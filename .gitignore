@@ -14,6 +14,12 @@ target/
 *.min.js
 *.min.css
 
+# CDK outputs
+**/cdk.out/
+**/cdk.out*/
+cdk.out/
+cdk.out*/
+
 # Environment variables
 .env
 .env.local
