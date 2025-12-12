@@ -1,0 +1,17 @@
+# Amazon Bedrock AgentCore SDK (Browser Tool)
+bedrock-agentcore>=0.1.0
+
+# Amazon Nova Act SDK (Browser AI)
+nova-act>=0.1.0
+
+# AWS SDK
+boto3>=1.34.0
+
+# Rich console output
+rich>=13.0.0
+
+# Async support
+nest-asyncio>=1.6.0
+
+# Environment variable management
+python-dotenv>=1.0.0

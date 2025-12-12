@@ -7,7 +7,10 @@ set -e  # Exit on error
 # Parse command line arguments
 REQUIRED_SERVICE=""
 MIN_AWS_CLI_VERSION="2.31.13"
+MIN_PYTHON_VERSION=""
+MIN_NODE_VERSION=""
 SKIP_SERVICE_CHECK=false
+REQUIRE_CDK=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -19,8 +22,20 @@ while [[ $# -gt 0 ]]; do
             MIN_AWS_CLI_VERSION="$2"
             shift 2
             ;;
+        --min-python-version)
+            MIN_PYTHON_VERSION="$2"
+            shift 2
+            ;;
+        --min-node-version)
+            MIN_NODE_VERSION="$2"
+            shift 2
+            ;;
         --skip-service-check)
             SKIP_SERVICE_CHECK=true
+            shift
+            ;;
+        --require-cdk)
+            REQUIRE_CDK=true
             shift
             ;;
         *)
@@ -30,10 +45,52 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "\033[0;36m=== GenAI Ops Demo Prerequisites Check ===\033[0m"
+echo -e "\033[0;36m=== GenAI Ops Demo Prerequisites Check (Shared Script) ===\033[0m"
 
-# Step 1: Verify AWS credentials
-echo -e "\n\033[0;33m[1/4] Verifying AWS credentials...\033[0m"
+# Check Python version (if required)
+if [ -n "$MIN_PYTHON_VERSION" ]; then
+    echo -e "\n\033[0;33mChecking Python version...\033[0m"
+    PYTHON_VERSION=$(python3 --version 2>&1 || python --version 2>&1)
+    if [[ $PYTHON_VERSION =~ Python\ ([0-9]+)\.([0-9]+) ]]; then
+        PY_MAJOR=${BASH_REMATCH[1]}
+        PY_MINOR=${BASH_REMATCH[2]}
+        IFS='.' read -r MIN_PY_MAJOR MIN_PY_MINOR <<< "$MIN_PYTHON_VERSION"
+        
+        if [ "$PY_MAJOR" -gt "$MIN_PY_MAJOR" ] || [ "$PY_MAJOR" -eq "$MIN_PY_MAJOR" -a "$PY_MINOR" -ge "$MIN_PY_MINOR" ]; then
+            echo -e "\033[0;32m      ✓ Python $PY_MAJOR.$PY_MINOR (required: $MIN_PYTHON_VERSION+)\033[0m"
+        else
+            echo -e "\033[0;31m      ❌ Python $MIN_PYTHON_VERSION+ required (found $PY_MAJOR.$PY_MINOR)\033[0m"
+            echo -e "\033[0;36m      Install from: https://python.org\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[0;31m      ❌ Python not found. Install from https://python.org\033[0m"
+        exit 1
+    fi
+fi
+
+# Check Node.js version (if required for CDK)
+if [ "$REQUIRE_CDK" = true ] || [ -n "$MIN_NODE_VERSION" ]; then
+    NODE_MIN=${MIN_NODE_VERSION:-18}
+    echo -e "\n\033[0;33mChecking Node.js version...\033[0m"
+    NODE_VERSION=$(node --version 2>&1)
+    if [[ $NODE_VERSION =~ v([0-9]+) ]]; then
+        NODE_MAJOR=${BASH_REMATCH[1]}
+        if [ "$NODE_MAJOR" -ge "$NODE_MIN" ]; then
+            echo -e "\033[0;32m      ✓ Node.js v$NODE_MAJOR (required: v$NODE_MIN+)\033[0m"
+        else
+            echo -e "\033[0;31m      ❌ Node.js v$NODE_MIN+ required (found v$NODE_MAJOR)\033[0m"
+            echo -e "\033[0;36m      Install from: https://nodejs.org\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[0;31m      ❌ Node.js not found. Install from https://nodejs.org\033[0m"
+        exit 1
+    fi
+fi
+
+# Verify AWS credentials
+echo -e "\n\033[0;33mVerifying AWS credentials...\033[0m"
 echo -e "\033[0;90m      (Checking AWS CLI configuration and validating access)\033[0m"
 
 # Check if AWS credentials are configured
@@ -53,8 +110,8 @@ ARN=$(echo "$CALLER_IDENTITY" | grep -o '"Arn": "[^"]*' | cut -d'"' -f4)
 echo -e "\033[0;32m      Authenticated as: $ARN\033[0m"
 echo -e "\033[0;32m      AWS Account: $ACCOUNT_ID\033[0m"
 
-# Step 2: Check AWS CLI version
-echo -e "\n\033[0;33m[2/4] Checking AWS CLI version...\033[0m"
+# Check AWS CLI version
+echo -e "\n\033[0;33mChecking AWS CLI version...\033[0m"
 AWS_VERSION=$(aws --version 2>&1)
 if [[ $AWS_VERSION =~ aws-cli/([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
     MAJOR=${BASH_REMATCH[1]}
@@ -84,8 +141,8 @@ else
     echo -e "\033[0;33m      ⚠ Could not parse AWS CLI version, continuing anyway...\033[0m"
 fi
 
-# Step 3: Check AWS region configuration
-echo -e "\n\033[0;33m[3/4] Checking AWS region configuration...\033[0m"
+# Check AWS region configuration
+echo -e "\n\033[0;33mChecking AWS region configuration...\033[0m"
 CURRENT_REGION=$(aws configure get region)
 if [ -z "$CURRENT_REGION" ]; then
     echo -e "\033[0;31m      ❌ No AWS region configured\033[0m"
@@ -98,9 +155,9 @@ if [ -z "$CURRENT_REGION" ]; then
 fi
 echo -e "\033[0;90m      Target region: $CURRENT_REGION\033[0m"
 
-# Step 4: Check specific AWS service availability (if specified)
+# Check specific AWS service availability (if specified)
 if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
-    echo -e "\n\033[0;33m[4/4] Checking $REQUIRED_SERVICE availability in $CURRENT_REGION...\033[0m"
+    echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $CURRENT_REGION...\033[0m"
     
     case "${REQUIRED_SERVICE,,}" in
         "bedrock")
@@ -123,6 +180,26 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             fi
             echo -e "\033[0;32m      ✓ Amazon Bedrock AgentCore is available in $CURRENT_REGION\033[0m"
             ;;
+        "agentcore-browser")
+            if ! aws bedrock-agentcore-control list-browsers --region "$CURRENT_REGION" > /dev/null 2>&1; then
+                echo -e "\033[0;31m      ❌ AgentCore Browser Tool is not available in region: $CURRENT_REGION\033[0m"
+                echo -e ""
+                echo -e "\033[0;90m      For supported regions, see:\033[0m"
+                echo -e "\033[0;90m      https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser-building-agents.html\033[0m"
+                exit 1
+            fi
+            echo -e "\033[0;32m      ✓ AgentCore Browser Tool is available in $CURRENT_REGION\033[0m"
+            ;;
+        "nova-act")
+            if ! aws nova-act list-workflow-definitions --region "$CURRENT_REGION" > /dev/null 2>&1; then
+                echo -e "\033[0;31m      ❌ Amazon Nova Act is not available in region: $CURRENT_REGION\033[0m"
+                echo -e ""
+                echo -e "\033[0;90m      Nova Act is currently available in us-east-1\033[0m"
+                echo -e "\033[0;90m      https://aws.amazon.com/nova/act/\033[0m"
+                exit 1
+            fi
+            echo -e "\033[0;32m      ✓ Amazon Nova Act is available in $CURRENT_REGION\033[0m"
+            ;;
         "transform")
             # AWS Transform doesn't have a direct availability check, so we check if the CLI supports it
             if ! aws transform help > /dev/null 2>&1; then
@@ -139,21 +216,7 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             ;;
     esac
 else
-    echo -e "\n\033[0;33m[4/4] Skipping service availability check...\033[0m"
-fi
-
-# Install CDK dependencies if CDK directory exists
-if [ -d "deployment" ]; then
-    echo -e "\nInstalling CDK dependencies...\033[0m"
-    echo -e "\033[0;90m      (Installing AWS CDK libraries and TypeScript packages)\033[0m"
-    if [ ! -d "deployment/node_modules" ]; then
-        pushd deployment > /dev/null
-        npm install
-        popd > /dev/null
-        echo -e "\033[0;32m      ✓ CDK dependencies installed\033[0m"
-    else
-        echo -e "\033[0;90m      ✓ CDK dependencies already installed\033[0m"
-    fi
+    echo -e "\n\033[0;33mSkipping service availability check...\033[0m"
 fi
 
 echo -e "\n\033[0;32m✅ All prerequisites validated successfully!\033[0m"

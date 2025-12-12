@@ -4,13 +4,60 @@
 param(
     [string]$RequiredService = "",
     [string]$MinAwsCliVersion = "2.31.13",
-    [switch]$SkipServiceCheck = $false
+    [string]$MinPythonVersion = "",
+    [string]$MinNodeVersion = "",
+    [switch]$SkipServiceCheck = $false,
+    [switch]$RequireCDK = $false
 )
 
-Write-Host "=== GenAI Ops Demo Prerequisites Check ===" -ForegroundColor Cyan
+Write-Host "=== GenAI Ops Demo Prerequisites Check (Shared Script) ===" -ForegroundColor Cyan
 
-# Step 1: Verify AWS credentials
-Write-Host "`n[1/4] Verifying AWS credentials..." -ForegroundColor Yellow
+# Check Python version (if required)
+if (-not [string]::IsNullOrEmpty($MinPythonVersion)) {
+    Write-Host "`nChecking Python version..." -ForegroundColor Yellow
+    $pythonVersion = python --version 2>&1
+    if ($pythonVersion -match "Python (\d+)\.(\d+)") {
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        $minParts = $MinPythonVersion.Split('.')
+        $minMajor = [int]$minParts[0]
+        $minMinor = [int]$minParts[1]
+        
+        if ($major -gt $minMajor -or ($major -eq $minMajor -and $minor -ge $minMinor)) {
+            Write-Host "      ✓ Python $major.$minor (required: $MinPythonVersion+)" -ForegroundColor Green
+        } else {
+            Write-Host "      ❌ Python $MinPythonVersion+ required (found $major.$minor)" -ForegroundColor Red
+            Write-Host "      Install from: https://python.org" -ForegroundColor Cyan
+            exit 1
+        }
+    } else {
+        Write-Host "      ❌ Python not found. Install from https://python.org" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Check Node.js version (if required for CDK)
+if ($RequireCDK -or -not [string]::IsNullOrEmpty($MinNodeVersion)) {
+    $nodeMinVersion = if ([string]::IsNullOrEmpty($MinNodeVersion)) { "18" } else { $MinNodeVersion }
+    Write-Host "`nChecking Node.js version..." -ForegroundColor Yellow
+    $nodeVersion = node --version 2>&1
+    if ($nodeVersion -match "v(\d+)") {
+        $major = [int]$Matches[1]
+        if ($major -ge [int]$nodeMinVersion) {
+            Write-Host "      ✓ Node.js v$major (required: v$nodeMinVersion+)" -ForegroundColor Green
+        } else {
+            Write-Host "      ❌ Node.js v$nodeMinVersion+ required (found v$major)" -ForegroundColor Red
+            Write-Host "      Install from: https://nodejs.org" -ForegroundColor Cyan
+            exit 1
+        }
+    } else {
+        Write-Host "      ❌ Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Verify AWS credentials
+Write-Host "`nVerifying AWS credentials..." -ForegroundColor Yellow
 Write-Host "      (Checking AWS CLI configuration and validating access)" -ForegroundColor Gray
 
 # Check if AWS credentials are configured
@@ -32,8 +79,8 @@ $arn = ($callerIdentity | ConvertFrom-Json).Arn
 Write-Host "      Authenticated as: $arn" -ForegroundColor Green
 Write-Host "      AWS Account: $accountId" -ForegroundColor Green
 
-# Step 2: Check AWS CLI version
-Write-Host "`n[2/4] Checking AWS CLI version..." -ForegroundColor Yellow
+# Check AWS CLI version
+Write-Host "`nChecking AWS CLI version..." -ForegroundColor Yellow
 $awsVersion = aws --version 2>&1
 $versionMatch = $awsVersion -match 'aws-cli/(\d+)\.(\d+)\.(\d+)'
 if ($versionMatch) {
@@ -68,8 +115,8 @@ if ($versionMatch) {
     Write-Host "      ⚠ Could not parse AWS CLI version, continuing anyway..." -ForegroundColor Yellow
 }
 
-# Step 3: Check AWS region configuration
-Write-Host "`n[3/4] Checking AWS region configuration..." -ForegroundColor Yellow
+# Check AWS region configuration
+Write-Host "`nChecking AWS region configuration..." -ForegroundColor Yellow
 $currentRegion = aws configure get region
 if ([string]::IsNullOrEmpty($currentRegion)) {
     Write-Host "      ❌ No AWS region configured" -ForegroundColor Red
@@ -82,9 +129,9 @@ if ([string]::IsNullOrEmpty($currentRegion)) {
 }
 Write-Host "      Target region: $currentRegion" -ForegroundColor Gray
 
-# Step 4: Check specific AWS service availability (if specified)
+# Check specific AWS service availability (if specified)
 if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) {
-    Write-Host "`n[4/4] Checking $RequiredService availability in $currentRegion..." -ForegroundColor Yellow
+    Write-Host "`nChecking $RequiredService availability in $currentRegion..." -ForegroundColor Yellow
     
     switch ($RequiredService.ToLower()) {
         "bedrock" {
@@ -109,32 +156,38 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             }
             Write-Host "      ✓ Amazon Bedrock AgentCore is available in $currentRegion" -ForegroundColor Green
         }
+        "agentcore-browser" {
+            $serviceCheck = aws bedrock-agentcore-control list-browsers --region $currentRegion 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "      ❌ AgentCore Browser Tool is not available in region: $currentRegion" -ForegroundColor Red
+                Write-Host ""
+                Write-Host "      For supported regions, see:" -ForegroundColor Gray
+                Write-Host "      https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser-building-agents.html" -ForegroundColor Gray
+                exit 1
+            }
+            Write-Host "      ✓ AgentCore Browser Tool is available in $currentRegion" -ForegroundColor Green
+        }
+        "nova-act" {
+            $serviceCheck = aws nova-act list-workflow-definitions --region $currentRegion 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "      ❌ Amazon Nova Act is not available in region: $currentRegion" -ForegroundColor Red
+                Write-Host ""
+                Write-Host "      Nova Act is currently available in us-east-1" -ForegroundColor Gray
+                Write-Host "      https://aws.amazon.com/nova/act/" -ForegroundColor Gray
+                exit 1
+            }
+            Write-Host "      ✓ Amazon Nova Act is available in $currentRegion" -ForegroundColor Green
+        }
         "transform" {
             # AWS Transform service availability check
-            # Note: The Lambda function will execute Transform jobs in the cloud, not locally
             Write-Host "      ✓ AWS Transform service is available in $currentRegion" -ForegroundColor Green
-            Write-Host "      (Transform jobs will be executed by Lambda function in the cloud)" -ForegroundColor Gray
         }
         default {
             Write-Host "      ⚠ Unknown service '$RequiredService', skipping service check..." -ForegroundColor Yellow
         }
     }
 } else {
-    Write-Host "`n[4/4] Skipping service availability check..." -ForegroundColor Yellow
-}
-
-# Install CDK dependencies if CDK directory exists
-if (Test-Path "deployment") {
-    Write-Host "`nInstalling CDK dependencies..." -ForegroundColor Yellow
-    Write-Host "      (Installing AWS CDK libraries and TypeScript packages)" -ForegroundColor Gray
-    if (-not (Test-Path "deployment/node_modules")) {
-        Push-Location deployment
-        npm install
-        Pop-Location
-        Write-Host "      ✓ CDK dependencies installed" -ForegroundColor Green
-    } else {
-        Write-Host "      ✓ CDK dependencies already installed" -ForegroundColor Gray
-    }
+    Write-Host "`nSkipping service availability check..." -ForegroundColor Yellow
 }
 
 Write-Host "`n✅ All prerequisites validated successfully!" -ForegroundColor Green
