@@ -187,7 +187,7 @@ if [ "$PROJECT_EXISTS" != "$PROJECT_NAME" ]; then
     --artifacts "type=NO_ARTIFACTS" \
     --environment "type=LINUX_CONTAINER,image=aws/codebuild/amazonlinux2-x86_64-standard:5.0,computeType=BUILD_GENERAL1_MEDIUM,environmentVariables=[{name=REPOSITORY_URL,value=$REPOSITORY_URL,type=PLAINTEXT},{name=OUTPUT_BUCKET,value=$OUTPUT_BUCKET,type=PLAINTEXT},{name=JOB_ID,value=doc-gen-default,type=PLAINTEXT}]" \
     --source "type=S3,location=$OUTPUT_BUCKET/config/buildspec.yml" \
-    --timeout-in-minutes 60 > /dev/null
+    --timeout-in-minutes 120 > /dev/null
   
   echo "      CodeBuild project created successfully"
 else
@@ -239,7 +239,7 @@ echo "    --environment-variables-override name=REPOSITORY_URL,value=https://git
 # Offer to wait and download documentation
 echo ""
 echo "=== Download Documentation ==="
-echo "The build typically takes 45-60 minutes to complete."
+echo "The build typically takes 45-90 minutes to complete depending on repository size."
 echo ""
 read -p "Would you like to wait for the build to complete and download the documentation? (y/n) " WAIT_CHOICE
 

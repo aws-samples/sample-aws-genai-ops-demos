@@ -35,9 +35,7 @@ phases:
     commands:
       - export PATH="/root/.local/bin:$PATH"
       - echo "Uploading documentation to S3..."
-      - echo "Current directory contents:"
-      - ls -la
       - echo "Documentation folder contents:"
-      - ls -la Documentation/ || echo "Documentation folder not found in current directory"
-      - aws s3 cp . s3://$OUTPUT_BUCKET/documentation/$JOB_ID/ --recursive --exclude ".git/*"
+      - ls -la target-repo/Documentation/ || echo "Documentation folder not found"
+      - aws s3 cp target-repo/Documentation/ s3://$OUTPUT_BUCKET/documentation/$JOB_ID/ --recursive
       - echo "Documentation uploaded to s3://$OUTPUT_BUCKET/documentation/$JOB_ID/"
