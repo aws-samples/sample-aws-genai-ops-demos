@@ -35,6 +35,7 @@ This repository contains deployable code samples demonstrating practical applica
 | Model Upgrade Evaluator | Automated testing framework for AI model migrations | operations-automation/model-upgrade-evaluator/ |
 | Automated Documentation Generation | Generate comprehensive technical documentation from any codebase using AWS Transform | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Automate workflows on legacy systems using Nova Act with AgentCore Browser Tool | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
+| AI Password Reset Chatbot | Conversational password reset using Amazon Nova 2 Lite and AgentCore with Cognito integration | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
 
 ## Repository Structure
 

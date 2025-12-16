@@ -83,8 +83,9 @@ venv.bak/
 *.rar
 
 # .NET
-bin/
-obj/
+**/bin/Debug/
+**/bin/Release/
+**/obj/
 *.user
 *.suo
 *.cache
@@ -97,6 +98,7 @@ obj/
 *.sqlite3
 
 # Internal documentation and configuration
+samples/
 docs/
 .kiro/
 

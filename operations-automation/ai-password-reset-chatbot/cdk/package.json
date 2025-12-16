@@ -1,0 +1,24 @@
+{
+  "name": "password-reset-chatbot-cdk",
+  "version": "1.0.0",
+  "description": "CDK deployment for Password Reset Chatbot on Bedrock AgentCore",
+  "main": "app.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk"
+  },
+  "keywords": ["aws", "cdk", "bedrock", "agentcore", "cognito", "password-reset"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.19.20",
+    "aws-cdk": "^2.1030.0",
+    "source-map-support": "^0.5.21",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.219.0",
+    "constructs": "^10.4.2"
+  }
+}

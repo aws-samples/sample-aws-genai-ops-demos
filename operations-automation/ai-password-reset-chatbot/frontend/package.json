@@ -1,0 +1,31 @@
+{
+  "name": "password-reset-chatbot-frontend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:local": "vite --mode local",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.0.0",
+    "@aws-sdk/client-cognito-identity": "^3.0.0",
+    "@aws-sdk/client-sts": "^3.0.0",
+    "@cloudscape-design/chat-components": "^1.0.67",
+    "@cloudscape-design/components": "^3.0.1109",
+    "@cloudscape-design/design-tokens": "^3.0.62",
+    "@cloudscape-design/global-styles": "^1.0.46",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.26",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.6"
+  }
+}
