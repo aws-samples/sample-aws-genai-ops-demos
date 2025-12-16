@@ -150,6 +150,29 @@ export class PasswordResetInfraStack extends cdk.Stack {
       resources: [`arn:aws:cognito-idp:${this.region}:${this.account}:userpool/*`],
     }));
 
+    // AGENTCORE MEMORY PERMISSIONS
+    // Required for AgentCore Memory integration for session management
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'AgentCoreMemoryAccess',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock-agentcore:ListMemories',
+        'bedrock-agentcore:CreateMemory',
+        'bedrock-agentcore:GetMemory',
+        'bedrock-agentcore:UpdateMemory',
+        'bedrock-agentcore:DeleteMemory',
+        'bedrock-agentcore:ListEvents',
+        'bedrock-agentcore:CreateEvent',
+        'bedrock-agentcore:GetEvent',
+        'bedrock-agentcore:UpdateEvent',
+        'bedrock-agentcore:DeleteEvent',
+      ],
+      resources: [
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:event/*`,
+      ],
+    }));
+
     // S3 bucket for CodeBuild source
     const sourceBucket = new s3.Bucket(this, 'SourceBucket', {
       bucketName: `password-reset-agent-sources-${this.account}-${this.region}`,
