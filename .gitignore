@@ -14,6 +14,16 @@ target/
 *.min.js
 *.min.css
 
+# TypeScript compilation outputs (CDK)
+**/cdk/lib/*.js
+**/cdk/lib/*.d.ts
+**/cdk/bin/*.js
+**/cdk/bin/*.d.ts
+
+# Test files (temporary debugging)
+test_*.py
+**/test_*.py
+
 # CDK outputs
 **/cdk.out/
 **/cdk.out*/
