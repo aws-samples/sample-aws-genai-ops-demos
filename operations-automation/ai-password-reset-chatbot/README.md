@@ -1,71 +1,111 @@
 # AI Password Reset Chatbot
 
-A conversational chatbot that guides users through Cognito's native password reset flow using Amazon Bedrock AgentCore and Nova 2 Lite.
+A conversational chatbot that guides users through Cognito's native password reset flow using Amazon Bedrock AgentCore Runtime, AgentCore Memory, and Strands Agents with Nova 2 Lite.
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────┐
-│   Browser   │────▶│  Cognito        │────▶│  AgentCore      │────▶│   Cognito   │
-│   (React)   │     │  Identity Pool  │     │  Runtime        │     │  User Pool  │
-│             │     │  (Unauth Role)  │     │ (Nova 2 Lite)   │     │             │
-│  Anonymous  │     │                 │     │  SigV4 Auth     │     │  Password   │
-│   Access    │     │  AWS Creds      │     │                 │     │  Reset APIs │
-└─────────────┘     └─────────────────┘     └─────────────────┘     └─────────────┘
-       │                    │                      │                      │
-       ▼                    ▼                      ▼                      ▼
-┌─────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────┐
-│ CloudFront  │     │  Temporary AWS  │     │  Strands Agent  │     │ Email/SMS   │
-│    + S3     │     │  Credentials    │     │  + Tools        │     │ Delivery    │
-└─────────────┘     └─────────────────┘     └─────────────────┘     └─────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              Frontend (React + CloudFront)                          │
+│  ┌─────────────┐    ┌─────────────────┐    ┌─────────────────────────────────────┐  │
+│  │   Browser   │--->│  Cognito        │--->│         AWS Credentials             │  │
+│  │   (React)   │    │  Identity Pool  │    │      (Temporary SigV4 Auth)         │  │
+│  │             │    │ (Unauth Role)   │    │                                     │  │
+│  │ Anonymous   │    │                 │    │                                     │  │
+│  │  Access     │    │  AWS Creds      │    │                                     │  │
+│  └─────────────┘    └─────────────────┘    └─────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      v SigV4 Signed Requests
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                        Amazon Bedrock AgentCore Runtime                            │
+│                                                                                    │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │                          AgentCore Memory                                   │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │   │
+│  │  │ Session Storage │  │ Conversation    │  │    Context Persistence      │  │   │
+│  │  │   (8hr max)     │  │    History      │  │   (Email, Codes, State)     │  │   │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│                                      │                                             │
+│                                      v                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │                         Strands Agent Framework                             │   │
+│  │                                                                             │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │   │
+│  │  │ Amazon Nova     │  │ Agent Tools     │  │    Conversation Manager     │  │   │
+│  │  │   2 Lite        │  │                 │  │   (Session Awareness)       │  │   │
+│  │  │                 │  │ • initiate_     │  │                             │  │   │
+│  │  │ (Foundation     │  │   password_     │  │                             │  │   │
+│  │  │  Model)         │  │   reset()       │  │                             │  │   │
+│  │  │                 │  │                 │  │                             │  │   │
+│  │  │ • Reasoning     │  │ • complete_     │  │                             │  │   │
+│  │  │ • Tool Calling  │  │   password_     │  │                             │  │   │
+│  │  │ • Streaming     │  │   reset()       │  │                             │  │   │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      v Cognito API Calls
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           Amazon Cognito User Pool                                  │
+│                                                                                     │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────────────┐  │
+│  │ User Accounts   │  │ Password Reset  │  │         Email/SMS Delivery          │  │
+│  │                 │  │                 │  │                                     │  │
+│  │ • Credentials   │  │ • Code Gen      │  │ • Verification Codes                │  │
+│  │ • Profiles      │  │ • Validation    │  │ • Reset Instructions                │  │
+│  │ • Status        │  │ • Rate Limiting │  │ • Security Notifications            │  │
+│  │ • Policies      │  │ • Expiration    │  │                                     │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Two Distinct Cognito Use Cases
+## Core Technologies
 
-**⚠️ Important:** This solution uses Cognito for two completely separate purposes. Understanding this distinction is crucial for customization and integration.
+### AgentCore Runtime & Memory
+- **Runtime Environment**: Managed platform for deploying and executing custom Strands Agents with your GenAI business logic
+- **Session Management**: Persistent conversation context using `runtimeSessionId` parameter
+- **Memory Integration**: Automatic conversation history and state retention across interactions
+- **Security**: Built-in SigV4 authentication and IAM integration
 
-### 1. User Database (Target of Password Resets)
+### Strands Agent Framework
+- **Agent Implementation**: Conversational AI with tool integration capabilities
+- **Nova 2 Lite Integration**: Optimized prompting for consistent, secure responses
+- **Tool System**: Custom password reset tools that wrap external APIs
+- **Conversation Manager**: Session-aware context handling and response streaming
 
-**Purpose:** The actual user accounts that need password resets
-**Cognito Service:** User Pool
-**Location:** `PasswordResetAuth` CDK stack
-**Configuration:** `cdk/lib/auth-stack.ts`
+### System Prompt Design
+The agent uses a structured system prompt following [Nova prompting best practices](https://docs.aws.amazon.com/nova/latest/userguide/prompting-precision.html):
 
-This is where your application's users are stored. The chatbot performs password reset operations on accounts in this User Pool.
-
-**For Production Integration:**
-- Replace this User Pool with your existing user database
-- Modify the agent tools (`agent/strands_agent.py`) to call your user management APIs instead of Cognito
-- Update IAM permissions to access your user database (RDS, DynamoDB, etc.)
-- Keep the same tool interface (`initiate_password_reset`, `complete_password_reset`)
-
-**Example Integration Points:**
-```python
-# Instead of Cognito APIs, call your user service:
-# cognito_client.forgot_password() → your_user_service.initiate_reset()
-# cognito_client.confirm_forgot_password() → your_user_service.complete_reset()
+```
+Task Summary: Password reset assistant for secure, guided user experience
+Context Information: Session state, user verification status, conversation history
+Model Instructions: Security boundaries, tool usage patterns, response formatting
+Response Style: Helpful, secure, step-by-step guidance with clear next actions
 ```
 
-### 2. Chat UI Authentication (Anonymous Access)
+**Key Prompt Features:**
+- **Security Boundaries**: Agent receives user input but delegates all validation and storage to Cognito APIs
+- **Tool Delegation**: All security operations routed to Cognito APIs
+- **Session Awareness**: Maintains context across conversation turns
+- **Error Handling**: Graceful fallbacks and user guidance for edge cases
 
-**Purpose:** Allows anonymous users to access the chatbot interface
-**Cognito Service:** Identity Pool (unauthenticated role)
-**Location:** `PasswordResetAuth` CDK stack  
-**Configuration:** `frontend/src/agentcore.ts`
+## Authentication Architecture
 
-This provides temporary AWS credentials so the browser can make authenticated API calls to AgentCore without requiring user login.
+This solution uses **dual Cognito integration** for different purposes:
 
-**For Production Integration:**
-- Keep this Identity Pool for anonymous access, OR
-- Replace with authenticated access (require login to use chatbot)
-- Modify frontend authentication in `frontend/src/agentcore.ts`
-- Update IAM roles for appropriate permissions
+### 1. **User Database** (Password Reset Target)
+- **Service**: Cognito User Pool
+- **Purpose**: Stores actual user accounts that need password resets
+- **Integration Point**: Agent tools call `cognito-idp` APIs
+- **Customization**: Replace with your existing user database (RDS, LDAP, etc.)
 
-**Key Design Decisions:**
-- Anonymous access via Cognito Identity Pool (unauthenticated role)
-- SigV4 signed requests to AgentCore (required by AWS APIs)
-- GenAI handles conversation flow, Cognito handles all security
-- Agent never sees, generates, or validates passwords/codes
+### 2. **UI Access** (Anonymous Chat Access)  
+- **Service**: Cognito Identity Pool (unauthenticated role)
+- **Purpose**: Provides temporary AWS credentials for browser API calls
+- **Integration Point**: Frontend SigV4 signing for AgentCore requests
+- **Customization**: Keep for anonymous access or replace with authenticated flow
 
 ## Prerequisites
 
@@ -117,35 +157,59 @@ ai-password-reset-chatbot/
 │   └── Dockerfile            # ARM64 container definition
 ├── cdk/                      # Infrastructure as Code
 │   ├── bin/app.ts            # CDK app entry point
-│   └── lib/
-│       ├── infra-stack.ts    # ECR, CodeBuild, IAM (with Cognito permissions)
-│       ├── auth-stack.ts     # Cognito User Pool
-│       ├── runtime-stack.ts  # AgentCore Runtime (NO JWT auth)
-│       └── frontend-stack.ts # CloudFront + S3
+│   ├── lib/
+│   │   ├── infra-stack.ts    # ECR, CodeBuild, IAM (with Cognito permissions)
+│   │   ├── auth-stack.ts     # Cognito User Pool + Identity Pool
+│   │   ├── runtime-stack.ts  # AgentCore Runtime deployment
+│   │   └── frontend-stack.ts # CloudFront + S3 hosting
+│   ├── package.json          # CDK dependencies
+│   └── cdk.json              # CDK configuration
 ├── frontend/                 # React app (anonymous access)
-│   └── src/
-│       ├── App.tsx           # Chat UI (no auth required)
-│       └── agentcore.ts      # AgentCore client (no JWT)
+│   ├── src/
+│   │   ├── App.tsx           # Chat UI with streaming support
+│   │   ├── agentcore.ts      # AgentCore client with session management
+│   │   └── markdown.css      # Chat styling
+│   ├── package.json          # Frontend dependencies
+│   └── vite.config.ts        # Build configuration
 ├── scripts/
 │   ├── build-frontend.ps1    # Frontend build (Windows)
 │   └── build-frontend.sh     # Frontend build (macOS/Linux)
 ├── deploy-all.ps1            # One-command deploy (Windows)
-└── deploy-all.sh             # One-command deploy (macOS/Linux)
+├── deploy-all.sh             # One-command deploy (macOS/Linux)
+├── ARCHITECTURE.md           # Technical design documentation
+└── README.md                 # This file
 ```
 
 ## CDK Stacks
 
-| Stack | Purpose | Key Resources | Cognito Usage |
-|-------|---------|---------------|---------------|
-| PasswordResetInfra | Build pipeline | ECR, CodeBuild, IAM Role | None |
-| PasswordResetAuth | Identity & user management | **User Pool** (target users), **Identity Pool** (UI auth), IAM Roles | Both use cases |
-| PasswordResetRuntime | Agent runtime | AgentCore Runtime (SigV4 authentication) | None |
-| PasswordResetFrontend | Web UI | S3, CloudFront | None |
+| Stack | Purpose | Key Resources | Dependencies |
+|-------|---------|---------------|--------------|
+| PasswordResetInfra | Build pipeline & IAM | ECR Repository, CodeBuild Project, Agent Runtime IAM Role, S3 Source Bucket | None |
+| PasswordResetAuth | Identity management | Cognito User Pool, Identity Pool, Unauthenticated IAM Role | None |
+| PasswordResetRuntime | Agent deployment | AgentCore Runtime, CodeBuild Trigger, Build Waiter | Infra + Auth |
+| PasswordResetFrontend | Web hosting | S3 Bucket, CloudFront Distribution, Website Deployment | Runtime + Auth |
 
-**PasswordResetAuth Stack Details:**
-- **Cognito User Pool**: Contains the actual user accounts that need password resets (Use Case #1)
-- **Cognito Identity Pool**: Provides anonymous AWS credentials for the chat UI (Use Case #2)
-- **IAM Roles**: Permissions for both anonymous UI access and agent operations
+**Stack Details:**
+
+**PasswordResetInfra:**
+- **ECR Repository**: Stores the containerized Strands Agent
+- **CodeBuild Project**: Compiles agent code into container images
+- **Agent Runtime IAM Role**: Permissions for AgentCore to access Cognito APIs
+- **S3 Source Bucket**: Stores agent source code for builds
+
+**PasswordResetAuth:**
+- **Cognito User Pool**: Target user accounts for password resets
+- **Cognito Identity Pool**: Anonymous AWS credentials for frontend
+- **Unauthenticated IAM Role**: Minimal permissions for AgentCore API access
+
+**PasswordResetRuntime:**
+- **AgentCore Runtime**: Managed hosting environment for the Strands Agent
+- **Custom Resources**: Triggers CodeBuild and waits for container compilation
+- **Environment Variables**: User Pool configuration passed to agent
+
+**PasswordResetFrontend:**
+- **S3 + CloudFront**: Static website hosting with global CDN
+- **Build Integration**: Automatically deploys frontend with runtime configuration
 
 ## Agent Tools
 
@@ -160,6 +224,24 @@ The agent has two tools that wrap Cognito APIs:
 - Calls `cognito-idp:ConfirmForgotPassword`
 - Validates code and sets new password
 - Returns success or specific error guidance
+
+## Session Management & Streaming
+
+### Session Persistence
+The chatbot maintains conversation context across multiple interactions using AgentCore Runtime sessions:
+
+- **Session ID**: Each conversation uses a unique UUID session identifier
+- **Context Retention**: Agent remembers email addresses, verification codes, and conversation state
+- **Session Duration**: Sessions persist for up to 8 hours or 15 minutes of inactivity
+- **Implementation**: Uses `runtimeSessionId` parameter in `InvokeAgentRuntimeCommand` (AWS SDK best practice)
+
+### Real-Time Streaming
+Responses stream in real-time for a natural chat experience:
+
+- **Server-Sent Events (SSE)**: AgentCore returns streaming responses as `text/event-stream`
+- **Progressive Display**: Text appears word-by-word as the agent generates responses
+- **Chunk Processing**: Frontend processes `data: ` lines from SSE stream
+- **Fallback Handling**: Gracefully handles both streaming and non-streaming responses
 
 ## Nova 2 Lite Optimization
 
@@ -193,12 +275,30 @@ This structured approach ensures Nova 2 Lite provides consistent, accurate respo
 | Session management | AgentCore Runtime |
 
 **Security Boundaries:**
-- **Agent NEVER** generates, validates, or stores passwords
-- **Agent NEVER** validates verification codes  
+- **Agent receives** user input but delegates all validation and storage to Cognito APIs
 - **All security operations** delegated to Cognito User Pool
 - **Anonymous UI access** via Cognito Identity Pool with minimal IAM permissions
 - **API authentication** via SigV4 signing ensures requests are authenticated at AWS level
 - **Complete separation** between UI authentication and user database
+
+### Production Security Enhancements
+
+For production deployments, consider these additional security measures:
+
+**Rate Limiting & Monitoring:**
+- CloudWatch alarms on password reset attempt frequency
+- WAF rules to limit requests per IP address
+- API Gateway throttling for additional protection
+
+**Session Security:**
+- Shorter AgentCore session timeouts (reduce from 8hr default)
+- CloudTrail logging for all password reset operations
+- Regular security audits of IAM permissions
+
+**Network Security:**
+- VPC deployment for AgentCore Runtime (private subnets)
+- PrivateLink endpoints for Cognito API calls
+- Custom domain with AWS Certificate Manager
 
 
 ## IAM Permissions
@@ -252,6 +352,18 @@ Check CloudWatch logs:
 ```bash
 aws logs tail /aws/bedrock-agentcore/runtimes/password_reset_agent-* --follow --no-cli-pager
 ```
+
+### "Session not persisting between messages"
+Ensure the frontend is using the correct session parameter:
+- **Correct**: `runtimeSessionId` in `InvokeAgentRuntimeCommand`
+- **Incorrect**: `sessionId` (deprecated parameter name)
+- **Verification**: Check browser console for consistent session ID logs across messages
+
+### "Streaming not working"
+Verify streaming configuration:
+- **Response Type**: Should be `text/event-stream` in network tab
+- **Console Logs**: Look for "📥 RECEIVED CHUNK:" messages
+- **Progressive Display**: Text should appear word-by-word, not all at once
 
 ### "Rate limit exceeded"
 Cognito enforces rate limits on password reset attempts. Wait a few minutes before retrying.
