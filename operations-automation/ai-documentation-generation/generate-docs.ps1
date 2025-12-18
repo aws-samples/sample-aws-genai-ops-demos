@@ -32,7 +32,19 @@ $ErrorActionPreference = "Stop"
 $defaultRepo = "https://github.com/aws-samples/sample-serverless-digital-asset-payments"
 
 Write-Host "=== AWS Transform Documentation Generator ===" -ForegroundColor Cyan
-Write-Host "Generates comprehensive documentation from any Git repository" -ForegroundColor Green
+Write-Host "Generates comprehensive documentation from any Git repository using AWS Transform" -ForegroundColor Green
+Write-Host ""
+Write-Host "Uses Enhanced AWS-managed transformation with custom organizational context:" -ForegroundColor Yellow
+Write-Host "  - AWS-maintained transformation logic for deep technical analysis" -ForegroundColor Gray
+Write-Host "  - Custom context for structured, operational documentation" -ForegroundColor Gray
+Write-Host "  - Role-based navigation and multi-audience content" -ForegroundColor Gray
+Write-Host "  - Expected time: ~53 minutes" -ForegroundColor Gray
+Write-Host ""
+
+$transformationType = "enhanced"
+$buildspecFile = "buildspec.yml"
+$expectedTime = "~53 minutes"
+
 Write-Host ""
 
 # Check if repository URL was provided
@@ -93,15 +105,27 @@ if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectN
 Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
 Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
 
-# Upload buildspec to S3
+# Upload appropriate buildspec to S3
 Write-Host ""
 Write-Host "Uploading buildspec to S3..." -ForegroundColor Yellow
-$buildspecPath = Join-Path $scriptDir "buildspec.yml"
+$buildspecPath = Join-Path $scriptDir $buildspecFile
 aws s3 cp $buildspecPath "s3://$outputBucket/config/buildspec.yml" --region $currentRegion --no-cli-pager | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Buildspec uploaded successfully" -ForegroundColor Green
+    Write-Host "      ✓ Buildspec uploaded successfully ($buildspecFile)" -ForegroundColor Green
 } else {
     Write-Host "      ❌ Failed to upload buildspec" -ForegroundColor Red
+    exit 1
+}
+
+# Upload enhanced transformation context
+Write-Host ""
+Write-Host "Uploading enhanced transformation context..." -ForegroundColor Yellow
+$enhancedTransformDir = Join-Path $scriptDir "enhanced-transformation"
+aws s3 cp $enhancedTransformDir "s3://$outputBucket/enhanced-transformation/" --recursive --region $currentRegion --no-cli-pager | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "      ✓ Enhanced transformation context uploaded successfully" -ForegroundColor Green
+} else {
+    Write-Host "      ❌ Failed to upload enhanced transformation context" -ForegroundColor Red
     exit 1
 }
 
@@ -119,6 +143,7 @@ if ($DeployOnly) {
 Write-Host ""
 Write-Host "Starting documentation generation build..." -ForegroundColor Yellow
 Write-Host "      Repository: $RepositoryUrl" -ForegroundColor Gray
+Write-Host "      Expected time: $expectedTime" -ForegroundColor Gray
 
 # Generate unique job ID
 $jobId = "doc-gen-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -164,7 +189,7 @@ Write-Host "    --environment-variables-override name=REPOSITORY_URL,value=https
 # Offer to wait and download documentation
 Write-Host ""
 Write-Host "=== Download Documentation ===" -ForegroundColor Cyan
-Write-Host "The build typically takes 45-90 minutes to complete depending on repository size." -ForegroundColor Yellow
+Write-Host "The build is expected to take $expectedTime to complete depending on repository size." -ForegroundColor Yellow
 Write-Host ""
 $waitChoice = Read-Host "Would you like to wait for the build to complete and download the documentation? (y/n)"
 

@@ -37,7 +37,53 @@ while getopts "r:g:dh" opt; do
 done
 
 echo -e "\033[0;36m=== AWS Transform Documentation Generator ===\033[0m"
-echo -e "\033[0;32mGenerates comprehensive documentation from any Git repository\033[0m"
+echo -e "\033[0;32mGenerates comprehensive documentation from any Git repository using AWS Transform\033[0m"
+echo ""
+echo -e "\033[0;33mUses Enhanced AWS-managed transformation with custom organizational context:\033[0m"
+echo -e "\033[0;90m  - AWS-maintained transformation logic for deep technical analysis\033[0m"
+echo -e "\033[0;90m  - Custom context for structured, operational documentation\033[0m"
+echo -e "\033[0;90m  - Role-based navigation and multi-audience content\033[0m"
+echo -e "\033[0;90m  - Expected time: ~53 minutes\033[0m"
+echo ""
+
+TRANSFORMATION_TYPE="enhanced"
+BUILDSPEC_FILE="buildspec.yml"
+EXPECTED_TIME="~53 minutes"
+echo -e "\033[0;37m  2. Enhanced AWS-managed transformation (recommended)\033[0m"
+echo -e "\033[0;90m     - AWS-managed transformation with custom organizational context\033[0m"
+echo -e "\033[0;90m     - Best of both worlds: technical depth + structured output\033[0m"
+echo -e "\033[0;90m     - Expected time: 45-90 minutes\033[0m"
+echo ""
+echo -e "\033[0;37m  3. Custom-defined transformation (experimental)\033[0m"
+echo -e "\033[0;90m     - Fully custom transformation with organization-specific logic\033[0m"
+echo -e "\033[0;90m     - Complete control over analysis and output structure\033[0m"
+echo -e "\033[0;90m     - Expected time: ~60 minutes (benchmarked)\033[0m"
+echo ""
+
+while true; do
+    read -p "Enter your choice (1, 2, or 3): " TRANSFORM_CHOICE
+    if [ "$TRANSFORM_CHOICE" = "1" ] || [ "$TRANSFORM_CHOICE" = "2" ] || [ "$TRANSFORM_CHOICE" = "3" ]; then
+        break
+    fi
+done
+
+if [ "$TRANSFORM_CHOICE" = "1" ]; then
+    TRANSFORMATION_TYPE="managed"
+    BUILDSPEC_FILE="buildspec-custom-managed.yml"
+    EXPECTED_TIME="45-90 minutes"
+    echo -e "\033[0;32mSelected: AWS-managed transformation (standard)\033[0m"
+elif [ "$TRANSFORM_CHOICE" = "2" ]; then
+    TRANSFORMATION_TYPE="enhanced"
+    BUILDSPEC_FILE="buildspec-enhanced-managed.yml"
+    EXPECTED_TIME="45-90 minutes"
+    echo -e "\033[0;32mSelected: Enhanced AWS-managed transformation\033[0m"
+else
+    TRANSFORMATION_TYPE="custom"
+    BUILDSPEC_FILE="buildspec-custom-defined.yml"
+    EXPECTED_TIME="~60 minutes"
+    echo -e "\033[0;32mSelected: Custom-defined transformation\033[0m"
+fi
+
 echo ""
 
 # Check if repository URL was provided
@@ -93,14 +139,26 @@ fi
 echo -e "\033[0;90m      Output Bucket: $OUTPUT_BUCKET\033[0m"
 echo -e "\033[0;90m      CodeBuild Project: $PROJECT_NAME\033[0m"
 
-# Upload buildspec to S3
+# Upload appropriate buildspec to S3
 echo ""
 echo -e "\033[0;33mUploading buildspec to S3...\033[0m"
-if aws s3 cp "$SCRIPT_DIR/buildspec.yml" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
-    echo -e "\033[0;32m      ✓ Buildspec uploaded successfully\033[0m"
+if aws s3 cp "$SCRIPT_DIR/$BUILDSPEC_FILE" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
+    echo -e "\033[0;32m      ✓ Buildspec uploaded successfully ($BUILDSPEC_FILE)\033[0m"
 else
     echo -e "\033[0;31m      ❌ Failed to upload buildspec\033[0m"
     exit 1
+fi
+
+# Upload custom transformation files if using custom transformation
+if [ "$TRANSFORMATION_TYPE" = "custom" ]; then
+    echo ""
+    echo -e "\033[0;33mUploading custom transformation definition...\033[0m"
+    if aws s3 cp "$SCRIPT_DIR/custom-transformation/" "s3://$OUTPUT_BUCKET/transformations/custom-doc-generation/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
+        echo -e "\033[0;32m      ✓ Custom transformation uploaded successfully\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ Failed to upload custom transformation\033[0m"
+        exit 1
+    fi
 fi
 
 if [ "$DEPLOY_ONLY" = true ]; then
@@ -117,6 +175,8 @@ fi
 echo ""
 echo -e "\033[0;33mStarting documentation generation build...\033[0m"
 echo -e "\033[0;90m      Repository: $REPOSITORY_URL\033[0m"
+echo -e "\033[0;90m      Transformation: $TRANSFORMATION_TYPE\033[0m"
+echo -e "\033[0;90m      Expected time: $EXPECTED_TIME\033[0m"
 
 # Generate unique job ID
 JOB_ID="doc-gen-$(date +%Y%m%d-%H%M%S)"
@@ -165,7 +225,7 @@ echo "    --environment-variables-override name=REPOSITORY_URL,value=https://git
 # Offer to wait and download documentation
 echo ""
 echo -e "\033[0;36m=== Download Documentation ===\033[0m"
-echo -e "\033[0;33mThe build typically takes 45-90 minutes to complete depending on repository size.\033[0m"
+echo -e "\033[0;33mThe build is expected to take $EXPECTED_TIME to complete depending on repository size.\033[0m"
 echo ""
 read -p "Would you like to wait for the build to complete and download the documentation? (y/n) " WAIT_CHOICE
 
@@ -179,6 +239,7 @@ if [ "$WAIT_CHOICE" = "y" ] || [ "$WAIT_CHOICE" = "Y" ]; then
   # Poll for build completion
   BUILD_COMPLETE=false
   BUILD_STATUS=""
+  START_TIME=$(date +%s)
   while [ "$BUILD_COMPLETE" = "false" ]; do
     sleep 30
     BUILD_INFO=$(aws codebuild batch-get-builds --ids "$BUILD_ID" --region "$CURRENT_REGION" --no-cli-pager \
@@ -193,7 +254,9 @@ if [ "$WAIT_CHOICE" = "y" ] || [ "$WAIT_CHOICE" = "Y" ]; then
       BUILD_STATUS="$BUILD_INFO"
       echo -e "\033[0;31mBuild ended with status: $BUILD_INFO\033[0m"
     else
-      echo -e "\033[0;90m  Build in progress... (Status: $BUILD_INFO)\033[0m"
+      CURRENT_TIME=$(date +%s)
+      ELAPSED=$(( (CURRENT_TIME - START_TIME) / 60 ))
+      echo -e "\033[0;90m  Build in progress... (Status: $BUILD_INFO, Elapsed: ${ELAPSED} min)\033[0m"
     fi
   done
   

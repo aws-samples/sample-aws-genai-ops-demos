@@ -19,22 +19,36 @@ phases:
       - echo "Repository URL - $REPOSITORY_URL"
       - echo "Output Bucket - $OUTPUT_BUCKET"
       - echo "Job ID - $JOB_ID"
+      - echo "Creating enhanced configuration for AWS-managed transformation..."
+      # Download additional plan context from S3
+      - aws s3 cp s3://$OUTPUT_BUCKET/enhanced-transformation/additional-plan-context.md ./additional-plan-context.md
+      # Create configuration file with custom context from file
+      - |
+        cat > transform-config.yaml << EOF
+        transformationName: "AWS/early-access-comprehensive-codebase-analysis"
+        codeRepositoryPath: "."
+        buildCommand: "npm run build || echo 'No build command available'"
+        additionalPlanContext: |
+        $(sed 's/^/  /' ./additional-plan-context.md)
+        EOF
+      - echo "Cloning target repository..."
       - git clone --depth 1 $REPOSITORY_URL ./target-repo
       - ls -la ./target-repo
 
   build:
     commands:
       - export PATH="/root/.local/bin:$PATH"
-      - echo "Running AWS Transform comprehensive codebase analysis..."
-      # Change to target-repo and run Transform
+      - echo "Running enhanced AWS-managed transformation with custom context..."
+      # Change to target-repo and run Transform with configuration
       # NOTE: cd persists across commands in CodeBuild, affecting post_build too
-      - cd target-repo && atx custom def exec -n "AWS/early-access-comprehensive-codebase-analysis" -p "." -x -t -d
-      - echo "AWS Transform completed"
+      - cd target-repo && atx custom def exec -n "AWS/early-access-comprehensive-codebase-analysis" -p "." -x -t -d --configuration file://../transform-config.yaml
+      - echo "Enhanced AWS Transform completed"
       - ls -la
 
   post_build:
     commands:
       - export PATH="/root/.local/bin:$PATH"
       - echo "Uploading documentation to S3..."
+      # We're still in target-repo directory from build phase
       - aws s3 cp Documentation/ s3://$OUTPUT_BUCKET/documentation/$JOB_ID/ --recursive
       - echo "Documentation uploaded to s3://$OUTPUT_BUCKET/documentation/$JOB_ID/"

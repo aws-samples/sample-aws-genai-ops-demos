@@ -1,28 +1,56 @@
-# Automated Documentation Generation
+# AI-Powered Documentation Generation
 
-Automatically generate comprehensive technical documentation from any codebase using AWS Transform's `AWS/early-access-comprehensive-codebase-analysis` transformation in a simple CodeBuild project.
+Generate comprehensive technical documentation from any codebase using AWS Transform with custom organizational guidance. This demo deploys a CodeBuild project that runs AWS Transform's comprehensive codebase analysis with additional context to guide the output structure and content.
 
-## Important: Processing Time
+## How It Works
 
-The comprehensive codebase analysis typically takes **45-90 minutes** to complete depending on repository size and complexity. This is due to the deep AI-powered analysis that generates architecture diagrams, behavior documentation, migration guides, and technical debt reports. The CodeBuild timeout is set to **120 minutes** to accommodate larger repositories. Plan accordingly when integrating into CI/CD pipelines.
+This demo uses AWS Transform's `AWS/early-access-comprehensive-codebase-analysis` transformation with custom `additionalPlanContext` to:
+- **Leverage AWS expertise**: Uses AWS-managed transformation logic for deep technical analysis
+- **Add organizational guidance**: Provides custom instructions based on your organization's guidelines and preferences for documentation structure and priorities
+- **Enable customization**: Allows you to modify the guidance without changing transformation logic
+
+## Processing Time
+
+The comprehensive analysis takes **around 1 hour** depending on repository size and complexity. This includes deep AI-powered analysis of code structure, architecture, and technical patterns.
 
 ## What This Demo Shows
 
 This demo provides a **CodeBuild-based AWS Transform solution** that generates comprehensive documentation from any Git repository. Infrastructure is deployed via CDK, making it easy to deploy and integrate into CI/CD pipelines.
 
-## Generated Documentation Includes
+## What Gets Generated
 
-- System Architecture: Component relationships, data flows, technology stack analysis
-- Technical Specifications: Code structure, API endpoints, configuration details  
-- Operational Runbooks: Deployment procedures, monitoring guides, troubleshooting
-- Security Analysis: Best practices, vulnerability identification, compliance mapping
-- Technical Debt Analysis: Actionable insights on outdated components and maintenance needs
+AWS Transform analyzes your codebase and generates comprehensive documentation. The exact structure and content depend on your codebase, but typically includes:
+
+**Architecture Analysis**
+- System architecture overview and component relationships
+- Technology stack analysis and architectural patterns
+- Data flow documentation and integration points
+
+**Technical Documentation**
+- Code structure and organization analysis
+- API documentation and interface specifications
+- Configuration and deployment information
+
+**Operational Insights**
+- Technical debt identification and recommendations
+- Security analysis and best practices
+- Performance considerations and optimization opportunities
+
+**Custom Guidance Applied**
+Our `additionalPlanContext` requests:
+- Structured organization with clear sections (architecture/, api/, deployment/, operations/, etc.)
+- Role-based content for different audiences (developers, architects, DevOps, managers)
+- Operational focus with deployment guides and troubleshooting information
+- Technical debt categorization with effort estimates
+- Mermaid diagrams for visual architecture representation
+
+**Note**: The actual output structure and content are determined by AWS Transform based on your codebase and our guidance. Results may vary depending on the project type, size, and complexity.
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Git Repo      │────▶│   CodeBuild      │────▶│   S3 Bucket     │
+│   Git Repo      │───->│   CodeBuild      │────>│   S3 Bucket     │
 │   (any URL)     │     │   + AWS Transform│     │   (docs output) │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
@@ -33,6 +61,8 @@ Components deployed via CDK:
 - IAM Role: Minimal permissions for Transform, S3, and CloudWatch
 
 ## Prerequisites
+
+The deployment script automatically checks for all required prerequisites:
 
 - AWS CLI version 2.31.13 or later (includes AWS Transform CLI)
 - Python 3.10+ (for CDK)
@@ -49,9 +79,60 @@ Components deployed via CDK:
 - CloudWatch Logs (create log groups, write logs)
 - AWS Transform (`transform-custom:*` permissions)
 
+## Customizing Documentation Output
+
+You can guide AWS Transform's output by editing the `enhanced-transformation/additional-plan-context.md` file. This file contains instructions that influence how AWS Transform structures and presents the documentation.
+
+### What You Can Customize
+
+**Documentation Structure**: Request specific folder organization and file types
+```markdown
+STRUCTURE REQUIREMENTS:
+- Organize documentation into clear sections: architecture/, api/, deployment/, operations/, security/, analysis/
+- Create a comprehensive README.md with role-based navigation
+- Generate Mermaid diagrams for architecture visualization
+```
+
+**Content Emphasis**: Specify what aspects to prioritize
+```markdown
+CONTENT PRIORITIES:
+1. OPERATIONAL FOCUS: Emphasize deployment procedures, monitoring setup, troubleshooting guides
+2. BUSINESS ALIGNMENT: Connect technical decisions to business value and operational impact  
+3. ACTIONABLE INSIGHTS: Provide clear effort estimates and prioritized recommendations
+4. MULTI-AUDIENCE: Serve developers, architects, DevOps engineers, and engineering managers
+```
+
+**Analysis Approach**: Guide how technical issues are categorized
+```markdown
+TECHNICAL DEBT ANALYSIS:
+- Categorize issues as High/Medium/Low priority with effort estimates (e.g., "1-2 weeks", "3-5 days")
+- Focus on production readiness and operational concerns
+- Include cost optimization opportunities
+```
+
+**Presentation Style**: Request specific formatting and organization
+```markdown
+OUTPUT FORMAT:
+- Use scannable format with clear headings, bullet points, and tables
+- Include quick start guides for different roles (developers, architects, DevOps)
+- Balance comprehensive technical detail with executive accessibility
+```
+
+### How to Make Changes
+
+1. **Edit the guidance**: Modify `enhanced-transformation/additional-plan-context.md`
+2. **Redeploy**: Run the deployment script to upload your updated guidance
+3. **Test**: Generate documentation to see how AWS Transform interprets your instructions
+
+### Important Notes
+
+- **Guidance, not guarantees**: The context file provides instructions to AWS Transform, but the actual output depends on your codebase and how AWS Transform interprets the guidance
+- **Iterative process**: You may need to refine your instructions based on the generated results
+- **Codebase dependent**: Different types of projects may produce different documentation structures even with the same guidance
+
 ## Quick Start
 
-### Deploy with Your Repository
+### Deploy and Analyze Your Repository
 
 ```powershell
 # PowerShell (Windows)
@@ -102,11 +183,17 @@ The script will:
 ### Generate Documentation for Any Repository
 
 ```bash
+# Get the actual project name from CloudFormation
+PROJECT_NAME=$(aws cloudformation describe-stacks \
+  --stack-name DocumentationGeneratorStack \
+  --region us-east-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" \
+  --output text)
+
 # Start a documentation generation job
 aws codebuild start-build \
-  --project-name aws-transform-doc-generator \
+  --project-name $PROJECT_NAME \
   --region us-east-1 \
-  --no-cli-pager \
   --environment-variables-override \
     name=REPOSITORY_URL,value=https://github.com/owner/repo \
     name=JOB_ID,value=my-job-123
@@ -115,11 +202,11 @@ aws codebuild start-build \
 ### Monitor Build Progress
 
 ```bash
-# Check build status
-aws codebuild batch-get-builds --region us-east-1 --ids <build-id> --no-cli-pager
+# Check build status (replace <build-id> with actual build ID)
+aws codebuild batch-get-builds --region us-east-1 --ids <build-id>
 
-# Stream build logs
-aws logs tail /aws/codebuild/aws-transform-doc-generator --follow --region us-east-1
+# Stream build logs (use actual project name)
+aws logs tail /aws/codebuild/$PROJECT_NAME --follow --region us-east-1
 ```
 
 ### Retrieve Generated Documentation
@@ -244,14 +331,13 @@ The transformation uses `atx custom def exec` with these available flags:
 
 ### Performance Notes
 
-The **45-90 minute runtime** is inherent to comprehensive AI analysis (larger repos may take longer). The transformation performs:
-- Deep code structure analysis
-- Architecture diagram generation
-- Behavior documentation
-- Migration guide creation
-- Technical debt analysis
+The **45-90 minute runtime** is inherent to comprehensive AI analysis. The transformation performs deep analysis of:
+- Code structure and architecture patterns
+- Component relationships and dependencies  
+- Technical debt and improvement opportunities
+- Documentation generation based on findings
 
-**There is no "fast mode"** - this is the nature of comprehensive AI-powered analysis.
+**There is no "fast mode"** - this is the nature of comprehensive AI-powered codebase analysis. Runtime varies by repository size and complexity.
 
 ### Tips for Development/Testing
 
@@ -341,6 +427,8 @@ ai-documentation-generation/
 ├── buildspec.yml                  # CodeBuild build specification
 ├── README.md                      # This file
 ├── ARCHITECTURE.md                # Technical architecture details
+├── enhanced-transformation/
+│   └── additional-plan-context.md # Customizable transformation guidance
 └── infrastructure/
     └── cdk/
         ├── app.py                 # CDK app entry point
