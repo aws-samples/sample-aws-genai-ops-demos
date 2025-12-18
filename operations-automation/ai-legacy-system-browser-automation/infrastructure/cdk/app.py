@@ -17,7 +17,7 @@ app = cdk.App()
 LegacySystemAutomationStack(
     app,
     "LegacySystemAutomationAgentCore",
-    description="AgentCore Browser Tool for Legacy System Automation Demo",
+    description="AgentCore Browser Tool for Legacy System Automation Demo (uksb-q3p3ydk6f3)(tag:legacy-automation,operations-automation)",
     env=cdk.Environment(
         region="us-east-1"
     )
