@@ -87,10 +87,50 @@ Your IAM user/role needs permissions for CDK deployment, Nova Act, and AgentCore
             "Action": [
                 "cloudformation:*",
                 "s3:*",
-                "iam:*",
                 "ecr:*"
             ],
             "Resource": "*"
+        },
+        {
+            "Sid": "IAMRoleManagement",
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:TagRole",
+                "iam:UntagRole"
+            ],
+            "Resource": [
+                "arn:aws:iam::*:role/LegacySystemAutomationAgentCore-*",
+                "arn:aws:iam::*:role/cdk-*"
+            ]
+        },
+        {
+            "Sid": "IAMPassRoleRestricted",
+            "Effect": "Allow",
+            "Action": [
+                "iam:PassRole"
+            ],
+            "Resource": [
+                "arn:aws:iam::*:role/LegacySystemAutomationAgentCore-*",
+                "arn:aws:iam::*:role/cdk-*"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "iam:PassedToService": [
+                        "bedrock-agentcore.amazonaws.com",
+                        "cloudformation.amazonaws.com"
+                    ]
+                }
+            }
         },
         {
             "Sid": "NovaActAccess",

@@ -477,7 +477,7 @@ const getSupportPrompts = () => {
 ### Customize Agent Behavior
 Edit `agent/strands_agent.py`:
 ```python
-PASSWORD_RESET_SYSTEM_PROMPT = """
+SYSTEM_PROMPT_TEMPLATE = """
 You are a password reset assistant for [YOUR COMPANY].
 [Add your specific instructions, branding, policies]
 """

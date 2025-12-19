@@ -146,7 +146,7 @@ def complete_password_reset(username: str, verification_code: str, new_password:
 
 
 # System prompt for password reset assistant - optimized for Nova 2 Lite
-PASSWORD_RESET_SYSTEM_PROMPT = """## Task Summary:
+SYSTEM_PROMPT_TEMPLATE = """## Task Summary:
 You are a password reset assistant. Your ONLY job is to help users reset their password through a secure, guided process using the provided tools.
 
 ## Available Tools:
@@ -314,7 +314,7 @@ async def agent_invocation(payload, context=None):
     session_agent = Agent(
         model=model,
         tools=[initiate_password_reset, complete_password_reset],
-        system_prompt=PASSWORD_RESET_SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT_TEMPLATE,
         session_manager=session_manager
     )
     
