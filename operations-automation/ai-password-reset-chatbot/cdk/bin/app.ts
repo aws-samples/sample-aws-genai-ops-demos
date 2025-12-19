@@ -16,7 +16,7 @@ const env = {
 // Infrastructure stack (ECR, IAM, CodeBuild, S3)
 const infraStack = new PasswordResetInfraStack(app, 'PasswordResetInfra', {
   env,
-  description: 'Password Reset Chatbot: Container registry, build pipeline, and IAM roles (uksb-q3p3ydk6f3)(tag:password-reset,operations-automation)',
+  description: 'Password Reset Chatbot: Container registry, build pipeline, and IAM roles (uksb-do9bhieqqh)(tag:password-reset,operations-automation)',
 });
 
 // Auth stack (Cognito User Pool) - users reset passwords for accounts in this pool

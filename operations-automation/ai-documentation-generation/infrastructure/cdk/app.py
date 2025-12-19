@@ -9,7 +9,7 @@ app = cdk.App()
 DocumentationGeneratorStack(
     app,
     "DocumentationGeneratorStack",
-    description="AWS Transform Documentation Generator - CodeBuild-based solution for comprehensive codebase analysis (uksb-q3p3ydk6f3)(tag:doc-generation,operations-automation)",
+    description="AWS Transform Documentation Generator - CodeBuild-based solution for comprehensive codebase analysis (uksb-do9bhieqqh)(tag:doc-generation,operations-automation)",
 )
 
 app.synth()
