@@ -61,6 +61,10 @@ A conversational chatbot that guides users through Cognito's native password res
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Foundation
+
+This demo is built upon the [Sample Amazon Bedrock AgentCore Fullstack WebApp](https://github.com/aws-samples/sample-amazon-bedrock-agentcore-fullstack-webapp) repository, extending it with password reset functionality and Cognito integration.
+
 ## Core Technologies
 
 ### AgentCore Runtime & Memory
