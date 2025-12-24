@@ -115,6 +115,7 @@ venv.bak/
 samples/
 docs/
 .kiro/
+.hypothesis/
 
 # OS generated files
 .DS_Store
