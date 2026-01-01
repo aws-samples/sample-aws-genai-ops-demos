@@ -76,6 +76,53 @@
             width: 500px;
             max-width: 90vw;
         }
+        
+        /* Vendor Grid Styling */
+        .vendor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: var(--element-spacing);
+            margin-top: var(--element-spacing);
+        }
+        
+        .vendor-card {
+            background: var(--window-bg);
+            border: 2px outset var(--button-shadow);
+            padding: var(--element-spacing);
+            border-radius: 3px;
+        }
+        
+        .vendor-card h3 {
+            margin: 0 0 8px 0;
+            font-weight: bold;
+            color: var(--window-fg);
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 4px;
+        }
+        
+        .vendor-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .vendor-info-row {
+            display: flex;
+            align-items: center;
+        }
+        
+        .vendor-info-label {
+            width: 60px;
+            display: inline-block;
+            text-align: right;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .vendor-info-value {
+            flex: 1;
+            color: var(--window-fg);
+        }
     </style>
 </head>
 <body>
@@ -96,8 +143,8 @@
 
             <div class="flex-row gap margin-bottom">
                 <button class="primary" onclick="showCreateModal()">Create Purchase Order</button>
-                <button onclick="submitSelected()" id="submitBtn" disabled>Submit Selected</button>
-                <button onclick="approveSelected()" id="approveBtn" disabled>Approve Selected</button>
+                <button onclick="handleSubmitSelected()" id="submitBtn" disabled>Submit Selected</button>
+                <button onclick="handleApproveSelected()" id="approveBtn" disabled>Approve Selected</button>
             </div>
 
             <fieldset>
@@ -109,11 +156,13 @@
                                 <th scope="col" role="button"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
                                 <th scope="col" role="button">PO Number</th>
                                 <th scope="col" role="button">Vendor</th>
+                                <th scope="col" role="button">Items</th>
                                 <th scope="col" role="button" style="text-align: right;">Total Amount</th>
                                 <th scope="col" role="button">Status</th>
                                 <th scope="col" role="button">Requested By</th>
                                 <th scope="col" role="button">Order Date</th>
                                 <th scope="col" role="button">Budget Code</th>
+                                <th scope="col" role="button">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="poTableBody">
@@ -125,7 +174,7 @@
 
             <fieldset>
                 <legend>Active Vendors</legend>
-                <div id="vendorGrid">
+                <div id="vendorGrid" class="vendor-grid">
                     <!-- Vendors will be populated here -->
                 </div>
             </fieldset>
@@ -181,7 +230,7 @@
                     
                     <div class="form-buttons">
                         <button type="button" onclick="hideCreateModal()">Cancel</button>
-                        <button type="button" class="primary" onclick="createPO()">Create PO</button>
+                        <button type="button" class="primary" onclick="handleCreatePO()">Create PO</button>
                     </div>
                 </div>
             </form>
@@ -205,7 +254,28 @@
             
             <div class="flex-row gap margin-top">
                 <button type="button" onclick="hidePODetailsModal()">Close</button>
-                <button type="button" class="primary" id="poActionBtn" onclick="performPOAction()" style="display: none;">Action</button>
+                <button type="button" class="primary" id="poActionBtn" onclick="handlePerformPOAction()" style="display: none;">Action</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="successModalBackdrop" onclick="hideSuccessModal()" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); z-index: 999;"></div>
+    <div class="dialog active" id="successModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; width: 500px;">
+        <div class="title-bar">
+            <div class="title-bar-text" id="successModalTitle">Success</div>
+            <div class="title-bar-buttons">
+                <button data-close onclick="hideSuccessModal()"></button>
+            </div>
+        </div>
+        
+        <div class="window-body padding">
+            <div id="successModalContent">
+                <!-- Success message content will be populated here -->
+            </div>
+            
+            <div class="flex-row gap margin-top">
+                <button type="button" class="primary" onclick="hideSuccessModal()">OK</button>
             </div>
         </div>
     </div>
@@ -275,6 +345,19 @@
                     requestedBy: 'AI Automation System',
                     orderDate: '2024-01-25',
                     budgetCode: 'ENG-2024-Q1'
+                },
+                {
+                    id: 'PO-2024-003',
+                    vendorId: 'vendor-1',
+                    vendorName: 'TechCorp Solutions',
+                    items: [
+                        { itemName: 'UltraSharp 27" 4K Monitor', quantity: 5, unitPrice: 599.00, totalPrice: 2995.00 }
+                    ],
+                    totalAmount: 2995.00,
+                    status: 'Approved',
+                    requestedBy: 'Office Manager',
+                    orderDate: '2024-01-23',
+                    budgetCode: 'OFC-2024-Q1'
                 }
             ];
             purchaseOrders.length = 0;
@@ -356,15 +439,32 @@
             
             purchaseOrders.forEach(po => {
                 const row = document.createElement('tr');
+                const statusClass = po.status === 'Approved' ? 'style="background-color: #90EE90; font-weight: bold;"' : 
+                                   po.status === 'Delivered' ? 'style="background-color: #87CEEB; font-weight: bold;"' : '';
+                const actionButton = po.status === 'Approved' ? 
+                    `<button onclick="receiveDelivery('${po.id}')" style="font-size: 11px; padding: 2px 6px;">Receive Delivery</button>` : 
+                    po.status === 'Delivered' ? 
+                    `<span style="color: #666; font-size: 11px;">Delivered ${po.deliveryDate ? new Date(po.deliveryDate).toLocaleDateString() : ''}</span>` : 
+                    '';
+                
+                // Format items for display - with null check
+                const itemsDisplay = (po.items && po.items.length > 0) ? 
+                    po.items.map(item => 
+                        `${item.quantity}x ${item.itemName}`
+                    ).join('<br>') : 
+                    'No items';
+                
                 row.innerHTML = `
                     <td><input type="checkbox" value="${po.id}" onchange="updateSelection()"></td>
                     <td><a href="#" onclick="showPODetails('${po.id}')">${po.id}</a></td>
                     <td>${po.vendorName}</td>
+                    <td style="font-size: 11px; line-height: 1.2;">${itemsDisplay}</td>
                     <td style="text-align: right;">${po.totalAmount.toFixed(2)}</td>
-                    <td>${po.status}</td>
+                    <td ${statusClass}>${po.status}</td>
                     <td>${po.requestedBy}</td>
                     <td>${new Date(po.orderDate).toLocaleDateString()}</td>
                     <td>${po.budgetCode}</td>
+                    <td style="text-align: center;">${actionButton}</td>
                 `;
                 tbody.appendChild(row);
             });
@@ -375,14 +475,26 @@
             vendorGrid.innerHTML = '';
             
             vendors.filter(v => v.isActive).forEach(vendor => {
-                const vendorDiv = document.createElement('div');
-                vendorDiv.innerHTML = `
-                    <p><strong>${vendor.name}</strong></p>
-                    <p>Email: ${vendor.contactEmail}</p>
-                    <p>Phone: ${vendor.contactPhone}</p>
-                    <p>Terms: ${vendor.paymentTerms}</p>
+                const vendorCard = document.createElement('div');
+                vendorCard.className = 'vendor-card';
+                vendorCard.innerHTML = `
+                    <h3>${vendor.name}</h3>
+                    <div class="vendor-info">
+                        <div class="vendor-info-row">
+                            <span class="vendor-info-label">Email:</span>
+                            <span class="vendor-info-value">${vendor.contactEmail}</span>
+                        </div>
+                        <div class="vendor-info-row">
+                            <span class="vendor-info-label">Phone:</span>
+                            <span class="vendor-info-value">${vendor.contactPhone}</span>
+                        </div>
+                        <div class="vendor-info-row">
+                            <span class="vendor-info-label">Terms:</span>
+                            <span class="vendor-info-value">${vendor.paymentTerms}</span>
+                        </div>
+                    </div>
                 `;
-                vendorGrid.appendChild(vendorDiv);
+                vendorGrid.appendChild(vendorCard);
             });
         }
 
@@ -396,62 +508,203 @@
             document.getElementById('createModal').style.display = 'none';
         }
 
+        function generateNextPONumber() {
+            // Find the highest existing PO number for the current year
+            let maxNumber = 0;
+            const currentYear = new Date().getFullYear();
+            
+            purchaseOrders.forEach(po => {
+                // Match format: PO-YYYY-NNN (e.g., PO-2024-001)
+                const match = po.id.match(/^PO-(\d{4})-(\d{3})$/);
+                if (match) {
+                    const year = parseInt(match[1]);
+                    const number = parseInt(match[2]);
+                    // Only consider POs from current year
+                    if (year === currentYear && number > maxNumber) {
+                        maxNumber = number;
+                    }
+                }
+            });
+            
+            // Generate next sequential number (pad with zeros to 3 digits)
+            const nextNumber = (maxNumber + 1).toString().padStart(3, '0');
+            return `PO-${currentYear}-${nextNumber}`;
+        }
+
         async function createPO() {
+            // Validate form inputs
             const vendorId = document.getElementById('vendorSelect').value;
-            const vendor = vendors.find(v => v.id === vendorId);
-            const itemName = document.getElementById('itemName').value;
+            const itemName = document.getElementById('itemName').value.trim();
             const quantity = parseInt(document.getElementById('quantity').value);
             const unitPrice = parseFloat(document.getElementById('unitPrice').value);
-            const budgetCode = document.getElementById('budgetCode').value;
+            const budgetCode = document.getElementById('budgetCode').value.trim();
             
-            const newPO = {
-                id: `PO-${Date.now()}`,
-                vendorId: vendorId,
-                vendorName: vendor.name,
-                items: [
-                    { itemName: itemName, quantity: quantity, unitPrice: unitPrice, totalPrice: quantity * unitPrice }
-                ],
-                totalAmount: quantity * unitPrice,
-                status: 'Draft',
-                requestedBy: 'AI Automation System',
-                orderDate: new Date().toISOString().split('T')[0],
-                budgetCode: budgetCode
-            };
+            // Basic validation
+            if (!vendorId || !itemName || !quantity || !unitPrice || !budgetCode) {
+                showSuccessModal('Validation Error', 'Please fill in all required fields.');
+                return;
+            }
+            
+            if (quantity <= 0 || unitPrice <= 0) {
+                showSuccessModal('Validation Error', 'Quantity and unit price must be greater than 0.');
+                return;
+            }
+            
+            const vendor = vendors.find(v => v.id === vendorId);
+            if (!vendor) {
+                showSuccessModal('Validation Error', 'Please select a valid vendor.');
+                return;
+            }
+            
+            // Disable the create button to prevent double-clicks
+            const createBtn = document.querySelector('#createModal button.primary');
+            const originalText = createBtn.textContent;
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
             
             try {
-                // Try to save to API
+                // Try to find matching model by name with improved matching
+                let modelId = null;
+                let matchType = 'none';
+                
+                try {
+                    const modelsResponse = await fetch(`${apiBaseUrl}/models`);
+                    if (modelsResponse.ok) {
+                        const models = await modelsResponse.json();
+                        
+                        // Try exact match first (case-insensitive)
+                        let matchingModel = models.find(model => 
+                            model.name.toLowerCase() === itemName.toLowerCase()
+                        );
+                        
+                        if (matchingModel) {
+                            modelId = matchingModel.id;
+                            matchType = 'exact';
+                        } else {
+                            // Try alias matching
+                            matchingModel = models.find(model => 
+                                model.aliases && model.aliases.some(alias => 
+                                    alias.toLowerCase() === itemName.toLowerCase()
+                                )
+                            );
+                            
+                            if (matchingModel) {
+                                modelId = matchingModel.id;
+                                matchType = 'alias';
+                            } else {
+                                // Try partial matching (contains)
+                                matchingModel = models.find(model => 
+                                    model.name.toLowerCase().includes(itemName.toLowerCase()) ||
+                                    itemName.toLowerCase().includes(model.name.toLowerCase())
+                                );
+                                
+                                if (matchingModel) {
+                                    modelId = matchingModel.id;
+                                    matchType = 'partial';
+                                }
+                            }
+                        }
+                        
+                        if (matchingModel) {
+                            console.log(`Model match found: ${matchingModel.name} (${matchType} match) -> ${modelId}`);
+                        } else {
+                            console.log(`No model match found for: ${itemName}`);
+                        }
+                    }
+                } catch (error) {
+                    console.log('Could not fetch models for matching:', error);
+                }
+                
+                const newPO = {
+                    id: generateNextPONumber(),
+                    vendorId: vendorId,
+                    vendorName: vendor.name,
+                    items: [
+                        { 
+                            itemId: `item-${Date.now()}`,
+                            modelId: modelId, // Will be null if no match found
+                            itemName: itemName, 
+                            quantity: quantity, 
+                            unitPrice: unitPrice, 
+                            totalPrice: quantity * unitPrice 
+                        }
+                    ],
+                    totalAmount: quantity * unitPrice,
+                    status: 'Draft',
+                    requestedBy: 'AI Automation System',
+                    approvedBy: '',
+                    orderDate: new Date().toISOString(),
+                    expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
+                    budgetCode: budgetCode
+                };
+                
+                // Try to save to API with timeout
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+                
                 const response = await fetch(`${apiBaseUrl}/purchase-orders`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(newPO)
+                    body: JSON.stringify(newPO),
+                    signal: controller.signal
                 });
+                
+                clearTimeout(timeoutId);
                 
                 if (response.ok) {
                     // Reload POs from API
                     await loadPurchaseOrders();
+                    const modelInfo = modelId ? ` (${matchType} match to existing model)` : ` (new product - no model match)`;
+                    showSuccessModal('Success', `Purchase Order ${newPO.id} created successfully!${modelInfo}`);
                 } else {
-                    // Fallback to local storage
-                    purchaseOrders.unshift(newPO);
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
             } catch (error) {
                 console.error('Error creating purchase order:', error);
-                // Fallback to local storage
-                purchaseOrders.unshift(newPO);
-            }
-            
-            renderPurchaseOrders();
-            hideCreateModal();
-            
-            // Auto-submit after 2 seconds (simulate AI automation)
-            setTimeout(() => {
-                const po = purchaseOrders.find(p => p.id === newPO.id);
-                if (po && po.status === 'Draft') {
-                    po.status = 'Submitted';
-                    renderPurchaseOrders();
+                
+                if (error.name === 'AbortError') {
+                    showSuccessModal('Error', 'Request timed out. Please try again.');
+                } else {
+                    // Fallback to local storage (without model matching for fallback)
+                    const newPO = {
+                        id: generateNextPONumber(),
+                        vendorId: vendorId,
+                        vendorName: vendor.name,
+                        items: [
+                            { 
+                                itemId: `item-${Date.now()}`,
+                                itemName: itemName, 
+                                quantity: quantity, 
+                                unitPrice: unitPrice, 
+                                totalPrice: quantity * unitPrice 
+                            }
+                        ],
+                        totalAmount: quantity * unitPrice,
+                        status: 'Draft',
+                        requestedBy: 'AI Automation System',
+                        approvedBy: '',
+                        orderDate: new Date().toISOString(),
+                        expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+                        budgetCode: budgetCode
+                    };
+                    
+                    purchaseOrders.unshift(newPO);
+                    showSuccessModal('Warning', `Purchase Order ${newPO.id} created locally. Changes may not persist.`);
                 }
-            }, 2000);
+            } finally {
+                // Re-enable the button
+                createBtn.disabled = false;
+                createBtn.textContent = originalText;
+                
+                // Update display and close modal
+                renderPurchaseOrders();
+                hideCreateModal();
+                
+                // Clear form
+                document.getElementById('createModal').querySelector('form').reset();
+            }
         }
 
         function toggleSelectAll() {
@@ -486,13 +739,31 @@
             approveBtn.disabled = !hasSubmitted;
         }
 
-        function submitSelected() {
-            selectedPOs.forEach(id => {
+        async function submitSelected() {
+            const submitPromises = selectedPOs.map(async (id) => {
                 const po = purchaseOrders.find(p => p.id === id);
                 if (po && po.status === 'Draft') {
+                    // Update locally first for immediate UI feedback
                     po.status = 'Submitted';
+                    
+                    try {
+                        // Persist to database
+                        await updatePOStatusInDatabase(po);
+                    } catch (error) {
+                        console.error(`Failed to submit PO ${po.id}:`, error);
+                        // Revert local change if API call failed
+                        po.status = 'Draft';
+                        throw error;
+                    }
                 }
             });
+            
+            try {
+                await Promise.all(submitPromises);
+                showSuccessModal('Success', `${selectedPOs.length} purchase order(s) submitted successfully!`);
+            } catch (error) {
+                showSuccessModal('Error', 'Some purchase orders failed to submit. Please try again.');
+            }
             
             renderPurchaseOrders();
             selectedPOs = [];
@@ -500,14 +771,33 @@
             updateSelection();
         }
 
-        function approveSelected() {
-            selectedPOs.forEach(id => {
+        async function approveSelected() {
+            const approvePromises = selectedPOs.map(async (id) => {
                 const po = purchaseOrders.find(p => p.id === id);
                 if (po && po.status === 'Submitted') {
+                    // Update locally first for immediate UI feedback
                     po.status = 'Approved';
                     po.approvedBy = 'Manager';
+                    
+                    try {
+                        // Persist to database
+                        await updatePOStatusInDatabase(po);
+                    } catch (error) {
+                        console.error(`Failed to approve PO ${po.id}:`, error);
+                        // Revert local changes if API call failed
+                        po.status = 'Submitted';
+                        delete po.approvedBy;
+                        throw error;
+                    }
                 }
             });
+            
+            try {
+                await Promise.all(approvePromises);
+                showSuccessModal('Success', `${selectedPOs.length} purchase order(s) approved successfully!`);
+            } catch (error) {
+                showSuccessModal('Error', 'Some purchase orders failed to approve. Please try again.');
+            }
             
             renderPurchaseOrders();
             selectedPOs = [];
@@ -622,22 +912,54 @@
             document.getElementById('poDetailsModal').style.display = 'none';
         }
 
-        function performPOAction() {
+        async function performPOAction() {
             const actionBtn = document.getElementById('poActionBtn');
             const poId = actionBtn.getAttribute('data-po-id');
             const action = actionBtn.getAttribute('data-action');
             
             const po = purchaseOrders.find(p => p.id === poId);
             if (po) {
-                if (action === 'submit') {
-                    po.status = 'Submitted';
-                } else if (action === 'approve') {
-                    po.status = 'Approved';
-                    po.approvedBy = 'Manager';
-                }
+                // Disable button during processing
+                actionBtn.disabled = true;
+                const originalText = actionBtn.textContent;
+                actionBtn.textContent = 'Processing...';
                 
-                renderPurchaseOrders();
-                hidePODetailsModal();
+                try {
+                    if (action === 'submit') {
+                        po.status = 'Submitted';
+                    } else if (action === 'approve') {
+                        po.status = 'Approved';
+                        po.approvedBy = 'Manager';
+                    }
+                    
+                    // Persist to database
+                    await updatePOStatusInDatabase(po);
+                    
+                    renderPurchaseOrders();
+                    hidePODetailsModal();
+                    
+                    const actionName = action === 'submit' ? 'submitted' : 'approved';
+                    showSuccessModal('Success', `Purchase Order ${po.id} ${actionName} successfully!`);
+                    
+                } catch (error) {
+                    console.error(`Error ${action}ing PO:`, error);
+                    
+                    // Revert local changes
+                    if (action === 'submit') {
+                        po.status = 'Draft';
+                    } else if (action === 'approve') {
+                        po.status = 'Submitted';
+                        delete po.approvedBy;
+                    }
+                    
+                    renderPurchaseOrders();
+                    showSuccessModal('Error', `Failed to ${action} purchase order. Please try again.`);
+                    
+                } finally {
+                    // Re-enable button
+                    actionBtn.disabled = false;
+                    actionBtn.textContent = originalText;
+                }
             }
         }
 
@@ -646,9 +968,234 @@
                 case 'Draft': return '#666666';
                 case 'Submitted': return '#0066cc';
                 case 'Approved': return '#009900';
+                case 'Delivered': return '#4169E1';
                 case 'Rejected': return '#cc0000';
                 default: return '#000000';
             }
+        }
+
+        function receiveDelivery(poId) {
+            const po = purchaseOrders.find(p => p.id === poId);
+            if (!po || po.status !== 'Approved') {
+                showSuccessModal('Error', 'Only approved purchase orders can be received.');
+                return;
+            }
+            
+            // Check if PO has items
+            if (!po.items || po.items.length === 0) {
+                showSuccessModal('Error', 'This purchase order has no items to receive.');
+                return;
+            }
+            
+            // Update PO status locally first for immediate UI feedback
+            po.status = 'Delivered';
+            po.deliveryDate = new Date().toISOString().split('T')[0];
+            renderPurchaseOrders();
+            
+            // Persist PO status change to database
+            updatePOStatusInDatabase(po).then(() => {
+                // Update inventory for each item in the PO
+                return updateInventoryFromPO(po);
+            }).then((inventoryUpdates) => {
+                // Show success message
+                const updateSummary = inventoryUpdates.length > 0 ? 
+                    `<p><strong>PO ${po.id} marked as delivered!</strong></p><p><strong>Inventory Updates:</strong></p><ul>${inventoryUpdates.map(update => `<li>${update}</li>`).join('')}</ul>` : 
+                    `<p><strong>PO ${po.id} marked as delivered!</strong></p><p>Inventory updates have been processed.</p>`;
+                
+                showSuccessModal('Delivery Received', updateSummary);
+            }).catch((error) => {
+                console.error('Error processing delivery:', error);
+                // Revert local changes if API call failed
+                po.status = 'Approved';
+                delete po.deliveryDate;
+                renderPurchaseOrders();
+                showSuccessModal('Error', 'Failed to process delivery. Please try again.');
+            });
+        }
+        
+        async function updatePOStatusInDatabase(po) {
+            try {
+                // Send the complete PO object to preserve all data
+                const response = await fetch(`${apiBaseUrl}/purchase-orders`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(po) // Send complete PO object
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('Error updating PO status:', error);
+                throw error;
+            }
+        }
+        
+        async function updateInventoryFromPO(po) {
+            const inventoryUpdates = [];
+            
+            // Check if PO has items
+            if (!po.items || po.items.length === 0) {
+                return ['No items to process'];
+            }
+            
+            try {
+                // Get current inventory from API
+                const inventoryResponse = await fetch(`${apiBaseUrl}/inventory`);
+                if (!inventoryResponse.ok) {
+                    throw new Error('Failed to fetch current inventory');
+                }
+                const currentInventory = await inventoryResponse.json();
+                
+                // Process each item in the PO
+                for (const poItem of po.items) {
+                    if (poItem.modelId) {
+                        // Find existing inventory item by modelId
+                        let inventoryItem = currentInventory.find(inv => inv.modelId === poItem.modelId);
+                        
+                        if (inventoryItem) {
+                            // Update existing inventory item
+                            const updatedItem = {
+                                ...inventoryItem,
+                                stockLevel: inventoryItem.stockLevel + poItem.quantity,
+                                availableQuantity: (inventoryItem.stockLevel + poItem.quantity) - (inventoryItem.reservedQuantity || 0),
+                                lastUpdated: new Date().toISOString().split('T')[0]
+                            };
+                            
+                            // Update via API
+                            const updateResponse = await fetch(`${apiBaseUrl}/inventory`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify(updatedItem)
+                            });
+                            
+                            if (updateResponse.ok) {
+                                inventoryUpdates.push(`Updated ${poItem.itemName}: +${poItem.quantity} units (Total: ${updatedItem.stockLevel})`);
+                            }
+                        } else {
+                            // Create new inventory item
+                            const newInventoryItem = {
+                                id: `inv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                                modelId: poItem.modelId,
+                                name: poItem.itemName,
+                                category: getCategoryFromModelId(poItem.modelId),
+                                manufacturer: getManufacturerFromModelId(poItem.modelId),
+                                model: poItem.itemName,
+                                stockLevel: poItem.quantity,
+                                reservedQuantity: 0,
+                                availableQuantity: poItem.quantity,
+                                unitCost: poItem.unitPrice,
+                                location: 'Receiving Dock',
+                                lastUpdated: new Date().toISOString().split('T')[0]
+                            };
+                            
+                            // Create via API
+                            const createResponse = await fetch(`${apiBaseUrl}/inventory`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify(newInventoryItem)
+                            });
+                            
+                            if (createResponse.ok) {
+                                inventoryUpdates.push(`Added new item ${poItem.itemName}: ${poItem.quantity} units`);
+                            }
+                        }
+                    }
+                }
+                
+                return inventoryUpdates;
+            } catch (error) {
+                console.error('Error updating inventory:', error);
+                throw error;
+            }
+        }
+        
+        function showSuccessModal(title, message) {
+            document.getElementById('successModalTitle').textContent = title;
+            document.getElementById('successModalContent').innerHTML = message;
+            document.getElementById('successModalBackdrop').style.display = 'block';
+            document.getElementById('successModal').style.display = 'block';
+        }
+
+        function hideSuccessModal() {
+            document.getElementById('successModalBackdrop').style.display = 'none';
+            document.getElementById('successModal').style.display = 'none';
+        }
+        
+        function handleCreatePO() {
+            createPO().catch(error => {
+                console.error('Error in createPO:', error);
+                showSuccessModal('Error', 'An unexpected error occurred. Please try again.');
+            });
+        }
+        
+        function handleSubmitSelected() {
+            submitSelected().catch(error => {
+                console.error('Error in submitSelected:', error);
+                showSuccessModal('Error', 'An unexpected error occurred while submitting. Please try again.');
+            });
+        }
+        
+        function handleApproveSelected() {
+            approveSelected().catch(error => {
+                console.error('Error in approveSelected:', error);
+                showSuccessModal('Error', 'An unexpected error occurred while approving. Please try again.');
+            });
+        }
+        
+        function handlePerformPOAction() {
+            performPOAction().catch(error => {
+                console.error('Error in performPOAction:', error);
+                showSuccessModal('Error', 'An unexpected error occurred. Please try again.');
+            });
+        }
+        
+        function getCategoryFromModelId(modelId) {
+            const categoryMap = {
+                'model-001': 'Laptops',
+                'model-002': 'Laptops', 
+                'model-003': 'Monitors',
+                'model-004': 'Monitors',
+                'model-005': 'Peripherals',
+                'model-006': 'Mobile Devices',
+                'model-007': 'Networking',
+                'model-008': 'Desktops',
+                'model-009': 'Peripherals',
+                'model-010': 'Mobile Devices',
+                'model-011': 'Cloud Services',
+                'model-012': 'Software',
+                'model-013': 'Security Software',
+                'model-014': 'Security Software'
+            };
+            return categoryMap[modelId] || 'General';
+        }
+        
+        function getManufacturerFromModelId(modelId) {
+            const manufacturerMap = {
+                'model-001': 'TechCorp',
+                'model-002': 'CompuTech',
+                'model-003': 'ViewTech', 
+                'model-004': 'DisplayCorp',
+                'model-005': 'PeripheralTech',
+                'model-006': 'MobileTech',
+                'model-007': 'NetworkCorp',
+                'model-008': 'CompuTech',
+                'model-009': 'AudioTech',
+                'model-010': 'TabletCorp',
+                'model-011': 'CloudServices Ltd',
+                'model-012': 'SoftwarePro Inc',
+                'model-013': 'SecurityTech Corp',
+                'model-014': 'SecurityTech Corp'
+            };
+            return manufacturerMap[modelId] || 'Various';
         }
     </script>
 </body>

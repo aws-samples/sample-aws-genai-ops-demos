@@ -1,0 +1,211 @@
+[
+  {
+    "id": "model-001",
+    "name": "Professional Laptop 16\"",
+    "manufacturer": "TechCorp",
+    "category": "Laptops",
+    "partNumber": "TC-PL16-001",
+    "description": "High-performance laptop for professional use with 16-inch display",
+    "aliases": ["Prof Laptop 16", "TechCorp Laptop 16", "Professional 16"],
+    "specifications": {
+      "screen": "16-inch",
+      "processor": "Intel i7",
+      "memory": "16GB RAM",
+      "storage": "512GB SSD"
+    }
+  },
+  {
+    "id": "model-002",
+    "name": "Professional Laptop 15\"",
+    "manufacturer": "CompuTech",
+    "category": "Laptops",
+    "partNumber": "CT-PL15-001",
+    "description": "Business laptop with 15-inch display for everyday professional tasks",
+    "aliases": ["Prof Laptop 15", "CompuTech Laptop", "Professional 15"],
+    "specifications": {
+      "screen": "15-inch",
+      "processor": "Intel i5",
+      "memory": "8GB RAM",
+      "storage": "256GB SSD"
+    }
+  },
+  {
+    "id": "model-003",
+    "name": "UltraSharp 27\" 4K Monitor",
+    "manufacturer": "ViewTech",
+    "category": "Monitors",
+    "partNumber": "VT-US27-4K",
+    "description": "Professional 4K monitor with excellent color accuracy",
+    "aliases": ["UltraSharp 27", "4K Monitor", "ViewTech Monitor"],
+    "specifications": {
+      "screen": "27-inch",
+      "resolution": "3840x2160",
+      "panel": "IPS",
+      "connectivity": "USB-C, HDMI, DisplayPort"
+    }
+  },
+  {
+    "id": "model-004",
+    "name": "UltraWide 34\" Monitor",
+    "manufacturer": "DisplayCorp",
+    "category": "Monitors",
+    "partNumber": "DC-UW34-001",
+    "description": "Ultrawide monitor for enhanced productivity",
+    "aliases": ["UltraWide 34", "Curved Monitor", "DisplayCorp Monitor"],
+    "specifications": {
+      "screen": "34-inch",
+      "resolution": "3440x1440",
+      "panel": "VA Curved",
+      "refresh": "144Hz"
+    }
+  },
+  {
+    "id": "model-005",
+    "name": "Wireless Mouse & Keyboard Combo",
+    "manufacturer": "PeripheralTech",
+    "category": "Peripherals",
+    "partNumber": "PT-MK-001",
+    "description": "Professional wireless mouse and keyboard set",
+    "aliases": ["Mouse Keyboard Set", "Wireless Combo", "PeripheralTech Set"],
+    "specifications": {
+      "connectivity": "Wireless 2.4GHz",
+      "battery": "Rechargeable",
+      "compatibility": "Windows, Mac, Linux"
+    }
+  },
+  {
+    "id": "model-006",
+    "name": "Business Smartphone Pro",
+    "manufacturer": "MobileTech",
+    "category": "Mobile Devices",
+    "partNumber": "MT-BSP-001",
+    "description": "Enterprise smartphone with enhanced security features",
+    "aliases": ["Business Phone", "Smartphone Pro", "MobileTech Phone"],
+    "specifications": {
+      "screen": "6.1-inch",
+      "storage": "256GB",
+      "security": "Enterprise MDM Support",
+      "battery": "All-day battery life"
+    }
+  },
+  {
+    "id": "model-007",
+    "name": "Enterprise Switch 24-Port",
+    "manufacturer": "NetworkCorp",
+    "category": "Networking",
+    "partNumber": "NC-ES24-001",
+    "description": "Managed Ethernet switch for enterprise networks",
+    "aliases": ["Network Switch", "24-Port Switch", "Enterprise Switch"],
+    "specifications": {
+      "ports": "24x Gigabit Ethernet",
+      "management": "Web-based GUI",
+      "power": "PoE+ Support",
+      "mounting": "Rack-mountable"
+    }
+  },
+  {
+    "id": "model-008",
+    "name": "Business Desktop Tower",
+    "manufacturer": "CompuTech",
+    "category": "Desktops",
+    "partNumber": "CT-BDT-001",
+    "description": "Reliable desktop computer for office productivity",
+    "aliases": ["Desktop Tower", "Business Desktop", "CompuTech Desktop"],
+    "specifications": {
+      "processor": "Intel i5",
+      "memory": "8GB RAM",
+      "storage": "1TB HDD",
+      "expansion": "Multiple PCIe slots"
+    }
+  },
+  {
+    "id": "model-009",
+    "name": "Noise-Canceling Headset",
+    "manufacturer": "AudioTech",
+    "category": "Peripherals",
+    "partNumber": "AT-NCH-001",
+    "description": "Professional headset with active noise cancellation",
+    "aliases": ["Headset", "Noise Canceling", "AudioTech Headset"],
+    "specifications": {
+      "connectivity": "USB-A, 3.5mm",
+      "features": "Active Noise Cancellation",
+      "microphone": "Boom mic with mute",
+      "comfort": "All-day wearing comfort"
+    }
+  },
+  {
+    "id": "model-010",
+    "name": "Business Tablet 12\"",
+    "manufacturer": "TabletCorp",
+    "category": "Mobile Devices",
+    "partNumber": "TC-BT12-001",
+    "description": "Professional tablet for mobile productivity",
+    "aliases": ["Business Tablet", "12-inch Tablet", "TabletCorp Tablet"],
+    "specifications": {
+      "screen": "12-inch touchscreen",
+      "storage": "128GB",
+      "connectivity": "Wi-Fi, Bluetooth",
+      "accessories": "Keyboard cover included"
+    }
+  },
+  {
+    "id": "model-011",
+    "name": "Cloud Storage Service - 1TB",
+    "manufacturer": "CloudServices Ltd",
+    "category": "Cloud Services",
+    "partNumber": "CS-STOR-1TB",
+    "description": "Cloud storage service with 1TB capacity per license",
+    "aliases": ["Cloud Storage", "Storage Service", "1TB Storage"],
+    "specifications": {
+      "capacity": "1TB per license",
+      "type": "Cloud Service",
+      "billing": "Monthly subscription",
+      "features": "Secure cloud storage with backup"
+    }
+  },
+  {
+    "id": "model-012",
+    "name": "Office Suite Enterprise License",
+    "manufacturer": "SoftwarePro Inc",
+    "category": "Software",
+    "partNumber": "SP-OFFICE-ENT",
+    "description": "Enterprise office productivity suite license",
+    "aliases": ["Office Suite", "Productivity Software", "Enterprise License"],
+    "specifications": {
+      "type": "Software License",
+      "users": "Per user license",
+      "features": "Word processing, spreadsheets, presentations",
+      "support": "Enterprise support included"
+    }
+  },
+  {
+    "id": "model-013",
+    "name": "Enterprise Antivirus License",
+    "manufacturer": "SecurityTech Corp",
+    "category": "Security Software",
+    "partNumber": "ST-AV-ENT",
+    "description": "Enterprise antivirus protection license",
+    "aliases": ["Antivirus", "Security Software", "Endpoint Protection"],
+    "specifications": {
+      "type": "Security License",
+      "protection": "Real-time threat detection",
+      "management": "Centralized console",
+      "updates": "Automatic signature updates"
+    }
+  },
+  {
+    "id": "model-014",
+    "name": "VPN Client License",
+    "manufacturer": "SecurityTech Corp",
+    "category": "Security Software",
+    "partNumber": "ST-VPN-CLIENT",
+    "description": "VPN client software license for secure remote access",
+    "aliases": ["VPN Client", "Remote Access", "Secure Connection"],
+    "specifications": {
+      "type": "VPN License",
+      "encryption": "AES-256 encryption",
+      "protocols": "OpenVPN, IKEv2",
+      "platforms": "Windows, Mac, Mobile"
+    }
+  }
+]

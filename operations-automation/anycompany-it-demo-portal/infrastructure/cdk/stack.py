@@ -140,6 +140,30 @@ class AnyCompanyITPortalStack(Stack):
             partition_key=dynamodb.Attribute(name="category", type=dynamodb.AttributeType.STRING)
         )
 
+        # Models Table
+        models_table = dynamodb.Table(
+            self, "ModelsTable",
+            table_name="anycompany-models",
+            partition_key=dynamodb.Attribute(
+                name="id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=True
+            ),
+            table_class=dynamodb.TableClass.STANDARD
+        )
+        models_table.add_global_secondary_index(
+            index_name="category-index",
+            partition_key=dynamodb.Attribute(name="category", type=dynamodb.AttributeType.STRING)
+        )
+        models_table.add_global_secondary_index(
+            index_name="manufacturer-index",
+            partition_key=dynamodb.Attribute(name="manufacturer", type=dynamodb.AttributeType.STRING)
+        )
+
         # S3 Bucket for Static Website Hosting
         website_bucket = s3.Bucket(
             self, "WebsiteBucket",
@@ -201,6 +225,8 @@ def handler(event, context):
             table = dynamodb.Table('anycompany-shipping')
         elif '/vendors' in path:
             table = dynamodb.Table('anycompany-vendors')
+        elif '/models' in path:
+            table = dynamodb.Table('anycompany-models')
         else:
             return {
                 'statusCode': 404,
@@ -252,7 +278,8 @@ def handler(event, context):
                 'PURCHASE_ORDERS_TABLE': purchase_orders_table.table_name,
                 'ASSETS_TABLE': assets_table.table_name,
                 'SHIPPING_TABLE': shipping_table.table_name,
-                'VENDORS_TABLE': vendors_table.table_name
+                'VENDORS_TABLE': vendors_table.table_name,
+                'MODELS_TABLE': models_table.table_name
             }
         )
 
@@ -263,6 +290,7 @@ def handler(event, context):
         assets_table.grant_read_write_data(api_lambda)
         shipping_table.grant_read_write_data(api_lambda)
         vendors_table.grant_read_write_data(api_lambda)
+        models_table.grant_read_write_data(api_lambda)
 
         # API Gateway
         api = apigateway.RestApi(
@@ -286,6 +314,7 @@ def handler(event, context):
         api.root.add_resource("assets").add_method("ANY", lambda_integration)
         api.root.add_resource("shipping").add_method("ANY", lambda_integration)
         api.root.add_resource("vendors").add_method("ANY", lambda_integration)
+        api.root.add_resource("models").add_method("ANY", lambda_integration)
 
         # Add /api/* routes for CloudFront routing
         api_resource = api.root.add_resource("api")
@@ -295,6 +324,7 @@ def handler(event, context):
         api_resource.add_resource("assets").add_method("ANY", lambda_integration)
         api_resource.add_resource("shipping").add_method("ANY", lambda_integration)
         api_resource.add_resource("vendors").add_method("ANY", lambda_integration)
+        api_resource.add_resource("models").add_method("ANY", lambda_integration)
 
         # CloudFront Distribution
         distribution = cloudfront.Distribution(

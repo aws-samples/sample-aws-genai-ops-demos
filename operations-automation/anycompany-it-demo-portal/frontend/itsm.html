@@ -90,7 +90,7 @@
 
             <div class="flex-row gap margin-bottom">
                 <button class="primary" onclick="showCreateTicketModal()">Create Ticket</button>
-                <button onclick="refreshTickets()">Refresh</button>
+                <button onclick="resetTickets()">Reset</button>
                 <button onclick="exportTickets()">Export</button>
                 <button onclick="bulkUpdate()" id="bulkUpdateBtn" disabled>Bulk Update (0 selected)</button>
             </div>
@@ -605,8 +605,26 @@
             showStatusModal(selectedTickets, null);
         }
 
+        function resetTickets() {
+            // Reset to original fallback data
+            tickets.length = 0; // Clear current tickets
+            loadFallbackTickets(); // Reload original data
+            filteredTickets = [...tickets];
+            renderTickets();
+            
+            // Clear any selections
+            document.getElementById('selectAll').checked = false;
+            selectedTickets = [];
+            updateSelection();
+            
+            // Clear any filters
+            clearFilters();
+            
+            showMessage('Success', 'Environment reset to original state! All created tickets and changes have been cleared.');
+        }
+
         function refreshTickets() {
-            // Simulate refreshing data
+            // Simulate refreshing data (keeps current state but updates timestamps)
             tickets.forEach(ticket => {
                 ticket.updatedDate = new Date().toISOString().split('T')[0];
             });
@@ -800,10 +818,16 @@
             
             const newStatus = selectedStatus.value;
             let updatedCount = 0;
+            let previousStatus = '';
             
             currentStatusUpdateTickets.forEach(ticketId => {
                 const ticket = tickets.find(t => t.id === ticketId);
                 if (ticket) {
+                    // Capture previous status for single ticket updates
+                    if (currentStatusUpdateTickets.length === 1) {
+                        previousStatus = ticket.status;
+                    }
+                    
                     ticket.status = newStatus;
                     ticket.updatedDate = new Date().toISOString().split('T')[0];
                     
@@ -827,7 +851,7 @@
             hideStatusModal();
             
             if (updatedCount === 1) {
-                showMessage('Success', `Ticket ${currentStatusUpdateTickets[0]} status updated to: ${newStatus}`);
+                showMessage('Success', `Ticket ${currentStatusUpdateTickets[0]} status updated from "${previousStatus}" to "${newStatus}"`);
             } else {
                 showMessage('Success', `${updatedCount} tickets updated to: ${newStatus}`);
             }

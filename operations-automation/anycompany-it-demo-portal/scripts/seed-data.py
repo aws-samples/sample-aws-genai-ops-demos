@@ -45,6 +45,7 @@ def seed_data(region='us-east-1'):
     assets_data = load_json_data('assets.json')
     shipping_data = load_json_data('shipping.json')
     vendors_data = load_json_data('vendors.json')
+    models_data = load_json_data('models.json')
     
     # Verify all data loaded successfully
     data_files = [
@@ -53,7 +54,8 @@ def seed_data(region='us-east-1'):
         ('purchase_orders.json', purchase_orders_data),
         ('assets.json', assets_data),
         ('shipping.json', shipping_data),
-        ('vendors.json', vendors_data)
+        ('vendors.json', vendors_data),
+        ('models.json', models_data)
     ]
     
     for filename, data in data_files:
@@ -69,7 +71,8 @@ def seed_data(region='us-east-1'):
         ('anycompany-purchase-orders', purchase_orders_data),
         ('anycompany-assets', assets_data),
         ('anycompany-shipping', shipping_data),
-        ('anycompany-vendors', vendors_data)
+        ('anycompany-vendors', vendors_data),
+        ('anycompany-models', models_data)
     ]
     
     for table_name, data in tables_data:

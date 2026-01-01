@@ -27,7 +27,7 @@
 
             <div class="flex-row gap margin-bottom">
                 <button class="primary" onclick="showAddItemModal()">Add Item</button>
-                <button onclick="refreshInventory()">Refresh</button>
+                <button onclick="resetInventory()">Reset</button>
                 <button onclick="exportInventory()">Export</button>
                 <button onclick="checkStock()" id="checkStockBtn" disabled>Check Stock (0 selected)</button>
             </div>
@@ -49,6 +49,9 @@
                             <option value="Peripherals">Peripherals</option>
                             <option value="Mobile Devices">Mobile Devices</option>
                             <option value="Networking">Networking</option>
+                            <option value="Cloud Services">Cloud Services</option>
+                            <option value="Software">Software</option>
+                            <option value="Security Software">Security Software</option>
                         </select>
                     </div>
                     <div>
@@ -412,50 +415,7 @@
             renderInventory();
         }
 
-        function showAddItemModal() {
-            document.getElementById('modalBackdrop').style.display = 'block';
-            document.getElementById('addItemModal').style.display = 'block';
-        }
 
-        function hideAddItemModal() {
-            document.getElementById('modalBackdrop').style.display = 'none';
-            document.getElementById('addItemModal').style.display = 'none';
-            document.getElementById('addItemForm').reset();
-        }
-
-        function addItem() {
-            const name = document.getElementById('itemName').value;
-            const category = document.getElementById('itemCategory').value;
-            const manufacturer = document.getElementById('itemManufacturer').value;
-            const model = document.getElementById('itemModel').value;
-            const stockLevel = parseInt(document.getElementById('itemStock').value);
-            const unitCost = parseFloat(document.getElementById('itemCost').value);
-            const location = document.getElementById('itemLocation').value;
-            
-            if (!name || !manufacturer || !model || !location) {
-                showMessage('Validation Error', 'Please fill in all required fields.');
-                return;
-            }
-            
-            const newItem = {
-                id: `item-${Date.now()}`,
-                name: name,
-                category: category,
-                model: model,
-                manufacturer: manufacturer,
-                stockLevel: stockLevel,
-                reservedQuantity: 0,
-                availableQuantity: stockLevel,
-                unitCost: unitCost,
-                location: location,
-                lastUpdated: new Date().toISOString().split('T')[0]
-            };
-            
-            inventoryItems.unshift(newItem);
-            filteredItems = [...inventoryItems];
-            renderInventory();
-            hideAddItemModal();
-        }
 
         function toggleSelectAll() {
             const selectAll = document.getElementById('selectAll');
@@ -492,8 +452,26 @@
             showStockResults(selectedItemsData);
         }
 
+        function resetInventory() {
+            // Reset to original fallback data
+            inventoryItems.length = 0; // Clear current items
+            loadFallbackInventory(); // Reload original data
+            filteredItems = [...inventoryItems];
+            renderInventory();
+            
+            // Clear any selections
+            document.getElementById('selectAll').checked = false;
+            selectedItems = [];
+            updateSelection();
+            
+            // Clear any filters
+            clearFilters();
+            
+            showMessage('Success', 'Environment reset to original state! All added items and changes have been cleared.');
+        }
+
         function refreshInventory() {
-            // Simulate refreshing data
+            // Simulate refreshing data (keeps current state but updates timestamps)
             inventoryItems.forEach(item => {
                 item.lastUpdated = new Date().toISOString().split('T')[0];
             });

@@ -6,7 +6,8 @@
     "items": [
       {
         "itemId": "laptop-002",
-        "itemName": "Business Laptop Pro",
+        "modelId": "model-002",
+        "itemName": "Professional Laptop 15\"",
         "quantity": 2,
         "unitPrice": 1899.00,
         "totalPrice": 3798.00
@@ -27,7 +28,8 @@
     "items": [
       {
         "itemId": "switch-001",
-        "itemName": "Enterprise Network Switch",
+        "modelId": "model-007",
+        "itemName": "Enterprise Switch 24-Port",
         "quantity": 1,
         "unitPrice": 2499.00,
         "totalPrice": 2499.00
@@ -48,6 +50,7 @@
     "items": [
       {
         "itemId": "monitor-001",
+        "modelId": "model-003",
         "itemName": "UltraSharp 27\" 4K Monitor",
         "quantity": 5,
         "unitPrice": 599.00,
@@ -55,7 +58,8 @@
       },
       {
         "itemId": "keyboard-001",
-        "itemName": "Wireless Keyboard & Mouse Combo",
+        "modelId": "model-005",
+        "itemName": "Wireless Mouse & Keyboard Combo",
         "quantity": 5,
         "unitPrice": 129.00,
         "totalPrice": 645.00
@@ -76,6 +80,7 @@
     "items": [
       {
         "itemId": "software-001",
+        "modelId": "model-012",
         "itemName": "Office Suite Enterprise License",
         "quantity": 50,
         "unitPrice": 199.00,
@@ -97,6 +102,7 @@
     "items": [
       {
         "itemId": "cloud-001",
+        "modelId": "model-011",
         "itemName": "Cloud Storage Service - 1TB",
         "quantity": 10,
         "unitPrice": 99.00,
@@ -118,6 +124,7 @@
     "items": [
       {
         "itemId": "security-001",
+        "modelId": "model-013",
         "itemName": "Enterprise Antivirus License",
         "quantity": 100,
         "unitPrice": 49.00,
@@ -125,6 +132,7 @@
       },
       {
         "itemId": "security-002",
+        "modelId": "model-014",
         "itemName": "VPN Client License",
         "quantity": 75,
         "unitPrice": 29.00,
