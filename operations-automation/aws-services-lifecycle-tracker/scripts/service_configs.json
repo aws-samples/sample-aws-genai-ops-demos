@@ -1,0 +1,185 @@
+{
+  "services": {
+    "lambda": {
+      "name": "AWS Lambda",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html#runtimes-deprecated"
+      ],
+      "extraction_focus": "Locate the 'Supported runtimes' or 'Deprecated runtimes' tables. Focus on the most important deprecation or block items from 2024 and later. For each runtime, extract: runtime name, runtime identifier, operating system, deprecation_date, block_create_date, and block_update_date.",
+      "schema_key": "runtimes",
+      "item_properties": {
+        "name": "Runtime name",
+        "identifier": "Runtime identifier like nodejs18.x, python3.8",
+        "os": "Operating system",
+        "deprecation_date": "Deprecation date",
+        "block_create_date": "Block function create date",
+        "block_update_date": "Block function update date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "deprecation_date",
+        "status"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "eks": {
+      "name": "Amazon EKS",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html"
+      ],
+      "extraction_focus": "Locate the 'Amazon EKS Kubernetes release calendar' table or similar. Extract all rows from this table. For each Kubernetes version, extract: version number, upstream release date, EKS release date, end of standard support date, and end of extended support date.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Kubernetes version with status (e.g., '1.30 (Extended Support)')",
+        "identifier": "Kubernetes version number (e.g., '1.30')",
+        "upstream_release_date": "Upstream Kubernetes release date",
+        "eks_release_date": "Amazon EKS release date",
+        "end_of_standard_support_date": "Date when standard support ends",
+        "end_of_extended_support_date": "Date when extended support ends"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "end_of_standard_support_date"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "rds": {
+      "name": "Amazon RDS",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/MySQL.Concepts.VersionMgmt.html"
+      ],
+      "extraction_focus": "Locate database engine version lifecycle tables (e.g., MySQL, PostgreSQL version tables). Extract all rows from these tables. For each engine version, extract available fields such as: major version, community release date, RDS release date, community end of life date, RDS end of standard support date, RDS start of Extended Support year 1 pricing date, RDS start of Extended Support year 3 pricing date. Include all versions regardless of support status.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "Database engine and version (e.g., 'MySQL 5.7.44')",
+        "identifier": "Engine version identifier (e.g., 'mysql-5.7.44')",
+        "engine": "Database engine (MySQL, PostgreSQL, Oracle, etc.)",
+        "version": "Engine version number",
+        "community_release_date": "Community release date",
+        "rds_release_date": "RDS release date",
+        "end_of_standard_support_date": "Date when standard support ends",
+        "end_of_extended_support_date": "Date when extended support ends"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "engine",
+        "version"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "elasticache": {
+      "name": "Amazon ElastiCache",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/extended-support-versions.html"
+      ],
+      "extraction_focus": "Locate the 'Extended support and End of Life schedule' table or similar. Extract all rows from this table. For each Redis OSS version, extract: Major Engine Version, End of Standard Support, Start of Extended Support Y1 Premium, Start of Extended Support Y2 Premium, Start of Extended Support Y3 Premium, End of Extended Support and version EOL. Use consistent field names: end_of_standard_support_date, start_extended_support_y1_date, start_extended_support_y2_date, start_extended_support_y3_date, end_of_extended_support_date.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "Redis OSS version with status (e.g., 'Redis OSS v4 (Extended Support)')",
+        "identifier": "Engine version identifier (e.g., 'redis-oss-v4')",
+        "engine": "Cache engine (Redis OSS)",
+        "version": "Major version number (e.g., 'v4', 'v5', 'v6')",
+        "end_of_standard_support_date": "End of standard support date",
+        "start_extended_support_y1_date": "Start of Extended Support Year 1 Premium",
+        "start_extended_support_y2_date": "Start of Extended Support Year 2 Premium",
+        "start_extended_support_y3_date": "Start of Extended Support Year 3 Premium",
+        "end_of_extended_support_date": "End of Extended Support and version EOL date"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "engine",
+        "version",
+        "end_of_standard_support_date"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "opensearch": {
+      "name": "Amazon OpenSearch Service",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/what-is.html"
+      ],
+      "extraction_focus": "Locate the 'Standard and extended support' tables or similar. CRITICAL FILTERING RULE: COMPLETELY IGNORE and DO NOT EXTRACT any row where 'End of Standard Support' OR 'End of Extended Support' contains 'Not announced'. ONLY extract rows that have actual dates in BOTH support columns (e.g., 'November 7, 2025', 'November 7, 2026'). Skip versions like 'OpenSearch 2.11 and higher versions', 'OpenSearch 1.3', 'Elasticsearch 7.9' that show 'Not announced' in their support dates. For each valid version with announced dates, extract: Software Version, End of Standard Support date, End of Extended Support date.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Search engine and version (e.g., 'OpenSearch 1.3', 'Elasticsearch 7.10')",
+        "identifier": "Version identifier (e.g., 'opensearch-1.3', 'elasticsearch-7.10')",
+        "engine": "Search engine (OpenSearch or Elasticsearch)",
+        "version": "Engine version",
+        "end_of_standard_support_date": "Date when standard support ends (must be actual date, not 'Not announced')",
+        "end_of_extended_support_date": "Date when extended support ends (must be actual date, not 'Not announced')"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "engine",
+        "version",
+        "end_of_standard_support_date",
+        "end_of_extended_support_date"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "elasticbeanstalk": {
+      "name": "AWS Elastic Beanstalk",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/platforms-schedule.html"
+      ],
+      "extraction_focus": "Locate the 'Retiring' or 'Retired' tables or similar. Focus on the most important retirement items from 2025 and later. For each platform branch, extract: Runtime version, Platform branch name, Operating system, and retirement dates (both target retirement dates and actual retirement dates).",
+      "schema_key": "platform_branches",
+      "item_properties": {
+        "name": "Full platform branch name (e.g., 'Corretto 17 AL2', 'PHP 8.1 AL2023')",
+        "identifier": "Platform branch identifier (e.g., 'corretto-17-al2', 'php-8.1-al2023')",
+        "runtime_version": "Runtime version (e.g., 'Corretto 17', 'PHP 8.1')",
+        "operating_system": "Operating system (e.g., 'Amazon Linux 2', 'AL2023')",
+        "target_retirement_date": "Target retirement date",
+        "retirement_date": "Actual retirement date"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "runtime_version"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "msk": {
+      "name": "Amazon MSK (Managed Streaming for Apache Kafka)",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/msk/latest/developerguide/supported-kafka-versions.html"
+      ],
+      "extraction_focus": "Extract Apache Kafka version information from the 'Supported Apache Kafka versions' table.\n\nFILTERING RULES:\n- EXCLUDE any row where the 'End of support date' column contains '--'\n- EXCLUDE any row where the 'End of support date' starts with '2024' or earlier\n- ONLY INCLUDE rows where 'End of support date' starts with '2025' or higher year numbers\n- Extract all versions that meet these criteria (the number may vary as AWS adds new versions)",
+      "schema_key": "kafka_versions",
+      "item_properties": {
+        "name": "Apache Kafka version (e.g., 'Apache Kafka 2.8.2-tiered')",
+        "identifier": "Kafka version identifier (e.g., 'kafka-2.8.2-tiered')",
+        "kafka_version": "Apache Kafka version number",
+        "msk_release_date": "MSK release date",
+        "end_of_support_date": "End of support date"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "kafka_version",
+        "end_of_support_date"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    }
+  }
+}

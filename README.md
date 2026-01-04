@@ -10,7 +10,7 @@ This repository contains deployable code samples demonstrating practical applica
 | AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation from any codebase using AWS Transform custom | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Operations Automation | Automate workflows on legacy systems using Nova Act with AgentCore Browser Tool | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
 | AI Password Reset Chatbot | Operations Automation | Conversational password reset using Amazon Nova 2 Lite and AgentCore with Cognito integration | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
-| AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring of AWS service deprecations and end-of-life notices | [External Repository](https://github.com/aws-samples/sample-genai-powered-end-of-life-tracker) |
+| AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring of AWS service deprecations and end-of-life notices | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | MCP server for AWS FIS operations, enabling natural language generation of chaos engineering experiment templates packaged as a Kiro Power | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 
 ## Roadmap (Coming Soon)
@@ -31,7 +31,8 @@ cost-optimization/
 operations-automation/
 ├── ai-documentation-generation/
 ├── ai-legacy-system-browser-automation/
-└── ai-password-reset-chatbot/
+├── ai-password-reset-chatbot/
+└── aws-services-lifecycle-tracker/
 resilience/
 └── ai-chaos-engineering-with-fis/
 shared/
