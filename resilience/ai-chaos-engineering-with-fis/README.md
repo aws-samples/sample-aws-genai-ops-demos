@@ -2,9 +2,11 @@
 
 An MCP (Model Context Protocol) server for AWS FIS (Fault Injection Simulator) operations, enabling natural language generation of chaos engineering experiment templates. This server is designed to be packaged as a Kiro Power for seamless integration with AI-assisted development workflows.
 
+> **Inspired by**: [Chaos engineering made clear: Generate AWS FIS experiments using natural language through Amazon Bedrock](https://aws.amazon.com/blogs/publicsector/chaos-engineering-made-clear-generate-aws-fis-experiments-using-natural-language-through-amazon-bedrock/)
+
 ## Overview
 
-This MCP server transforms natural language descriptions into validated AWS Fault Injection Service (FIS) experiment templates. It replicates and improves upon the AWS blog approach by providing dynamic, current FIS capabilities instead of static hardcoded lists, while maintaining proper MCP architecture where agents orchestrate all server interactions.
+This MCP server transforms natural language descriptions into validated AWS Fault Injection Service (FIS) experiment templates. It builds upon the approach described in the AWS blog post by providing dynamic, current FIS capabilities instead of static hardcoded lists, while maintaining proper MCP architecture where agents orchestrate all server interactions.
 
 ### Key Capabilities
 
@@ -1110,14 +1112,14 @@ aws-chaos-engineering/
 - Proper MCP architecture with agent orchestration
 - Comprehensive error handling and logging
 
+## Contributing
+
+We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
+
+## Security
+
+See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
+
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Acknowledgments
-
-- **AWS FIS Team**: For providing the Fault Injection Simulator service
-- **MCP Protocol**: For the Model Context Protocol specification
-- **FastMCP**: For the Python MCP server framework
-- **Kiro Team**: For the AI-assisted development platform
-- **AWS GenAI Ops Demo Library**: For the operational GenAI patterns and examples
+This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENSE) file.

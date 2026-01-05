@@ -483,6 +483,14 @@ You are a password reset assistant for [YOUR COMPANY].
 """
 ```
 
+## Contributing
+
+We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
+
+## Security
+
+See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
+
 ## License
 
-MIT-0
+This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENSE) file.

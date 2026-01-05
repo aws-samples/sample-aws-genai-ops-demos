@@ -6,12 +6,12 @@ This repository contains deployable code samples demonstrating practical applica
 
 | Demo Name | Pillar | Description | Repository |
 |-----------|--------|-------------|------------|
-| AI-Powered Graviton Migration Assessment | Cost Optimization | Analyze codebases for Graviton migration opportunities and drive cost optimization using AWS Transform custom | [cost-optimization/ai-graviton-migration-assessment/](cost-optimization/ai-graviton-migration-assessment/README.md) |
-| AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation from any codebase using AWS Transform custom | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
-| AI-Powered Legacy System Automation | Operations Automation | Automate workflows on legacy systems using Nova Act with AgentCore Browser Tool | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
-| AI Password Reset Chatbot | Operations Automation | Conversational password reset using Amazon Nova 2 Lite and AgentCore with Cognito integration | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
-| AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring of AWS service deprecations and end-of-life notices | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
-| Natural Language Chaos Engineering with AWS FIS | Resilience | MCP server for AWS FIS operations, enabling natural language generation of chaos engineering experiment templates packaged as a Kiro Power | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
+| AI-Powered Graviton Migration Assessment | Cost Optimization | Get comprehensive migration assessment with cost analysis and ready-to-use migration artifacts for any codebase | [cost-optimization/ai-graviton-migration-assessment/](cost-optimization/ai-graviton-migration-assessment/README.md) |
+| AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
+| AI-Powered Legacy System Automation | Operations Automation | Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
+| AI Password Reset Chatbot | Operations Automation | Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
+| AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
+| Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 
 ## Roadmap (Coming Soon)
 
@@ -86,7 +86,9 @@ Each demo folder typically contains:
 
 Each demo includes detailed cost estimates and optimization recommendations. Typical costs range from $10-50/month depending on usage patterns. See individual demo READMEs for specific cost breakdowns.
 
+## Contributing
 
+We welcome community contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Security
 
@@ -94,5 +96,13 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 
 ## License
 
-This library is licensed under the MIT-0 License. See the LICENSE file.
+This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.
+
+## 👏 Contributors
+
+Shout out to these awesome contributors:
+
+<a href="https://github.com/aws-samples/sample-aws-genai-ops-demos/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=aws-samples/sample-aws-genai-ops-demos" />
+</a>
 
