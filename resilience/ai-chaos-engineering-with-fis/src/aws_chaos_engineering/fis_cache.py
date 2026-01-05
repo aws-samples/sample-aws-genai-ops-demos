@@ -147,8 +147,9 @@ class FISCache:
             # Remove corrupted cache file
             try:
                 cache_file.unlink()
-            except Exception:
-                pass
+                logger.info(f"Removed corrupted cache file for region {region}")
+            except OSError as unlink_error:
+                logger.warning(f"Could not remove corrupted cache file for region {region}: {unlink_error}")
             return None
         except Exception as e:
             logger.error(f"Error reading cache for region {region}: {e}")
