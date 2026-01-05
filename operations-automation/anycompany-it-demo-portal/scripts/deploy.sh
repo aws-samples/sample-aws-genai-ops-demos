@@ -65,15 +65,15 @@ echo "Getting CDK stack outputs..."
 
 # Get outputs using AWS CLI
 STACK_NAME="AnyCompanyITPortalStack"
-OUTPUTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output json --no-cli-pager 2>&1)
+OUTPUTS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs" --output json --no-cli-pager 2>&1)
 
 if [ $? -eq 0 ]; then
     echo "=== Deployment Outputs ==="
     
-    WEBSITE_URL=$(echo $OUTPUTS | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'WebsiteURL'), ''))")
-    API_ENDPOINT=$(echo $OUTPUTS | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'APIEndpoint'), ''))")
-    S3_BUCKET=$(echo $OUTPUTS | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'S3BucketName'), ''))")
-    CLOUDFRONT_ID=$(echo $OUTPUTS | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'CloudFrontDistributionId'), ''))")
+    WEBSITE_URL=$(echo "$OUTPUTS" | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'WebsiteURL'), ''))")
+    API_ENDPOINT=$(echo "$OUTPUTS" | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'APIEndpoint'), ''))")
+    S3_BUCKET=$(echo "$OUTPUTS" | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'S3BucketName'), ''))")
+    CLOUDFRONT_ID=$(echo "$OUTPUTS" | python3 -c "import sys, json; outputs = json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey'] == 'CloudFrontDistributionId'), ''))")
     
     echo "Website URL: $WEBSITE_URL"
     echo "API Endpoint: $API_ENDPOINT"
@@ -96,19 +96,19 @@ window.APP_CONFIG = {
 EOF
     echo "Generated config.js with API endpoint: $API_ENDPOINT"
     
-    aws s3 sync frontend/ s3://$S3_BUCKET --delete --no-cli-pager
+    aws s3 sync frontend/ "s3://$S3_BUCKET" --delete --no-cli-pager
     
     # Invalidate CloudFront cache
     if [ ! -z "$CLOUDFRONT_ID" ]; then
         echo "Invalidating CloudFront cache..."
-        aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*" --no-cli-pager
+        aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_ID" --paths "/*" --no-cli-pager
     fi
 fi
 
 # Populate mock data
 if [ "$POPULATE_DATA" = true ]; then
     echo "Populating mock data..."
-    python3 scripts/seed-data.py $REGION
+    python3 scripts/seed-data.py "$REGION"
 fi
 
 echo "=== Deployment Complete ==="

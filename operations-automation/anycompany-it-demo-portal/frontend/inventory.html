@@ -348,18 +348,54 @@
             filteredItems.forEach(item => {
                 const stockClass = getStockClass(item.stockLevel);
                 const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td><input type="checkbox" value="${item.id}" onchange="updateSelection()"></td>
-                    <td>${item.name}</td>
-                    <td>${item.category}</td>
-                    <td>${item.manufacturer}</td>
-                    <td>${item.model}</td>
-                    <td style="background: ${getStockColor(item.stockLevel)}; font-weight: bold;">${item.stockLevel}</td>
-                    <td>${item.availableQuantity}</td>
-                    <td>$${item.unitCost.toFixed(2)}</td>
-                    <td>${item.location}</td>
-                    <td>${new Date(item.lastUpdated).toLocaleDateString()}</td>
-                `;
+                                // Create cells safely using textContent and createElement
+                const checkboxCell = document.createElement('td');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = item.id;
+                checkbox.onchange = updateSelection;
+                checkboxCell.appendChild(checkbox);
+                
+                const nameCell = document.createElement('td');
+                nameCell.textContent = item.name;
+                
+                const categoryCell = document.createElement('td');
+                categoryCell.textContent = item.category;
+                
+                const manufacturerCell = document.createElement('td');
+                manufacturerCell.textContent = item.manufacturer;
+                
+                const modelCell = document.createElement('td');
+                modelCell.textContent = item.model;
+                
+                const stockCell = document.createElement('td');
+                stockCell.style.background = getStockColor(item.stockLevel);
+                stockCell.style.fontWeight = 'bold';
+                stockCell.textContent = item.stockLevel;
+                
+                const availableCell = document.createElement('td');
+                availableCell.textContent = item.availableQuantity;
+                
+                const costCell = document.createElement('td');
+                costCell.textContent = item.unitCost.toFixed(2);
+                
+                const locationCell = document.createElement('td');
+                locationCell.textContent = item.location;
+                
+                const dateCell = document.createElement('td');
+                dateCell.textContent = new Date(item.lastUpdated).toLocaleDateString();
+                
+                // Append all cells to row
+                row.appendChild(checkboxCell);
+                row.appendChild(nameCell);
+                row.appendChild(categoryCell);
+                row.appendChild(manufacturerCell);
+                row.appendChild(modelCell);
+                row.appendChild(stockCell);
+                row.appendChild(availableCell);
+                row.appendChild(costCell);
+                row.appendChild(locationCell);
+                row.appendChild(dateCell);
                 tbody.appendChild(row);
             });
         }
@@ -500,7 +536,11 @@
         // Modal functions
         function showMessage(title, message) {
             document.getElementById('messageModalTitle').textContent = title;
-            document.getElementById('messageModalContent').innerHTML = `<p>${message}</p>`;
+            const messageContent = document.getElementById('messageModalContent');
+            messageContent.innerHTML = ''; // Clear existing content
+            const paragraph = document.createElement('p');
+            paragraph.textContent = message; // Use textContent to prevent XSS
+            messageContent.appendChild(paragraph);
             document.getElementById('messageModalBackdrop').style.display = 'block';
             document.getElementById('messageModal').style.display = 'block';
         }
@@ -512,30 +552,77 @@
 
         function showStockResults(itemsData) {
             const stockContent = document.getElementById('stockModalContent');
+            stockContent.innerHTML = ''; // Clear existing content
             
-            const itemsList = itemsData.map(item => 
-                `<tr>
-                    <td style="border: 1px solid #ccc; padding: 8px;">${item.name}</td>
-                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold; color: ${item.available > 0 ? '#009900' : '#cc0000'};">${item.available}</td>
-                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${item.total}</td>
-                </tr>`
-            ).join('');
+            // Create description paragraph
+            const description = document.createElement('p');
+            const strong = document.createElement('strong');
+            strong.textContent = `Stock check results for ${itemsData.length} selected item(s):`;
+            description.appendChild(strong);
+            stockContent.appendChild(description);
             
-            stockContent.innerHTML = `
-                <p><strong>Stock check results for ${itemsData.length} selected item(s):</strong></p>
-                <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-                    <thead>
-                        <tr style="background: #f0f0f0;">
-                            <th style="border: 1px solid #ccc; padding: 8px; text-align: left;">Item Name</th>
-                            <th style="border: 1px solid #ccc; padding: 8px; text-align: center;">Available</th>
-                            <th style="border: 1px solid #ccc; padding: 8px; text-align: center;">Total Stock</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${itemsList}
-                    </tbody>
-                </table>
-            `;
+            // Create table
+            const table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+            table.style.marginTop = '10px';
+            
+            // Create table header
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            headerRow.style.background = '#f0f0f0';
+            
+            const headers = ['Item Name', 'Available', 'Total Stock'];
+            const headerAlignments = ['left', 'center', 'center'];
+            
+            headers.forEach((headerText, index) => {
+                const th = document.createElement('th');
+                th.style.border = '1px solid #ccc';
+                th.style.padding = '8px';
+                th.style.textAlign = headerAlignments[index];
+                th.textContent = headerText;
+                headerRow.appendChild(th);
+            });
+            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            // Create table body
+            const tbody = document.createElement('tbody');
+            
+            itemsData.forEach(item => {
+                const row = document.createElement('tr');
+                
+                // Item name cell
+                const nameCell = document.createElement('td');
+                nameCell.style.border = '1px solid #ccc';
+                nameCell.style.padding = '8px';
+                nameCell.textContent = item.name;
+                row.appendChild(nameCell);
+                
+                // Available cell
+                const availableCell = document.createElement('td');
+                availableCell.style.border = '1px solid #ccc';
+                availableCell.style.padding = '8px';
+                availableCell.style.textAlign = 'center';
+                availableCell.style.fontWeight = 'bold';
+                availableCell.style.color = item.available > 0 ? '#009900' : '#cc0000';
+                availableCell.textContent = item.available;
+                row.appendChild(availableCell);
+                
+                // Total cell
+                const totalCell = document.createElement('td');
+                totalCell.style.border = '1px solid #ccc';
+                totalCell.style.padding = '8px';
+                totalCell.style.textAlign = 'center';
+                totalCell.textContent = item.total;
+                row.appendChild(totalCell);
+                
+                tbody.appendChild(row);
+            });
+            
+            table.appendChild(tbody);
+            stockContent.appendChild(table);
             
             document.getElementById('stockModalBackdrop').style.display = 'block';
             document.getElementById('stockModal').style.display = 'block';

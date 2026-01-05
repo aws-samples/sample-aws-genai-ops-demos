@@ -447,25 +447,85 @@
                     `<span style="color: #666; font-size: 11px;">Delivered ${po.deliveryDate ? new Date(po.deliveryDate).toLocaleDateString() : ''}</span>` : 
                     '';
                 
+                // Create cells safely using textContent and createElement
+                const checkboxCell = document.createElement('td');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = po.id;
+                checkbox.onchange = updateSelection;
+                checkboxCell.appendChild(checkbox);
+                
+                const poNumberCell = document.createElement('td');
+                const poLink = document.createElement('a');
+                poLink.href = '#';
+                poLink.textContent = po.id;
+                poLink.onclick = () => showPODetails(po.id);
+                poNumberCell.appendChild(poLink);
+                
+                const vendorCell = document.createElement('td');
+                vendorCell.textContent = po.vendorName;
+                
+                const itemsCell = document.createElement('td');
+                itemsCell.style.fontSize = '11px';
+                itemsCell.style.lineHeight = '1.2';
                 // Format items for display - with null check
                 const itemsDisplay = (po.items && po.items.length > 0) ? 
-                    po.items.map(item => 
-                        `${item.quantity}x ${item.itemName}`
-                    ).join('<br>') : 
+                    po.items.map(item => `${item.quantity}x ${item.itemName}`).join(', ') : 
                     'No items';
+                itemsCell.textContent = itemsDisplay;
                 
-                row.innerHTML = `
-                    <td><input type="checkbox" value="${po.id}" onchange="updateSelection()"></td>
-                    <td><a href="#" onclick="showPODetails('${po.id}')">${po.id}</a></td>
-                    <td>${po.vendorName}</td>
-                    <td style="font-size: 11px; line-height: 1.2;">${itemsDisplay}</td>
-                    <td style="text-align: right;">${po.totalAmount.toFixed(2)}</td>
-                    <td ${statusClass}>${po.status}</td>
-                    <td>${po.requestedBy}</td>
-                    <td>${new Date(po.orderDate).toLocaleDateString()}</td>
-                    <td>${po.budgetCode}</td>
-                    <td style="text-align: center;">${actionButton}</td>
-                `;
+                const totalCell = document.createElement('td');
+                totalCell.style.textAlign = 'right';
+                totalCell.textContent = po.totalAmount.toFixed(2);
+                
+                const statusCell = document.createElement('td');
+                if (po.status === 'Approved') {
+                    statusCell.style.backgroundColor = '#90EE90';
+                    statusCell.style.fontWeight = 'bold';
+                } else if (po.status === 'Delivered') {
+                    statusCell.style.backgroundColor = '#87CEEB';
+                    statusCell.style.fontWeight = 'bold';
+                }
+                statusCell.textContent = po.status;
+                
+                const requestedByCell = document.createElement('td');
+                requestedByCell.textContent = po.requestedBy;
+                
+                const orderDateCell = document.createElement('td');
+                orderDateCell.textContent = new Date(po.orderDate).toLocaleDateString();
+                
+                const budgetCodeCell = document.createElement('td');
+                budgetCodeCell.textContent = po.budgetCode;
+                
+                const actionsCell = document.createElement('td');
+                actionsCell.style.textAlign = 'center';
+                if (po.status === 'Approved') {
+                    const receiveBtn = document.createElement('button');
+                    receiveBtn.textContent = 'Receive Delivery';
+                    receiveBtn.style.fontSize = '11px';
+                    receiveBtn.style.padding = '2px 6px';
+                    receiveBtn.onclick = () => receiveDelivery(po.id);
+                    actionsCell.appendChild(receiveBtn);
+                } else if (po.status === 'Delivered') {
+                    const deliveredSpan = document.createElement('span');
+                    deliveredSpan.style.color = '#666';
+                    deliveredSpan.style.fontSize = '11px';
+                    deliveredSpan.textContent = `Delivered ${po.deliveryDate ? new Date(po.deliveryDate).toLocaleDateString() : ''}`;
+                    actionsCell.appendChild(deliveredSpan);
+                }
+                
+                // Append all cells to row
+                row.appendChild(checkboxCell);
+                row.appendChild(poNumberCell);
+                row.appendChild(vendorCell);
+                row.appendChild(itemsCell);
+                row.appendChild(totalCell);
+                row.appendChild(statusCell);
+                row.appendChild(requestedByCell);
+                row.appendChild(orderDateCell);
+                row.appendChild(budgetCodeCell);
+                row.appendChild(actionsCell);
+                
                 tbody.appendChild(row);
             });
         }
@@ -477,23 +537,55 @@
             vendors.filter(v => v.isActive).forEach(vendor => {
                 const vendorCard = document.createElement('div');
                 vendorCard.className = 'vendor-card';
-                vendorCard.innerHTML = `
-                    <h3>${vendor.name}</h3>
-                    <div class="vendor-info">
-                        <div class="vendor-info-row">
-                            <span class="vendor-info-label">Email:</span>
-                            <span class="vendor-info-value">${vendor.contactEmail}</span>
-                        </div>
-                        <div class="vendor-info-row">
-                            <span class="vendor-info-label">Phone:</span>
-                            <span class="vendor-info-value">${vendor.contactPhone}</span>
-                        </div>
-                        <div class="vendor-info-row">
-                            <span class="vendor-info-label">Terms:</span>
-                            <span class="vendor-info-value">${vendor.paymentTerms}</span>
-                        </div>
-                    </div>
-                `;
+                
+                // Create vendor card content safely
+                const vendorTitle = document.createElement('h3');
+                vendorTitle.textContent = vendor.name;
+                vendorCard.appendChild(vendorTitle);
+                
+                const vendorInfo = document.createElement('div');
+                vendorInfo.className = 'vendor-info';
+                
+                // Email row
+                const emailRow = document.createElement('div');
+                emailRow.className = 'vendor-info-row';
+                const emailLabel = document.createElement('span');
+                emailLabel.className = 'vendor-info-label';
+                emailLabel.textContent = 'Email:';
+                const emailValue = document.createElement('span');
+                emailValue.className = 'vendor-info-value';
+                emailValue.textContent = vendor.contactEmail;
+                emailRow.appendChild(emailLabel);
+                emailRow.appendChild(emailValue);
+                vendorInfo.appendChild(emailRow);
+                
+                // Phone row
+                const phoneRow = document.createElement('div');
+                phoneRow.className = 'vendor-info-row';
+                const phoneLabel = document.createElement('span');
+                phoneLabel.className = 'vendor-info-label';
+                phoneLabel.textContent = 'Phone:';
+                const phoneValue = document.createElement('span');
+                phoneValue.className = 'vendor-info-value';
+                phoneValue.textContent = vendor.contactPhone;
+                phoneRow.appendChild(phoneLabel);
+                phoneRow.appendChild(phoneValue);
+                vendorInfo.appendChild(phoneRow);
+                
+                // Terms row
+                const termsRow = document.createElement('div');
+                termsRow.className = 'vendor-info-row';
+                const termsLabel = document.createElement('span');
+                termsLabel.className = 'vendor-info-label';
+                termsLabel.textContent = 'Terms:';
+                const termsValue = document.createElement('span');
+                termsValue.className = 'vendor-info-value';
+                termsValue.textContent = vendor.paymentTerms;
+                termsRow.appendChild(termsLabel);
+                termsRow.appendChild(termsValue);
+                vendorInfo.appendChild(termsRow);
+                
+                vendorCard.appendChild(vendorInfo);
                 vendorGrid.appendChild(vendorCard);
             });
         }
@@ -811,71 +903,123 @@
                 const detailsContent = document.getElementById('poDetailsContent');
                 const actionBtn = document.getElementById('poActionBtn');
                 
-                // Use proper classic-stylesheets field alignment patterns
-                detailsContent.innerHTML = `
-                    <fieldset>
-                        <legend>Purchase Order Information</legend>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>PO Number:</strong>
-                            </label>
-                            <span style="margin-left: 8px;">${po.id}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Vendor:</strong>
-                            </label>
-                            <span style="margin-left: 8px;">${po.vendorName}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Status:</strong>
-                            </label>
-                            <span style="margin-left: 8px; font-weight: bold; color: ${getStatusColor(po.status)};">${po.status}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Total Amount:</strong>
-                            </label>
-                            <span style="margin-left: 8px; font-weight: bold;">${po.totalAmount.toFixed(2)}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Requested By:</strong>
-                            </label>
-                            <span style="margin-left: 8px;">${po.requestedBy}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Order Date:</strong>
-                            </label>
-                            <span style="margin-left: 8px;">${new Date(po.orderDate).toLocaleDateString()}</span>
-                        </div>
-                        <div class="field-row">
-                            <label style="width: 120px; display: inline-block; text-align: right;">
-                                <strong>Budget Code:</strong>
-                            </label>
-                            <span style="margin-left: 8px;">${po.budgetCode}</span>
-                        </div>
-                    </fieldset>
+                // Clear existing content
+                detailsContent.innerHTML = '';
+                
+                // Create Purchase Order Information fieldset
+                const poInfoFieldset = document.createElement('fieldset');
+                const poInfoLegend = document.createElement('legend');
+                poInfoLegend.textContent = 'Purchase Order Information';
+                poInfoFieldset.appendChild(poInfoLegend);
+                
+                // Helper function to create field rows
+                function createFieldRow(labelText, value, isColored = false, color = null) {
+                    const fieldRow = document.createElement('div');
+                    fieldRow.className = 'field-row';
                     
-                    <fieldset>
-                        <legend>Items</legend>
-                        <div class="list" role="listbox">
-                            <table class="detailed">
-                                <thead>
-                                    <tr>
-                                        <th scope="col" role="button">Item Name</th>
-                                        <th scope="col" role="button" style="text-align: center;">Quantity</th>
-                                        <th scope="col" role="button" style="text-align: right;">Unit Price</th>
-                                        <th scope="col" role="button" style="text-align: right;">Total Price</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${po.items.map(item => 
-                                        `<tr>
-                                            <td>${item.itemName}</td>
-                                            <td style="text-align: center;">${item.quantity}</td>
+                    const label = document.createElement('label');
+                    label.style.width = '120px';
+                    label.style.display = 'inline-block';
+                    label.style.textAlign = 'right';
+                    const strong = document.createElement('strong');
+                    strong.textContent = labelText + ':';
+                    label.appendChild(strong);
+                    fieldRow.appendChild(label);
+                    
+                    const span = document.createElement('span');
+                    span.style.marginLeft = '8px';
+                    if (isColored) {
+                        span.style.fontWeight = 'bold';
+                        if (color) span.style.color = color;
+                    }
+                    span.textContent = value;
+                    fieldRow.appendChild(span);
+                    
+                    return fieldRow;
+                }
+                
+                // Add PO information fields
+                poInfoFieldset.appendChild(createFieldRow('PO Number', po.id));
+                poInfoFieldset.appendChild(createFieldRow('Vendor', po.vendorName));
+                poInfoFieldset.appendChild(createFieldRow('Status', po.status, true, getStatusColor(po.status)));
+                poInfoFieldset.appendChild(createFieldRow('Total Amount', po.totalAmount.toFixed(2), true));
+                poInfoFieldset.appendChild(createFieldRow('Requested By', po.requestedBy));
+                poInfoFieldset.appendChild(createFieldRow('Order Date', new Date(po.orderDate).toLocaleDateString()));
+                poInfoFieldset.appendChild(createFieldRow('Budget Code', po.budgetCode));
+                
+                detailsContent.appendChild(poInfoFieldset);
+                
+                // Create Items fieldset
+                const itemsFieldset = document.createElement('fieldset');
+                const itemsLegend = document.createElement('legend');
+                itemsLegend.textContent = 'Items';
+                itemsFieldset.appendChild(itemsLegend);
+                
+                const listDiv = document.createElement('div');
+                listDiv.className = 'list';
+                listDiv.setAttribute('role', 'listbox');
+                
+                const table = document.createElement('table');
+                table.className = 'detailed';
+                
+                // Create table header
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                
+                const headers = [
+                    { text: 'Item Name', align: 'left' },
+                    { text: 'Quantity', align: 'center' },
+                    { text: 'Unit Price', align: 'right' },
+                    { text: 'Total Price', align: 'right' }
+                ];
+                
+                headers.forEach(header => {
+                    const th = document.createElement('th');
+                    th.setAttribute('scope', 'col');
+                    th.setAttribute('role', 'button');
+                    if (header.align !== 'left') {
+                        th.style.textAlign = header.align;
+                    }
+                    th.textContent = header.text;
+                    headerRow.appendChild(th);
+                });
+                
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                
+                // Create table body
+                const tbody = document.createElement('tbody');
+                
+                po.items.forEach(item => {
+                    const row = document.createElement('tr');
+                    
+                    const nameCell = document.createElement('td');
+                    nameCell.textContent = item.itemName;
+                    row.appendChild(nameCell);
+                    
+                    const quantityCell = document.createElement('td');
+                    quantityCell.style.textAlign = 'center';
+                    quantityCell.textContent = item.quantity;
+                    row.appendChild(quantityCell);
+                    
+                    const unitPriceCell = document.createElement('td');
+                    unitPriceCell.style.textAlign = 'right';
+                    unitPriceCell.textContent = item.unitPrice.toFixed(2);
+                    row.appendChild(unitPriceCell);
+                    
+                    const totalPriceCell = document.createElement('td');
+                    totalPriceCell.style.textAlign = 'right';
+                    totalPriceCell.style.fontWeight = 'bold';
+                    totalPriceCell.textContent = item.totalPrice.toFixed(2);
+                    row.appendChild(totalPriceCell);
+                    
+                    tbody.appendChild(row);
+                });
+                
+                table.appendChild(tbody);
+                listDiv.appendChild(table);
+                itemsFieldset.appendChild(listDiv);
+                detailsContent.appendChild(itemsFieldset);
                                             <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
                                             <td style="text-align: right; font-weight: bold;">${item.totalPrice.toFixed(2)}</td>
                                         </tr>`
@@ -1120,7 +1264,62 @@
         
         function showSuccessModal(title, message) {
             document.getElementById('successModalTitle').textContent = title;
-            document.getElementById('successModalContent').innerHTML = message;
+            const successContent = document.getElementById('successModalContent');
+            
+            // Clear existing content
+            successContent.innerHTML = '';
+            
+            // Check if message contains HTML (for complex messages like inventory updates)
+            if (message.includes('<p>') || message.includes('<ul>')) {
+                // For complex messages, create elements safely
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = message;
+                
+                // Extract text content and recreate safely
+                const paragraphs = tempDiv.querySelectorAll('p');
+                const lists = tempDiv.querySelectorAll('ul');
+                
+                paragraphs.forEach(p => {
+                    const para = document.createElement('p');
+                    // Check if paragraph contains <strong> tags
+                    if (p.innerHTML.includes('<strong>')) {
+                        const strongElements = p.querySelectorAll('strong');
+                        let textContent = p.textContent;
+                        if (strongElements.length > 0) {
+                            const strong = document.createElement('strong');
+                            strong.textContent = strongElements[0].textContent;
+                            para.appendChild(strong);
+                            // Add remaining text after strong element
+                            const remainingText = textContent.replace(strongElements[0].textContent, '');
+                            if (remainingText) {
+                                para.appendChild(document.createTextNode(remainingText));
+                            }
+                        } else {
+                            para.textContent = textContent;
+                        }
+                    } else {
+                        para.textContent = p.textContent;
+                    }
+                    successContent.appendChild(para);
+                });
+                
+                lists.forEach(ul => {
+                    const list = document.createElement('ul');
+                    const listItems = ul.querySelectorAll('li');
+                    listItems.forEach(li => {
+                        const listItem = document.createElement('li');
+                        listItem.textContent = li.textContent;
+                        list.appendChild(listItem);
+                    });
+                    successContent.appendChild(list);
+                });
+            } else {
+                // For simple messages, just use textContent
+                const paragraph = document.createElement('p');
+                paragraph.textContent = message;
+                successContent.appendChild(paragraph);
+            }
+            
             document.getElementById('successModalBackdrop').style.display = 'block';
             document.getElementById('successModal').style.display = 'block';
         }

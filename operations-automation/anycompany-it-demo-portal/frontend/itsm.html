@@ -497,22 +497,78 @@
             
             filteredTickets.forEach(ticket => {
                 const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td><input type="checkbox" value="${ticket.id}" onchange="updateSelection()"></td>
-                    <td><strong>${ticket.id}</strong></td>
-                    <td>${ticket.title}</td>
-                    <td><span class="status-badge status-${ticket.status.toLowerCase().replace(' ', '-')}">${ticket.status}</span></td>
-                    <td><span class="priority-badge priority-${ticket.priority.toLowerCase()}">${ticket.priority}</span></td>
-                    <td>${ticket.category}</td>
-                    <td>${ticket.requester}</td>
-                    <td>${ticket.assignee}</td>
-                    <td>${new Date(ticket.createdDate).toLocaleDateString()}</td>
-                    <td>${ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : '-'}</td>
-                    <td>
-                        <button onclick="viewTicket('${ticket.id}')" style="font-size: 12px;">View</button>
-                        <button onclick="updateTicketStatus('${ticket.id}')" style="font-size: 12px;">Update</button>
-                    </td>
-                `;
+                
+                // Create cells safely using textContent and createElement
+                const checkboxCell = document.createElement('td');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = ticket.id;
+                checkbox.onchange = updateSelection;
+                checkboxCell.appendChild(checkbox);
+                
+                const idCell = document.createElement('td');
+                const strongId = document.createElement('strong');
+                strongId.textContent = ticket.id;
+                idCell.appendChild(strongId);
+                
+                const titleCell = document.createElement('td');
+                titleCell.textContent = ticket.title;
+                
+                const statusCell = document.createElement('td');
+                const statusSpan = document.createElement('span');
+                statusSpan.className = `status-badge status-${ticket.status.toLowerCase().replace(' ', '-')}`;
+                statusSpan.textContent = ticket.status;
+                statusCell.appendChild(statusSpan);
+                
+                const priorityCell = document.createElement('td');
+                const prioritySpan = document.createElement('span');
+                prioritySpan.className = `priority-badge priority-${ticket.priority.toLowerCase()}`;
+                prioritySpan.textContent = ticket.priority;
+                priorityCell.appendChild(prioritySpan);
+                
+                const categoryCell = document.createElement('td');
+                categoryCell.textContent = ticket.category;
+                
+                const requesterCell = document.createElement('td');
+                requesterCell.textContent = ticket.requester;
+                
+                const assigneeCell = document.createElement('td');
+                assigneeCell.textContent = ticket.assignee;
+                
+                const createdCell = document.createElement('td');
+                createdCell.textContent = new Date(ticket.createdDate).toLocaleDateString();
+                
+                const dueCell = document.createElement('td');
+                dueCell.textContent = ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : '-';
+                
+                const actionsCell = document.createElement('td');
+                const viewBtn = document.createElement('button');
+                viewBtn.textContent = 'View';
+                viewBtn.style.fontSize = '12px';
+                viewBtn.onclick = () => viewTicket(ticket.id);
+                
+                const updateBtn = document.createElement('button');
+                updateBtn.textContent = 'Update';
+                updateBtn.style.fontSize = '12px';
+                updateBtn.onclick = () => updateTicketStatus(ticket.id);
+                
+                actionsCell.appendChild(viewBtn);
+                actionsCell.appendChild(document.createTextNode(' '));
+                actionsCell.appendChild(updateBtn);
+                
+                // Append all cells to row
+                row.appendChild(checkboxCell);
+                row.appendChild(idCell);
+                row.appendChild(titleCell);
+                row.appendChild(statusCell);
+                row.appendChild(priorityCell);
+                row.appendChild(categoryCell);
+                row.appendChild(requesterCell);
+                row.appendChild(assigneeCell);
+                row.appendChild(createdCell);
+                row.appendChild(dueCell);
+                row.appendChild(actionsCell);
+                
                 tbody.appendChild(row);
             });
         }
@@ -653,7 +709,11 @@
         // Modal functions
         function showMessage(title, message) {
             document.getElementById('messageModalTitle').textContent = title;
-            document.getElementById('messageModalContent').innerHTML = `<p>${message}</p>`;
+            const messageContent = document.getElementById('messageModalContent');
+            messageContent.innerHTML = ''; // Clear existing content
+            const paragraph = document.createElement('p');
+            paragraph.textContent = message; // Use textContent to prevent XSS
+            messageContent.appendChild(paragraph);
             document.getElementById('messageModalBackdrop').style.display = 'block';
             document.getElementById('messageModal').style.display = 'block';
         }
@@ -667,47 +727,89 @@
             const detailsContent = document.getElementById('ticketDetailsContent');
             const actionBtn = document.getElementById('ticketActionBtn');
             
-            detailsContent.innerHTML = `
-                <fieldset>
-                    <legend>Ticket Information</legend>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Ticket ID:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.id}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Title:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.title}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Description:</strong></label>
-                        <div style="margin-left: 8px; border: 1px solid #ccc; padding: 8px; background: #f9f9f9; max-height: 100px; overflow-y: auto;">
-                            ${ticket.description}
-                        </div>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Status:</strong></label>
-                        <span style="margin-left: 8px; font-weight: bold; color: ${getTicketStatusColor(ticket.status)};">${ticket.status}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Priority:</strong></label>
-                        <span style="margin-left: 8px; font-weight: bold; color: ${getPriorityColor(ticket.priority)};">${ticket.priority}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Category:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.category}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Requester:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.requester}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Assignee:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.assignee}</span>
-                    </div>
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Created Date:</strong></label>
-                        <span style="margin-left: 8px;">${new Date(ticket.createdDate).toLocaleDateString()}</span>
-                    </div>
+            // Clear existing content
+            detailsContent.innerHTML = '';
+            
+            // Create fieldset
+            const fieldset = document.createElement('fieldset');
+            const legend = document.createElement('legend');
+            legend.textContent = 'Ticket Information';
+            fieldset.appendChild(legend);
+            
+            // Helper function to create field rows
+            function createFieldRow(labelText, value, isDescription = false) {
+                const fieldRow = document.createElement('div');
+                fieldRow.className = 'field-row';
+                
+                const label = document.createElement('label');
+                label.style.width = '120px';
+                label.style.display = 'inline-block';
+                label.style.textAlign = 'right';
+                const strong = document.createElement('strong');
+                strong.textContent = labelText + ':';
+                label.appendChild(strong);
+                fieldRow.appendChild(label);
+                
+                if (isDescription) {
+                    const descDiv = document.createElement('div');
+                    descDiv.style.marginLeft = '8px';
+                    descDiv.style.border = '1px solid #ccc';
+                    descDiv.style.padding = '8px';
+                    descDiv.style.background = '#f9f9f9';
+                    descDiv.style.maxHeight = '100px';
+                    descDiv.style.overflowY = 'auto';
+                    descDiv.textContent = value;
+                    fieldRow.appendChild(descDiv);
+                } else {
+                    const span = document.createElement('span');
+                    span.style.marginLeft = '8px';
+                    span.textContent = value;
+                    fieldRow.appendChild(span);
+                }
+                
+                return fieldRow;
+            }
+            
+            // Helper function to create colored field rows
+            function createColoredFieldRow(labelText, value, color) {
+                const fieldRow = document.createElement('div');
+                fieldRow.className = 'field-row';
+                
+                const label = document.createElement('label');
+                label.style.width = '120px';
+                label.style.display = 'inline-block';
+                label.style.textAlign = 'right';
+                const strong = document.createElement('strong');
+                strong.textContent = labelText + ':';
+                label.appendChild(strong);
+                fieldRow.appendChild(label);
+                
+                const span = document.createElement('span');
+                span.style.marginLeft = '8px';
+                span.style.fontWeight = 'bold';
+                span.style.color = color;
+                span.textContent = value;
+                fieldRow.appendChild(span);
+                
+                return fieldRow;
+            }
+            
+            // Add all fields
+            fieldset.appendChild(createFieldRow('Ticket ID', ticket.id));
+            fieldset.appendChild(createFieldRow('Title', ticket.title));
+            fieldset.appendChild(createFieldRow('Description', ticket.description, true));
+            fieldset.appendChild(createColoredFieldRow('Status', ticket.status, getTicketStatusColor(ticket.status)));
+            fieldset.appendChild(createColoredFieldRow('Priority', ticket.priority, getPriorityColor(ticket.priority)));
+            fieldset.appendChild(createFieldRow('Category', ticket.category));
+            fieldset.appendChild(createFieldRow('Requester', ticket.requester));
+            fieldset.appendChild(createFieldRow('Assignee', ticket.assignee));
+            fieldset.appendChild(createFieldRow('Created Date', new Date(ticket.createdDate).toLocaleDateString()));
+            
+            if (ticket.dueDate) {
+                fieldset.appendChild(createFieldRow('Due Date', new Date(ticket.dueDate).toLocaleDateString()));
+            }
+            
+            detailsContent.appendChild(fieldset);
                     <div class="field-row">
                         <label style="width: 120px; display: inline-block; text-align: right;"><strong>Due Date:</strong></label>
                         <span style="margin-left: 8px;">${ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : 'Not set'}</span>
@@ -767,13 +869,33 @@
             const statusContent = document.getElementById('statusModalContent');
             const statusTitle = document.getElementById('statusModalTitle');
             
+            // Clear existing content
+            statusContent.innerHTML = '';
+            
             if (ticketIds.length === 1) {
                 const ticket = tickets.find(t => t.id === ticketIds[0]);
                 statusTitle.textContent = `Update Status - ${ticketIds[0]}`;
-                statusContent.innerHTML = `
-                    <p><strong>Ticket:</strong> ${ticket.title}</p>
-                    <p><strong>Current Status:</strong> <span style="color: ${getTicketStatusColor(ticket.status)}; font-weight: bold;">${ticket.status}</span></p>
-                `;
+                
+                // Create ticket info paragraph
+                const ticketPara = document.createElement('p');
+                const ticketStrong = document.createElement('strong');
+                ticketStrong.textContent = 'Ticket: ';
+                ticketPara.appendChild(ticketStrong);
+                ticketPara.appendChild(document.createTextNode(ticket.title));
+                statusContent.appendChild(ticketPara);
+                
+                // Create current status paragraph
+                const statusPara = document.createElement('p');
+                const statusStrong = document.createElement('strong');
+                statusStrong.textContent = 'Current Status: ';
+                statusPara.appendChild(statusStrong);
+                
+                const statusSpan = document.createElement('span');
+                statusSpan.style.color = getTicketStatusColor(ticket.status);
+                statusSpan.style.fontWeight = 'bold';
+                statusSpan.textContent = ticket.status;
+                statusPara.appendChild(statusSpan);
+                statusContent.appendChild(statusPara);
                 
                 // Pre-select current status
                 const currentRadio = document.querySelector(`input[name="newStatus"][value="${ticket.status}"]`);
@@ -782,10 +904,17 @@
                 }
             } else {
                 statusTitle.textContent = `Bulk Update Status - ${ticketIds.length} tickets`;
-                statusContent.innerHTML = `
-                    <p><strong>Updating ${ticketIds.length} selected tickets</strong></p>
-                    <p>Choose the new status to apply to all selected tickets:</p>
-                `;
+                
+                // Create bulk update info
+                const bulkPara1 = document.createElement('p');
+                const bulkStrong = document.createElement('strong');
+                bulkStrong.textContent = `Updating ${ticketIds.length} selected tickets`;
+                bulkPara1.appendChild(bulkStrong);
+                statusContent.appendChild(bulkPara1);
+                
+                const bulkPara2 = document.createElement('p');
+                bulkPara2.textContent = 'Choose the new status to apply to all selected tickets:';
+                statusContent.appendChild(bulkPara2);
                 
                 // Clear any pre-selection for bulk updates
                 document.querySelectorAll('input[name="newStatus"]').forEach(radio => {
