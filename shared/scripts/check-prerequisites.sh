@@ -201,15 +201,11 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             echo -e "\033[0;32m      ✓ Amazon Nova Act is available in $CURRENT_REGION\033[0m"
             ;;
         "transform")
-            # AWS Transform doesn't have a direct availability check, so we check if the CLI supports it
-            if ! aws transform help > /dev/null 2>&1; then
-                echo -e "\033[0;31m      ❌ AWS Transform CLI is not available\033[0m"
-                echo -e ""
-                echo -e "\033[0;33m      AWS Transform requires AWS CLI version 2.31.13 or later\033[0m"
-                echo -e "\033[0;33m      Please upgrade your AWS CLI\033[0m"
-                exit 1
-            fi
-            echo -e "\033[0;32m      ✓ AWS Transform CLI is available\033[0m"
+            # AWS Transform service availability (informational only)
+            echo -e "\033[0;36m      ℹ AWS Transform service check (informational)\033[0m"
+            echo -e "\033[0;90m        AWS Transform service must be available in $CURRENT_REGION\033[0m"
+            echo -e "\033[0;90m        Please check the documentation for AWS Transform supported regions:\033[0m"
+            echo -e "\033[0;90m        https://docs.aws.amazon.com/transform/latest/userguide/regions.html\033[0m"
             ;;
         *)
             echo -e "\033[0;33m      ⚠ Unknown service '$REQUIRED_SERVICE', skipping service check...\033[0m"

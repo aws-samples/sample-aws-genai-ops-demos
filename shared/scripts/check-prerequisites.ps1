@@ -179,8 +179,11 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             Write-Host "      ✓ Amazon Nova Act is available in $currentRegion" -ForegroundColor Green
         }
         "transform" {
-            # AWS Transform service availability check
-            Write-Host "      ✓ AWS Transform service is available in $currentRegion" -ForegroundColor Green
+            # AWS Transform service availability (informational only)
+            Write-Host "      ℹ AWS Transform service check (informational)" -ForegroundColor Cyan
+            Write-Host "        AWS Transform service must be available in $currentRegion" -ForegroundColor Gray
+            Write-Host "        Please check the documentation for AWS Transform supported regions:" -ForegroundColor Gray
+            Write-Host "        https://docs.aws.amazon.com/transform/latest/userguide/regions.html" -ForegroundColor Gray
         }
         default {
             Write-Host "      ⚠ Unknown service '$RequiredService', skipping service check..." -ForegroundColor Yellow
