@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "genai-cost-optimizer": {
+      "command": "uvx",
+      "args": ["mcp-cost-optim-genai"],
+      "disabled": false,
+      "autoApprove": [
+        "scan_project",
+        "analyze_file"
+      ]
+    },
+    "aws-mcp": {
+      "command": "uvx",
+      "timeout": 100000,
+      "transport": "stdio",
+      "args": [
+        "mcp-proxy-for-aws@latest",
+        "https://aws-mcp.us-east-1.api.aws/mcp",
+        "--metadata",
+        "AWS_REGION=us-west-2"
+      ],
+      "disabled": false,
+      "autoApprove": []
+    },
+    "aws-pricing": {
+      "command": "uvx",
+      "args": ["awslabs.aws-pricing-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
