@@ -8,7 +8,7 @@ echo -e "\033[0;36m=== AWS Services Lifecycle Tracker Deployment ===\033[0m"
 
 # Run shared prerequisites check
 echo -e "\n\033[0;33mRunning prerequisites check...\033[0m"
-../../shared/scripts/check-prerequisites.sh --required-service "agentcore" --min-aws-cli-version "2.31.13" --require-cdk
+../../shared/scripts/check-prerequisites.sh --service "agentcore" --min-cli-version "2.31.13" --require-cdk
 
 # Install frontend dependencies
 echo -e "\n\033[0;33mInstalling frontend dependencies...\033[0m"
