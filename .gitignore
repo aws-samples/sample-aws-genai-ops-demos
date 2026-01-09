@@ -20,10 +20,6 @@ target/
 **/cdk/bin/*.js
 **/cdk/bin/*.d.ts
 
-# Test files (temporary debugging)
-test_*.py
-**/test_*.py
-
 # CDK outputs
 **/cdk.out/
 **/cdk.out*/
