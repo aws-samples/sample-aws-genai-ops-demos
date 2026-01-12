@@ -1,6 +1,6 @@
 # AWS GenAI Operations Demos
 
-This repository contains deployable code samples demonstrating practical applications of generative AI for cloud operations, spanning a wide range of AWS services and use cases. Each demo provides working implementations that can be deployed in your AWS environment.
+This repository contains deployable code samples demonstrating how generative AI transforms cloud operations across security, cost optimization, resilience, and automation. Each demo provides working implementations that solve real operational challenges - deploy as-is with one click, or adapt to your specific environment and business needs with minimal customization effort.
 
 ## Available Demos
 
