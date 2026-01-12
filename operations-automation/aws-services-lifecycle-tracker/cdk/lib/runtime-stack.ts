@@ -4,6 +4,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
@@ -51,8 +52,19 @@ export class AgentCoreStack extends cdk.Stack {
     const region = cdk.Stack.of(this).region;
     const discoveryUrl = `https://cognito-idp.${region}.amazonaws.com/${props.userPool.userPoolId}/.well-known/openid-configuration`;
 
-    // Note: Agent source files are uploaded to S3 by the deployment script (deploy-all.ps1)
-    // This ensures files are always fresh and avoids CDK asset hash caching issues
+    // Upload agent source files to S3 (matches Password Reset demo pattern)
+    const agentSourceUpload = new s3deploy.BucketDeployment(this, 'AgentSourceUpload', {
+      sources: [s3deploy.Source.asset('../agent', {
+        exclude: [
+          'venv/**', '__pycache__/**', '*.pyc', '.git/**',
+          'node_modules/**', '.DS_Store', '*.log', 'build/**', 'dist/**',
+        ]
+      })],
+      destinationBucket: sourceBucket,
+      destinationKeyPrefix: 'agent-source/',
+      prune: false,
+      retainOnDelete: false,
+    });
 
     // Step 1: Trigger CodeBuild to build the Docker image
     const buildTrigger = new cr.AwsCustomResource(this, 'TriggerCodeBuild', {
@@ -80,6 +92,9 @@ export class AgentCoreStack extends cdk.Stack {
         }),
       ]),
     });
+
+    // Ensure build triggers after source upload completes
+    buildTrigger.node.addDependency(agentSourceUpload);
 
     // Step 2: Wait for build to complete using a custom Lambda
     const buildWaiterFunction = new lambda.Function(this, 'BuildWaiterFunction', {
