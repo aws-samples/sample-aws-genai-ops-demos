@@ -43,7 +43,19 @@ DEFAULT_SKIP_DIRS = {
 }
 
 # File extensions to scan
-SCANNABLE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx"}
+SCANNABLE_EXTENSIONS = {
+    # Code files
+    ".py", ".ts", ".js", ".tsx", ".jsx",
+    # Configuration files (high GenAI pattern likelihood)
+    ".json", ".yaml", ".yml",
+    # Infrastructure as Code
+    ".tf", ".tfvars",
+    # Shell scripts (deployment patterns)
+    ".sh", ".ps1", ".bat"
+}
+
+# File extensions to always skip (binary/archive files)
+SKIP_EXTENSIONS = {".zip", ".tar", ".gz", ".rar", ".7z", ".exe", ".dll", ".so", ".dylib"}
 
 # Maximum file size to scan (in bytes) - skip very large files
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -92,6 +104,10 @@ def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE) -> bool:
     Returns:
         True if file should be scanned
     """
+    # Skip binary/archive files immediately
+    if file_path.suffix in SKIP_EXTENSIONS:
+        return False
+    
     # Check extension
     if file_path.suffix not in SCANNABLE_EXTENSIONS:
         return False
@@ -113,6 +129,27 @@ def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE) -> bool:
         tsx_equivalent = file_path.with_suffix(".tsx")
         if tsx_equivalent.exists():
             return False  # Skip JSX file, scan TSX source instead
+    
+    # Skip common config files that rarely contain GenAI patterns
+    config_files_to_skip = {
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "tsconfig.json", "eslint.config.js", "prettier.config.js",
+        "jest.config.js", "webpack.config.js", "vite.config.ts",
+        # CDK Lambda runtime files
+        "cfn-response.js", "framework.js", "outbound.js"
+    }
+    if file_name in config_files_to_skip:
+        return False
+    
+    # Skip CDK generated files (cdk.out directory contents)
+    if (file_name.endswith(".assets.json") or 
+        file_name.endswith(".template.json") or
+        file_name.endswith(".template.yaml") or
+        file_name == "manifest.json" or
+        file_name == "tree.json" or
+        file_name.startswith("asset.") or
+        "cdk.out" in str(file_path)):
+        return False
     
     # Check file size
     try:
