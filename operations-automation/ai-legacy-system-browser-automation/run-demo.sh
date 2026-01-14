@@ -106,25 +106,34 @@ fi
 # ============================================================
 # STEP 2: Deploy Infrastructure with CDK (using shared script)
 # ============================================================
-echo "------------------------------------------------------------"
-echo "[INFRA] Deploying AgentCore Browser infrastructure via CDK..."
-echo "------------------------------------------------------------"
+if [[ "$SKIP_SETUP" == "true" ]]; then
+    echo "------------------------------------------------------------"
+    echo "[INFRA] Skipping deployment, using existing infrastructure..."
+    echo "------------------------------------------------------------"
+else
+    echo "------------------------------------------------------------"
+    echo "[INFRA] Deploying AgentCore Browser infrastructure via CDK..."
+    echo "------------------------------------------------------------"
 
-"$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
+    "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
 
-if [[ $? -ne 0 ]]; then
-    echo "CDK deployment failed!"
-    exit 1
+    if [[ $? -ne 0 ]]; then
+        echo "CDK deployment failed!"
+        exit 1
+    fi
 fi
 
 # Get outputs from CloudFormation
 echo ""
 echo "Getting stack outputs..."
-BROWSER_ID=$(aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region "$REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='BrowserId'].OutputValue" --output text)
-RECORDINGS_BUCKET=$(aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region "$REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='RecordingsBucketName'].OutputValue" --output text)
+BROWSER_ID=$(aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region "$REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='BrowserId'].OutputValue" --output text 2>/dev/null)
+RECORDINGS_BUCKET=$(aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region "$REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='RecordingsBucketName'].OutputValue" --output text 2>/dev/null)
 
 if [[ -z "$BROWSER_ID" ]] || [[ -z "$RECORDINGS_BUCKET" ]]; then
     echo "      ❌ Failed to get stack outputs"
+    if [[ "$SKIP_SETUP" == "true" ]]; then
+        echo "      Stack may not exist. Run without --skip-setup to deploy infrastructure first."
+    fi
     exit 1
 fi
 
@@ -160,20 +169,20 @@ fi
 echo ""
 
 # ============================================================
-# STEP 4: Display Live View Instructions
+# STEP 4: Display AWS Console URLs
 # ============================================================
 echo "------------------------------------------------------------"
-echo "[LIVE VIEW] Watch the browser session in AWS Console"
+echo "[AWS CONSOLE] Monitor your automation"
 echo "------------------------------------------------------------"
 echo ""
-echo "  Console URL:"
+echo "  🎥 BROWSER LIVE VIEW (AgentCore):"
 echo "  https://$REGION.console.aws.amazon.com/bedrock-agentcore/builtInTools"
+echo "     → Navigate to 'Built-in tools' > Select your browser"
+echo "     → Find active session (status: Ready) > Click 'View live session'"
 echo ""
-echo "  Instructions:"
-echo "  1. Open the URL above in your browser"
-echo "  2. Navigate to 'Built-in tools' > Select your browser"
-echo "  3. Find your active session (status: Ready)"
-echo "  4. Click 'View live session' to watch in real-time"
+echo "  📊 WORKFLOW RUNS (Nova Act):"
+echo "  https://$REGION.console.aws.amazon.com/nova-act/home#/workflow-definitions/$WORKFLOW_NAME"
+echo "     → View workflow execution history and step details"
 echo ""
 
 # ============================================================

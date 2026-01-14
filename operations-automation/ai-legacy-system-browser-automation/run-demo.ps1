@@ -70,25 +70,34 @@ if (-not $SkipSetup) {
 # ============================================================
 # STEP 2: Deploy Infrastructure with CDK (using shared script)
 # ============================================================
-Write-Host "------------------------------------------------------------" -ForegroundColor Gray
-Write-Host "[INFRA] Deploying AgentCore Browser infrastructure via CDK..." -ForegroundColor Yellow
-Write-Host "------------------------------------------------------------" -ForegroundColor Gray
+if ($SkipSetup) {
+    Write-Host "------------------------------------------------------------" -ForegroundColor Gray
+    Write-Host "[INFRA] Skipping deployment, using existing infrastructure..." -ForegroundColor Yellow
+    Write-Host "------------------------------------------------------------" -ForegroundColor Gray
+} else {
+    Write-Host "------------------------------------------------------------" -ForegroundColor Gray
+    Write-Host "[INFRA] Deploying AgentCore Browser infrastructure via CDK..." -ForegroundColor Yellow
+    Write-Host "------------------------------------------------------------" -ForegroundColor Gray
 
-& "$SharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $CdkDir
+    & "$SharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $CdkDir
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "CDK deployment failed!" -ForegroundColor Red
-    exit 1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CDK deployment failed!" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Get outputs from CloudFormation
 Write-Host ""
 Write-Host "Getting stack outputs..." -ForegroundColor Yellow
-$BrowserId = aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region $Region --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='BrowserId'].OutputValue" --output text
-$RecordingsBucket = aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region $Region --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='RecordingsBucketName'].OutputValue" --output text
+$BrowserId = aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region $Region --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='BrowserId'].OutputValue" --output text 2>$null
+$RecordingsBucket = aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --region $Region --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='RecordingsBucketName'].OutputValue" --output text 2>$null
 
 if ([string]::IsNullOrEmpty($BrowserId) -or [string]::IsNullOrEmpty($RecordingsBucket)) {
     Write-Host "      ❌ Failed to get stack outputs" -ForegroundColor Red
+    if ($SkipSetup) {
+        Write-Host "      Stack may not exist. Run without -SkipSetup to deploy infrastructure first." -ForegroundColor Yellow
+    }
     exit 1
 }
 
@@ -129,20 +138,20 @@ if ($exists) {
 Write-Host ""
 
 # ============================================================
-# STEP 4: Display Live View Instructions
+# STEP 4: Display AWS Console URLs
 # ============================================================
 Write-Host "------------------------------------------------------------" -ForegroundColor Gray
-Write-Host "[LIVE VIEW] Watch the browser session in AWS Console" -ForegroundColor Cyan
+Write-Host "[AWS CONSOLE] Monitor your automation" -ForegroundColor Cyan
 Write-Host "------------------------------------------------------------" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  Console URL:" -ForegroundColor White
+Write-Host "  🎥 BROWSER LIVE VIEW (AgentCore):" -ForegroundColor White
 Write-Host "  https://$Region.console.aws.amazon.com/bedrock-agentcore/builtInTools" -ForegroundColor Yellow
+Write-Host "     → Navigate to 'Built-in tools' > Select your browser" -ForegroundColor Gray
+Write-Host "     → Find active session (status: Ready) > Click 'View live session'" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  Instructions:" -ForegroundColor White
-Write-Host "  1. Open the URL above in your browser" -ForegroundColor Gray
-Write-Host "  2. Navigate to 'Built-in tools' > Select your browser" -ForegroundColor Gray
-Write-Host "  3. Find your active session (status: Ready)" -ForegroundColor Gray
-Write-Host "  4. Click 'View live session' to watch in real-time" -ForegroundColor Gray
+Write-Host "  📊 WORKFLOW RUNS (Nova Act):" -ForegroundColor White
+Write-Host "  https://$Region.console.aws.amazon.com/nova-act/home#/workflow-definitions/$workflowName" -ForegroundColor Yellow
+Write-Host "     → View workflow execution history, acts and steps details" -ForegroundColor Gray
 Write-Host ""
 
 # ============================================================
