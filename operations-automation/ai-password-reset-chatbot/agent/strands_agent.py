@@ -21,7 +21,7 @@ from bedrock_agentcore.memory import MemoryClient
 from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig, RetrievalConfig
 from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
 from botocore.exceptions import ClientError
-from shared.utils import get_region
+from aws_utils import get_region
 
 # Create the AgentCore app
 app = BedrockAgentCoreApp()
