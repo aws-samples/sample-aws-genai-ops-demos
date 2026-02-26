@@ -327,7 +327,7 @@
         let tickets = [];
 
         // API Configuration - Load from generated config
-        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : 'https://wa0s6jimi7.execute-api.us-east-1.amazonaws.com/prod';
+        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : '';
 
         let filteredTickets = [...tickets];
         let selectedTickets = [];
@@ -469,20 +469,20 @@
                     body: JSON.stringify(newTicket)
                 });
                 
-                if (response.ok) {
-                    // Reload tickets from API
-                    await loadTickets();
-                } else {
-                    // Fallback to local storage
-                    tickets.unshift(newTicket);
+                // Always add to local array first (DynamoDB eventual consistency)
+                tickets.unshift(newTicket);
+                filteredTickets = [...tickets];
+                
+                if (!response.ok) {
+                    console.warn('API save may have failed, ticket saved locally');
                 }
             } catch (error) {
                 console.error('Error creating ticket:', error);
-                // Fallback to local storage
+                // Still add to local array
                 tickets.unshift(newTicket);
+                filteredTickets = [...tickets];
             }
             
-            filteredTickets = [...tickets];
             renderTickets();
             hideCreateTicketModal();
             showMessage('Success', `Ticket ${newTicket.id} created successfully!`);
@@ -810,12 +810,6 @@
             }
             
             detailsContent.appendChild(fieldset);
-                    <div class="field-row">
-                        <label style="width: 120px; display: inline-block; text-align: right;"><strong>Due Date:</strong></label>
-                        <span style="margin-left: 8px;">${ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : 'Not set'}</span>
-                    </div>
-                </fieldset>
-            `;
             
             // Show action button if ticket can be updated
             if (ticket.status !== 'Closed' && ticket.status !== 'Resolved') {
@@ -937,7 +931,7 @@
             });
         }
 
-        function applyStatusUpdate() {
+        async function applyStatusUpdate() {
             const selectedStatus = document.querySelector('input[name="newStatus"]:checked');
             
             if (!selectedStatus) {
@@ -949,7 +943,8 @@
             let updatedCount = 0;
             let previousStatus = '';
             
-            currentStatusUpdateTickets.forEach(ticketId => {
+            // Update tickets and persist to API
+            for (const ticketId of currentStatusUpdateTickets) {
                 const ticket = tickets.find(t => t.id === ticketId);
                 if (ticket) {
                     // Capture previous status for single ticket updates
@@ -963,9 +958,29 @@
                     if (newStatus === 'Resolved' || newStatus === 'Closed') {
                         ticket.resolvedDate = new Date().toISOString().split('T')[0];
                     }
-                    updatedCount++;
+                    
+                    // Persist to API
+                    try {
+                        const response = await fetch(`${apiBaseUrl}/tickets`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(ticket)
+                        });
+                        
+                        if (response.ok) {
+                            updatedCount++;
+                        } else {
+                            console.error(`Failed to update ticket ${ticketId} in API`);
+                            updatedCount++; // Still count as updated locally
+                        }
+                    } catch (error) {
+                        console.error(`Error updating ticket ${ticketId}:`, error);
+                        updatedCount++; // Still count as updated locally
+                    }
                 }
-            });
+            }
             
             filteredTickets = [...tickets];
             renderTickets();

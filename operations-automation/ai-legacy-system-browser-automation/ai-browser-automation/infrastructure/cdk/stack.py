@@ -3,8 +3,8 @@ CDK Stack for Legacy System Automation with AgentCore Browser Tool
 
 Creates the infrastructure needed to run browser automation in AWS cloud:
 - AgentCore Browser Tool (custom browser)
-- Nova Act Workflow Definition  
-- S3 bucket for session recordings (optional)
+- Nova Act Workflow Definition with S3 export config
+- S3 bucket for session recordings and workflow data
 - IAM roles with required permissions
 """
 
@@ -25,7 +25,7 @@ class LegacySystemAutomationStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # =================================================================
-        # S3 Bucket for Session Recordings (Optional)
+        # S3 Bucket for Session Recordings and Nova Act Workflow Data
         # =================================================================
         recordings_bucket = s3.Bucket(
             self,
@@ -145,11 +145,15 @@ class LegacySystemAutomationStack(Stack):
         browser_tool.node.add_dependency(recordings_bucket)
 
         # =================================================================
-        # Nova Act Workflow Definition (Custom Resource)
+        # Nova Act Workflow Definition
         # =================================================================
-        # Note: Nova Act doesn't have CloudFormation support yet
-        # The workflow definition must be created via CLI or SDK
-        # This is documented in the README
+        # Note: Nova Act doesn't have CloudFormation support yet.
+        # After deploying this stack, run the update_workflow_s3.py script
+        # to configure the workflow definition with S3 export:
+        #
+        #   python update_workflow_s3.py --bucket <RecordingsBucketName>
+        #
+        # This enables step data visualization in the AWS console.
 
         # =================================================================
         # Outputs
@@ -174,7 +178,7 @@ class LegacySystemAutomationStack(Stack):
             self,
             "RecordingsBucketName",
             value=recordings_bucket.bucket_name,
-            description="S3 bucket for session recordings",
+            description="S3 bucket for session recordings and workflow data",
             export_name=f"{construct_id}-RecordingsBucket",
         )
 
@@ -183,6 +187,13 @@ class LegacySystemAutomationStack(Stack):
             "RecordingsLocation",
             value=f"s3://{recordings_bucket.bucket_name}/browser-recordings/",
             description="S3 location for session recordings",
+        )
+
+        CfnOutput(
+            self,
+            "WorkflowDataLocation",
+            value=f"s3://{recordings_bucket.bucket_name}/workflow-data/",
+            description="S3 location for Nova Act workflow step data",
         )
 
         CfnOutput(

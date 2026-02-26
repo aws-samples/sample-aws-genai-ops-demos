@@ -9,7 +9,7 @@
     "destroy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 -DestroyInfra"
   },
   "dependencies": {
-    "classic-stylesheets": "^2.1.0"
+    "classic-stylesheets": "2.1.0"
   },
   "devDependencies": {},
   "keywords": [

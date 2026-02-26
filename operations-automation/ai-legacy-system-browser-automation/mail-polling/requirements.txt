@@ -1,0 +1,31 @@
+# AWS SDK (for basic AWS services if needed)
+boto3>=1.34.0
+
+# CLI framework
+click>=8.1.0
+
+# Testing
+pytest>=7.4.0
+hypothesis>=6.92.0
+
+# YAML configuration
+pyyaml>=6.0.1
+
+# Browser automation dependencies
+bedrock-agentcore>=0.1.0
+nova-act>=0.1.0
+rich>=13.0.0
+nest-asyncio>=1.6.0
+
+# Mail monkey dependencies - Windows
+pywin32>=306; sys_platform == "win32"
+plyer>=2.1.0; sys_platform == "win32"
+
+# Mail monkey dependencies - macOS
+appscript>=1.2.0; sys_platform == "darwin"
+mactypes>=1.2; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+
+# Mail monkey dependencies - Cross-platform
+beautifulsoup4>=4.12.0
+lxml>=4.9.0

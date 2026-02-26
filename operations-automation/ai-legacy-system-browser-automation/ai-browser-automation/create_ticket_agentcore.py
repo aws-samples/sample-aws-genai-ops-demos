@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from datetime import datetime
 
@@ -29,10 +30,10 @@ from rich.panel import Panel
 
 console = Console()
 
-# Nova Act Gym - Legacy Ticketing System Demo
-NOVA_ACT_GYM_URL = "https://nova.amazon.com/act/gym/next-dot"
-DEFAULT_REGION = "us-east-1"
-WORKFLOW_NAME = "legacy-system-automation-agentcore"
+# AnyCompany IT Demo Portal - ITSM System (use CLOUDFRONT_DOMAIN env var or --url argument)
+ITSM_PORTAL_URL = None  # Set via command line or environment
+DEFAULT_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+WORKFLOW_NAME = "onboarding-email-workflow"
 
 try:
     from bedrock_agentcore.tools.browser_client import browser_session
@@ -49,10 +50,10 @@ def create_ticket(
     browser_id: str = None
 ) -> dict:
     """
-    Create a ticket in a legacy system using Nova Act with AgentCore Browser Tool.
+    Create a ticket in the AnyCompany ITSM portal using Nova Act with AgentCore Browser Tool.
     
-    Demonstrates legacy system automation by navigating a booking interface,
-    filling forms, and completing a multi-step ticket creation process.
+    Demonstrates legacy system automation by navigating the ITSM interface,
+    filling forms, and completing a ticket creation process.
     
     Args:
         region: AWS region for AgentCore Browser
@@ -62,7 +63,7 @@ def create_ticket(
         dict with execution results including ticket summary
     """
     result = {
-        "target_url": NOVA_ACT_GYM_URL,
+        "target_url": ITSM_PORTAL_URL,
         "region": region,
         "browser_id": browser_id,
         "browser_type": "AgentCore Browser Tool (Cloud)",
@@ -106,71 +107,65 @@ def create_ticket(
             with NovaAct(
                 cdp_endpoint_url=ws_url,
                 cdp_headers=headers,
-                starting_page=NOVA_ACT_GYM_URL,
+                starting_page=ITSM_PORTAL_URL,
             ) as nova:
                 console.print(f"[green]✓ Nova Act connected[/green]")
-                console.print(f"  Target: {NOVA_ACT_GYM_URL}")
+                console.print(f"  Target: {ITSM_PORTAL_URL}")
                 
-                # Act ID 1: Click Destinations
-                console.print(f"\n[yellow]Act 1:[/yellow] Click Destinations...")
-                nova.act("Click on 'Destinations'.")
-                result["steps"].append({"act_id": 1, "name": "click_destinations", "status": "success"})
+                # Act ID 1: Click Create Ticket button
+                console.print(f"\n[yellow]Act 1:[/yellow] Click Create Ticket button...")
+                nova.act("Click the 'Create Ticket' button.")
+                result["steps"].append({"act_id": 1, "name": "click_create_ticket", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 2: Select Wolf 1061c and click Book departure
-                console.print(f"\n[yellow]Act 2:[/yellow] Select Wolf 1061c...")
+                # Act ID 2: Fill in the ticket title
+                console.print(f"\n[yellow]Act 2:[/yellow] Fill in ticket title...")
+                nova.act("In the Title field, type 'Hardware Request - John Smith - New Employee Laptop Setup'")
+                result["steps"].append({"act_id": 2, "name": "fill_title", "status": "success"})
+                console.print(f"[green]✓ Done[/green]")
+                
+                # Act ID 3: Fill in the description
+                console.print(f"\n[yellow]Act 3:[/yellow] Fill in description...")
                 nova.act(
-                    "Click on 'Wolf 1061c'. Then scroll down and click the large button "
-                    "'BOOK DEPARTURE TO WOLF 1061C' at the bottom of the page."
+                    "In the Description field, type: 'New employee John Smith (Engineering, Software Developer) "
+                    "requires complete hardware setup including Professional Laptop 15\", external monitor, "
+                    "keyboard and mouse. Start date: Next Monday. Manager: Jane Doe. Budget code: ENG-2024-Q1.'"
                 )
-                result["steps"].append({"act_id": 2, "name": "select_wolf1061c_and_book", "status": "success"})
+                result["steps"].append({"act_id": 3, "name": "fill_description", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 3: Select origin and date
-                console.print(f"\n[yellow]Act 3:[/yellow] Select Boston and date...")
-                nova.act("Select 'Boston' as origin. Set departure date to next week.")
-                result["steps"].append({"act_id": 3, "name": "select_origin_date", "status": "success"})
+                # Act ID 4: Select category
+                console.print(f"\n[yellow]Act 4:[/yellow] Select Hardware Request category...")
+                nova.act("Select 'Hardware Request' from the Category dropdown.")
+                result["steps"].append({"act_id": 4, "name": "select_category", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 4: Search flights
-                console.print(f"\n[yellow]Act 4:[/yellow] Search flights...")
-                nova.act("Click 'Search Flights'.")
-                result["steps"].append({"act_id": 4, "name": "search_flights", "status": "success"})
+                # Act ID 5: Select priority
+                console.print(f"\n[yellow]Act 5:[/yellow] Select High priority...")
+                nova.act("Select 'High' from the Priority dropdown.")
+                result["steps"].append({"act_id": 5, "name": "select_priority", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 5: Select Premium ticket
-                console.print(f"\n[yellow]Act 5:[/yellow] Select Premium ticket...")
-                nova.act("Find 'Starlight Express' and select the 'Premium' ticket.")
-                result["steps"].append({"act_id": 5, "name": "select_premium", "status": "success"})
+                # Act ID 6: Fill requester name
+                console.print(f"\n[yellow]Act 6:[/yellow] Fill requester name...")
+                nova.act("In the Requester field, type 'Jane Doe'")
+                result["steps"].append({"act_id": 6, "name": "fill_requester", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 6: Enter passenger details
-                console.print(f"\n[yellow]Act 6:[/yellow] Enter passenger details...")
-                nova.act("Enter 'Jeff' as Full Legal Name. Set date of birth to January 12, 1964. Click Continue.")
-                result["steps"].append({"act_id": 6, "name": "passenger_details", "status": "success"})
+                # Act ID 7: Submit the ticket
+                console.print(f"\n[yellow]Act 7:[/yellow] Submit the ticket...")
+                nova.act("Click the 'Create Ticket' button to submit the form.")
+                result["steps"].append({"act_id": 7, "name": "submit_ticket", "status": "success"})
                 console.print(f"[green]✓ Done[/green]")
                 
-                # Act ID 7: Medical clearance
-                console.print(f"\n[yellow]Act 7:[/yellow] Medical clearance...")
-                nova.act("Answer 'No' to all medical questions. Click Continue.")
-                result["steps"].append({"act_id": 7, "name": "medical", "status": "success"})
-                console.print(f"[green]✓ Done[/green]")
-                
-                # Act ID 8: Select cabin
-                console.print(f"\n[yellow]Act 8:[/yellow] Select Premium Pod...")
-                nova.act("Select 'Premium Pod' cabin.")
-                result["steps"].append({"act_id": 8, "name": "cabin", "status": "success"})
-                console.print(f"[green]✓ Done[/green]")
-                
-                # Act ID 9: Get summary
-                console.print(f"\n[yellow]Act 9:[/yellow] Get ticket summary...")
-                summary = nova.act("Return the journey summary details shown on screen.")
-                # Extract parsed response if available
+                # Act ID 8: Get confirmation
+                console.print(f"\n[yellow]Act 8:[/yellow] Get ticket confirmation...")
+                summary = nova.act("Read and return the success message or ticket ID shown on screen.")
                 if hasattr(summary, 'parsed_response') and summary.parsed_response:
                     result["ticket_summary"] = str(summary.parsed_response)
                 else:
                     result["ticket_summary"] = str(summary)
-                result["steps"].append({"act_id": 9, "name": "summary", "status": "success"})
+                result["steps"].append({"act_id": 8, "name": "get_confirmation", "status": "success"})
                 result["status"] = "success"
                 console.print(f"[green]✓ Done[/green]")
         
@@ -183,6 +178,8 @@ def create_ticket(
 
 
 def main():
+    global ITSM_PORTAL_URL
+    
     parser = argparse.ArgumentParser(
         description="Create a ticket in a legacy system using Nova Act with AgentCore Browser Tool"
     )
@@ -196,18 +193,37 @@ def main():
         required=True,
         help="Browser ID from CDK stack (required for session tracking)"
     )
+    parser.add_argument(
+        "--url",
+        default=None,
+        help="ITSM portal URL (default: built from CLOUDFRONT_DOMAIN env var)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Resolve ITSM portal URL from args or environment
+    if args.url:
+        ITSM_PORTAL_URL = args.url
+    else:
+        import os
+        cloudfront_domain = os.environ.get("CLOUDFRONT_DOMAIN")
+        if cloudfront_domain:
+            ITSM_PORTAL_URL = f"https://{cloudfront_domain}/itsm.html"
+        else:
+            console.print("[bold red]Error: Set CLOUDFRONT_DOMAIN env var or pass --url[/bold red]")
+            sys.exit(1)
     
     args = parser.parse_args()
     
     console.print(Panel(
         f"[bold cyan]Legacy System Ticket Creation[/bold cyan]\n"
         f"[bold cyan]with AgentCore Browser Tool[/bold cyan]\n\n"
-        f"Target: {NOVA_ACT_GYM_URL}\n"
+        f"Target: {ITSM_PORTAL_URL}\n"
         f"Region: {args.region}\n"
         f"Browser ID: {args.browser_id}\n"
         f"Browser: Cloud (AgentCore)\n"
         f"Auth: AWS IAM\n\n"
-        f"[dim]Creating ticket: Wolf 1061c → Boston → Next week[/dim]",
+        f"[dim]Creating ticket: Hardware Request for new employee[/dim]",
         title="Demo Configuration",
         border_style="cyan"
     ))
