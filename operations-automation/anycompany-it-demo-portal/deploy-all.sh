@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # Bash deployment script for AnyCompany IT Portal Demo
 set -e
 
@@ -23,7 +23,7 @@ echo "=== AnyCompany IT Portal Demo Deployment ==="
 
 if [ "$DESTROY_INFRA" = true ]; then
     echo "Destroying infrastructure..."
-    "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" -CdkDirectory infrastructure/cdk -DestroyStack
+    "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory infrastructure/cdk --destroy
     echo "Infrastructure destruction completed"
     exit 0
 fi
@@ -38,7 +38,7 @@ REGION=$(get_aws_region)
 
 # Deploy CDK infrastructure using shared script
 echo "Deploying AWS infrastructure..."
-"$SHARED_SCRIPTS_DIR/deploy-cdk.sh" -CdkDirectory infrastructure/cdk
+"$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory infrastructure/cdk
 
 if [ $? -ne 0 ]; then
     echo "Error: CDK deployment failed"
@@ -84,6 +84,9 @@ fi
 # Populate mock data
 if [ "$POPULATE_DATA" = true ]; then
     echo "Populating mock data..."
+    set +e
+    pip3 install boto3 -q 2>/dev/null || pip3 install boto3 -q --break-system-packages 2>/dev/null
+    set -e
     python3 scripts/seed-data.py "$REGION"
 fi
 

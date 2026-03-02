@@ -41,6 +41,17 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-
 echo "  Account: $ACCOUNT_ID"
 echo "  Region:  $REGION"
 
+# Create virtual environment if it doesn't exist
+VENV_DIR="$CDK_DIR/.venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo ""
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+# Activate virtual environment
+source "$VENV_DIR/bin/activate"
+
 # Destroy mode
 if [ "$DESTROY" = true ]; then
     echo ""
@@ -48,6 +59,7 @@ if [ "$DESTROY" = true ]; then
     cd "$CDK_DIR"
     pip install -r requirements.txt -q
     npx cdk destroy --force
+    deactivate
     echo ""
     echo "Infrastructure destroyed."
     exit 0
@@ -61,6 +73,8 @@ pip install -r requirements.txt -q
 
 echo ""
 echo "Deploying AgentCore Browser Tool stack..."
+# Set PYTHONPATH to include shared utilities
+export PYTHONPATH="$SCRIPT_DIR/../..:$PYTHONPATH"
 npx cdk deploy --require-approval never
 
 # Extract outputs
@@ -85,3 +99,6 @@ echo "    export AWS_REGION=\"$REGION\""
 echo ""
 echo "  Live view: https://$REGION.console.aws.amazon.com/bedrock-agentcore/builtInTools"
 echo ""
+
+# Deactivate virtual environment
+deactivate
