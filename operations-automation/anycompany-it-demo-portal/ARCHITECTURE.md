@@ -314,50 +314,41 @@ class AnyCompanyITPortalStack(Stack):
 
 #### AI Automation Flow
 ```
-1. Email Trigger → SNS Topic
-2. Lambda → Parses email content
-3. Nova Act Agent → Initiates workflow
-4. AgentCore Browser Tool → Navigates portals:
-   a. ITSM Portal → Read ticket details
-   b. Inventory Portal → Check availability
-   c. Procurement Portal → Create PO (if needed)
-   d. ITSM Portal → Update ticket status
-5. Workflow Complete → Notification sent
+1. Outlook Email → Mail Polling Service detects "NEW EMPLOYEE ORDER"
+2. Email Parser → Extracts employee details and equipment list
+3. Onboarding Orchestrator → Coordinates workflow phases
+4. Nova Act + AgentCore Browser Tool → Navigates portals:
+   a. ITSM Portal → Create ticket, update to In Progress
+   b. Inventory Portal → Check stock for each item
+   c. Procurement Portal → Create PO for out-of-stock items
+   d. Inventory Portal → Add delivered items, allocate to employee
+   e. ITSM Portal → Resolve ticket
+5. Amazon SES → Send completion notification email
 ```
 
 ### AI Integration Architecture
 
 #### Amazon Nova Act Integration
 ```python
-# Example workflow configuration
-@nova_act_workflow
-def hardware_provisioning_workflow(request_data):
-    """
-    Multi-portal navigation workflow for hardware provisioning
-    """
-    browser = AgentCoreBrowserTool()
-    
-    # Step 1: Read service request
-    browser.navigate("https://domain.com/itsm.html")
-    ticket_data = browser.extract_form_data("ticket-form")
-    
-    # Step 2: Check inventory
-    browser.navigate("https://domain.com/inventory.html")
-    availability = browser.search_and_extract("Professional Laptop")
-    
-    # Step 3: Create purchase order if needed
-    if availability["stock"] < 1:
-        browser.navigate("https://domain.com/procurement.html")
-        browser.fill_form("po-form", {
-            "vendor": "TechCorp Solutions",
-            "item": "Professional Laptop 16",
-            "quantity": 1
-        })
-        browser.click("submit-po")
-    
-    # Step 4: Update original ticket
-    browser.navigate("https://domain.com/itsm.html")
-    browser.update_ticket_status("INC-001234", "Completed")
+# Real workflow pattern using Nova Act with AgentCore Browser Tool
+from bedrock_agentcore.tools.browser_client import browser_session
+from nova_act import NovaAct
+from nova_act.types.workflow import workflow
+
+@workflow(workflow_definition_name="onboarding-email-workflow", model_id="nova-act-latest")
+def hardware_provisioning_workflow():
+    with browser_session("us-east-1", identifier="your-browser-id") as client:
+        ws_url, headers = client.generate_ws_headers()
+        
+        with NovaAct(
+            cdp_endpoint_url=ws_url,
+            cdp_headers=headers,
+            starting_page="https://your-domain.cloudfront.net/itsm.html",
+        ) as nova:
+            # All actions are natural language instructions
+            nova.act("Click 'Create Ticket' button")
+            nova.act("Fill the form with Title: 'Hardware Request - John Doe'...")
+            nova.act("Navigate to inventory portal and search for 'Professional Laptop'")
 ```
 
 #### AgentCore Browser Tool Configuration
@@ -492,33 +483,37 @@ Total Estimated Cost   |                         | $3-13
 │                Integration Architecture                      │
 ├─────────────────────────────────────────────────────────────┤
 │ Email Processing                                            │
-│ ├── Amazon SES (Incoming Email)                            │
-│ ├── Lambda (Email Parsing)                                 │
-│ └── SNS (Workflow Triggers)                                │
+│ ├── Microsoft Outlook (Inbox Monitoring)                   │
+│ ├── Mail Polling Service (Python)                          │
+│ └── Email Parser (Structured Data Extraction)              │
+│                                                             │
+│ Browser Automation                                          │
+│ ├── Amazon Nova Act (Natural Language Instructions)        │
+│ ├── AgentCore Browser Tool (Cloud Chrome Browser)          │
+│ └── JSON Workflow Definitions (Configurable Actions)       │
 │                                                             │
 │ Notification System                                         │
-│ ├── SNS Topics (Status Updates)                            │
-│ ├── SES (Email Notifications)                              │
-│ └── SMS (Critical Alerts)                                  │
+│ ├── Amazon SES (Completion Emails)                         │
+│ └── CloudWatch Logs (Workflow Monitoring)                   │
 │                                                             │
-│ File Storage                                                │
-│ ├── S3 (Document Attachments)                              │
-│ ├── Presigned URLs (Secure Access)                         │
-│ └── Lifecycle Policies (Cost Management)                   │
+│ Storage                                                     │
+│ ├── S3 (Browser Session Recordings)                        │
+│ ├── S3 (Nova Act Workflow Step Data)                       │
+│ └── DynamoDB (Portal Data)                                 │
 │                                                             │
-│ Audit and Compliance                                        │
-│ ├── CloudTrail (API Logging)                               │
-│ ├── Config (Resource Compliance)                           │
-│ └── GuardDuty (Security Monitoring)                        │
+│ Audit and Monitoring                                        │
+│ ├── CloudWatch (Lambda and API Metrics)                    │
+│ ├── Nova Act Console (Workflow Visualization)              │
+│ └── AgentCore Console (Live Browser View)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 #### AI Automation Integration Points
-- **Browser Automation**: Direct portal URL navigation
-- **API Integration**: RESTful endpoints for data manipulation
-- **Event-Driven**: SNS triggers for workflow initiation
-- **Monitoring**: CloudWatch metrics for automation tracking
-- **Error Handling**: Dead letter queues for failed workflows
+- **Browser Automation**: Nova Act navigates portal URLs with natural language instructions
+- **API Integration**: RESTful endpoints for data manipulation (DynamoDB backend)
+- **Email Trigger**: Outlook mail-polling service detects "NEW EMPLOYEE ORDER" emails
+- **Monitoring**: Nova Act console for workflow visualization, AgentCore console for live browser view
+- **Recordings**: S3 bucket stores browser session recordings and workflow step data
 
 ## Conclusion
 

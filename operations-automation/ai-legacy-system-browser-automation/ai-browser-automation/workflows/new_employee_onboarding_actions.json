@@ -1,0 +1,503 @@
+{
+  "schema_version": "1.0.0",
+  "description": "IT Onboarding Automation - Complete Workflow Definitions",
+  "total_nova_act_calls": 46,
+  "portals": {
+    "itsm": "{{config.itsm_url}}",
+    "inventory": "{{config.inventory_url}}",
+    "procurement": "{{config.procurement_url}}"
+  },
+  "workflows": {
+    "itsm_create_ticket": {
+      "workflow_name": "itsm_create_ticket",
+      "description": "Create a new service ticket in the ITSM portal",
+      "portal": "itsm",
+      "phase": 1,
+      "nova_act_calls": 5,
+      "variables": {
+        "itsm_url": "{{config.itsm_url}}",
+        "title": "{{ticket.title}}",
+        "description": "{{ticket.description}}",
+        "category": "{{ticket.category}}",
+        "priority": "{{ticket.priority}}",
+        "requester": "{{employee.manager}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_itsm",
+          "instruction": "Navigate to {{itsm_url}}",
+          "description": "Open the ITSM portal"
+        },
+        {
+          "act_id": 2,
+          "name": "click_create_ticket",
+          "instruction": "Click the 'Create Ticket' button to open the ticket creation form",
+          "description": "Open ticket creation form"
+        },
+        {
+          "act_id": 3,
+          "name": "fill_ticket_form",
+          "instruction": "Fill out the 'Create New Service Ticket' form with these values:\n1. In the 'Title' field, enter: {{title}}\n2. In the 'Description' textarea, enter: {{description}}\n3. Select '{{category}}' from the 'Category' dropdown\n4. Select '{{priority}}' from the 'Priority' dropdown\n5. In the 'Requester' field, enter: {{requester}}\nLeave the Due Date field as is - do not modify it.\nDo NOT click the Create Ticket button yet.",
+          "description": "Fill all form fields"
+        },
+        {
+          "act_id": 4, 
+          "name": "submit_ticket",
+          "instruction": "Click the 'Create Ticket' button at the bottom of the form to submit it. Wait for the success message to appear.",
+          "description": "Submit the ticket form"
+        },
+        {
+          "act_id": 5,
+          "name": "read_ticket_id",
+          "instruction": "Look at the success message popup. Find the ticket ID which starts with 'INC-' followed by 6 digits. Return ONLY the ticket ID (example format: INC-123456).",
+          "description": "Read and return the ticket ID from success message",
+          "capture_output": true,
+          "output_variable": "ticket_id",
+          "output_pattern": "INC-\\d{6}"
+        },
+        {
+          "act_id": 6,
+          "name": "close_popup",
+          "instruction": "Click the OK button to close the success message popup.",
+          "description": "Close success popup"
+        }
+      ]
+    },
+    "itsm_update_status": {
+      "workflow_name": "itsm_update_status",
+      "description": "Update ticket status in ITSM portal",
+      "portal": "itsm",
+      "phase": "2 or 7",
+      "nova_act_calls": 7,
+      "variables": {
+        "itsm_url": "{{config.itsm_url}}",
+        "ticket_id": "{{state.ticket_id}}",
+        "ticket_title": "{{ticket.title}}",
+        "new_status": "{{params.new_status}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_itsm",
+          "instruction": "Navigate to {{itsm_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "clear_filters",
+          "instruction": "Click the 'Clear Filters' button if visible to reset the ticket list"
+        },
+        {
+          "act_id": 3,
+          "name": "search_ticket",
+          "instruction": "Clear the search field if it has any text, then type '{{ticket_id}}' into the search field. Wait for the table to filter."
+        },
+        {
+          "act_id": 4,
+          "name": "check_results",
+          "instruction": "Look at the Service Tickets table. Count how many rows are visible. If there are 0 rows, say 'NO RESULTS'. If there are 1 or more rows, say 'FOUND RESULTS'.",
+          "capture_output": true,
+          "fallback_search": "{{ticket_title}}"
+        },
+        {
+          "act_id": 5,
+          "name": "click_update",
+          "instruction": "Look at the tickets table. Find the FIRST row. In that row, find the 'Update' button in the Actions column and click it."
+        },
+        {
+          "act_id": 6,
+          "name": "select_status",
+          "instruction": "A modal dialog titled 'Update Ticket Status' should now be visible. Find the radio button labeled '{{new_status}}' and click it to select it."
+        },
+        {
+          "act_id": 7,
+          "name": "confirm_update",
+          "instruction": "In the status update modal, click the 'Update Status' button to confirm and save the change."
+        }
+      ]
+    },
+    "inventory_search": {
+      "workflow_name": "inventory_search",
+      "description": "Search for an item in the inventory portal and check stock level",
+      "portal": "inventory",
+      "phase": 3,
+      "nova_act_calls": 4,
+      "variables": {
+        "inventory_url": "{{config.inventory_url}}",
+        "item_name": "{{params.item_name}}",
+        "required_quantity": "{{params.quantity}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_inventory",
+          "instruction": "Navigate to {{inventory_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "clear_filters",
+          "instruction": "Click the 'Clear Filters' button if visible"
+        },
+        {
+          "act_id": 3,
+          "name": "search_item",
+          "instruction": "In the search field, enter '{{item_name}}' and wait for the table to filter"
+        },
+        {
+          "act_id": 4,
+          "name": "read_stock_level",
+          "instruction": "Look at the inventory table. Find the row that contains '{{item_name}}'. Read the 'Available' column value for that row. If no matching row is found, return '0'. Return ONLY the number.",
+          "description": "Read available stock quantity from filtered results",
+          "capture_output": true,
+          "output_variable": "stock_level",
+          "output_pattern": "\\d+"
+        }
+      ]
+    },
+    "procurement_create_po": {
+      "workflow_name": "procurement_create_po",
+      "description": "Create a purchase order in the procurement portal",
+      "portal": "procurement",
+      "phase": "4a",
+      "nova_act_calls": 9,
+      "variables": {
+        "procurement_url": "{{config.procurement_url}}",
+        "vendor": "{{params.vendor}}",
+        "item_name": "{{params.item_name}}",
+        "quantity": "{{params.quantity}}",
+        "unit_price": "{{params.unit_price}}",
+        "budget_code": "{{request.budget_code}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_procurement",
+          "instruction": "Navigate to {{procurement_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "click_create_po",
+          "instruction": "Click the 'Create Purchase Order' button"
+        },
+        {
+          "act_id": 3,
+          "name": "select_vendor",
+          "instruction": "Select '{{vendor}}' from the 'Vendor' dropdown"
+        },
+        {
+          "act_id": 4,
+          "name": "enter_item",
+          "instruction": "In the 'Item' field, clear any existing text and enter: {{item_name}}"
+        },
+        {
+          "act_id": 5,
+          "name": "enter_quantity",
+          "instruction": "In the 'Quantity' field, clear and enter: {{quantity}}"
+        },
+        {
+          "act_id": 6,
+          "name": "enter_price",
+          "instruction": "In the 'Unit Price' field, clear and enter: {{unit_price}}"
+        },
+        {
+          "act_id": 7,
+          "name": "enter_budget_code",
+          "instruction": "In the 'Budget Code' field, clear and enter: {{budget_code}}"
+        },
+        {
+          "act_id": 8,
+          "name": "submit_po",
+          "instruction": "Click the 'Create PO' button to submit the form"
+        },
+        {
+          "act_id": 9,
+          "name": "read_po_id",
+          "instruction": "Look at the success message or the Purchase Orders table. Find the PO number that was just created (format: PO- followed by year and 3 digits). Return ONLY that PO ID value.",
+          "capture_output": true,
+          "output_variable": "po_id",
+          "output_pattern": "PO-\\d{4}-\\d{3}"
+        }
+      ]
+    },
+    "procurement_submit_po": {
+      "workflow_name": "procurement_submit_po",
+      "description": "Submit a draft purchase order",
+      "portal": "procurement",
+      "phase": "4b",
+      "nova_act_calls": 3,
+      "variables": {
+        "procurement_url": "{{config.procurement_url}}",
+        "po_id": "{{state.po_id}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_procurement",
+          "instruction": "Navigate to {{procurement_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "select_po",
+          "instruction": "Find the row with PO number '{{po_id}}' and check its checkbox"
+        },
+        {
+          "act_id": 3,
+          "name": "click_submit",
+          "instruction": "Click the 'Submit Selected' button"
+        }
+      ]
+    },
+    "procurement_approve_po": {
+      "workflow_name": "procurement_approve_po",
+      "description": "Approve a submitted purchase order",
+      "portal": "procurement",
+      "phase": "4c",
+      "nova_act_calls": 3,
+      "variables": {
+        "procurement_url": "{{config.procurement_url}}",
+        "po_id": "{{state.po_id}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_procurement",
+          "instruction": "Navigate to {{procurement_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "select_po",
+          "instruction": "Find the row with PO number '{{po_id}}' and check its checkbox"
+        },
+        {
+          "act_id": 3,
+          "name": "click_approve",
+          "instruction": "Click the 'Approve Selected' button"
+        }
+      ]
+    },
+    "procurement_receive": {
+      "workflow_name": "procurement_receive",
+      "description": "Mark a purchase order as delivered",
+      "portal": "procurement",
+      "phase": "4d",
+      "nova_act_calls": 2,
+      "variables": {
+        "procurement_url": "{{config.procurement_url}}",
+        "po_id": "{{state.po_id}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_procurement",
+          "instruction": "Navigate to {{procurement_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "receive_delivery",
+          "instruction": "Find the row with PO number '{{po_id}}'. Click the 'Receive Delivery' button in that row."
+        }
+      ]
+    },
+    "inventory_add_item": {
+      "workflow_name": "inventory_add_item",
+      "description": "Add a new item to inventory after delivery",
+      "portal": "inventory",
+      "phase": 5,
+      "nova_act_calls": 10,
+      "variables": {
+        "inventory_url": "{{config.inventory_url}}",
+        "name": "{{params.item_name}}",
+        "category": "{{params.category}}",
+        "manufacturer": "{{params.manufacturer}}",
+        "model": "{{params.model}}",
+        "stock_level": "{{params.stock_level}}",
+        "unit_cost": "{{params.unit_cost}}",
+        "location": "{{params.location}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_inventory",
+          "instruction": "Navigate to {{inventory_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "click_add_item",
+          "instruction": "Click the 'Add Item' button"
+        },
+        {
+          "act_id": 3,
+          "name": "enter_name",
+          "instruction": "In the 'Item Name' field, enter: {{name}}"
+        },
+        {
+          "act_id": 4,
+          "name": "select_category",
+          "instruction": "Select '{{category}}' from the 'Category' dropdown"
+        },
+        {
+          "act_id": 5,
+          "name": "enter_manufacturer",
+          "instruction": "In the 'Manufacturer' field, enter: {{manufacturer}}"
+        },
+        {
+          "act_id": 6,
+          "name": "enter_model",
+          "instruction": "In the 'Model' field, enter: {{model}}"
+        },
+        {
+          "act_id": 7,
+          "name": "enter_stock_level",
+          "instruction": "In the 'Stock Level' field, enter: {{stock_level}}"
+        },
+        {
+          "act_id": 8,
+          "name": "enter_unit_cost",
+          "instruction": "In the 'Unit Cost' field, enter: {{unit_cost}}"
+        },
+        {
+          "act_id": 9,
+          "name": "enter_location",
+          "instruction": "In the 'Location' field, enter: {{location}}"
+        },
+        {
+          "act_id": 10,
+          "name": "submit_item",
+          "instruction": "Click the 'Add Item' button to submit the form"
+        }
+      ]
+    },
+    "inventory_allocate": {
+      "workflow_name": "inventory_allocate",
+      "description": "Allocate inventory item to employee via browser",
+      "portal": "inventory",
+      "phase": 6,
+      "nova_act_calls": 8,
+      "variables": {
+        "inventory_url": "{{config.inventory_url}}",
+        "item_name": "{{params.item_name}}",
+        "employee_name": "{{employee.name}}",
+        "quantity": "{{params.quantity}}",
+        "notes": "{{params.notes}}"
+      },
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_inventory",
+          "instruction": "Navigate to {{inventory_url}}"
+        },
+        {
+          "act_id": 2,
+          "name": "clear_filters",
+          "instruction": "Click the 'Clear Filters' button if visible to reset the inventory list"
+        },
+        {
+          "act_id": 3,
+          "name": "search_item",
+          "instruction": "In the search field, enter '{{item_name}}' to filter the inventory list"
+        },
+        {
+          "act_id": 4,
+          "name": "select_item",
+          "instruction": "In the inventory table, find the row containing '{{item_name}}' and check its checkbox in the first column"
+        },
+        {
+          "act_id": 5,
+          "name": "click_allocate",
+          "instruction": "Click the 'Allocate Item' button (it should now show '1 selected') to open the allocation form"
+        },
+        {
+          "act_id": 6,
+          "name": "fill_allocation_form",
+          "instruction": "In the 'Allocate Inventory Item' modal:\n1. In the 'Employee Name' field, enter: {{employee_name}}\n2. In the 'Quantity to Allocate' field, enter: {{quantity}}\n3. In the 'Reason/Notes' textarea, enter: {{notes}}"
+        },
+        {
+          "act_id": 7,
+          "name": "submit_allocation",
+          "instruction": "Click the 'Allocate Item' button at the bottom of the modal to confirm the allocation"
+        },
+        {
+          "act_id": 8,
+          "name": "close_confirmation",
+          "instruction": "Click the 'OK' button to close the success message"
+        }
+      ]
+    },
+    "ses_notification": {
+      "workflow_name": "ses_notification",
+      "description": "Send email notification via AWS SES API",
+      "portal": null,
+      "phase": 8,
+      "nova_act_calls": 0,
+      "api_only": true,
+      "note": "No browser action - uses AWS SES API directly",
+      "variables": {
+        "recipient": "{{employee.email}}",
+        "subject": "{{notification.subject}}",
+        "body": "{{notification.body}}"
+      },
+      "steps": []
+    }
+  },
+  "composite_workflows": {
+    "full_onboarding": {
+      "workflow_name": "full_onboarding",
+      "description": "Complete 8-phase IT onboarding workflow with conditional procurement",
+      "phases": [
+        {"phase": 1, "workflow": "itsm_create_ticket", "pass_outputs": ["ticket_id"]},
+        {"phase": 2, "workflow": "itsm_update_status", "inputs": {"new_status": "In Progress"}},
+        {"phase": 3, "workflow": "inventory_search", "pass_outputs": ["stock_level"], "note": "Checks stock, sets stock_level output"},
+        {"phase": "4a", "workflow": "procurement_create_po", "skip_if": "stock_sufficient", "pass_outputs": ["po_id"]},
+        {"phase": "4b", "workflow": "procurement_submit_po", "skip_if": "stock_sufficient"},
+        {"phase": "4c", "workflow": "procurement_approve_po", "skip_if": "stock_sufficient"},
+        {"phase": "4d", "workflow": "procurement_receive", "skip_if": "stock_sufficient"},
+        {"phase": 5, "workflow": "inventory_add_item", "skip_if": "stock_sufficient"},
+        {"phase": 6, "workflow": "inventory_allocate"},
+        {"phase": 7, "workflow": "itsm_update_status", "inputs": {"new_status": "Resolved"}},
+        {"phase": 8, "workflow": "ses_notification"}
+      ]
+    },
+    "procurement_cycle": {
+      "workflow_name": "procurement_cycle",
+      "description": "Complete procurement: create, submit, approve, receive",
+      "sub_workflows": [
+        {"workflow": "procurement_create_po", "pass_outputs": ["po_id"]},
+        {"workflow": "procurement_submit_po", "inputs": {"po_id": "{{outputs.po_id}}"}},
+        {"workflow": "procurement_approve_po", "inputs": {"po_id": "{{outputs.po_id}}"}},
+        {"workflow": "procurement_receive", "inputs": {"po_id": "{{outputs.po_id}}"}}
+      ]
+    }
+  },
+  "action_summary": {
+    "by_portal": {
+      "itsm": {
+        "total_nova_act_calls": 12,
+        "workflows": ["itsm_create_ticket", "itsm_update_status"]
+      },
+      "inventory": {
+        "total_nova_act_calls": 22,
+        "workflows": ["inventory_search", "inventory_add_item", "inventory_allocate"]
+      },
+      "procurement": {
+        "total_nova_act_calls": 17,
+        "workflows": ["procurement_create_po", "procurement_submit_po", "procurement_approve_po", "procurement_receive"]
+      }
+    },
+    "by_phase": [
+      {"phase": 1, "action": "Create ITSM Ticket", "nova_act_calls": 6},
+      {"phase": 2, "action": "Update to In Progress", "nova_act_calls": 7},
+      {"phase": 3, "action": "Check Inventory & Stock Level", "nova_act_calls": 4, "note": "Now reads actual stock level"},
+      {"phase": "4a", "action": "Create PO", "nova_act_calls": 9, "skip_if": "stock_sufficient"},
+      {"phase": "4b", "action": "Submit PO", "nova_act_calls": 3, "skip_if": "stock_sufficient"},
+      {"phase": "4c", "action": "Approve PO", "nova_act_calls": 3, "skip_if": "stock_sufficient"},
+      {"phase": "4d", "action": "Receive Delivery", "nova_act_calls": 2, "skip_if": "stock_sufficient"},
+      {"phase": 5, "action": "Add to Inventory", "nova_act_calls": 10, "skip_if": "stock_sufficient"},
+      {"phase": 6, "action": "Allocate Items", "nova_act_calls": 8},
+      {"phase": 7, "action": "Resolve Ticket", "nova_act_calls": 7},
+      {"phase": 8, "action": "Send Notification", "nova_act_calls": 0, "note": "AWS SES API only"}
+    ],
+    "conditional_logic": {
+      "stock_sufficient": "Skips procurement phases (4a-4d) and inventory add (5) when stock_level >= required quantity"
+    }
+  }
+}

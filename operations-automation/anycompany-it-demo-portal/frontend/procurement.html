@@ -287,7 +287,7 @@
         const vendors = [];
 
         // API Configuration - Load from generated config
-        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : 'https://wa0s6jimi7.execute-api.us-east-1.amazonaws.com/prod';
+        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : '';
 
         let selectedPOs = [];
 
@@ -420,7 +420,9 @@
 
         function updateVendorDropdown() {
             const vendorSelect = document.getElementById('vendorSelect');
-            vendorSelect.innerHTML = '';
+            while (vendorSelect.firstChild) {
+                vendorSelect.removeChild(vendorSelect.firstChild);
+            }
             
             vendors.filter(v => v.isActive).forEach(vendor => {
                 const option = document.createElement('option');
@@ -434,7 +436,7 @@
             const tbody = document.getElementById('poTableBody');
             const poCount = document.getElementById('poCount');
             
-            tbody.innerHTML = '';
+            tbody.textContent = '';
             poCount.textContent = purchaseOrders.length;
             
             purchaseOrders.forEach(po => {
@@ -532,7 +534,7 @@
 
         function renderVendors() {
             const vendorGrid = document.getElementById('vendorGrid');
-            vendorGrid.innerHTML = '';
+            vendorGrid.textContent = '';
             
             vendors.filter(v => v.isActive).forEach(vendor => {
                 const vendorCard = document.createElement('div');
@@ -749,12 +751,28 @@
                     // Reload POs from API
                     await loadPurchaseOrders();
                     const modelInfo = modelId ? ` (${matchType} match to existing model)` : ` (new product - no model match)`;
+                    
+                    // Re-enable the button
+                    createBtn.disabled = false;
+                    createBtn.textContent = originalText;
+                    
+                    // Update display and close modal
+                    renderPurchaseOrders();
+                    hideCreateModal();
+                    
+                    // Clear form
+                    document.getElementById('createModal').querySelector('form').reset();
+                    
                     showSuccessModal('Success', `Purchase Order ${newPO.id} created successfully!${modelInfo}`);
                 } else {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
             } catch (error) {
                 console.error('Error creating purchase order:', error);
+                
+                // Re-enable the button
+                createBtn.disabled = false;
+                createBtn.textContent = originalText;
                 
                 if (error.name === 'AbortError') {
                     showSuccessModal('Error', 'Request timed out. Please try again.');
@@ -783,19 +801,16 @@
                     };
                     
                     purchaseOrders.unshift(newPO);
+                    
+                    // Update display and close modal
+                    renderPurchaseOrders();
+                    hideCreateModal();
+                    
+                    // Clear form
+                    document.getElementById('createModal').querySelector('form').reset();
+                    
                     showSuccessModal('Warning', `Purchase Order ${newPO.id} created locally. Changes may not persist.`);
                 }
-            } finally {
-                // Re-enable the button
-                createBtn.disabled = false;
-                createBtn.textContent = originalText;
-                
-                // Update display and close modal
-                renderPurchaseOrders();
-                hideCreateModal();
-                
-                // Clear form
-                document.getElementById('createModal').querySelector('form').reset();
             }
         }
 
@@ -904,7 +919,7 @@
                 const actionBtn = document.getElementById('poActionBtn');
                 
                 // Clear existing content
-                detailsContent.innerHTML = '';
+                detailsContent.textContent = '';
                 
                 // Create Purchase Order Information fieldset
                 const poInfoFieldset = document.createElement('fieldset');
@@ -1020,16 +1035,6 @@
                 listDiv.appendChild(table);
                 itemsFieldset.appendChild(listDiv);
                 detailsContent.appendChild(itemsFieldset);
-                                            <td style="text-align: right;">${item.unitPrice.toFixed(2)}</td>
-                                            <td style="text-align: right; font-weight: bold;">${item.totalPrice.toFixed(2)}</td>
-                                        </tr>`
-                                    ).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </fieldset>
-                `;
-                
                 // Show appropriate action button based on status
                 if (po.status === 'Draft') {
                     actionBtn.style.display = 'inline-block';
@@ -1141,12 +1146,12 @@
                 // Update inventory for each item in the PO
                 return updateInventoryFromPO(po);
             }).then((inventoryUpdates) => {
-                // Show success message
-                const updateSummary = inventoryUpdates.length > 0 ? 
-                    `<p><strong>PO ${po.id} marked as delivered!</strong></p><p><strong>Inventory Updates:</strong></p><ul>${inventoryUpdates.map(update => `<li>${update}</li>`).join('')}</ul>` : 
-                    `<p><strong>PO ${po.id} marked as delivered!</strong></p><p>Inventory updates have been processed.</p>`;
-                
-                showSuccessModal('Delivery Received', updateSummary);
+                // Show success message using structured data (no HTML strings)
+                showSuccessModal('Delivery Received', null, {
+                    heading: `PO ${po.id} marked as delivered!`,
+                    details: inventoryUpdates.length > 0 ? 'Inventory Updates:' : 'Inventory updates have been processed.',
+                    items: inventoryUpdates
+                });
             }).catch((error) => {
                 console.error('Error processing delivery:', error);
                 // Revert local changes if API call failed
@@ -1262,59 +1267,39 @@
             }
         }
         
-        function showSuccessModal(title, message) {
+        function showSuccessModal(title, message, structuredData) {
             document.getElementById('successModalTitle').textContent = title;
             const successContent = document.getElementById('successModalContent');
             
-            // Clear existing content
-            successContent.innerHTML = '';
+            // Clear existing content safely
+            while (successContent.firstChild) {
+                successContent.removeChild(successContent.firstChild);
+            }
             
-            // Check if message contains HTML (for complex messages like inventory updates)
-            if (message.includes('<p>') || message.includes('<ul>')) {
-                // For complex messages, create elements safely
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = message;
-                
-                // Extract text content and recreate safely
-                const paragraphs = tempDiv.querySelectorAll('p');
-                const lists = tempDiv.querySelectorAll('ul');
-                
-                paragraphs.forEach(p => {
-                    const para = document.createElement('p');
-                    // Check if paragraph contains <strong> tags
-                    if (p.innerHTML.includes('<strong>')) {
-                        const strongElements = p.querySelectorAll('strong');
-                        let textContent = p.textContent;
-                        if (strongElements.length > 0) {
-                            const strong = document.createElement('strong');
-                            strong.textContent = strongElements[0].textContent;
-                            para.appendChild(strong);
-                            // Add remaining text after strong element
-                            const remainingText = textContent.replace(strongElements[0].textContent, '');
-                            if (remainingText) {
-                                para.appendChild(document.createTextNode(remainingText));
-                            }
-                        } else {
-                            para.textContent = textContent;
-                        }
-                    } else {
-                        para.textContent = p.textContent;
-                    }
-                    successContent.appendChild(para);
-                });
-                
-                lists.forEach(ul => {
+            // Handle structured data (heading, details, items list)
+            if (structuredData) {
+                if (structuredData.heading) {
+                    const headingPara = document.createElement('p');
+                    const strong = document.createElement('strong');
+                    strong.textContent = structuredData.heading;
+                    headingPara.appendChild(strong);
+                    successContent.appendChild(headingPara);
+                }
+                if (structuredData.details) {
+                    const detailsPara = document.createElement('p');
+                    detailsPara.textContent = structuredData.details;
+                    successContent.appendChild(detailsPara);
+                }
+                if (structuredData.items && structuredData.items.length > 0) {
                     const list = document.createElement('ul');
-                    const listItems = ul.querySelectorAll('li');
-                    listItems.forEach(li => {
-                        const listItem = document.createElement('li');
-                        listItem.textContent = li.textContent;
-                        list.appendChild(listItem);
+                    structuredData.items.forEach(function(item) {
+                        const li = document.createElement('li');
+                        li.textContent = item;
+                        list.appendChild(li);
                     });
                     successContent.appendChild(list);
-                });
-            } else {
-                // For simple messages, just use textContent
+                }
+            } else if (message) {
                 const paragraph = document.createElement('p');
                 paragraph.textContent = message;
                 successContent.appendChild(paragraph);
