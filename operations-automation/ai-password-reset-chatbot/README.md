@@ -124,32 +124,44 @@ This solution uses **dual Cognito integration** for different purposes:
 
 **Windows (PowerShell):**
 ```powershell
-.\deploy-all.ps1
+.\run-demo.ps1
 ```
 
 **macOS/Linux:**
 ```bash
-chmod +x deploy-all.sh scripts/build-frontend.sh
-./deploy-all.sh
+chmod +x run-demo.sh scripts/build-frontend.sh
+./run-demo.sh
 ```
 
 **Time:** ~10 minutes (CodeBuild container compilation takes 5-10 minutes)
 
 ### Test the Demo
 
-1. Create a test user in Cognito:
+1. Create a test user in Cognito with an email address you can access:
 ```bash
 # Get User Pool ID from deployment output, then:
 aws cognito-idp admin-create-user \
   --user-pool-id <USER_POOL_ID> \
-  --username test@youremail.com \
-  --temporary-password TempPass1! \
+  --username your.email@example.com \
+  --user-attributes Name=email,Value=your.email@example.com \
   --message-action SUPPRESS
 ```
 
-2. Open the CloudFront URL from deployment output
-3. Type "I forgot my password" or click a suggested prompt
-4. Follow the chatbot's guidance through the reset flow
+2. **CRITICAL:** Set a permanent password to change user status from `FORCE_CHANGE_PASSWORD` to `CONFIRMED`:
+```bash
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <USER_POOL_ID> \
+  --username your.email@example.com \
+  --password TempPass123! \
+  --permanent
+```
+
+**Why this step is required:** Cognito will NOT send password reset emails to users in `FORCE_CHANGE_PASSWORD` status. Setting a permanent password changes the status to `CONFIRMED`, which enables password reset functionality.
+
+3. Open the CloudFront URL from deployment output
+4. Type "I forgot my password" or click a suggested prompt
+5. Follow the chatbot's guidance through the reset flow
+6. Check your email for the verification code (may take 1-5 minutes)
 
 ## Project Structure
 
@@ -186,8 +198,8 @@ ai-password-reset-chatbot/
 │   ├── test_session_persistence.py # Session state testing
 │   ├── test_streaming_debug.py # Streaming response testing
 │   └── test_streaming_simulation.py # Streaming simulation
-├── deploy-all.ps1            # One-command deploy (Windows)
-├── deploy-all.sh             # One-command deploy (macOS/Linux)
+├── run-demo.ps1              # One-command deploy (Windows)
+├── run-demo.sh               # One-command deploy (macOS/Linux)
 ├── ARCHITECTURE.md           # Technical design documentation
 └── README.md                 # This file
 ```
@@ -196,25 +208,25 @@ ai-password-reset-chatbot/
 
 | Stack | Purpose | Key Resources | Dependencies |
 |-------|---------|---------------|--------------|
-| PasswordResetInfra | Build pipeline & IAM | ECR Repository, CodeBuild Project, Agent Runtime IAM Role, S3 Source Bucket | None |
-| PasswordResetAuth | Identity management | Cognito User Pool, Identity Pool, Unauthenticated IAM Role | None |
-| PasswordResetRuntime | Agent deployment | AgentCore Runtime, CodeBuild Trigger, Build Waiter | Infra + Auth |
-| PasswordResetFrontend | Web hosting | S3 Bucket, CloudFront Distribution, Website Deployment | Runtime + Auth |
+| PasswordResetInfra-{region} | Build pipeline & IAM | ECR Repository, CodeBuild Project, Agent Runtime IAM Role, S3 Source Bucket | None |
+| PasswordResetAuth-{region} | Identity management | Cognito User Pool, Identity Pool, Unauthenticated IAM Role | None |
+| PasswordResetRuntime-{region} | Agent deployment | AgentCore Runtime, CodeBuild Trigger, Build Waiter | Infra + Auth |
+| PasswordResetFrontend-{region} | Web hosting | S3 Bucket, CloudFront Distribution, Website Deployment | Runtime + Auth |
 
 **Stack Details:**
 
-**PasswordResetInfra:**
+**PasswordResetInfra-{region}:**
 - **ECR Repository**: Stores the containerized Strands Agent
 - **CodeBuild Project**: Compiles agent code into container images
 - **Agent Runtime IAM Role**: Permissions for AgentCore to access Cognito APIs
 - **S3 Source Bucket**: Stores agent source code for builds
 
-**PasswordResetAuth:**
+**PasswordResetAuth-{region}:**
 - **Cognito User Pool**: Target user accounts for password resets
 - **Cognito Identity Pool**: Anonymous AWS credentials for frontend
 - **Unauthenticated IAM Role**: Minimal permissions for AgentCore API access
 
-**PasswordResetRuntime:**
+**PasswordResetRuntime-{region}:**
 - **AgentCore Runtime**: Managed hosting environment for the Strands Agent
 - **Custom Resources**: Triggers CodeBuild and waits for container compilation
 - **Environment Variables**: User Pool configuration passed to agent
@@ -382,6 +394,20 @@ Cognito enforces rate limits on password reset attempts. Wait a few minutes befo
 
 ### "Invalid verification code"
 Codes expire after 1 hour. Request a new code through the chatbot.
+
+### "Not receiving verification emails"
+**Common causes:**
+1. **Corporate email filtering**: Corporate email systems (e.g., company domains) may block emails from Cognito's default email service
+2. **Email delivery delay**: Cognito's default email service can take 5-15 minutes to deliver emails
+3. **Spam folder**: Check your spam/junk folder
+
+**Solutions:**
+- Use a personal email address (Gmail, Outlook, Yahoo, etc.) for testing
+- Ensure user status is `CONFIRMED` (not `FORCE_CHANGE_PASSWORD`):
+  ```bash
+  aws cognito-idp admin-set-user-password --user-pool-id <USER_POOL_ID> --username your.email@example.com --password TempPass123! --permanent
+  ```
+- For production deployments, configure Cognito to use Amazon SES instead of the default email service
 
 ## Integration with Existing Systems
 

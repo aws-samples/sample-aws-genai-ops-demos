@@ -1,0 +1,532 @@
+
+---
+-
+  subj: "Your certificate is renewed"
+  body: |-
+    Greetings from Amazon Web Services,
+
+    This is to notify you that AWS Certificate Manager (ACM) has completed the renewal of an SSL/TLS certificate that certificate includes the primary domain {domain} and a total of {n} domains.
+  template: |-
+    Certificates renewed: {domain}
+
+
+-
+  subj: "The launch template cannot be found for an Auto Scaling group in account {account_id}"
+  body: |-
+    Hello,
+
+    At {date}, we detected an issue with your Auto Scaling group {arn} in AWS account {account_id}.
+
+    The launch template associated with this Auto Scaling group cannot be found.
+
+  template: |-
+    Launch template cannot be found: {arn}
+
+
+-
+  subj: "Amazon EC2 Maintenance: Instance scheduled for reboot [AWS Account ID: {account_id}]"
+  body: |-
+    Hello,
+
+    One or more of your Amazon EC2 instances associated with your AWS account (AWS Account ID: {account_id}) are scheduled for maintenance between {start_date} and {end_date}. During this time, the following instances in the {region} region will be unavailable and rebooted. The tags associated with these instances are included below.
+
+    The affected instances are listed below:
+    {instance_id}
+    {tags}
+
+  template: |-
+    Instance scheduled for reboot: {instance_id}
+
+
+-
+  subj: "Amazon Location Service Preview Period Ending [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    Thank you for your usage of Amazon Location Service. The preview period for the service will end after {date}, when the service becomes generally available. If you continue using the service after the preview ends, then going forward you will be billed for any usage that exceeds the service’s free tier, in accordance with our pricing plan: https://aws.amazon.com/location/pricing/
+  template:  |-
+    Location Service Preview Period Ending after {date}
+
+-
+  subj: "Action required: Amazon Data Pipeline IAM Policy Deprecation Notice [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    On {date}, AWS will deprecate the '{policy}' policy. The policy will continue to work for all currently attached users, groups, roles, and pipelines. If you have any automated workflows that attach the 'AWSDataPipelineRole' policy to a user, group, or a role, you will need to change the automated workflows to point to a new policy. These automated workflows will fail after {date2}.
+  template:  |-
+    AWS will deprecate the '{policy}' policy  on {date}
+
+
+-
+  subj: "Amazon EC2 Instance Retirement [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    EC2 has detected degradation of the underlying hardware hosting your Amazon EC2 instance (instance-ID: {instance_id}) associated with your AWS account (AWS Account ID: {account_id}) in the {region} region. Due to this degradation your instance could already be unreachable. We will stop your instance after {date}. Please take appropriate action before this time.
+
+  template:  |-
+      EC2 Instance Retirement {instance_id} in {region}. We will stop your instance after {date}: 
+
+
+-
+  subj: "Athena Engine Version 1 Deprecation Notice [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    Athena engine version 1 will be retired on {date} for the {region} Region. After this date, workgroups using Athena engine version 1 will be upgraded to Athena engine version 2. For more details about the improvements and changes in engine version 2 see "Athena Engine Version Reference" [1]. To learn how to upgrade your accounts, see "Changing Athena Engine Versions" [2].
+
+  template:  |-
+    Athena engine version 1 will be retired on {date}
+
+
+
+-
+  subj: "Amazon EC2 Maintenance: Instance scheduled for retirement [AWS Account ID: {account_id}]"
+  body:  |-
+    Hello,
+
+    One or more of your Amazon EC2 instances associated with your AWS account (AWS Account ID: {account_id}) are scheduled for maintenance that requires your instances to be retired on {date}. The following instances in the {region} region will be stopped after {date2}.
+
+    The affected instances are listed below:
+    {instance_id}
+
+  template:  |-
+    Instance scheduled for retirement
+
+
+-
+  subj: "[Action Required] Security Groups for EC2 Launch Templates [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We are writing to notify you that between {date} and {date2}, some EC2 Launch Templates that you created or modified using the EC2 Management Console may have resulted in templates missing one or more security groups. This issue would not have decreased the security posture of EC2 Instances launched from these templates as rules on EC2 security groups can only grant connectivity to/from instances. However, instances launched from these templates may result in an instance with limited connectivity to/from the instance. We have resolved the issue that allowed creation of Launch Templates with missing security groups and the service is operating normally.
+
+  template:  |-
+    Missing one or more security groups for EC2 Launch Templates
+
+
+-
+  subj: "Amazon EC2 Maintenance: Instance scheduled for retirement [AWS Account ID: {account_id}]"
+  body:  |-
+    Hello,
+
+    One or more of your Amazon EC2 instances associated with your AWS account (AWS Account ID: {account_id2}) are scheduled for maintenance that requires your instances to be retired on {date}. The following instances in the {date1} region will be stopped after {date3}. The tags associated with these instances are included below.
+
+    The affected instances are listed below:
+    {instance_id}
+
+  template:  |-
+    Instance scheduled for retirement {instance_id} on {date}
+
+
+-
+  subj: "Amazon Elasticsearch Service Software Update available for domain(s) in AWS account {account_id}"
+  body:  |-
+    A new service software update {update} is available for your domain(s) in the {region} Region. Amazon Elasticsearch Service regularly releases service software updates to improve the availability, performance, and resiliency of your domain. It is recommended that you install service software updates as soon as possible.
+  template:  |-
+    A new service software update {update} is available for Elasticsearch
+
+
+-
+  subj: "{prefix} AWS Lambda end of support for Node.js 10 [AWS Account: {account_id}]"
+  body:  ""
+
+  template:  |-
+    AWS Lambda end of support for Node.js 10
+
+-
+  subj: "Amazon Athena engine version upgraded for your workgroup [{workgroup}] in [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    At {date}, Amazon Athena upgraded your workgroup [{workgroup}] to use Athena engine version {v} in your AWS account.
+
+  template:  |-
+    Amazon Athena engine version will be upgraded to v{v} for your {workgroup} workgroup at {date}
+
+-
+  subj: "[ACTION REQUIRED] Issue that could impact your Amazon Aurora PostgreSQL or Amazon RDS for PostgreSQL databases [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    Our records indicate that you are running Amazon Aurora PostgreSQL or Amazon RDS for PostgreSQL databases in versions that could be affected by the PostgreSQL {upgrade} [1]
+  template:  |-
+    CRITICAL SECURITY VUNERABILITY We recommend that you perform an upgrade on your RDS instances ({upgrade}). 
+
+
+-
+  subj: "Amazon EMR Managed Policies Deprecation Notice [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    Amazon EMR has launched three new managed policies for granting access to EMR. The new managed policies have been scoped down to align with AWS best practices. Given the launch of new policies, the existing policies, namely {policies} will be deprecated on {date}. The deprecated policies will continue to work for all currently attached users, groups, and roles but cannot be attached to any new users, groups, or roles. You can learn more about managed policy deprecation here
+  template:  |-
+    Amazon EMR Managed Policies {policies} will be deprecated on {date}
+
+-
+  subj: "[IMPORTANT] Blue/Green Update to your Elasticsearch Service Domains [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We have identified a background process issue with a recent update of some Amazon Elasticsearch Service domains that are running on Graviton2-based instances.
+  template:  |-
+    Update to your Elasticsearch Service Domains
+
+
+-
+  subj: "Important notice about your AWS Account regarding VPN connections [AWS Account: {account_id}]"
+  body:  |-
+    Hello AWS VPN Customer, 
+
+    Your VPN Connection {vpn} in the {region} Region had a momentary lapse of redundancy as one of two tunnel endpoints was replaced. 
+  template:  |-
+    Your VPN Connection {vpn} in the {region} Region had a momentary lapse of redundancy as one of two tunnel endpoints was replaced.
+
+
+-
+  subj: "[Action May Be Required] AWS Glue create-job API Default Version Change [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    On {date}, AWS will change the default Glue version on the create-job API [1] and create-job CLI [2] {from_to}. If
+  template:  |-
+    AWS Glue create-job API Default Version Change {from_to}
+
+
+-
+  subj: "{product} Subscription Renewal on {date} for AWS Account ID: {account_id}"
+  body:  |-
+    Dear AWS customer,
+
+    You are receiving this email because you are subscribed to {product} for the AWS Account ID: {account_id}
+
+    Your current {nmonth_subscription} for {product2} ends on {date}. In order to ensure that you continue to receive the same level of protection, your subscription will be renewed.
+  template:  |-
+    Your {product} subscription will be autmatically renewed on {date}.
+
+
+-
+  subj: "{product} Subscription Renewed for AWS Account ID: {account_id}"
+  body:  |-
+    Dear AWS customer,
+
+    You are receiving this email because you are subscribed to {product} for the AWS Account ID: {account_id}
+
+    Your {term} subscription for {product2} has been renewed.
+  template:  |-
+    Your {product} {term} subscription is autmatically renewed.
+
+
+-
+  subj: "[Auto Recovery] Amazon EC2 instance recovery: Success [AWS Account: {account_id}]"
+  body:  |-
+    Dear Amazon EC2 Customer,
+
+    We have important news about your account (AWS Account ID: {account_id}). One of your EC2 instances in the {region} region has failed a System status check and the instance was successfully recovered by EC2 Auto Recovery. The Instance ID is:
+    {instance_id}
+
+    Your instance is running and reporting healthy. If you have startup procedures that aren't automated during your instance boot process, please remember that you need to log in and run them.
+  template:  |-
+     Amazon EC2 instance {instance_id} was successfuly recovered by EC2 Auto Recovery.
+
+
+-
+  subj: "Amazon AppStream 2.0 stopped a fleet in AWS account {account_id}"
+  body:  |-
+    Hello,
+
+    At {date}, Amazon AppStream 2.0 stopped a fleet in your AWS account automatically due to an issue. Following is the Amazon Resource Name (ARN) for the fleet that was stopped:
+    {arn}
+
+
+    For information 
+  template:  |-
+    At {date} Amazon AppStream 2.0 stopped a fleet automatically  {arn} due to an issue.
+
+-
+  subj: "Update Regarding ADS Data Exploration os_name field [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    The Application Discovery Service has updated a data field that is exported to S3 using the Data Exploration feature. The field "os_name" is now in the format "<os_type> - <version> - <system_release>". This was previously in the format "<os_type> - <version>".
+
+  template:  |-
+    Application Discovery Service has updated a data field that is exported to S3 using the Data Exploration feature
+
+
+-
+  subj: "Your certificate has expired"
+  body:  |-
+    Greetings from Amazon Web Services,
+
+    Recently we attempted to renew an SSL/TLS certificate that included the primary domain {domain} and a total of 1 domains.
+
+    AWS account ID: {account_id}
+    AWS Region name: {region}
+    Certificate identifier: {cert_arn}
+    Private CA identifier: {ca_arn}
+
+    ACM was unable to renew the certificate because of the following error: {error}. For details on and steps to address this failure, see
+  template:  |-
+    ACM was unable to renew the {domain} certificate. Error = {error}
+
+
+-
+  subj: "Important notice about your AWS Account regarding VPN connections [AWS Account: {account_id}]"
+  body:  |-
+    Hello AWS VPN Customer,
+
+    You're receiving this message because you have at least one VPN Connection in the {region} Region, for which your VPN Customer Gateway is not using both tunnels. This mode of operation is not recommended as you may experience connectivity issues if your active tunnel fails.
+
+    The VPN Connection(s) which do not currently have both tunnels established are:
+
+    {vpn_id}
+
+
+    You can obtain
+  template:  |-
+    At least one VPN Connection in the {region} Region, for which your VPN Customer Gateway is not using both tunnels.
+-
+  subj: "URGENT Action Required - Your certificate renewal"
+  body:  |-
+    Greetings from Amazon Web Services,
+
+    You have an SSL/TLS certificate from AWS Certificate Manager (ACM) that expires on {date}. This certificate includes the primary domain {domain} and a total of {n_domain} domains.
+
+    AWS account ID: {account_id}
+    AWS Region name: {region}
+    Certificate identifier: {arn1}
+    Private CA identifier: {arn2}
+
+    ACM was unable to renew the certificate automatically because of the following error: {error}. For details
+  template:  |-
+    ACM was unable to renew the certificate {domain}  automatically. Error: {error}
+
+-
+  subj: "Action Required - Your certificate renewal"
+  body:  |-
+    Greetings from Amazon Web Services,
+
+    You have an AWS Certificate Manager (ACM) SSL/TLS certificate in your AWS account that expires on {date}. That certificate includes the primary domain {domain} and a total of {n_domain} domains.
+
+    AWS account ID: {account_id}
+    AWS Region name: {region}
+    Certificate identifier: {arn1}
+
+    ACM was unable to automatically renew your certificate. The domain validation method for this certificate is email validation. This method requires the domain owner or someone authorized by the domain owner to take one of the following actions before {date2}. If no action is taken, the certificate will expire, which might cause your website or application to become unreachable.
+  template:  |-
+    CM was unable to automatically renew your certificate {domain}
+
+
+-
+  subj: "Amazon RDS Maintenance [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We are contacting you to inform you that one or more of your Amazon RDS DB instances are scheduled to receive maintenance on the underlying hardware between {date} and {date2}. You can view the scheduled maintenance time and perform opt-in actions on the RDS Console, using the AWS CLI or the AWS RDS API [1].
+
+    Region          DB Instance Identifier          Affected Availability Zone(s)
+    ======================================================================
+    {region}      {db}      {az}
+
+
+    During the maintenance, single-AZ deployments will be unavailable for a few minutes.
+  template:  |-
+    RDS DB {db} in {az} is scheduled to receive maintenance on the underlying hardware between {date} and {date2}
+
+-
+  subj: "AWS Direct Connect Maintenance Complete [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We would like to inform you that the maintenance that was scheduled for AWS Direct Connect router {details} has been completed. Please find below your AWS Direct Connect services that would have been affected by this maintenance.
+
+    {instances}
+
+
+    If you have any questions regarding the completed work
+  template:  |-
+    AWS Direct Connect Maintenance Completed
+
+
+-
+  subj: "AWS Storage Gateway Software Update [AWS Account: {account_id}]"
+  body:  |-
+    Dear AWS Storage Gateway Customer,
+
+    An AWS Storage Gateway software update will be available beginning on {date}. This update includes several enhancements and service improvements. The update will be automatically deployed to one or more of your gateways during the configured weekly maintenance time. Your gateway will be unavailable for a short period while the associated services are updated and restarted.
+
+  template:  |-
+    AWS Storage Gateway software update will be automatically deployed to one or more of your gateways during the configured weekly maintenance time starting from {date}. 
+
+-
+  subj: "[Action Required] Migrate to Signature Version 4 to continue using Amazon SES [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    Amazon Simple Email Service (SES) had extended support for Signature Version 3 to {date}. To continue to use Amazon SES, you must migrate to Signature Version 4 which offers enhanced security for authentication and authorization of Amazon SES customers.
+
+  template:  |-
+    FIXME:You must migrate SES to Signature Version 4
+
+-
+  subj: "A new Amazon ElastiCache service update is available [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    A new ElastiCache service update, {update}, is now available for your ElastiCache cluster(s).
+  template:  |-
+    A new ElastiCache service update, {update} is now available for your ElastiCache cluster(s).
+
+-
+  subj: "AWS Unified Registration Cancellation Confirmation"
+  body:  |-
+    Greetings from Amazon Web Services,
+    This e-mail confirms that you have closed your Amazon Web Services account.
+
+  template:  |-
+    Registration Cancellation Confirmation
+
+-
+  subj: "Amazon Web Services – Email Address Verification Request in region {region}"
+  body:  |-
+    Dear Amazon Web Services Customer,
+  template:  |-
+    Email Verification
+
+
+-
+  subj: "AWS Free Tier limit alert"
+  body: "" 
+  template:  |-
+    Free Tier limit alert
+
+
+-
+  subj: "System Maintenance for AWS MSK Clusters in Account {account_id}"
+  body:  |-
+    MSK will patch the underlying operating system of brokers in your MSK cluster(s) with the latest OS updates between {date} and {date2}. MSK patches brokers to address security vulnerabilities and to update software supporting the brokers. MSK uses an automated rolling update to patch one broker at a time, following Kafka best practices. To ensure client I/O continuity during the rolling update that is performed as part of the patching process, we recommend you review the configuration of your clients and your Apache Kafka topics as follows:
+
+    {info}
+
+    Patching will occur on the following cluster:
+
+    {arn}
+
+    If you have questions or concerns, please contact AWS Support 
+  template:  |-
+    AWS MSK Clusters Maintenance planed between {date} and {date2}. {arn} 
+-
+  subj: "Amazon ECS-optimized Amazon Linux AMI end-of-life [AWS Account: {account_id}]"
+  body: ""
+
+  template:  |-
+    Amazon ECS-optimized Amazon Linux AMI end-of-life
+
+-
+  subj: "Amazon EC2 Maintenance: Instance scheduled for reboot [AWS Account ID: {account_id}]"
+  body:  |-
+    Hello,
+
+    One or more of your Amazon EC2 instances associated with your AWS account (AWS Account ID: {account_id}) are scheduled for maintenance between {date} and {date2}. During this time, the following instances in the {region} region will be unavailable and rebooted. 
+
+    The affected instances are listed below:
+    {instance_id}
+
+
+    At any time before {date3}, you can reschedule this maintenance or stop and start the instance
+  template:  |-
+    EC2 Instance scheduled {instance_id} for reboot between {date} and {date2}
+
+
+-
+  subj: "Amazon Web Services: New Support case: {case_id}"
+  body:  |-
+    Amazon Web Services has opened case.
+  template:  |-
+    Opened case {case_id}
+
+
+-
+  subj: "[Action Required] AWS Lambda end of support for Python 2.7 [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+  template:  |-
+    AWS Lambda end of support for Python 2.7
+
+
+-
+  subj: "[Reminder] New Amazon ElastiCache Service Update Available [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    A new ElastiCache update {update} is available for your ElastiCache instances. This update improves the security, reliability, and operational performance of your ElastiCache instance.
+
+  template:  |-
+    New Amazon ElastiCache Service Update ({update}) Available
+
+-
+  subj: "Canonical announces Ubuntu 16.04 LTS end of standard support [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+  template:  |-
+    Ubuntu 16.04 LTS end of standard support
+
+
+-
+  subj: "Minor Version Upgrade Postpone Notification for Amazon Aurora (with 5.6 MySQL compatibility) [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+  template:  |-
+    Upgrade Postpone Notification for Amazon Aurora
+
+
+-
+  subj: "Important information regarding NLB Sticky Sessions - Stickiness Change Notification  [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We are contacting you regarding your Network Load Balancer(s) using the Sticky sessions feature. Starting on {date}, we will be deploying a change that will route new connections from the same client to the same backend target regardless of the Availability Zone your client connects through. Prior to this change, the new connections could potentially route to a different backend target per Availability Zone depending on the Availability Zone your client connects through. This change should not impact your application as NLB will behave as originally intended, and no action is required at this time.
+
+  template: |-
+    NLB Starting on {date}, we will be deploying a change that will route new connections from the same client to the same backend target regardless of the Availability Zone your client connects through.
+
+
+-
+  subj: "AWS Elastic Beanstalk Managed Policy Deprecation [AWS Account: {account_id}]"
+  body:  |-
+    Hello,
+
+    We have detected that at least one user, group, or role in your account is currently employing the {policy} managed policy. This policy is scheduled for deprecation and will no longer be available for attachment to new IAM users, groups, or roles after {date}.
+
+  template: |-
+    AWS Elastic Beanstalk Managed Policy {policy} Deprecation
+
+
+-
+  subj: "Welcome to Amazon Web Services"
+  body:  |-
+    Thank you for creating an Amazon Web Services account
+  template: |-
+    Welcome to Amazon Web Services
+
+-
+  subj: "Amazon Monitoring Services Sign-Up Confirmation"
+  body:  |-
+    Thank you for signing up for Amazon Monitoring Services. You now have access to Amazon Monitoring Services.
+  template: |-
+    Amazon Monitoring Services Sign-Up Confirmation
+-
+  subj: "Your AWS Account is Ready - Get Started Now"
+  body:  |-
+    Welcome to Amazon Web Services
+  template: |-
+    Your AWS Account is Ready
+
+
+-
+  subj: "AWS Support ({level}) Sign-Up Confirmation"
+  body:  |-
+    Thank you for signing up for AWS Support
+  template: |-
+    AWS Support {level}

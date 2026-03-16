@@ -3,8 +3,7 @@ set -e
 
 # Default values
 REPOSITORY_URL=""
-REGION="us-east-1"
-DEPLOY_ONLY=false
+SKIP_SETUP=false
 DEFAULT_REPO="https://github.com/aws-samples/sample-serverless-digital-asset-payments"
 
 # Parse command line arguments
@@ -14,12 +13,8 @@ while [[ $# -gt 0 ]]; do
             REPOSITORY_URL="$2"
             shift 2
             ;;
-        --region)
-            REGION="$2"
-            shift 2
-            ;;
-        -d|--deploy-only)
-            DEPLOY_ONLY=true
+        -s|--skip-setup)
+            SKIP_SETUP=true
             shift
             ;;
         -h|--help)
@@ -29,14 +24,17 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -r, --repository-url URL    Git repository URL to analyze"
-            echo "  --region REGION            AWS region for deployment (default: us-east-1)"
-            echo "  -d, --deploy-only          Only deploy infrastructure, don't start assessment"
+            echo "  -s, --skip-setup           Skip infrastructure deployment, only start assessment"
             echo "  -h, --help                 Show this help message"
+            echo ""
+            echo "Notes:"
+            echo "  This script uses the AWS region configured in your AWS CLI profile."
+            echo "  To set your region: aws configure set region <your-region>"
             echo ""
             echo "Examples:"
             echo "  $0"
             echo "  $0 -r \"https://github.com/owner/repo\""
-            echo "  $0 --region \"us-west-2\""
+            echo "  $0 -s"
             exit 0
             ;;
         *)
@@ -78,93 +76,98 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CDK_DIR="$SCRIPT_DIR/infrastructure/cdk"
 SHARED_SCRIPTS_DIR="$SCRIPT_DIR/../../shared/scripts"
 
-# Run prerequisites check
-echo "Running prerequisites check..."
-"$SHARED_SCRIPTS_DIR/check-prerequisites.sh" \
-    --required-service "transform" \
-    --require-cdk
+if [ "$SKIP_SETUP" = false ]; then
+    # Run prerequisites check
+    echo "Running prerequisites check..."
+    "$SHARED_SCRIPTS_DIR/check-prerequisites.sh" \
+        --required-service "transform" \
+        --require-cdk
 
-if [[ $? -ne 0 ]]; then
-    echo "Prerequisites check failed"
-    exit 1
-fi
+    if [[ $? -ne 0 ]]; then
+        echo "Prerequisites check failed"
+        exit 1
+    fi
 
-# Get AWS account and region info
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-CURRENT_REGION=$(aws configure get region)
-if [[ -z "$CURRENT_REGION" ]]; then
-    CURRENT_REGION="$REGION"
-fi
+    # Get AWS account and region info
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 
-echo ""
-echo "Deploying infrastructure via CDK..."
-echo "      Region: $CURRENT_REGION"
+    # Get region using shared utility
+    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    CURRENT_REGION=$(get_aws_region)
 
-# Deploy CDK stack using shared script
-"$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
+    echo ""
+    echo "Deploying infrastructure via CDK..."
+    echo "      Region: $CURRENT_REGION"
 
-if [[ $? -ne 0 ]]; then
-    echo "CDK deployment failed"
-    exit 1
+    # Deploy CDK stack using shared script
+    "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
+
+    if [[ $? -ne 0 ]]; then
+        echo "CDK deployment failed"
+        exit 1
+    fi
+
+    # Upload buildspec to S3
+    echo ""
+    echo "Uploading buildspec to S3..."
+    BUILDSPEC_PATH="$SCRIPT_DIR/$BUILDSPEC_FILE"
+    aws s3 cp "$BUILDSPEC_PATH" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null
+    if [[ $? -eq 0 ]]; then
+        echo "      ✓ Buildspec uploaded successfully ($BUILDSPEC_FILE)"
+    else
+        echo "      ❌ Failed to upload buildspec"
+        exit 1
+    fi
+
+    # Upload custom transformation definition
+    echo ""
+    echo "Uploading custom Graviton transformation definition..."
+    GRAVITON_TRANSFORM_DIR="$SCRIPT_DIR/graviton-transformation-definition"
+    aws s3 cp "$GRAVITON_TRANSFORM_DIR" "s3://$OUTPUT_BUCKET/graviton-transformation-definition/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null
+    if [[ $? -eq 0 ]]; then
+        echo "      ✓ Custom transformation definition uploaded successfully"
+    else
+        echo "      ❌ Failed to upload custom transformation definition"
+        exit 1
+    fi
+
+    # Upload knowledge items
+    echo ""
+    echo "Uploading Graviton knowledge items..."
+    KNOWLEDGE_ITEMS_DIR="$SCRIPT_DIR/knowledge-items"
+    aws s3 cp "$KNOWLEDGE_ITEMS_DIR" "s3://$OUTPUT_BUCKET/knowledge-items/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null
+    if [[ $? -eq 0 ]]; then
+        echo "      ✓ Knowledge items uploaded successfully"
+    else
+        echo "      ❌ Failed to upload knowledge items"
+        exit 1
+    fi
+else
+    # Skip setup - just get region and retrieve stack outputs
+    echo "Skipping infrastructure deployment..."
+    
+    # Get region using shared utility (prerequisites check was skipped)
+    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    CURRENT_REGION=$(get_aws_region)
+    
+    echo "      Region: $CURRENT_REGION"
 fi
 
 # Get bucket name and project name from CloudFormation outputs
 echo ""
 echo "Getting stack outputs..."
-OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name GravitonAssessmentStack --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
-PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name GravitonAssessmentStack --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
+STACK_NAME="GravitonAssessmentStack-$CURRENT_REGION"
+OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
+PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
 if [[ -z "$OUTPUT_BUCKET" || -z "$PROJECT_NAME" ]]; then
     echo "      ❌ Failed to get stack outputs"
+    if [ "$SKIP_SETUP" = true ]; then
+        echo "      Stack may not exist. Run without -s to deploy infrastructure first."
+    fi
     exit 1
 fi
 echo "      Output Bucket: $OUTPUT_BUCKET"
 echo "      CodeBuild Project: $PROJECT_NAME"
-
-# Upload buildspec to S3
-echo ""
-echo "Uploading buildspec to S3..."
-BUILDSPEC_PATH="$SCRIPT_DIR/$BUILDSPEC_FILE"
-aws s3 cp "$BUILDSPEC_PATH" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null
-if [[ $? -eq 0 ]]; then
-    echo "      ✓ Buildspec uploaded successfully ($BUILDSPEC_FILE)"
-else
-    echo "      ❌ Failed to upload buildspec"
-    exit 1
-fi
-
-# Upload custom transformation definition
-echo ""
-echo "Uploading custom Graviton transformation definition..."
-GRAVITON_TRANSFORM_DIR="$SCRIPT_DIR/graviton-transformation-definition"
-aws s3 cp "$GRAVITON_TRANSFORM_DIR" "s3://$OUTPUT_BUCKET/graviton-transformation-definition/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null
-if [[ $? -eq 0 ]]; then
-    echo "      ✓ Custom transformation definition uploaded successfully"
-else
-    echo "      ❌ Failed to upload custom transformation definition"
-    exit 1
-fi
-
-# Upload knowledge items
-echo ""
-echo "Uploading Graviton knowledge items..."
-KNOWLEDGE_ITEMS_DIR="$SCRIPT_DIR/knowledge-items"
-aws s3 cp "$KNOWLEDGE_ITEMS_DIR" "s3://$OUTPUT_BUCKET/knowledge-items/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null
-if [[ $? -eq 0 ]]; then
-    echo "      ✓ Knowledge items uploaded successfully"
-else
-    echo "      ❌ Failed to upload knowledge items"
-    exit 1
-fi
-
-if [[ "$DEPLOY_ONLY" == "true" ]]; then
-    echo ""
-    echo "=== Infrastructure Deployment Complete ==="
-    echo ""
-    echo "To generate Graviton assessment, run:"
-    echo "  aws codebuild start-build --project-name $PROJECT_NAME --region $CURRENT_REGION \\"
-    echo "    --environment-variables-override name=REPOSITORY_URL,value=https://github.com/owner/repo"
-    exit 0
-fi
 
 # Start Graviton assessment build
 echo ""

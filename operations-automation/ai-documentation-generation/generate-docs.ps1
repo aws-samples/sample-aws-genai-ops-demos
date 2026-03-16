@@ -10,22 +10,18 @@
 .PARAMETER RepositoryUrl
     Git repository URL to analyze (default: AWS sample repository)
 
-.PARAMETER Region
-    AWS region for deployment (default: us-east-1)
-
-.PARAMETER DeployOnly
-    Only deploy infrastructure, don't start a build
+.PARAMETER SkipSetup
+    Skip infrastructure deployment, only start a build (requires infrastructure already deployed)
 
 .EXAMPLE
     .\generate-docs.ps1
     .\generate-docs.ps1 -RepositoryUrl "https://github.com/owner/repo"
-    .\generate-docs.ps1 -Region "us-west-2"
+    .\generate-docs.ps1 -SkipSetup
 #>
 
 param(
     [string]$RepositoryUrl = "",
-    [string]$Region = "us-east-1",
-    [switch]$DeployOnly = $false
+    [switch]$SkipSetup = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,80 +59,100 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cdkDir = Join-Path $scriptDir "infrastructure/cdk"
 $sharedScriptsDir = Join-Path $scriptDir "..\..\shared\scripts"
 
-# Run prerequisites check
-Write-Host "Running prerequisites check..." -ForegroundColor Yellow
-& "$sharedScriptsDir\check-prerequisites.ps1" `
-    -RequiredService "transform" `
-    -RequireCDK
+if (-not $SkipSetup) {
+    # Run prerequisites check
+    Write-Host "Running prerequisites check..." -ForegroundColor Yellow
+    & "$sharedScriptsDir\check-prerequisites.ps1" `
+        -RequiredService "transform" `
+        -RequireCDK
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Prerequisites check failed" -ForegroundColor Red
-    exit 1
-}
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Prerequisites check failed" -ForegroundColor Red
+        exit 1
+    }
 
-# Get AWS account and region info
-$accountId = aws sts get-caller-identity --query Account --output text --no-cli-pager
-$currentRegion = aws configure get region
-if ([string]::IsNullOrEmpty($currentRegion)) {
-    $currentRegion = $Region
-}
+    # Get AWS account and region info
+    $accountId = aws sts get-caller-identity --query Account --output text --no-cli-pager
 
-Write-Host ""
-Write-Host "Deploying infrastructure via CDK..." -ForegroundColor Yellow
-Write-Host "      Region: $currentRegion" -ForegroundColor Gray
+    # Use region from prerequisites check
+    $currentRegion = $global:AWS_REGION
 
-# Deploy CDK stack using shared script
-& "$sharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $cdkDir
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "CDK deployment failed" -ForegroundColor Red
-    exit 1
-}
-
-# Get bucket name and project name from CloudFormation outputs
-Write-Host ""
-Write-Host "Getting stack outputs..." -ForegroundColor Yellow
-$outputBucket = aws cloudformation describe-stacks --stack-name DocumentationGeneratorStack --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text
-$projectName = aws cloudformation describe-stacks --stack-name DocumentationGeneratorStack --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text
-if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
-    Write-Host "      ❌ Failed to get stack outputs" -ForegroundColor Red
-    exit 1
-}
-Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
-Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
-
-# Upload appropriate buildspec to S3
-Write-Host ""
-Write-Host "Uploading buildspec to S3..." -ForegroundColor Yellow
-$buildspecPath = Join-Path $scriptDir $buildspecFile
-aws s3 cp $buildspecPath "s3://$outputBucket/config/buildspec.yml" --region $currentRegion --no-cli-pager | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Buildspec uploaded successfully ($buildspecFile)" -ForegroundColor Green
-} else {
-    Write-Host "      ❌ Failed to upload buildspec" -ForegroundColor Red
-    exit 1
-}
-
-# Upload enhanced transformation context
-Write-Host ""
-Write-Host "Uploading enhanced transformation context..." -ForegroundColor Yellow
-$enhancedTransformDir = Join-Path $scriptDir "enhanced-transformation"
-aws s3 cp $enhancedTransformDir "s3://$outputBucket/enhanced-transformation/" --recursive --region $currentRegion --no-cli-pager | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Enhanced transformation context uploaded successfully" -ForegroundColor Green
-} else {
-    Write-Host "      ❌ Failed to upload enhanced transformation context" -ForegroundColor Red
-    exit 1
-}
-
-if ($DeployOnly) {
     Write-Host ""
-    Write-Host "=== Infrastructure Deployment Complete ===" -ForegroundColor Cyan
+    Write-Host "Deploying infrastructure via CDK..." -ForegroundColor Yellow
+    Write-Host "      Region: $currentRegion" -ForegroundColor Gray
+
+    # Deploy CDK stack using shared script
+    & "$sharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $cdkDir
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CDK deployment failed" -ForegroundColor Red
+        exit 1
+    }
+
+    # Get bucket name and project name from CloudFormation outputs
     Write-Host ""
-    Write-Host "To generate documentation, run:" -ForegroundColor Yellow
-    Write-Host "  aws codebuild start-build --project-name $projectName --region $currentRegion ``" -ForegroundColor Gray
-    Write-Host "    --environment-variables-override name=REPOSITORY_URL,value=https://github.com/owner/repo" -ForegroundColor Gray
-    exit 0
+    Write-Host "Getting stack outputs..." -ForegroundColor Yellow
+    $stackName = "DocumentationGeneratorStack-$currentRegion"
+    $outputBucket = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text
+    $projectName = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text
+    if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
+        Write-Host "      ❌ Failed to get stack outputs" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
+    Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
+
+    # Upload appropriate buildspec to S3
+    Write-Host ""
+    Write-Host "Uploading buildspec to S3..." -ForegroundColor Yellow
+    $buildspecPath = Join-Path $scriptDir $buildspecFile
+    aws s3 cp $buildspecPath "s3://$outputBucket/config/buildspec.yml" --region $currentRegion --no-cli-pager | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      ✓ Buildspec uploaded successfully ($buildspecFile)" -ForegroundColor Green
+    } else {
+        Write-Host "      ❌ Failed to upload buildspec" -ForegroundColor Red
+        exit 1
+    }
+
+    # Upload enhanced transformation context
+    Write-Host ""
+    Write-Host "Uploading enhanced transformation context..." -ForegroundColor Yellow
+    $enhancedTransformDir = Join-Path $scriptDir "enhanced-transformation"
+    aws s3 cp $enhancedTransformDir "s3://$outputBucket/enhanced-transformation/" --recursive --region $currentRegion --no-cli-pager | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      ✓ Enhanced transformation context uploaded successfully" -ForegroundColor Green
+    } else {
+        Write-Host "      ❌ Failed to upload enhanced transformation context" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "[SETUP] Skipping infrastructure deployment..." -ForegroundColor Yellow
+    
+    # Get region directly (prerequisites check was skipped)
+    $currentRegion = $env:AWS_DEFAULT_REGION
+    if ([string]::IsNullOrEmpty($currentRegion)) {
+        $currentRegion = aws configure get region 2>$null
+    }
+    if ([string]::IsNullOrEmpty($currentRegion)) {
+        Write-Host "ERROR: AWS region not configured" -ForegroundColor Red
+        Write-Host "Please configure your AWS region: aws configure set region <your-region>" -ForegroundColor Yellow
+        exit 1
+    }
+    
+    # Get stack outputs
+    Write-Host ""
+    Write-Host "Getting stack outputs..." -ForegroundColor Yellow
+    $stackName = "DocumentationGeneratorStack-$currentRegion"
+    $outputBucket = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text 2>$null
+    $projectName = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text 2>$null
+    
+    if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
+        Write-Host "      ❌ Stack not found. Please deploy infrastructure first:" -ForegroundColor Red
+        Write-Host "      .\generate-docs.ps1" -ForegroundColor Gray
+        exit 1
+    }
+    Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
+    Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
 }
 
 # Start documentation generation build

@@ -142,15 +142,16 @@ def send_extraction_notification(result: dict) -> None:
     try:
         import boto3
         import os
+        from aws_utils import get_region
         
         # Only send notifications for scheduled extractions
         topic_arn = os.environ.get('NOTIFICATION_TOPIC_ARN')
         if not topic_arn:
             return
         
-        # Use region from environment
-        region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
-        sns = boto3.client('sns', region_name=region) if region else boto3.client('sns')
+        # Initialize SNS client using deployment region
+        region = get_region()
+        sns = boto3.client('sns', region_name=region)
         
         successful = result['successful_extractions']
         total = result['total_services_processed']

@@ -1,415 +1,465 @@
-# AI-Powered Legacy System Automation with AgentCore Browser Tool
+# Operations Automation with AI Browser Agents
 
-Automate workflows on legacy systems using Amazon Nova Act with AgentCore Browser Tool for cloud-based browser execution.
+End-to-end automation of IT operations workflows using Amazon Nova Act and AgentCore Browser Tool. This demo showcases how AI agents can automate complex multi-system workflows on legacy web applications that lack modern APIs.
 
 ## Overview
 
-This demo showcases how to automate ticket creation in a legacy IT system that only has a web interface. We use the **"Next-Dot" space travel booking site** ([Nova Act Gym](https://nova.amazon.com/act/gym/next-dot)) as a stand-in for a legacy ticketing system - imagine it's an old internal IT portal where employees submit support tickets, travel requests, or procurement forms.
+Many enterprises have legacy IT systems that only expose web interfaces - no APIs, no integrations. This creates operational bottlenecks where employees must manually navigate multiple portals to complete routine tasks. This demo solves that problem using AI-powered browser automation.
 
-**The Scenario**: Your organization has a legacy web application with no API. Employees must manually fill out multi-step forms to create tickets. This demo automates that entire workflow using AI-powered browser automation running in AWS cloud.
-
-AgentCore Browser Tool provides:
-
-- **Cloud execution**: No local browser installation required
-- **Session recording**: Automatic capture to S3 for audit trails
-- **Live view**: Watch automation in real-time via AWS Console
-- **VPC connectivity**: Access internal legacy systems without VPN
-- **Scalability**: Run multiple browser sessions in parallel
-
-**Authentication**: Uses AWS IAM credentials (no API key needed)
+**The Solution**: An AI agent monitors email for requests, then autonomously navigates legacy web portals to fulfill those requests - creating tickets, checking inventory, placing orders, and sending notifications.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Local Environment                               │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Python Orchestrator                                                  │  │
-│  │  • Coordinates automation workflow                                    │  │
-│  │  • Sends natural language instructions to Nova Act                    │  │
-│  └──────────────────────────────┬────────────────────────────────────────┘  │
-└─────────────────────────────────┼───────────────────────────────────────────┘
-                                  │ AWS API
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              AWS Cloud                                       │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Nova Act Model                                                       │  │
-│  │  • Interprets natural language instructions                           │  │
-│  │  • Plans and executes browser actions                                 │  │
-│  └──────────────────────────────┬────────────────────────────────────────┘  │
-│                                 │ CDP (Chrome DevTools Protocol)             │
-│                                 ▼                                            │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  AgentCore Browser Tool (Managed Chrome)                              │  │
-│  │  • Cloud browser execution                                            │  │
-│  │  • Session management & recording ──────────▶ S3 Bucket (Recordings)  │  │
-│  │  • Live view streaming ─────────────────────▶ AWS Console (Live View) │  │
-│  └──────────────────────────────┬────────────────────────────────────────┘  │
-│                                 │ HTTPS                                      │
-└─────────────────────────────────┼───────────────────────────────────────────┘
-                                  ▼
-                        ┌─────────────────┐
-                        │  Legacy System  │
-                        │  (Next-Dot)     │
-                        └─────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                              OPERATIONS AUTOMATION                             │
+│                                                                                │
+│  ┌─────────────┐     ┌──────────────────────────────────────────────────────┐  │
+│  │   Outlook   │     │              AWS Cloud                               │  │
+│  │   Inbox     │     │                                                      │  │
+│  │             │     │  ┌─────────────┐    ┌─────────────┐                  │  │
+│  │  "NEW       │     │  │  Nova Act   │    │  AgentCore  │                  │  │
+│  │  EMPLOYEE   │───▶│   │  AI Model   │───▶│  Browser    │                 │  │
+│  │  ORDER"     │     │  │             │    │  Tool       │                  │  │
+│  │             │     │  └─────────────┘    └──────┬──────┘                  │  │
+│  └─────────────┘     │                           │                          │  │
+│                      │                           ▼                          │  │
+│  ┌─────────────┐     │  ┌────────────────────────────────────────────────┐  │  │
+│  │   Mail      │     │  │           Legacy IT Portals                    │  │  │
+│  │   Polling   │───▶│  │    ┌──────────┐ ┌──────────┐ ┌──────────────┐   │  │  │
+│  │   Service   │     │  │   │   ITSM   │ │Inventory │ │ Procurement  │   │  │  │
+│  │  (Python)   │     │  │   │  Portal  │ │  Portal  │ │   Portal     │   │  │  │
+│  └─────────────┘     │  │   └──────────┘ └──────────┘ └──────────────┘   │  │  │
+│                      │  └────────────────────────────────────────────────┘  │  │
+│                      │                                                      │  │
+│                      │  ┌─────────────┐    ┌─────────────┐                  │  │
+│                      │  │  Amazon     │    │     S3      │                  │  │
+│                      │  │    SES      │    │  Recordings │                  │  │
+│                      │  │ (Notify)    │    │  & Workflow │                  │  │
+│                      │  └─────────────┘    └─────────────┘                  │  │
+│                      └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Components:**
-- **Nova Act SDK**: AI-powered browser automation via natural language (IAM auth)
-- **AgentCore Browser Tool**: Managed Chrome browser running in AWS (deployed via CDK)
-- **Python Orchestrator**: Local script coordinating the automation
-- **AWS Console**: Live view of browser session
-- **S3**: Session recordings for audit
-- **Next-Dot Demo Site**: Nova Act Gym test site simulating a legacy ticketing system
+## Demo Scenario: New Employee Onboarding
+
+When HR sends an email requesting equipment for a new employee, the AI agent:
+
+1. **Detects** the email in Outlook (mail-polling service)
+2. **Creates** an ITSM ticket in the legacy ticketing system
+3. **Checks** inventory availability for each requested item
+4. **Creates** purchase orders for out-of-stock items
+5. **Receives** deliveries and updates inventory
+6. **Allocates** equipment to the employee
+7. **Resolves** the ITSM ticket
+8. **Sends** email notification to the requester
+
+All of this happens autonomously, with the AI navigating web interfaces just like a human would.
+
+## Components
+
+| Component | Description |
+|-----------|-------------|
+| [ai-legacy-system-browser-automation/mail-polling](./ai-legacy-system-browser-automation/mail-polling/) | Python service that monitors Outlook for trigger emails |
+| [ai-legacy-system-browser-automation/ai-browser-automation](./ai-legacy-system-browser-automation/ai-browser-automation/) | Nova Act browser automation and workflow orchestration |
+| [anycompany-it-demo-portal](./anycompany-it-demo-portal/) | Demo legacy IT portals (ITSM, Inventory, Procurement) |
 
 ## Prerequisites
 
-- Python 3.10+
-- Node.js 20+ (for CDK)
-- AWS CLI v2 configured with credentials
-- AWS Region: `us-east-1`
+### Software Requirements
+- [**Python 3.11+**](https://www.python.org/downloads/) with pip
+- [**Node.js 20+**](https://nodejs.org/) with npm (for CDK)
+- [**AWS CLI v2**](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with credentials
+- **Microsoft Outlook** desktop app (Windows or macOS)
 
-Prerequisites are automatically validated using the shared scripts in `shared/scripts/`. All demos in this repository use CDK for infrastructure deployment.
+### AWS Requirements
+- AWS account with appropriate permissions
+- Region: `us-east-1` (recommended)
+- Services used: Nova Act, AgentCore Browser, S3, CloudFront, DynamoDB, Lambda, API Gateway, SES
 
-### Required IAM Permissions
+### IAM Permissions
 
-Your IAM user/role needs permissions for CDK deployment, Nova Act, and AgentCore Browser:
+Your IAM user/role needs permissions for:
+- CloudFormation (CDK deployment)
+- Nova Act (AI browser automation)
+- AgentCore Browser Tool (cloud browser)
+- S3 (recordings and static hosting)
+- DynamoDB (portal data)
+- Lambda & API Gateway (portal backend)
+- SES (email notifications)
 
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "CDKDeployment",
-            "Effect": "Allow",
-            "Action": [
-                "cloudformation:*",
-                "s3:*",
-                "ecr:*"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Sid": "IAMRoleManagement",
-            "Effect": "Allow",
-            "Action": [
-                "iam:CreateRole",
-                "iam:DeleteRole",
-                "iam:GetRole",
-                "iam:AttachRolePolicy",
-                "iam:DetachRolePolicy",
-                "iam:PutRolePolicy",
-                "iam:DeleteRolePolicy",
-                "iam:GetRolePolicy",
-                "iam:ListRolePolicies",
-                "iam:ListAttachedRolePolicies",
-                "iam:TagRole",
-                "iam:UntagRole"
-            ],
-            "Resource": [
-                "arn:aws:iam::*:role/LegacySystemAutomationAgentCore-*",
-                "arn:aws:iam::*:role/cdk-*"
-            ]
-        },
-        {
-            "Sid": "IAMPassRoleRestricted",
-            "Effect": "Allow",
-            "Action": [
-                "iam:PassRole"
-            ],
-            "Resource": [
-                "arn:aws:iam::*:role/LegacySystemAutomationAgentCore-*",
-                "arn:aws:iam::*:role/cdk-*"
-            ],
-            "Condition": {
-                "StringEquals": {
-                    "iam:PassedToService": [
-                        "bedrock-agentcore.amazonaws.com",
-                        "cloudformation.amazonaws.com"
-                    ]
-                }
-            }
-        },
-        {
-            "Sid": "NovaActAccess",
-            "Effect": "Allow",
-            "Action": [
-                "nova-act:*"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Sid": "BedrockAgentCoreBrowserAccess",
-            "Effect": "Allow",
-            "Action": [
-                "bedrock-agentcore:*"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
+See individual component documentation for detailed IAM policies.
+
+### AWS Credentials Setup
+
+Before deploying, configure your AWS credentials. Choose the method that matches your setup:
+
+**Option 1: AWS SSO (recommended for organizations)**
+
+```bash
+# Configure SSO profile (one-time)
+aws configure sso
+
+# Login before each session
+aws sso login --profile YOUR-PROFILE-NAME
 ```
+
+Then set the profile for all subsequent commands:
+
+**macOS / Linux:**
+```bash
+export AWS_PROFILE="YOUR-PROFILE-NAME"
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:AWS_PROFILE="YOUR-PROFILE-NAME"
+```
+
+**Option 2: IAM access keys**
+
+```bash
+aws configure
+# Enter your Access Key ID, Secret Access Key, and default region (us-east-1)
+```
+
+**Option 3: Environment variables**
+
+**macOS / Linux:**
+```bash
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_DEFAULT_REGION="us-east-1"
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:AWS_ACCESS_KEY_ID="your-access-key"
+$env:AWS_SECRET_ACCESS_KEY="your-secret-key"
+$env:AWS_DEFAULT_REGION="us-east-1"
+```
+
+Verify your credentials are working:
+
+```bash
+aws sts get-caller-identity
+```
+
+You should see your account ID and ARN. If you get an error, your credentials are not configured correctly.
 
 ## Quick Start
 
-### One-Command Demo
+### Step 1: Deploy the Demo Portal
 
-```powershell
-# PowerShell (Windows)
-cd operations-automation/ai-legacy-system-browser-automation
-.\run-demo.ps1
+**macOS / Linux:**
+```bash
+cd operations-automation/anycompany-it-demo-portal
+./deploy-all.sh --populate-data
 ```
+
+**Windows (PowerShell):**
+```powershell
+cd operations-automation/anycompany-it-demo-portal
+.\deploy-all.ps1 -PopulateData
+```
+
+Note the CloudFront domain from the output (e.g., `d32hac5jwq110e.cloudfront.net`).
+
+### Step 2: Deploy Browser Automation Infrastructure
+
+**macOS / Linux:**
+```bash
+cd operations-automation/ai-legacy-system-browser-automation
+./deploy-all.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+cd operations-automation/ai-legacy-system-browser-automation
+.\deploy-all.ps1
+```
+
+> **Note:** Always use the deploy scripts above rather than running `npx cdk deploy` directly. The deploy scripts set `PYTHONPATH` for shared utility imports.
+
+Note the Browser ID from the output (e.g., `legacy_system_automation_browser-WKb1NAhhMQ`).
+
+### Step 3: Configure Nova Act Workflow (Optional - for step visualization)
 
 ```bash
-# Bash (Linux/macOS)
-cd operations-automation/ai-legacy-system-browser-automation
-./run-demo.sh
+cd operations-automation/ai-legacy-system-browser-automation/ai-browser-automation
+python update_workflow_s3.py --bucket legacy-automation-recordings-YOUR-ACCOUNT-ID
 ```
 
-This will:
-1. Check prerequisites (Python, Node.js, AWS credentials)
-2. Deploy CDK infrastructure (Browser Tool, S3 bucket, IAM roles)
-3. Create Nova Act workflow definition
-4. Display live view instructions
-5. Create a ticket in the legacy system (Next-Dot demo site)
+### Step 4: Set Environment Variables
 
-### What the Demo Does
+Set the following environment variables before running the mail-polling service:
 
-The automation performs a 9-step ticket creation workflow:
-1. Navigate to the legacy ticketing portal
-2. Select destination category (Wolf 1061c)
-3. Click the booking button
-4. Fill origin and date fields
-5. Search available options
-6. Select ticket tier (Premium)
-7. Enter requester details (name, date of birth)
-8. Complete clearance questions
-9. Select accommodation and retrieve confirmation
+**macOS / Linux (bash/zsh):**
+```bash
+export BROWSER_ID="legacy_system_automation_browser-YOUR-BROWSER-ID"
+export AWS_REGION="us-east-1"
+export CLOUDFRONT_DOMAIN="YOUR-CLOUDFRONT-DOMAIN.cloudfront.net"
+```
 
-### Demo Options
-
+**Windows (PowerShell):**
 ```powershell
-# Different region
-.\run-demo.ps1 -Region "us-west-2"
-
-# Skip setup (if already configured)
-.\run-demo.ps1 -SkipSetup
-
-# Destroy infrastructure when done
-.\run-demo.ps1 -DestroyInfra
+$env:BROWSER_ID="legacy_system_automation_browser-YOUR-BROWSER-ID"
+$env:AWS_REGION="us-east-1"
+$env:CLOUDFRONT_DOMAIN="YOUR-CLOUDFRONT-DOMAIN.cloudfront.net"
 ```
+
+> **Note**: `CLOUDFRONT_DOMAIN` should be the domain only (e.g., `d32hac5jwq110e.cloudfront.net`), without `https://`.
+
+### Step 5: Run the Mail Polling Service
 
 ```bash
-# Bash equivalents
-./run-demo.sh --region "us-west-2"
-./run-demo.sh --skip-setup
-./run-demo.sh --destroy-infra
-```
-
-## Infrastructure
-
-This demo deploys resources using two methods:
-
-### Deployed via CDK (CloudFormation)
-
-Resources with CloudFormation support are deployed via CDK stack `LegacySystemAutomationAgentCore`:
-
-- **AgentCore Browser Tool** (`AWS::BedrockAgentCore::BrowserCustom`)
-  - Custom browser with session recording enabled
-  - Public network mode for accessing external sites
-
-- **S3 Bucket** for session recordings
-  - Versioned, encrypted, auto-delete on stack removal
-
-- **IAM Role** for browser execution
-  - Permissions for browser operations and S3 recording
-
-### Deployed via AWS CLI
-
-Nova Act does not have CloudFormation support yet, so the workflow definition is created via CLI:
-
-- **Nova Act Workflow Definition** (`legacy-system-automation-agentcore`)
-  - Created with S3 bucket configuration for step data
-  - Required for `@workflow` decorator authentication
-
-### Manual CDK Deployment
-
-If you prefer to deploy infrastructure manually:
-
-```powershell
-# PowerShell (Windows)
-cd infrastructure/cdk
+cd operations-automation/ai-legacy-system-browser-automation/mail-polling
 pip install -r requirements.txt
-npx -y cdk bootstrap --no-cli-pager
-npx -y cdk deploy --require-approval never --no-cli-pager
+python -m src.cli --config src/config.yaml
 ```
 
-```bash
-# Bash (Linux/macOS)
-cd infrastructure/cdk
-pip3 install -r requirements.txt
-npx -y cdk bootstrap --no-cli-pager
-npx -y cdk deploy --require-approval never --no-cli-pager
-```
+### Step 6: Send a Test Email
 
-### CDK Outputs
+Send an email to yourself with:
+- **Subject**: `NEW EMPLOYEE ORDER - John Doe - Equipment Setup`
+- **Body**: See [NEW_EMPLOYEE_ONBOARDING_SCENARIO.md](./NEW_EMPLOYEE_ONBOARDING_SCENARIO.md) for sample content
 
-After deployment, get stack outputs:
+The automation will detect the email and process it automatically.
 
-```bash
-aws cloudformation describe-stacks --stack-name LegacySystemAutomationAgentCore --no-cli-pager \
-  --query "Stacks[0].Outputs"
-```
+## Monitoring
 
-Outputs include:
-- `BrowserId` - Use this with `--browser-id` parameter
-- `RecordingsBucketName` - S3 bucket for recordings
-- `LiveViewConsoleUrl` - AWS Console URL for live view
-
-## Live View
-
-Watch the browser automation in real-time via AWS Console:
-
-1. Open the AgentCore Browser Console:
-   `https://us-east-1.console.aws.amazon.com/bedrock-agentcore/builtInTools`
-
-2. Navigate to **Built-in tools** in the left navigation
-
-3. Select your custom browser (`legacy_system_automation_browser`)
-
-4. Find your active session with status **Ready**
-
-5. Click **View live session** to watch in real-time
-
-## Session Recordings
-
-Session recordings are automatically saved to S3:
-
-```
-s3://legacy-automation-recordings-{account-id}/browser-recordings/
-  └── {session-id}/
-      ├── batch_1.ndjson.gz
-      ├── batch_2.ndjson.gz
-      └── ...
-```
-
-
-### Replay Recordings
-
-1. Go to AgentCore Browser Console
+### Live Browser View
+Watch the AI navigate in real-time:
+1. Open AWS Console → Bedrock AgentCore → Built-in Tools
 2. Select your browser tool
-3. Find completed session (status: Terminated)
-4. Click **View Recording**
+3. Click "View live session" on the active session
+
+### Workflow Visualization
+View step-by-step execution in Nova Act console:
+1. Open AWS Console → Nova Act → Workflow Definitions
+2. Select `onboarding-email-workflow`
+3. View workflow runs and step data
+
+### Session Recordings
+Review completed sessions:
+- S3 bucket: `legacy-automation-recordings-{account-id}`
+- Prefix: `browser-recordings/` for session recordings
+- Prefix: `workflow-data/` for workflow step data
 
 ## Cost Estimates
 
-### CDK Infrastructure
-- S3 bucket: ~$0.023/GB/month
-- IAM roles: Free
+### Monthly Costs (Development/Demo)
 
-### AgentCore Browser Tool
-- Browser session time: Varies by region and duration
-- See [AgentCore pricing](https://aws.amazon.com/bedrock/agentcore/pricing/)
+| Service | Estimated Cost |
+|---------|---------------|
+| Nova Act | $50-100 (100 sessions) |
+| AgentCore Browser | $20-50 (browser time) |
+| S3 | $1-5 (recordings) |
+| CloudFront | $1-5 (portal hosting) |
+| DynamoDB | $1-5 (on-demand) |
+| Lambda | $0-1 (API calls) |
+| SES | $0-1 (notifications) |
+| **Total** | **~$75-170/month** |
 
-### Nova Act
-- Based on browser session time and actions
-- See [Nova Act pricing](https://aws.amazon.com/nova/act/)
+### Per-Workflow Cost
+- Single workflow execution: ~$0.50-2.00
+- Depends on complexity and browser session duration
 
-### Estimated Demo Cost
-- Single demo run: < $1
-- Development (100 sessions/month): ~$50-100
+### Cost Optimization Tips
+- Use shorter step pauses for faster execution
+- Clean up old recordings with S3 lifecycle policies
+- Use on-demand DynamoDB pricing for variable workloads
 
 ## Troubleshooting
 
-### CDK Deployment Failed
-- Ensure CDK is bootstrapped: `npx cdk bootstrap`
-- Check IAM permissions for CloudFormation, S3, IAM
+### Email Not Detected
+- Ensure Outlook is running and connected
+- Check email subject contains "NEW EMPLOYEE ORDER"
+- Verify mail-polling service is running
 
-### Browser Session Failed
-- Check browser ID is correct in CDK outputs
-- Verify IAM role has correct trust policy
-- Check CloudWatch logs: `/aws/bedrock-agentcore/browser/`
+### Browser Automation Fails
+- Check Browser ID is correct
+- Verify AWS credentials are configured
+- Check CloudWatch logs for errors
 
-### Workflow Definition Error
-- Run manually: `aws nova-act create-workflow-definition --name legacy-system-automation-agentcore --region us-east-1 --no-cli-pager`
+### Workflow Definition Not Found
+- Run `update_workflow_s3.py` to create the workflow
+- Or let the first run create it automatically
 
-### Live View Not Loading
-- Check browser session status is "Ready" in Console
-- Ensure you have `ConnectBrowserLiveViewStream` permission
+### Portal Not Loading
+- Verify CloudFront domain is correct
+- Check portal deployment completed successfully
+- Try accessing portal directly in browser
 
-## Files
-
-```
-ai-legacy-system-browser-automation/
-├── run-demo.ps1                    # One-click demo runner (Windows)
-├── run-demo.sh                     # One-click demo runner (Linux/macOS)
-├── create_ticket_agentcore.py      # Main demo script
-├── requirements.txt                # Python dependencies
-├── README.md                       # This file
-├── ARCHITECTURE.md                 # Technical architecture
-└── infrastructure/
-    └── cdk/
-        ├── app.py                  # CDK app entry point
-        ├── stack.py                # CDK stack definition
-        ├── cdk.json                # CDK configuration
-        └── requirements.txt        # CDK Python dependencies
-```
-
-### Shared Scripts
-
-This demo uses the shared scripts for prerequisite validation and CDK deployment:
+## Project Structure
 
 ```
-shared/
-└── scripts/
-    ├── check-prerequisites.ps1     # Shared prereq validation (Windows)
-    ├── check-prerequisites.sh      # Shared prereq validation (Linux/macOS)
-    ├── deploy-cdk.ps1              # Shared CDK deployment (Windows)
-    └── deploy-cdk.sh               # Shared CDK deployment (Linux/macOS)
+operations-automation/
+│
+├── ai-legacy-system-browser-automation/ # This demo
+│   ├── README.md                       # This file
+│   ├── NEW_EMPLOYEE_ONBOARDING_SCENARIO.md # Detailed workflow documentation
+│   ├── operations-automation-architecture.drawio # Architecture diagram
+│   ├── deploy-all.sh                   # Bash deployment script
+│   ├── deploy-all.ps1                  # PowerShell deployment script
+│   │
+│   ├── ai-browser-automation/          # Nova Act browser automation
+│   │   ├── browser_actions.py          # JSON workflow executor
+│   │   ├── onboarding_orchestrator.py  # Workflow orchestration
+│   │   ├── onboarding_config.py        # Workflow configuration
+│   │   ├── email_parser.py             # Email content parsing
+│   │   ├── models.py                   # Data models
+│   │   ├── ses_notifier.py             # Email notifications
+│   │   ├── ticket_formatter.py         # Ticket title/description formatting
+│   │   ├── update_workflow_s3.py       # Workflow S3 configuration
+│   │   ├── create_ticket_agentcore.py  # Standalone single-ticket automation
+│   │   ├── requirements.txt            # Python dependencies
+│   │   ├── workflows/
+│   │   │   └── new_employee_onboarding_actions.json  # All browser actions (JSON)
+│   │   └── infrastructure/cdk/         # CDK infrastructure
+│   │
+│   └── mail-polling/                   # Email monitoring service
+│       ├── src/
+│       │   ├── cli.py                  # CLI entry point
+│       │   ├── email_monitor.py        # Main monitoring logic
+│       │   ├── config.py               # Configuration
+│       │   ├── config.yaml             # Default config values
+│       │   └── models.py               # Data models
+│       └── requirements.txt
+│
+└── anycompany-it-demo-portal/          # Demo legacy portals
+    ├── frontend/
+    │   ├── index.html                  # Portal selector
+    │   ├── itsm.html                   # IT Service Management
+    │   ├── inventory.html              # Inventory Management
+    │   └── procurement.html            # Procurement Management
+    ├── infrastructure/cdk/             # CDK infrastructure
+    └── scripts/                        # Deployment scripts
 ```
 
-## Deployment Standard
+## Customizing Workflow Actions
 
-All demos in this repository follow the same deployment pattern:
-1. **Shared prerequisites check** via `shared/scripts/check-prerequisites.*`
-2. **Infrastructure deployment** via AWS CDK (Python)
-3. **Demo execution** via Python scripts
+All browser automation steps are defined in a single JSON file:
 
-This ensures consistent experience across all demos and proper infrastructure management.
+```
+ai-legacy-system-browser-automation/ai-browser-automation/workflows/new_employee_onboarding_actions.json
+```
+
+This file contains every Nova Act instruction the AI executes — no browser actions are hardcoded in Python. To adapt the automation to a different scenario or portal, you edit this JSON file instead of modifying code.
+
+### JSON Structure
+
+```json
+{
+  "workflows": {
+    "itsm_create_ticket": {
+      "workflow_name": "itsm_create_ticket",
+      "description": "Create a new service ticket in the ITSM portal",
+      "portal": "itsm",
+      "steps": [
+        {
+          "act_id": 1,
+          "name": "navigate_to_itsm",
+          "instruction": "Navigate to {{itsm_url}}",
+          "description": "Open the ITSM portal"
+        },
+        {
+          "act_id": 2,
+          "name": "fill_ticket_form",
+          "instruction": "Fill out the form with Title: {{title}}, Category: {{category}}...",
+          "description": "Fill all form fields"
+        },
+        {
+          "act_id": 3,
+          "name": "read_ticket_id",
+          "instruction": "Find the ticket ID starting with INC- and return it.",
+          "capture_output": true,
+          "output_variable": "ticket_id",
+          "output_pattern": "INC-\\d{6}"
+        }
+      ]
+    }
+  }
+}
+```
+
+### Key Concepts
+
+- `instruction` — Natural language prompt sent to Nova Act. Supports `{{variable}}` placeholders resolved at runtime from employee data, ticket info, and config.
+- `capture_output` / `output_variable` — Captures a value from the page (e.g., ticket ID, stock level) and stores it for use in later workflows.
+- `output_pattern` — Regex pattern to extract the value from Nova Act's response.
+
+### Available Variables
+
+Variables are populated from the email parser and config:
+
+| Variable Path | Example Value |
+|---------------|---------------|
+| `{{config.itsm_url}}` | `https://d1qles...cloudfront.net/itsm.html` |
+| `{{employee.name}}` | `John Doe` |
+| `{{employee.position}}` | `Chief Information Security Officer (CISO)` |
+| `{{ticket.title}}` | `Onboarding: John Doe - CISO` |
+| `{{ticket.description}}` | Full equipment list |
+| `{{params.item_name}}` | `Professional Laptop 16"` |
+| `{{params.vendor}}` | `TechCorp Solutions` |
+| `{{params.unit_price}}` | `2499.0` |
+| `{{state.ticket_id}}` | `INC-370237` |
+
+### Adapting to a Different Portal
+
+To point the automation at a different web application:
+
+1. Update the `instruction` text in each step to match your portal's UI (button labels, field names, form layout)
+2. Update `output_pattern` if your system uses different ID formats
+3. Add or remove steps as needed — the orchestrator executes them sequentially
+4. Vendor/price mappings are in `onboarding_orchestrator.py` (`VENDOR_MAPPING` and `DEFAULT_PRICES` dicts)
+
+See [NEW_EMPLOYEE_ONBOARDING_SCENARIO.md](./NEW_EMPLOYEE_ONBOARDING_SCENARIO.md) for the complete list of workflows and what each one does.
+
+## Key Technologies
+
+| Technology | Purpose |
+|------------|---------|
+| Amazon Nova Act | AI model for natural language browser control |
+| AgentCore Browser Tool | Cloud-based Chrome browser execution |
+| AWS CDK | Infrastructure as code |
+| Amazon SES | Email notifications |
+| Amazon CloudFront | Portal hosting |
+| Amazon DynamoDB | Portal data storage |
+| Python | Automation orchestration |
 
 ## Cleanup
 
-To destroy CDK infrastructure:
+To remove all deployed resources:
 
+**macOS / Linux:**
+```bash
+# Destroy browser automation infrastructure
+cd operations-automation/ai-legacy-system-browser-automation
+./deploy-all.sh --destroy
+
+# Destroy demo portal infrastructure
+cd operations-automation/anycompany-it-demo-portal
+./deploy-all.sh --destroy-infra
+```
+
+**Windows (PowerShell):**
 ```powershell
-.\run-demo.ps1 -DestroyInfra
-```
+# Destroy browser automation infrastructure
+cd operations-automation/ai-legacy-system-browser-automation
+.\deploy-all.ps1 -Destroy
 
-```bash
-./run-demo.sh --destroy-infra
-```
-
-Or manually:
-
-```bash
-cd infrastructure/cdk
-npx -y cdk destroy --force --no-cli-pager
-```
-
-To delete the Nova Act workflow definition (created via CLI):
-
-```bash
-aws nova-act delete-workflow-definition --name legacy-system-automation-agentcore --region us-east-1 --no-cli-pager
+# Destroy demo portal infrastructure
+cd operations-automation/anycompany-it-demo-portal
+.\deploy-all.ps1 -DestroyInfra
 ```
 
 ## Resources
 
-- [AgentCore Browser Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser-building-agents.html)
-- [AgentCore CloudFormation Resources](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/AWS_BedrockAgentCore.html)
-- [Nova Act Documentation](https://aws.amazon.com/nova/act/)
-- [Nova Act Gym (Next-Dot Demo Site)](https://nova.amazon.com/act/gym/next-dot)
+- [Amazon Nova Act Documentation](https://docs.aws.amazon.com/nova-act/)
+- [AgentCore Browser Tool Guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser-building-agents.html)
+- [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
+- [Nova Act Pricing](https://aws.amazon.com/nova/act/pricing/)
 
 ## Contributing
 

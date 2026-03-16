@@ -1,0 +1,252 @@
+<mxfile host="app.diagrams.net" modified="2026-02-09" agent="Kiro" version="21.0.0" type="device">
+  <diagram name="Operations Automation Architecture" id="ops-auto-arch">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title Bar -->
+        <mxCell id="header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#232F3E;strokeColor=#232F3E;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1320" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="Operations Automation with AI Browser Agents" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="60" y="35" width="500" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Local Environment Container -->
+        <mxCell id="local-env" value="Local Environment" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="280" height="380" as="geometry" />
+        </mxCell>
+        
+        <!-- Outlook Icon (simplified) -->
+        <mxCell id="outlook" value="Microsoft&#xa;Outlook" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0078D4;strokeColor=#005a9e;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="70" y="150" width="100" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- Mail Polling Service -->
+        <mxCell id="mail-polling" value="Mail Polling&#xa;Service&#xa;(Python)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="70" y="250" width="100" height="70" as="geometry" />
+        </mxCell>
+        
+        <!-- Python Orchestrator -->
+        <mxCell id="orchestrator" value="Onboarding&#xa;Orchestrator&#xa;(Python)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="190" y="250" width="110" height="70" as="geometry" />
+        </mxCell>
+        
+        <!-- Email Parser -->
+        <mxCell id="email-parser" value="Email Parser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="350" width="80" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Browser Actions -->
+        <mxCell id="browser-actions" value="Browser&#xa;Actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="350" width="70" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Workflow Config -->
+        <mxCell id="workflow-config" value="Workflow&#xa;Config" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="240" y="350" width="70" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- AWS Cloud Container -->
+        <mxCell id="aws-cloud" value="AWS Cloud" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=14;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#AAB7B8;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="350" y="100" width="680" height="380" as="geometry" />
+        </mxCell>
+        
+        <!-- Amazon Bedrock Section -->
+        <mxCell id="bedrock-section" value="Amazon Bedrock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E7157B;strokeColor=#E7157B;opacity=15;verticalAlign=top;align=left;spacingLeft=10;fontSize=12;fontStyle=1;fontColor=#E7157B;" vertex="1" parent="1">
+          <mxGeometry x="370" y="130" width="300" height="160" as="geometry" />
+        </mxCell>
+        
+        <!-- Nova Act -->
+        <mxCell id="nova-act" value="Nova Act&#xa;AI Model" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;" vertex="1" parent="1">
+          <mxGeometry x="390" y="170" width="60" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- AgentCore Browser -->
+        <mxCell id="agentcore" value="AgentCore&#xa;Browser Tool" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;" vertex="1" parent="1">
+          <mxGeometry x="500" y="170" width="60" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- Cloud Browser -->
+        <mxCell id="cloud-browser" value="Managed&#xa;Chrome" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="590" y="180" width="60" height="50" as="geometry" />
+        </mxCell>
+        
+        <!-- Storage Section -->
+        <mxCell id="storage-section" value="Storage &amp; Data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7AA116;strokeColor=#7AA116;opacity=15;verticalAlign=top;align=left;spacingLeft=10;fontSize=12;fontStyle=1;fontColor=#7AA116;" vertex="1" parent="1">
+          <mxGeometry x="370" y="310" width="300" height="150" as="geometry" />
+        </mxCell>
+        
+        <!-- S3 -->
+        <mxCell id="s3" value="S3&#xa;Recordings" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" vertex="1" parent="1">
+          <mxGeometry x="390" y="350" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- DynamoDB -->
+        <mxCell id="dynamodb" value="DynamoDB&#xa;Portal Data" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" vertex="1" parent="1">
+          <mxGeometry x="480" y="350" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- SES -->
+        <mxCell id="ses" value="SES&#xa;Notifications" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.simple_email_service;" vertex="1" parent="1">
+          <mxGeometry x="570" y="350" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- Legacy Portals Section -->
+        <mxCell id="portals-section" value="Legacy IT Portals (CloudFront + S3)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8C4FFF;strokeColor=#8C4FFF;opacity=15;verticalAlign=top;align=left;spacingLeft=10;fontSize=12;fontStyle=1;fontColor=#8C4FFF;" vertex="1" parent="1">
+          <mxGeometry x="700" y="130" width="310" height="330" as="geometry" />
+        </mxCell>
+        
+        <!-- CloudFront -->
+        <mxCell id="cloudfront" value="CloudFront" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudfront;" vertex="1" parent="1">
+          <mxGeometry x="720" y="170" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- API Gateway -->
+        <mxCell id="api-gw" value="API Gateway" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" vertex="1" parent="1">
+          <mxGeometry x="800" y="170" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- Lambda -->
+        <mxCell id="lambda" value="Lambda" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" vertex="1" parent="1">
+          <mxGeometry x="880" y="170" width="55" height="55" as="geometry" />
+        </mxCell>
+        
+        <!-- ITSM Portal -->
+        <mxCell id="itsm-portal" value="ITSM Portal&#xa;(Tickets)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="720" y="280" width="80" height="50" as="geometry" />
+        </mxCell>
+        
+        <!-- Inventory Portal -->
+        <mxCell id="inventory-portal" value="Inventory&#xa;Portal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="820" y="280" width="80" height="50" as="geometry" />
+        </mxCell>
+        
+        <!-- Procurement Portal -->
+        <mxCell id="procurement-portal" value="Procurement&#xa;Portal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="920" y="280" width="80" height="50" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrows -->
+        <!-- Outlook to Mail Polling -->
+        <mxCell id="arrow1" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#666666;" edge="1" parent="1" source="outlook" target="mail-polling">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Mail Polling to Orchestrator -->
+        <mxCell id="arrow2" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#666666;" edge="1" parent="1" source="mail-polling" target="orchestrator">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Orchestrator to Nova Act -->
+        <mxCell id="arrow3" value="WebSocket&#xa;(CDP)" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#E7157B;fontColor=#E7157B;fontSize=9;" edge="1" parent="1">
+          <mxGeometry x="0.1" relative="1" as="geometry">
+            <mxPoint x="310" y="285" as="sourcePoint" />
+            <mxPoint x="390" y="200" as="targetPoint" />
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Nova Act to AgentCore -->
+        <mxCell id="arrow4" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#E7157B;" edge="1" parent="1" source="nova-act" target="agentcore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- AgentCore to Cloud Browser -->
+        <mxCell id="arrow5" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;" edge="1" parent="1" source="agentcore" target="cloud-browser">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Cloud Browser to Portals -->
+        <mxCell id="arrow6" value="Navigates" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#8C4FFF;fontColor=#8C4FFF;fontSize=9;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="650" y="205" as="sourcePoint" />
+            <mxPoint x="720" y="205" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- CloudFront to Portals -->
+        <mxCell id="arrow7" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="760" y="240" as="sourcePoint" />
+            <mxPoint x="760" y="280" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- API GW to Lambda -->
+        <mxCell id="arrow8" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1" source="api-gw" target="lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Lambda to DynamoDB -->
+        <mxCell id="arrow9" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="880" y="240" as="sourcePoint" />
+            <mxPoint x="535" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- AgentCore to S3 -->
+        <mxCell id="arrow10" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="530" y="240" as="sourcePoint" />
+            <mxPoint x="420" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- SES Arrow from Orchestrator -->
+        <mxCell id="arrow11" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="300" y="320" as="sourcePoint" />
+            <mxPoint x="570" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Footer -->
+        <mxCell id="footer" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a1a2e;strokeColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="500" width="1320" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="footer-text" value="GenAI Ops Demo Library | Operations Automation with Nova Act &amp; AgentCore Browser Tool" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="40" y="500" width="1320" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- Legend -->
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="100" width="300" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="Data Flow Legend" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="105" width="100" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend1" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1080" y="140" as="sourcePoint" />
+            <mxPoint x="1120" y="140" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend1-text" value="Primary Flow" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="130" width="80" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend2" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#E7157B;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1080" y="160" as="sourcePoint" />
+            <mxPoint x="1120" y="160" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend2-text" value="AI/Browser Control" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="150" width="90" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend3" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1080" y="180" as="sourcePoint" />
+            <mxPoint x="1120" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend3-text" value="Data/Storage" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="170" width="80" height="20" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

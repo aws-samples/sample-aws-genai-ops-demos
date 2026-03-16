@@ -10,22 +10,22 @@
 .PARAMETER RepositoryUrl
     Git repository URL to analyze (default: AWS sample repository)
 
-.PARAMETER Region
-    AWS region for deployment (default: us-east-1)
-
-.PARAMETER DeployOnly
-    Only deploy infrastructure, don't start an assessment
+.PARAMETER SkipSetup
+    Skip infrastructure deployment, only start an assessment (requires infrastructure already deployed)
 
 .EXAMPLE
     .\assess-graviton.ps1
     .\assess-graviton.ps1 -RepositoryUrl "https://github.com/owner/repo"
-    .\assess-graviton.ps1 -Region "us-west-2"
+    .\assess-graviton.ps1 -SkipSetup
+
+.NOTES
+    This script uses the AWS region configured in your AWS CLI profile.
+    To set your region: aws configure set region <your-region>
 #>
 
 param(
     [string]$RepositoryUrl = "",
-    [string]$Region = "us-east-1",
-    [switch]$DeployOnly = $false
+    [switch]$SkipSetup = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,94 +63,112 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cdkDir = Join-Path $scriptDir "infrastructure/cdk"
 $sharedScriptsDir = Join-Path $scriptDir "..\..\shared\scripts"
 
-# Run prerequisites check
-Write-Host "Running prerequisites check..." -ForegroundColor Yellow
-& "$sharedScriptsDir\check-prerequisites.ps1" `
-    -RequiredService "transform" `
-    -RequireCDK
+if (-not $SkipSetup) {
+    # Run prerequisites check
+    Write-Host "Running prerequisites check..." -ForegroundColor Yellow
+    & "$sharedScriptsDir\check-prerequisites.ps1" `
+        -RequiredService "transform" `
+        -RequireCDK
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Prerequisites check failed" -ForegroundColor Red
-    exit 1
-}
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Prerequisites check failed" -ForegroundColor Red
+        exit 1
+    }
 
-# Get AWS account and region info
-$accountId = aws sts get-caller-identity --query Account --output text --no-cli-pager
-$currentRegion = aws configure get region
-if ([string]::IsNullOrEmpty($currentRegion)) {
-    $currentRegion = $Region
-}
+    # Get AWS account and region info
+    $accountId = aws sts get-caller-identity --query Account --output text --no-cli-pager
 
-Write-Host ""
-Write-Host "Deploying infrastructure via CDK..." -ForegroundColor Yellow
-Write-Host "      Region: $currentRegion" -ForegroundColor Gray
+    # Use region from prerequisites check
+    $currentRegion = $global:AWS_REGION
 
-# Deploy CDK stack using shared script
-& "$sharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $cdkDir
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "CDK deployment failed" -ForegroundColor Red
-    exit 1
-}
-
-# Get bucket name and project name from CloudFormation outputs
-Write-Host ""
-Write-Host "Getting stack outputs..." -ForegroundColor Yellow
-$outputBucket = aws cloudformation describe-stacks --stack-name GravitonAssessmentStack --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text
-$projectName = aws cloudformation describe-stacks --stack-name GravitonAssessmentStack --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text
-if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
-    Write-Host "      ❌ Failed to get stack outputs" -ForegroundColor Red
-    exit 1
-}
-Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
-Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
-
-# Upload buildspec to S3
-Write-Host ""
-Write-Host "Uploading buildspec to S3..." -ForegroundColor Yellow
-$buildspecPath = Join-Path $scriptDir $buildspecFile
-aws s3 cp $buildspecPath "s3://$outputBucket/config/buildspec.yml" --region $currentRegion --no-cli-pager | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Buildspec uploaded successfully ($buildspecFile)" -ForegroundColor Green
-} else {
-    Write-Host "      ❌ Failed to upload buildspec" -ForegroundColor Red
-    exit 1
-}
-
-# Upload custom transformation definition
-Write-Host ""
-Write-Host "Uploading custom Graviton transformation definition..." -ForegroundColor Yellow
-$gravitonTransformDir = Join-Path $scriptDir "graviton-transformation-definition"
-aws s3 cp $gravitonTransformDir "s3://$outputBucket/graviton-transformation-definition/" --recursive --region $currentRegion --no-cli-pager | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Custom transformation definition uploaded successfully" -ForegroundColor Green
-} else {
-    Write-Host "      ❌ Failed to upload custom transformation definition" -ForegroundColor Red
-    exit 1
-}
-
-# Upload knowledge items
-Write-Host ""
-Write-Host "Uploading Graviton knowledge items..." -ForegroundColor Yellow
-$knowledgeItemsDir = Join-Path $scriptDir "knowledge-items"
-aws s3 cp $knowledgeItemsDir "s3://$outputBucket/knowledge-items/" --recursive --region $currentRegion --no-cli-pager | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✓ Knowledge items uploaded successfully" -ForegroundColor Green
-} else {
-    Write-Host "      ❌ Failed to upload knowledge items" -ForegroundColor Red
-    exit 1
-}
-
-if ($DeployOnly) {
     Write-Host ""
-    Write-Host "=== Infrastructure Deployment Complete ===" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To generate Graviton assessment, run:" -ForegroundColor Yellow
-    Write-Host "  aws codebuild start-build --project-name $projectName --region $currentRegion ``" -ForegroundColor Gray
-    Write-Host "    --environment-variables-override name=REPOSITORY_URL,value=https://github.com/owner/repo" -ForegroundColor Gray
-    exit 0
-}
+    Write-Host "Deploying infrastructure via CDK..." -ForegroundColor Yellow
+    Write-Host "      Region: $currentRegion" -ForegroundColor Gray
 
+    # Deploy CDK stack using shared script
+    & "$sharedScriptsDir\deploy-cdk.ps1" -CdkDirectory $cdkDir
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CDK deployment failed" -ForegroundColor Red
+        exit 1
+    }
+
+    # Get bucket name and project name from CloudFormation outputs
+    Write-Host ""
+    Write-Host "Getting stack outputs..." -ForegroundColor Yellow
+    $stackName = "GravitonAssessmentStack-$currentRegion"
+    $outputBucket = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text
+    $projectName = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text
+    if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
+        Write-Host "      ❌ Failed to get stack outputs" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
+    Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
+
+    # Upload buildspec to S3
+    Write-Host ""
+    Write-Host "Uploading buildspec to S3..." -ForegroundColor Yellow
+    $buildspecPath = Join-Path $scriptDir $buildspecFile
+    aws s3 cp $buildspecPath "s3://$outputBucket/config/buildspec.yml" --region $currentRegion --no-cli-pager | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      ✓ Buildspec uploaded successfully ($buildspecFile)" -ForegroundColor Green
+    } else {
+        Write-Host "      ❌ Failed to upload buildspec" -ForegroundColor Red
+        exit 1
+    }
+
+    # Upload custom transformation definition
+    Write-Host ""
+    Write-Host "Uploading custom Graviton transformation definition..." -ForegroundColor Yellow
+    $gravitonTransformDir = Join-Path $scriptDir "graviton-transformation-definition"
+    aws s3 cp $gravitonTransformDir "s3://$outputBucket/graviton-transformation-definition/" --recursive --region $currentRegion --no-cli-pager | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      ✓ Custom transformation definition uploaded successfully" -ForegroundColor Green
+    } else {
+        Write-Host "      ❌ Failed to upload custom transformation definition" -ForegroundColor Red
+        exit 1
+    }
+
+    # Upload knowledge items
+    Write-Host ""
+    Write-Host "Uploading Graviton knowledge items..." -ForegroundColor Yellow
+    $knowledgeItemsDir = Join-Path $scriptDir "knowledge-items"
+    aws s3 cp $knowledgeItemsDir "s3://$outputBucket/knowledge-items/" --recursive --region $currentRegion --no-cli-pager | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      ✓ Knowledge items uploaded successfully" -ForegroundColor Green
+    } else {
+        Write-Host "      ❌ Failed to upload knowledge items" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "[SETUP] Skipping infrastructure deployment..." -ForegroundColor Yellow
+    # Get region directly (prerequisites check was skipped)
+    $currentRegion = $env:AWS_DEFAULT_REGION
+    if ([string]::IsNullOrEmpty($currentRegion)) {
+        $currentRegion = aws configure get region 2>$null
+    }
+    if ([string]::IsNullOrEmpty($currentRegion)) {
+        Write-Host "ERROR: AWS region not configured" -ForegroundColor Red
+        Write-Host "Please configure your AWS region: aws configure set region <your-region>" -ForegroundColor Yellow
+        exit 1
+    }
+    
+    # Get stack outputs
+    Write-Host ""
+    Write-Host "Getting stack outputs..." -ForegroundColor Yellow
+    $stackName = "GravitonAssessmentStack-$currentRegion"
+    $outputBucket = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text 2>$null
+    $projectName = aws cloudformation describe-stacks --stack-name $stackName --region $currentRegion --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text 2>$null
+    
+    if ([string]::IsNullOrEmpty($outputBucket) -or [string]::IsNullOrEmpty($projectName)) {
+        Write-Host "      ❌ Stack not found. Please deploy infrastructure first:" -ForegroundColor Red
+        Write-Host "      .\assess-graviton.ps1" -ForegroundColor Gray
+        exit 1
+    }
+    Write-Host "      Output Bucket: $outputBucket" -ForegroundColor Gray
+    Write-Host "      CodeBuild Project: $projectName" -ForegroundColor Gray
+}
 # Start Graviton assessment build
 Write-Host ""
 Write-Host "Starting Graviton migration assessment..." -ForegroundColor Yellow

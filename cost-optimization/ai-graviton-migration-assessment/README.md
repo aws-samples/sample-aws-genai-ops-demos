@@ -55,7 +55,7 @@ GitHub Repo → CodeBuild (AWS Transform AI) → S3 (Assessment + Artifacts)
 
 ```bash
 # Analyze your repository
-cd cost-optimization/graviton-migration-assessment
+cd cost-optimization/ai-graviton-migration-assessment
 ./assess-graviton.ps1 -RepositoryUrl "https://github.com/owner/repo"
 
 # Or use the default sample (serverless payments app)

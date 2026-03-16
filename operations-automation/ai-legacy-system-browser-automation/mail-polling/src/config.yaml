@@ -1,0 +1,19 @@
+# Configuration for New Employee Order Browser Automation Integration
+# All values shown are defaults - uncomment and modify as needed
+
+# Pattern to match in email subjects (case-insensitive)
+# Emails with subjects containing this pattern will trigger browser automation
+subject_pattern: "NEW EMPLOYEE ORDER"
+
+# How often to poll the Outlook inbox for new emails (in seconds)
+# Lower values mean faster detection but more resource usage
+polling_interval_seconds: 30
+
+# AWS region for browser automation
+# Can also be set via AWS_REGION environment variable (takes precedence)
+aws_region: "us-east-1"
+
+# Browser ID for AgentCore Browser Tool
+# Can also be set via BROWSER_ID environment variable (takes precedence)
+# This should be obtained from the ai-browser-automation CDK deployment
+browser_id: null

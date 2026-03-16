@@ -27,20 +27,23 @@ else
     echo -e "\033[0;90m      Placeholder already exists, skipping...\033[0m"
 fi
 
+# Get region for stack names
+region=$(aws configure get region)
+
 # Deploy infrastructure stack
 echo -e "\n\033[0;33mDeploying infrastructure stack...\033[0m"
 echo -e "\033[0;90m      (Creating ECR repository, CodeBuild project, S3 bucket for agent builds, and IAM roles)\033[0m"
-../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerInfra"
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerInfra-$region"
 
 # Deploy data stack
 echo -e "\n\033[0;33mDeploying data stack...\033[0m"
 echo -e "\033[0;90m      (Creating DynamoDB tables and populating service configurations for 7 AWS services)\033[0m"
-../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerData" --skip-bootstrap
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerData-$region" --skip-bootstrap
 
 # Deploy auth stack
 echo -e "\n\033[0;33mDeploying authentication stack...\033[0m"
 echo -e "\033[0;90m      (Creating Cognito User Pool with email verification and password policies)\033[0m"
-../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerAuth" --skip-bootstrap
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerAuth-$region" --skip-bootstrap
 
 # Deploy runtime stack
 echo -e "\n\033[0;33mDeploying AgentCore runtime stack...\033[0m"
@@ -48,17 +51,15 @@ echo -e "\033[0;90m      (Uploading agent code, building ARM64 Docker image via 
 echo -e "\033[0;90m      Note: CodeBuild will compile the container image - this takes 5-10 minutes\033[0m"
 echo -e "\033[0;90m      The deployment will pause while waiting for the build to complete...\033[0m"
 
-if ! ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerRuntime" --skip-bootstrap 2>&1 | tee /tmp/agentcore-deploy.log; then
+if ! ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --skip-bootstrap 2>&1 | tee /tmp/agentcore-deploy.log; then
     if grep -q "Unrecognized resource types.*BedrockAgentCore" /tmp/agentcore-deploy.log; then
-        CURRENT_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-unknown}}"
-        echo -e "\n\033[0;31m❌ DEPLOYMENT FAILED: AgentCore is not available in region '$CURRENT_REGION'\033[0m"
+        echo -e "\n\033[0;31m❌ DEPLOYMENT FAILED: AgentCore is not available in region '$region'\033[0m"
         echo -e ""
         echo -e "\033[0;33mPlease verify AgentCore availability in your target region:\033[0m"
         echo -e "\033[0;36mhttps://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html\033[0m"
         echo -e ""
-        echo -e "\033[0;33mTo deploy to a supported region, set the AWS_DEFAULT_REGION environment variable:\033[0m"
-        echo -e "\033[0;90m  export AWS_DEFAULT_REGION=\"your-supported-region\"\033[0m"
-        echo -e "\033[0;90m  export AWS_REGION=\"your-supported-region\"\033[0m"
+        echo -e "\033[0;33mTo deploy to a supported region, configure your AWS CLI:\033[0m"
+        echo -e "\033[0;90m  aws configure set region your-supported-region\033[0m"
         echo -e "\033[0;90m  ./deploy-all.sh\033[0m"
         exit 1
     fi
@@ -69,11 +70,11 @@ fi
 # Build and deploy frontend (after backend is complete)
 echo -e "\n\033[0;33mBuilding and deploying frontend...\033[0m"
 echo -e "\033[0;90m      (Retrieving AgentCore Runtime ID and Cognito config, building React app, deploying to S3 + CloudFront)\033[0m"
-AGENT_RUNTIME_ARN=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerRuntime --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
-REGION=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerRuntime --query "Stacks[0].Outputs[?OutputKey=='Region'].OutputValue" --output text --no-cli-pager)
-USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
-USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
-IDENTITY_POOL_ID=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerAuth --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager)
+AGENT_RUNTIME_ARN=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+REGION=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='Region'].OutputValue" --output text --no-cli-pager)
+USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
+USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
+IDENTITY_POOL_ID=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager)
 
 if [ -z "$AGENT_RUNTIME_ARN" ]; then
     echo -e "\033[0;31mFailed to get Agent Runtime ARN from stack outputs\033[0m"
@@ -102,13 +103,13 @@ echo -e "\033[0;32mIdentity Pool ID: $IDENTITY_POOL_ID\033[0m"
 # Deploy scheduler stack (optional but recommended for automated extractions)
 echo -e "\nDeploying scheduler stack...\033[0m"
 echo -e "\033[0;90m      (Creating EventBridge rules for automated weekly/monthly extractions)\033[0m"
-../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerScheduler" --skip-bootstrap
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerScheduler-$region" --skip-bootstrap
 
 # Deploy frontend stack
-../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerFrontend" --skip-bootstrap
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerFrontend-$region" --skip-bootstrap
 
 # Get CloudFront URL
-WEBSITE_URL=$(aws cloudformation describe-stacks --stack-name AWSServicesLifecycleTrackerFrontend --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
+WEBSITE_URL=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerFrontend-$region" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
 
 echo -e "\n\033[0;32m=== Deployment Complete ===\033[0m"
 echo -e "\033[0;36mWebsite URL: $WEBSITE_URL\033[0m"
@@ -117,8 +118,13 @@ echo -e "\033[0;36mRegion: $REGION\033[0m"
 echo -e "\033[0;36mUser Pool ID: $USER_POOL_ID\033[0m"
 echo -e "\033[0;36mUser Pool Client ID: $USER_POOL_CLIENT_ID\033[0m"
 echo -e "\n\033[0;33mNext Steps:\033[0m"
-echo -e "\033[0;90m  1. Create an admin user via AWS CLI (see 'Admin User Management' section in README.md)\033[0m"
-echo -e "\033[0;90m     Example: aws cognito-idp admin-create-user --user-pool-id $USER_POOL_ID --username admin ...\033[0m"
+echo -e "\033[0;90m  1. Create an admin user (copy-paste these two commands):\033[0m"
+echo ""
+echo -e "\033[0;37m     aws cognito-idp admin-create-user --user-pool-id $USER_POOL_ID --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS\033[0m"
+echo ""
+echo -e "\033[0;37m     aws cognito-idp admin-set-user-password --user-pool-id $USER_POOL_ID --username admin --password 'YourSecurePassword123!' --permanent\033[0m"
+echo ""
+echo -e "\033[0;90m     (Replace the email and password with your own values)\033[0m"
 echo -e "\033[0;90m  2. Sign in at the Website URL above with your created admin credentials\033[0m"
 echo -e "\033[0;90m  3. Initial extraction is running in background - results will appear in DynamoDB\033[0m"
 echo -e "\033[0;90m  4. View extracted data via admin UI or query DynamoDB table aws-services-lifecycle\033[0m"

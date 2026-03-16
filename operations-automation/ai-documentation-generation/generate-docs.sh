@@ -8,7 +8,11 @@
 # Usage:
 #   ./generate-docs.sh
 #   ./generate-docs.sh -r "https://github.com/owner/repo"
-#   ./generate-docs.sh -g us-west-2
+#   ./generate-docs.sh -s
+#
+# Notes:
+#   This script uses the AWS region configured in your AWS CLI profile.
+#   To set your region: aws configure set region <your-region>
 #
 
 set -e
@@ -16,20 +20,20 @@ set -e
 # Default values
 DEFAULT_REPO="https://github.com/aws-samples/sample-serverless-digital-asset-payments"
 REPOSITORY_URL=""
-REGION="${AWS_REGION:-us-east-1}"
-DEPLOY_ONLY=false
+SKIP_SETUP=false
 
 # Parse arguments
-while getopts "r:g:dh" opt; do
+while getopts "r:sh" opt; do
   case $opt in
     r) REPOSITORY_URL="$OPTARG" ;;
-    g) REGION="$OPTARG" ;;
-    d) DEPLOY_ONLY=true ;;
+    s) SKIP_SETUP=true ;;
     h)
-      echo "Usage: $0 [-r repository_url] [-g region] [-d]"
+      echo "Usage: $0 [-r repository_url] [-s]"
       echo "  -r  Git repository URL to analyze"
-      echo "  -g  AWS region (default: us-east-1)"
-      echo "  -d  Deploy infrastructure only, don't start a build"
+      echo "  -s  Skip infrastructure deployment, only start a build"
+      echo ""
+      echo "This script uses the AWS region configured in your AWS CLI profile."
+      echo "To set your region: aws configure set region <your-region>"
       exit 0
       ;;
     \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
@@ -68,71 +72,85 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CDK_DIR="$SCRIPT_DIR/infrastructure/cdk"
 SHARED_SCRIPTS_DIR="$SCRIPT_DIR/../../shared/scripts"
 
-# Run prerequisites check
-echo -e "\033[0;33mRunning prerequisites check...\033[0m"
-"$SHARED_SCRIPTS_DIR/check-prerequisites.sh" \
-    --required-service "transform" \
-    --require-cdk
+if [ "$SKIP_SETUP" = false ]; then
+    # Run prerequisites check
+    echo -e "\033[0;33mRunning prerequisites check...\033[0m"
+    "$SHARED_SCRIPTS_DIR/check-prerequisites.sh" \
+        --required-service "transform" \
+        --require-cdk
 
-# Get AWS account and region info
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-CURRENT_REGION=$(aws configure get region)
-if [ -z "$CURRENT_REGION" ]; then
-  CURRENT_REGION="$REGION"
-fi
+    # Get AWS account and region info
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 
-echo ""
-echo -e "\033[0;33mDeploying infrastructure via CDK...\033[0m"
-echo -e "\033[0;90m      Region: $CURRENT_REGION\033[0m"
+    # Get region using shared utility
+    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    CURRENT_REGION=$(get_aws_region)
 
-# Deploy CDK stack using shared script
-"$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
-
-if [ $? -ne 0 ]; then
-    echo -e "\033[0;31mCDK deployment failed\033[0m"
-    exit 1
-fi
-
-# Get bucket name and project name from CloudFormation outputs
-echo ""
-echo -e "\033[0;33mGetting stack outputs...\033[0m"
-OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name DocumentationGeneratorStack --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
-PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name DocumentationGeneratorStack --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
-if [ -z "$OUTPUT_BUCKET" ] || [ -z "$PROJECT_NAME" ]; then
-    echo -e "\033[0;31m      ❌ Failed to get stack outputs\033[0m"
-    exit 1
-fi
-echo -e "\033[0;90m      Output Bucket: $OUTPUT_BUCKET\033[0m"
-echo -e "\033[0;90m      CodeBuild Project: $PROJECT_NAME\033[0m"
-
-# Upload appropriate buildspec to S3
-echo ""
-echo -e "\033[0;33mUploading buildspec to S3...\033[0m"
-if aws s3 cp "$SCRIPT_DIR/$BUILDSPEC_FILE" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
-    echo -e "\033[0;32m      ✓ Buildspec uploaded successfully ($BUILDSPEC_FILE)\033[0m"
-else
-    echo -e "\033[0;31m      ❌ Failed to upload buildspec\033[0m"
-    exit 1
-fi
-
-# Upload enhanced transformation context
-echo ""
-echo -e "\033[0;33mUploading enhanced transformation context...\033[0m"
-if aws s3 cp "$SCRIPT_DIR/enhanced-transformation/" "s3://$OUTPUT_BUCKET/enhanced-transformation/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
-    echo -e "\033[0;32m      ✓ Enhanced transformation context uploaded successfully\033[0m"
-else
-    echo -e "\033[0;31m      ❌ Failed to upload enhanced transformation context\033[0m"
-    exit 1
-fi
-
-if [ "$DEPLOY_ONLY" = true ]; then
     echo ""
-    echo -e "\033[0;36m=== Infrastructure Deployment Complete ===\033[0m"
+    echo -e "\033[0;33mDeploying infrastructure via CDK...\033[0m"
+    echo -e "\033[0;90m      Region: $CURRENT_REGION\033[0m"
+
+    # Deploy CDK stack using shared script
+    "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$CDK_DIR"
+
+    if [ $? -ne 0 ]; then
+        echo -e "\033[0;31mCDK deployment failed\033[0m"
+        exit 1
+    fi
+
+    # Get bucket name and project name from CloudFormation outputs
     echo ""
-    echo -e "\033[0;33mTo generate documentation, run:\033[0m"
-    echo "  aws codebuild start-build --project-name $PROJECT_NAME --region $CURRENT_REGION \\"
-    echo "    --environment-variables-override name=REPOSITORY_URL,value=https://github.com/owner/repo"
-    exit 0
+    echo -e "\033[0;33mGetting stack outputs...\033[0m"
+    STACK_NAME="DocumentationGeneratorStack-$CURRENT_REGION"
+    OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
+    PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
+    if [ -z "$OUTPUT_BUCKET" ] || [ -z "$PROJECT_NAME" ]; then
+        echo -e "\033[0;31m      ❌ Failed to get stack outputs\033[0m"
+        exit 1
+    fi
+    echo -e "\033[0;90m      Output Bucket: $OUTPUT_BUCKET\033[0m"
+    echo -e "\033[0;90m      CodeBuild Project: $PROJECT_NAME\033[0m"
+
+    # Upload appropriate buildspec to S3
+    echo ""
+    echo -e "\033[0;33mUploading buildspec to S3...\033[0m"
+    if aws s3 cp "$SCRIPT_DIR/$BUILDSPEC_FILE" "s3://$OUTPUT_BUCKET/config/buildspec.yml" --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
+        echo -e "\033[0;32m      ✓ Buildspec uploaded successfully ($BUILDSPEC_FILE)\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ Failed to upload buildspec\033[0m"
+        exit 1
+    fi
+
+    # Upload enhanced transformation context
+    echo ""
+    echo -e "\033[0;33mUploading enhanced transformation context...\033[0m"
+    if aws s3 cp "$SCRIPT_DIR/enhanced-transformation/" "s3://$OUTPUT_BUCKET/enhanced-transformation/" --recursive --region "$CURRENT_REGION" --no-cli-pager > /dev/null; then
+        echo -e "\033[0;32m      ✓ Enhanced transformation context uploaded successfully\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ Failed to upload enhanced transformation context\033[0m"
+        exit 1
+    fi
+else
+    echo -e "\033[0;33m[SETUP] Skipping infrastructure deployment...\033[0m"
+    
+    # Get region using shared utility (prerequisites check was skipped)
+    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    CURRENT_REGION=$(get_aws_region)
+    
+    # Get stack outputs
+    echo ""
+    echo -e "\033[0;33mGetting stack outputs...\033[0m"
+    STACK_NAME="DocumentationGeneratorStack-$CURRENT_REGION"
+    OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text 2>/dev/null)
+    PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text 2>/dev/null)
+    
+    if [ -z "$OUTPUT_BUCKET" ] || [ -z "$PROJECT_NAME" ]; then
+        echo -e "\033[0;31m      ❌ Stack not found. Please deploy infrastructure first:\033[0m"
+        echo -e "\033[0;90m      ./generate-docs.sh\033[0m"
+        exit 1
+    fi
+    echo -e "\033[0;90m      Output Bucket: $OUTPUT_BUCKET\033[0m"
+    echo -e "\033[0;90m      CodeBuild Project: $PROJECT_NAME\033[0m"
 fi
 
 # Start documentation generation build

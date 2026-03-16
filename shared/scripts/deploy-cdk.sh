@@ -41,6 +41,11 @@ if [ -z "$CDK_DIRECTORY" ]; then
     exit 1
 fi
 
+# Set PYTHONPATH to include shared utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export PYTHONPATH="$REPO_ROOT"
+
 # Get AWS account and region
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 CURRENT_REGION=$(aws configure get region)
@@ -68,10 +73,20 @@ pushd "$CDK_DIRECTORY" > /dev/null
 echo ""
 echo -e "\033[0;33mInstalling CDK dependencies...\033[0m"
 
+# Determine CDK app override for Python projects (use python3 for cross-platform compatibility)
+CDK_APP_OVERRIDE=""
+
 if [ -f "requirements.txt" ]; then
-    # Python CDK project
-    pip3 install -r requirements.txt -q
-    echo -e "\033[0;32m      ✓ Python CDK dependencies installed\033[0m"
+    # Python CDK project - install deps directly (--break-system-packages for PEP 668 environments)
+    set +e
+    pip3 install -r requirements.txt -q 2>/dev/null
+    if [ $? -ne 0 ]; then
+        pip3 install -r requirements.txt -q --break-system-packages 2>/dev/null
+    fi
+    set -e
+    # Override CDK app command to use python3 (some systems only have python3, not python)
+    CDK_APP_OVERRIDE="--app 'python3 app.py'"
+    echo -e "\033[0;32m      OK: Python CDK dependencies installed\033[0m"
 elif [ -f "package.json" ]; then
     # TypeScript/JavaScript CDK project
     if [ ! -d "node_modules" ]; then
@@ -86,33 +101,50 @@ fi
 if [ "$SKIP_BOOTSTRAP" = false ]; then
     echo ""
     echo -e "\033[0;33mEnsuring CDK bootstrap is up to date...\033[0m"
-    npx -y cdk bootstrap "aws://$ACCOUNT_ID/$CURRENT_REGION" --no-cli-pager > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo -e "\033[0;31m      ❌ CDK bootstrap failed\033[0m"
+    set +e
+    eval npx -y cdk bootstrap "aws://$ACCOUNT_ID/$CURRENT_REGION" --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+    bootstrap_exit=$?
+    set -e
+    if [ $bootstrap_exit -ne 0 ]; then
+        echo -e "\033[0;31m      ERROR: CDK bootstrap failed\033[0m"
         exit 1
     fi
-    echo -e "\033[0;32m      ✓ CDK bootstrap is up to date\033[0m"
+    echo -e "\033[0;32m      OK: CDK bootstrap is up to date\033[0m"
 fi
 
 # Deploy or destroy stack
 if [ "$DESTROY_STACK" = true ]; then
     echo ""
     echo -e "\033[0;33mDestroying CDK stack...\033[0m"
+    set +e
     if [ -z "$STACK_NAME" ]; then
-        npx -y cdk destroy --force --no-cli-pager
+        eval npx -y cdk destroy --force --no-cli-pager $CDK_APP_OVERRIDE 2>&1
     else
-        npx -y cdk destroy "$STACK_NAME" --force --no-cli-pager
+        eval npx -y cdk destroy "$STACK_NAME" --force --no-cli-pager $CDK_APP_OVERRIDE 2>&1
     fi
-    echo -e "\033[0;32m      ✓ Stack destroyed\033[0m"
+    cdk_exit=$?
+    set -e
+    if [ $cdk_exit -ne 0 ]; then
+        echo -e "\033[0;31m      ERROR: CDK destroy failed\033[0m"
+        exit 1
+    fi
+    echo -e "\033[0;32m      OK: Stack destroyed\033[0m"
 else
     echo ""
     echo -e "\033[0;33mDeploying CDK stack...\033[0m"
+    set +e
     if [ -z "$STACK_NAME" ]; then
-        npx -y cdk deploy --require-approval never --no-cli-pager
+        eval npx -y cdk deploy --require-approval never --no-cli-pager $CDK_APP_OVERRIDE 2>&1
     else
-        npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager
+        eval npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager $CDK_APP_OVERRIDE 2>&1
     fi
-    echo -e "\033[0;32m      ✓ Stack deployed successfully\033[0m"
+    cdk_exit=$?
+    set -e
+    if [ $cdk_exit -ne 0 ]; then
+        echo -e "\033[0;31m      ERROR: CDK deployment failed\033[0m"
+        exit 1
+    fi
+    echo -e "\033[0;32m      OK: Stack deployed successfully\033[0m"
 fi
 
 popd > /dev/null

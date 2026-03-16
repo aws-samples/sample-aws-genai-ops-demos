@@ -7,42 +7,39 @@ import { AgentCoreStack } from '../lib/runtime-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 import { AuthStack } from '../lib/auth-stack';
 import { AWSServicesLifecycleTrackerScheduler } from '../lib/scheduler-stack';
+import { getRegion } from '../../../../shared/utils/aws-utils';
 
 const app = new cdk.App();
 
+// Get region using shared utility
+const region = getRegion();
+
+const env = {
+  account: process.env.CDK_DEFAULT_ACCOUNT,
+  region: region,
+};
+
 // Infrastructure stack (ECR, IAM, CodeBuild, S3)
-new AWSServicesLifecycleTrackerInfraStack(app, 'AWSServicesLifecycleTrackerInfra', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+new AWSServicesLifecycleTrackerInfraStack(app, `AWSServicesLifecycleTrackerInfra-${region}`, {
+  env,
   description: 'AWS Services Lifecycle Tracker Infrastructure: Container registry, build pipeline, and IAM roles',
 });
 
 // Data stack (DynamoDB tables)
-const dataStack = new DataStack(app, 'AWSServicesLifecycleTrackerData', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+const dataStack = new DataStack(app, `AWSServicesLifecycleTrackerData-${region}`, {
+  env,
   description: 'AWS Services Lifecycle Tracker Data: DynamoDB tables for deprecation data and configuration',
 });
 
 // Auth stack (Cognito User Pool)
-const authStack = new AuthStack(app, 'AWSServicesLifecycleTrackerAuth', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+const authStack = new AuthStack(app, `AWSServicesLifecycleTrackerAuth-${region}`, {
+  env,
   description: 'AWS Services Lifecycle Tracker Authentication: Cognito User Pool for admin access',
 });
 
 // Runtime stack (depends on infra, auth, and data stacks)
-const agentStack = new AgentCoreStack(app, 'AWSServicesLifecycleTrackerRuntime', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+const agentStack = new AgentCoreStack(app, `AWSServicesLifecycleTrackerRuntime-${region}`, {
+  env,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,
   lifecycleTableName: dataStack.lifecycleTable.tableName,
@@ -51,11 +48,8 @@ const agentStack = new AgentCoreStack(app, 'AWSServicesLifecycleTrackerRuntime',
 });
 
 // Scheduler stack (depends on runtime stack)
-const schedulerStack = new AWSServicesLifecycleTrackerScheduler(app, 'AWSServicesLifecycleTrackerScheduler', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+const schedulerStack = new AWSServicesLifecycleTrackerScheduler(app, `AWSServicesLifecycleTrackerScheduler-${region}`, {
+  env,
   agentRuntimeArn: agentStack.agentRuntimeArn,
   description: 'AWS Services Lifecycle Tracker Scheduler: EventBridge rules for automated extraction scheduling',
 });
@@ -64,15 +58,12 @@ const schedulerStack = new AWSServicesLifecycleTrackerScheduler(app, 'AWSService
 schedulerStack.addDependency(agentStack);
 
 // Frontend stack (depends on runtime, auth, and data stacks)
-new FrontendStack(app, 'AWSServicesLifecycleTrackerFrontend', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
+new FrontendStack(app, `AWSServicesLifecycleTrackerFrontend-${region}`, {
+  env,
   userPoolId: authStack.userPool.userPoolId,
   userPoolClientId: authStack.userPoolClient.userPoolClientId,
   agentRuntimeArn: agentStack.agentRuntimeArn,
-  region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  region: region,
   lifecycleTableName: dataStack.lifecycleTable.tableName,
   configTableName: dataStack.configTable.tableName,
   userPool: authStack.userPool,

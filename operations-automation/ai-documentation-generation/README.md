@@ -169,13 +169,13 @@ The script will:
 ### Deploy Infrastructure Only
 
 ```powershell
-# PowerShell - deploy infrastructure without starting a build
-.\generate-docs.ps1 -DeployOnly
+# PowerShell - skip setup and retrieve existing stack outputs
+.\generate-docs.ps1 -SkipSetup
 ```
 
 ```bash
-# Bash - deploy infrastructure without starting a build
-./generate-docs.sh -d
+# Bash - skip setup and retrieve existing stack outputs
+./generate-docs.sh -s
 ```
 
 ## Usage
@@ -183,17 +183,20 @@ The script will:
 ### Generate Documentation for Any Repository
 
 ```bash
+# Get the current region
+REGION=$(aws configure get region)
+
 # Get the actual project name from CloudFormation
 PROJECT_NAME=$(aws cloudformation describe-stacks \
-  --stack-name DocumentationGeneratorStack \
-  --region us-east-1 \
+  --stack-name "DocumentationGeneratorStack-$REGION" \
+  --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" \
   --output text)
 
 # Start a documentation generation job
 aws codebuild start-build \
   --project-name $PROJECT_NAME \
-  --region us-east-1 \
+  --region "$REGION" \
   --environment-variables-override \
     name=REPOSITORY_URL,value=https://github.com/owner/repo \
     name=JOB_ID,value=my-job-123

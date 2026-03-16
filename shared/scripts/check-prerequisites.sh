@@ -73,6 +73,10 @@ fi
 if [ "$REQUIRE_CDK" = true ] || [ -n "$MIN_NODE_VERSION" ]; then
     NODE_MIN=${MIN_NODE_VERSION:-20}
     echo -e "\n\033[0;33mChecking Node.js version...\033[0m"
+    if ! command -v node &> /dev/null; then
+        echo -e "\033[0;31m      ❌ Node.js not found. Install from https://nodejs.org\033[0m"
+        exit 1
+    fi
     NODE_VERSION=$(node --version 2>&1)
     if [[ $NODE_VERSION =~ v([0-9]+) ]]; then
         NODE_MAJOR=${BASH_REMATCH[1]}

@@ -14,6 +14,7 @@ import boto3
 from botocore.exceptions import ClientError
 from typing import Dict, List, Any, Optional
 
+from aws_utils import get_region
 from database_reads import get_service_config
 from service_filters import apply_service_filters
 
@@ -35,9 +36,8 @@ class DataExtractor:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         
-        # Initialize Bedrock client - use us-east-1 for Nova models availability
-        # Note: Bedrock models may have different regional availability than DynamoDB tables
-        bedrock_region = os.environ.get('BEDROCK_REGION', 'us-east-1')
+        # Initialize Bedrock client using deployment region
+        bedrock_region = get_region()
         self.bedrock = boto3.client('bedrock-runtime', region_name=bedrock_region)
     
     def extract_service_data(self, service_name: str, force_refresh: bool = False, override_urls: List[str] = None) -> Dict[str, Any]:
@@ -310,11 +310,15 @@ class DataExtractor:
                 
                 return normalized_data
             except json.JSONDecodeError as e:
-                print(f"JSON parsing error: {e}")
-                print(f"Failed to parse: {repr(clean_response[:200])}")
+                print(f"JSON parsing error: {str(e)}")
+                print(f"Error at position {e.pos if hasattr(e, 'pos') else 'unknown'}")
+                print(f"Failed to parse around position: {repr(clean_response[max(0, e.pos-100):min(len(clean_response), e.pos+100)] if hasattr(e, 'pos') else 'N/A')}")
+                print(f"Full response (first 2000 chars): {response[:2000]}")
                 return {
-                    'error': 'Failed to parse LLM response as JSON',
-                    'raw_response': response
+                    'error': f'Failed to parse LLM response as JSON: {str(e)}',
+                    'raw_response': response[:2000],  # Increased to 2000 chars for better debugging
+                    'parse_error': str(e),
+                    'error_position': e.pos if hasattr(e, 'pos') else None
                 }
                 
         except Exception as e:
@@ -374,7 +378,7 @@ Return JSON format:
             str: LLM response text
         """
         
-        model_id = "us.amazon.nova-lite-v1:0"
+        model_id = "global.amazon.nova-2-lite-v1:0"
         
         # Prepare the request body for Nova Lite
         request_body = {

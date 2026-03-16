@@ -354,6 +354,15 @@ def handler(event, context):
             ]
         )
 
+        # Deploy frontend files to S3 and invalidate CloudFront cache
+        s3deploy.BucketDeployment(
+            self, "DeployWebsite",
+            sources=[s3deploy.Source.asset("../../frontend")],
+            destination_bucket=website_bucket,
+            distribution=distribution,
+            distribution_paths=["/*"]
+        )
+
         # Outputs
         CfnOutput(
             self, "WebsiteURL",

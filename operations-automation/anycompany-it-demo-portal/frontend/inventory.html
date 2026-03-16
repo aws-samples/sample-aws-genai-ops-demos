@@ -27,6 +27,7 @@
 
             <div class="flex-row gap margin-bottom">
                 <button class="primary" onclick="showAddItemModal()">Add Item</button>
+                <button onclick="showAllocateModal()" id="allocateBtn" disabled>Allocate Item (0 selected)</button>
                 <button onclick="resetInventory()">Reset</button>
                 <button onclick="exportInventory()">Export</button>
                 <button onclick="checkStock()" id="checkStockBtn" disabled>Check Stock (0 selected)</button>
@@ -45,13 +46,16 @@
                         <select id="categoryFilter" onchange="filterItems()">
                             <option value="">All Categories</option>
                             <option value="Laptops">Laptops</option>
+                            <option value="Desktops">Desktops</option>
                             <option value="Monitors">Monitors</option>
                             <option value="Peripherals">Peripherals</option>
                             <option value="Mobile Devices">Mobile Devices</option>
                             <option value="Networking">Networking</option>
-                            <option value="Cloud Services">Cloud Services</option>
                             <option value="Software">Software</option>
-                            <option value="Security Software">Security Software</option>
+                            <option value="Audio Equipment">Audio Equipment</option>
+                            <option value="Video Equipment">Video Equipment</option>
+                            <option value="Security">Security</option>
+                            <option value="Cloud Services">Cloud Services</option>
                         </select>
                     </div>
                     <div>
@@ -117,10 +121,16 @@
                         <label>Category:</label>
                         <select id="itemCategory">
                             <option value="Laptops">Laptops</option>
+                            <option value="Desktops">Desktops</option>
                             <option value="Monitors">Monitors</option>
                             <option value="Peripherals">Peripherals</option>
                             <option value="Mobile Devices">Mobile Devices</option>
                             <option value="Networking">Networking</option>
+                            <option value="Software">Software</option>
+                            <option value="Audio Equipment">Audio Equipment</option>
+                            <option value="Video Equipment">Video Equipment</option>
+                            <option value="Security">Security</option>
+                            <option value="Cloud Services">Cloud Services</option>
                         </select>
                     </div>
                     
@@ -202,12 +212,58 @@
         </div>
     </div>
 
+    <!-- Allocate Item Modal -->
+    <div id="allocateModalBackdrop" onclick="hideAllocateModal()" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); z-index: 999;"></div>
+    <div class="dialog active" id="allocateModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; width: 450px;">
+        <div class="title-bar">
+            <div class="title-bar-text">Allocate Inventory Item</div>
+            <div class="title-bar-buttons">
+                <button data-close onclick="hideAllocateModal()"></button>
+            </div>
+        </div>
+        
+        <div class="window-body padding">
+            <form id="allocateForm">
+                <div class="form-row">
+                    <label>Selected Item:</label>
+                    <input type="text" id="allocateItemName" readonly style="width: 100%; background: #f0f0f0;">
+                </div>
+                
+                <div class="form-row">
+                    <label>Employee Name:</label>
+                    <input type="text" id="allocateEmployeeName" placeholder="e.g., John Smith" style="width: 100%;">
+                </div>
+                
+                <div class="flex-row gap">
+                    <div style="flex: 1;">
+                        <label>Quantity to Allocate:</label>
+                        <input type="number" id="allocateQuantity" min="1" value="1">
+                    </div>
+                    <div style="flex: 1;">
+                        <label>Available:</label>
+                        <input type="text" id="allocateAvailable" readonly style="background: #f0f0f0;">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <label>Reason/Notes:</label>
+                    <textarea id="allocateNotes" rows="3" placeholder="e.g., New employee onboarding" style="width: 100%;"></textarea>
+                </div>
+                
+                <div class="flex-row gap margin-top">
+                    <button type="button" onclick="hideAllocateModal()">Cancel</button>
+                    <button type="button" class="primary" onclick="allocateItem()">Allocate Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         // API Configuration
         let inventoryItems = [];
 
         // API Configuration - Load from generated config
-        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : 'https://wa0s6jimi7.execute-api.us-east-1.amazonaws.com/prod';
+        let apiBaseUrl = window.APP_CONFIG ? window.APP_CONFIG.apiBaseUrl : '';
 
         let filteredItems = [...inventoryItems];
         let selectedItems = [];
@@ -471,6 +527,10 @@
             const checkStockBtn = document.getElementById('checkStockBtn');
             checkStockBtn.disabled = selectedItems.length === 0;
             checkStockBtn.textContent = `Check Stock (${selectedItems.length} selected)`;
+            
+            const allocateBtn = document.getElementById('allocateBtn');
+            allocateBtn.disabled = selectedItems.length !== 1;
+            allocateBtn.textContent = `Allocate Item (${selectedItems.length} selected)`;
         }
 
         function checkStock() {
@@ -631,6 +691,168 @@
         function hideStockModal() {
             document.getElementById('stockModalBackdrop').style.display = 'none';
             document.getElementById('stockModal').style.display = 'none';
+        }
+
+        // Allocate Item Modal functions
+        function showAllocateModal() {
+            if (selectedItems.length !== 1) {
+                showMessage('Error', 'Please select exactly one item to allocate.');
+                return;
+            }
+            
+            const itemId = selectedItems[0];
+            const item = inventoryItems.find(i => i.id === itemId);
+            
+            if (!item) {
+                showMessage('Error', 'Selected item not found.');
+                return;
+            }
+            
+            document.getElementById('allocateItemName').value = item.name;
+            document.getElementById('allocateAvailable').value = item.availableQuantity;
+            document.getElementById('allocateQuantity').value = 1;
+            document.getElementById('allocateQuantity').max = item.availableQuantity;
+            document.getElementById('allocateEmployeeName').value = '';
+            document.getElementById('allocateNotes').value = '';
+            
+            document.getElementById('allocateModalBackdrop').style.display = 'block';
+            document.getElementById('allocateModal').style.display = 'block';
+        }
+
+        function hideAllocateModal() {
+            document.getElementById('allocateModalBackdrop').style.display = 'none';
+            document.getElementById('allocateModal').style.display = 'none';
+        }
+
+        async function allocateItem() {
+            const employeeName = document.getElementById('allocateEmployeeName').value.trim();
+            const quantity = parseInt(document.getElementById('allocateQuantity').value);
+            const notes = document.getElementById('allocateNotes').value.trim();
+            
+            if (!employeeName) {
+                showMessage('Error', 'Please enter an employee name.');
+                return;
+            }
+            
+            if (quantity < 1) {
+                showMessage('Error', 'Quantity must be at least 1.');
+                return;
+            }
+            
+            const itemId = selectedItems[0];
+            const item = inventoryItems.find(i => i.id === itemId);
+            
+            if (!item) {
+                showMessage('Error', 'Selected item not found.');
+                return;
+            }
+            
+            if (quantity > item.availableQuantity) {
+                showMessage('Error', `Cannot allocate ${quantity} items. Only ${item.availableQuantity} available.`);
+                return;
+            }
+            
+            // Update local inventory
+            item.availableQuantity -= quantity;
+            item.reservedQuantity = (item.reservedQuantity || 0) + quantity;
+            item.lastUpdated = new Date().toISOString().split('T')[0];
+            
+            // Try to update via API
+            try {
+                await fetch(`${apiBaseUrl}/inventory`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(item)
+                });
+            } catch (error) {
+                console.error('Error updating inventory via API:', error);
+            }
+            
+            hideAllocateModal();
+            renderInventory();
+            
+            // Clear selection
+            document.getElementById('selectAll').checked = false;
+            selectedItems = [];
+            updateSelection();
+            
+            showMessage('Success', `Successfully allocated ${quantity} x "${item.name}" to ${employeeName}.\n\nNotes: ${notes || 'None'}`);
+        }
+
+        // Modal control functions
+        function showAddItemModal() {
+            document.getElementById('modalBackdrop').style.display = 'block';
+            document.getElementById('addItemModal').style.display = 'block';
+        }
+
+        function hideAddItemModal() {
+            document.getElementById('modalBackdrop').style.display = 'none';
+            document.getElementById('addItemModal').style.display = 'none';
+            // Clear form fields
+            document.getElementById('itemName').value = '';
+            document.getElementById('itemCategory').value = 'Laptops';
+            document.getElementById('itemManufacturer').value = '';
+            document.getElementById('itemModel').value = '';
+            document.getElementById('itemStock').value = '0';
+            document.getElementById('itemCost').value = '';
+            document.getElementById('itemLocation').value = '';
+        }
+
+        async function addItem() {
+            const name = document.getElementById('itemName').value.trim();
+            const category = document.getElementById('itemCategory').value;
+            const manufacturer = document.getElementById('itemManufacturer').value.trim();
+            const model = document.getElementById('itemModel').value.trim();
+            const stockLevel = parseInt(document.getElementById('itemStock').value) || 0;
+            const unitCost = parseFloat(document.getElementById('itemCost').value) || 0;
+            const location = document.getElementById('itemLocation').value.trim();
+
+            // Validation
+            if (!name || !manufacturer || !model || !location) {
+                showMessage('Validation Error', 'Please fill in all required fields: Item Name, Manufacturer, Model, and Location.');
+                return;
+            }
+
+            // Create new item object
+            const newItem = {
+                id: `item-${Date.now()}`,
+                name: name,
+                category: category,
+                manufacturer: manufacturer,
+                model: model,
+                stockLevel: stockLevel,
+                reservedQuantity: 0,
+                availableQuantity: stockLevel,
+                unitCost: unitCost,
+                location: location,
+                lastUpdated: new Date().toISOString().split('T')[0]
+            };
+
+            try {
+                // Persist to DynamoDB via API
+                const response = await fetch(`${apiBaseUrl}/inventory`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(newItem)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+
+                // Reload inventory from API to get updated data
+                await loadInventory();
+                filteredItems = [...inventoryItems];
+                renderInventory();
+
+                hideAddItemModal();
+                showMessage('Success', `Item "${name}" has been added to inventory successfully!`);
+            } catch (error) {
+                console.error('Error adding item:', error);
+                showMessage('Error', `Failed to add item to inventory: ${error.message}. The item was not saved.`);
+            }
         }
     </script>
 </body>

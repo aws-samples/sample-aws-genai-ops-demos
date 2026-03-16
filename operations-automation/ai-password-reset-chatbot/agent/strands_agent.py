@@ -21,6 +21,7 @@ from bedrock_agentcore.memory import MemoryClient
 from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig, RetrievalConfig
 from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
 from botocore.exceptions import ClientError
+from aws_utils import get_region
 
 # Create the AgentCore app
 app = BedrockAgentCoreApp()
@@ -28,7 +29,7 @@ app = BedrockAgentCoreApp()
 # Get User Pool configuration from environment
 USER_POOL_ID = os.environ.get('USER_POOL_ID', '')
 USER_POOL_CLIENT_ID = os.environ.get('USER_POOL_CLIENT_ID', '')
-AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+AWS_REGION = get_region()
 
 # Initialize Cognito client
 cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
@@ -190,6 +191,7 @@ agent = None
 
 async def get_or_create_memory():
     """Get or create AgentCore Memory for session management"""
+    import asyncio
     global MEMORY_ID
     
     print(f"DEBUG: get_or_create_memory called, current MEMORY_ID: {MEMORY_ID}")
@@ -203,31 +205,107 @@ async def get_or_create_memory():
             print(f"DEBUG: Memories response type: {type(memories)}")
             print(f"DEBUG: Memories content: {memories}")
             
-            # Look for our memory by name (check both 'name' and 'id' fields)
+            # Look for our memory by ID prefix (name field may be empty in list response)
+            existing_memory = None
             for memory in memories:
-                memory_name = memory.get('name', '')
                 memory_id = memory.get('id', '')
                 memory_status = memory.get('status', '')
-                print(f"DEBUG: Checking memory - name: '{memory_name}', id: '{memory_id}', status: '{memory_status}'")
+                print(f"DEBUG: Checking memory - id: '{memory_id}', status: '{memory_status}'")
                 
-                # Check if this is our memory (name starts with our prefix) AND it's active
-                if ((memory_name == 'password_reset_sessions' or 
-                     memory_id.startswith('password_reset_sessions')) and 
-                    memory_status == 'ACTIVE'):
-                    MEMORY_ID = memory.get('id')
-                    print(f"DEBUG: Found existing ACTIVE AgentCore Memory: {MEMORY_ID}")
+                # Check if this is our memory by ID prefix (regardless of status)
+                if memory_id.startswith('password_reset_sessions'):
+                    existing_memory = memory
+                    print(f"DEBUG: Found existing memory: {memory_id} with status: {memory_status}")
                     break
             
-            # If not found, create new one
-            if MEMORY_ID is None:
+            if existing_memory:
+                memory_id = existing_memory.get('id')
+                memory_status = existing_memory.get('status')
+                
+                # If memory is CREATING, wait for it to become ACTIVE
+                if memory_status == 'CREATING':
+                    print(f"DEBUG: Memory {memory_id} is CREATING, waiting for it to become ACTIVE...")
+                    max_wait_seconds = 30
+                    wait_interval = 2
+                    elapsed = 0
+                    
+                    while elapsed < max_wait_seconds:
+                        await asyncio.sleep(wait_interval)
+                        elapsed += wait_interval
+                        
+                        # Check status again
+                        memories = memory_client.list_memories()
+                        for memory in memories:
+                            if memory.get('id') == memory_id:
+                                memory_status = memory.get('status')
+                                print(f"DEBUG: Memory status after {elapsed}s: {memory_status}")
+                                
+                                if memory_status == 'ACTIVE':
+                                    MEMORY_ID = memory_id
+                                    print(f"DEBUG: Memory is now ACTIVE: {MEMORY_ID}")
+                                    return MEMORY_ID
+                                elif memory_status == 'FAILED':
+                                    raise Exception(f"Memory creation failed: {memory_id}")
+                                break
+                    
+                    # If we get here, timeout waiting for ACTIVE status
+                    raise Exception(f"Timeout waiting for memory {memory_id} to become ACTIVE after {max_wait_seconds}s")
+                
+                elif memory_status == 'ACTIVE':
+                    MEMORY_ID = memory_id
+                    print(f"DEBUG: Found existing ACTIVE AgentCore Memory: {MEMORY_ID}")
+                    return MEMORY_ID
+                
+                else:
+                    raise Exception(f"Memory {memory_id} has unexpected status: {memory_status}")
+            
+            else:
+                # No existing memory found, create new one
                 print("DEBUG: Creating new AgentCore Memory...")
                 memory_response = memory_client.create_memory(
-                    name="password_reset_sessions",  # Fixed: no hyphens allowed
+                    name="password_reset_sessions",
                     description="Session memory for password reset conversations"
                 )
-                MEMORY_ID = memory_response.get('id')
-                print(f"DEBUG: Successfully created AgentCore Memory: {MEMORY_ID}")
+                memory_id = memory_response.get('id')
+                memory_status = memory_response.get('status')
+                print(f"DEBUG: Successfully created AgentCore Memory: {memory_id} with status: {memory_status}")
                 print(f"DEBUG: Full memory response: {memory_response}")
+                
+                # Wait for it to become ACTIVE
+                if memory_status == 'CREATING':
+                    print(f"DEBUG: Waiting for newly created memory to become ACTIVE...")
+                    max_wait_seconds = 30
+                    wait_interval = 2
+                    elapsed = 0
+                    
+                    while elapsed < max_wait_seconds:
+                        await asyncio.sleep(wait_interval)
+                        elapsed += wait_interval
+                        
+                        # Check status
+                        memories = memory_client.list_memories()
+                        for memory in memories:
+                            if memory.get('id') == memory_id:
+                                memory_status = memory.get('status')
+                                print(f"DEBUG: Memory status after {elapsed}s: {memory_status}")
+                                
+                                if memory_status == 'ACTIVE':
+                                    MEMORY_ID = memory_id
+                                    print(f"DEBUG: Memory is now ACTIVE: {MEMORY_ID}")
+                                    return MEMORY_ID
+                                elif memory_status == 'FAILED':
+                                    raise Exception(f"Memory creation failed: {memory_id}")
+                                break
+                    
+                    # If we get here, timeout waiting for ACTIVE status
+                    raise Exception(f"Timeout waiting for memory {memory_id} to become ACTIVE after {max_wait_seconds}s")
+                
+                elif memory_status == 'ACTIVE':
+                    MEMORY_ID = memory_id
+                    return MEMORY_ID
+                
+                else:
+                    raise Exception(f"Newly created memory has unexpected status: {memory_status}")
                 
         except Exception as e:
             print(f"ERROR: Failed to get/create AgentCore Memory: {e}")

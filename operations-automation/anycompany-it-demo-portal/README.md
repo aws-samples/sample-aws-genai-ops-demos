@@ -48,6 +48,8 @@ This demo showcases how GenAI can automate workflows on legacy systems that lack
 
 ```
 anycompany-it-demo-portal/
+├── deploy-all.ps1                # PowerShell deployment script
+├── deploy-all.sh                 # Bash deployment script
 ├── frontend/                     # Static HTML portal implementations
 │   ├── index.html                # Main portal selector (CloudScape style)
 │   ├── itsm.html                 # IT Service Management portal
@@ -58,11 +60,9 @@ anycompany-it-demo-portal/
 │   ├── app.py                    # CDK application entry point
 │   ├── stack.py                  # Main infrastructure stack
 │   └── requirements.txt          # Python dependencies
-├── scripts/                      # Deployment and utility scripts
-│   ├── deploy.ps1                # PowerShell deployment script
-│   ├── deploy.sh                 # Bash deployment script
-│   └── seed-data.py              # Mock data population script
-└── .kiro/steering/               # Development guidelines and best practices
+└── scripts/                      # Utility scripts
+    ├── seed-data.py              # Mock data population script
+    └── mock_data/                # JSON mock data files
 ```
 
 ## Quick Start
@@ -77,13 +77,13 @@ anycompany-it-demo-portal/
 ```powershell
 # PowerShell (Windows)
 cd operations-automation/anycompany-it-demo-portal
-.\scripts\deploy.ps1 -PopulateData
+.\deploy-all.ps1 -PopulateData
 ```
 
 ```bash
 # Bash (Linux/macOS)
 cd operations-automation/anycompany-it-demo-portal
-./scripts/deploy.sh --populate-data
+./deploy-all.sh --populate-data
 ```
 
 **This deployment will:**
@@ -152,9 +152,10 @@ Body: New employee John Doe (Engineering, Senior Developer) requires
 
 ### Multi-Portal Navigation Pattern
 ```
-Email → ITSM Portal → Inventory Portal → Procurement Portal → ITSM Portal
-  ↓         ↓              ↓                 ↓                ↓
-Amazon SNS → Read Ticket → Check Stock → Create PO (if needed) → Update Status
+Outlook Email → Mail Polling → Nova Act Browser Automation
+  ↓                ↓              ↓
+Detect email → Parse request → ITSM Portal → Inventory Portal → Procurement Portal → ITSM Portal
+                                Create Ticket   Check Stock       Create PO (if needed)  Resolve Ticket
 ```
 
 ## Architecture Diagram
@@ -229,61 +230,45 @@ The demo includes comprehensive realistic mock data:
 
 ## AI Integration with Amazon Nova Act
 
-### AgentCore Browser Tool Configuration
+### AgentCore Browser Tool Integration
+
+The browser automation uses Nova Act with AgentCore Browser Tool to navigate the portals. All browser actions are defined in JSON workflow definitions and executed dynamically.
 
 ```python
-# Example Nova Act workflow for hardware provisioning
-from amazon_bedrock_agentcore import AgentCore
-from amazon_bedrock_agentcore.tools import BrowserTool
+# Real workflow execution pattern (simplified)
+from bedrock_agentcore.tools.browser_client import browser_session
+from nova_act import NovaAct
+from nova_act.types.workflow import workflow
 
-@workflow
-def hardware_provisioning_workflow(request_email):
-    """
-    Automated hardware provisioning workflow using Nova Act
-    with AgentCore Browser Tool for legacy system navigation
-    """
-    
-    # Initialize browser tool for portal navigation
-    browser = BrowserTool()
-    
-    # Step 1: Extract request details from ITSM portal
-    browser.navigate("https://your-domain.com/itsm.html")
-    ticket_details = browser.extract_data({
-        "ticket_id": "INC-001234",
-        "employee_name": "John Doe",
-        "hardware_requirements": ["Professional Laptop 16", "Monitor", "Peripherals"],
-        "budget_code": "ENG-2024-Q1"
-    })
-    
-    # Step 2: Check inventory availability
-    browser.navigate("https://your-domain.com/inventory.html")
-    availability = browser.check_stock("Professional Laptop 16")
-    
-    # Step 3: Create purchase order if needed
-    if availability["available"] < 1:
-        browser.navigate("https://your-domain.com/procurement.html")
-        po_result = browser.create_purchase_order({
-            "vendor": "TechCorp Solutions",
-            "item": "Professional Laptop 16",
-            "quantity": 1,
-            "budget_code": ticket_details["budget_code"]
-        })
-        browser.submit_for_approval(po_result["po_id"])
-    
-    # Step 4: Update original ticket with completion status
-    browser.navigate("https://your-domain.com/itsm.html")
-    browser.update_ticket_status(
-        ticket_id="INC-001234",
-        status="Completed",
-        notes=f"Hardware provisioned. PO: {po_result.get('po_id', 'N/A')}"
-    )
-    
-    return {
-        "status": "completed",
-        "ticket_id": ticket_details["ticket_id"],
-        "po_created": po_result.get("po_id") if availability["available"] < 1 else None
-    }
+@workflow(workflow_definition_name="onboarding-email-workflow", model_id="nova-act-latest")
+def hardware_provisioning_workflow():
+    with browser_session("us-east-1", identifier="your-browser-id") as client:
+        ws_url, headers = client.generate_ws_headers()
+        
+        with NovaAct(
+            cdp_endpoint_url=ws_url,
+            cdp_headers=headers,
+            starting_page="https://your-domain.cloudfront.net/itsm.html",
+        ) as nova:
+            # Step 1: Create ITSM ticket
+            nova.act("Click the 'Create Ticket' button")
+            nova.act("Fill out the form with Title: 'Hardware Request - John Doe'...")
+            nova.act("Click 'Create Ticket' to submit")
+            
+            # Step 2: Check inventory
+            nova.act("Navigate to https://your-domain.cloudfront.net/inventory.html")
+            nova.act("Search for 'Professional Laptop 16'")
+            
+            # Step 3: Create purchase order if needed
+            nova.act("Navigate to https://your-domain.cloudfront.net/procurement.html")
+            nova.act("Click 'Create Purchase Order' and fill the form...")
+            
+            # Step 4: Update ticket to resolved
+            nova.act("Navigate to https://your-domain.cloudfront.net/itsm.html")
+            nova.act("Update ticket status to Resolved")
 ```
+
+See the [ai-legacy-system-browser-automation](../ai-legacy-system-browser-automation/) component for the full implementation with JSON-driven workflow definitions.
 
 ### API Integration for Programmatic Access
 
@@ -381,12 +366,12 @@ To destroy all AWS resources and avoid ongoing charges:
 
 ```powershell
 # PowerShell (Windows)
-.\scripts\deploy.ps1 -DestroyInfra
+.\deploy-all.ps1 -DestroyInfra
 ```
 
 ```bash
 # Bash (Linux/macOS)
-./scripts/deploy.sh --destroy-infra
+./deploy-all.sh --destroy-infra
 ```
 
 This will remove all CloudFormation stacks, S3 buckets, DynamoDB tables, and associated resources.
@@ -495,3 +480,15 @@ This enables measurement of usage and adoption patterns through the AWS Solution
 **Infrastructure**: AWS CDK, DynamoDB, Lambda, API Gateway, S3, CloudFront  
 **Deployment Time**: 5-10 minutes  
 **Estimated Monthly Cost**: $3-13 USD
+
+## Contributing
+
+We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
+
+## Security
+
+See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## License
+
+This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENSE) file.
