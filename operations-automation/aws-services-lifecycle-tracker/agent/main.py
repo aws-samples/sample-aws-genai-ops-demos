@@ -19,6 +19,9 @@ from database_writes import update_service_config
 # Import workflow orchestration logic
 from workflow_orchestrator import extract_service_lifecycle
 
+# Import account discovery
+from account_discovery import discover_and_save
+
 # Create the AgentCore app
 app = BedrockAgentCoreApp()
 
@@ -201,12 +204,49 @@ def handle_api_action(action: str, payload: dict) -> dict:
     elif action == 'get_metrics':
         return get_metrics()
     
-
+    elif action == 'discover_account':
+        # Discover actual resources in the customer's AWS account
+        import os
+        region = payload.get('region') or os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
+        include_supported = payload.get('include_supported', True)
+        table_name = os.environ.get('LIFECYCLE_TABLE_NAME', 'aws-services-lifecycle')
+        
+        return discover_and_save(
+            region=region,
+            include_supported=include_supported,
+            table_name=table_name
+        )
     
     elif action == 'update_service':
         service_name = payload.get('service_name')
         updates = payload.get('updates', {})
         return update_service_config(service_name, updates)
+    
+    # Action Plan operations
+    elif action == 'list_action_plans':
+        from action_plans import list_action_plans
+        filters = payload.get('filters', {})
+        return list_action_plans(filters)
+    
+    elif action == 'get_action_plan':
+        from action_plans import get_action_plan
+        plan_id = payload.get('plan_id')
+        return get_action_plan(plan_id)
+    
+    elif action == 'create_action_plan':
+        from action_plans import create_action_plan
+        return create_action_plan(payload)
+    
+    elif action == 'update_action_plan':
+        from action_plans import update_action_plan
+        plan_id = payload.get('plan_id')
+        updates = payload.get('updates', {})
+        return update_action_plan(plan_id, updates)
+    
+    elif action == 'delete_action_plan':
+        from action_plans import delete_action_plan
+        plan_id = payload.get('plan_id')
+        return delete_action_plan(plan_id)
     
     else:
         return {'error': f'Unknown action: {action}'}

@@ -12,6 +12,7 @@ import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
 import Deprecations from './pages/Deprecations';
 import Timeline from './pages/Timeline';
+import PlanOfAction from './pages/PlanOfAction';
 
 function AppContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -130,6 +131,7 @@ function AppContent() {
               { type: "link", text: "Services", href: "/services" },
               { type: "link", text: "Deprecations", href: "/deprecations" },
               { type: "link", text: "Timeline", href: "/timeline" },
+              { type: "link", text: "Plan of Action", href: "/plan-of-action" },
               { type: "divider" },
               {
                 type: "link",
@@ -183,6 +185,7 @@ function AppContent() {
                     <Route path="/services" element={<Services />} />
                     <Route path="/deprecations" element={<Deprecations />} />
                     <Route path="/timeline" element={<Timeline />} />
+                    <Route path="/plan-of-action" element={<PlanOfAction />} />
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 )}

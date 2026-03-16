@@ -6,6 +6,8 @@ This system transforms manual deprecation tracking into an automated, scalable, 
 
 ## 🚀 Key Features
 
+- **🔍 Account Resource Discovery**: Automatically scan your AWS account to find actual resources (Lambda, RDS, EKS, ElastiCache, OpenSearch) and show only relevant deprecations
+- **📋 Plan of Action**: Assign deprecations to team members with ownership, priority, target dates, and notes for organized remediation tracking
 - **🤖 Hybrid AI Extraction**: BeautifulSoup HTML parsing + Amazon Nova Lite AI normalization for reliable data extraction
 - **⚡ Fast Extrant Status Categorization**: Automatically categorizes items as deprecated, extended_support, or end_of_life based on dates
 - **🎛️ Admin Interface**: React-based UI with Cloudscape Design System for service configuration and monitoring
@@ -50,7 +52,8 @@ This system transforms manual deprecation tracking into an automated, scalable, 
 │ AWS             │<────│                    Data Stack                                   │
 │ Documentation   │     │  DynamoDB Tables:                                               │
 └─────────────────┘     │  ├─ aws-services-lifecycle (deprecation data)                   │
-                        │  └─ service-extraction-config (service settings)                │
+                        │  ├─ service-extraction-config (service settings)                │
+                        │  └─ deprecation-action-plans (remediation tracking)             │
                         └─────────────────────────────────────────────────────────────────┘
 
                         ┌─────────────────────────────────────────────────────────────────┐
@@ -186,6 +189,8 @@ project-root/
 │   ├── data_extractor.py           # Low-level HTML parsing + AI extraction engine
 │   ├── database_reads.py           # READ operations (metrics, service configs)
 │   ├── database_writes.py          # WRITE operations + intelligent status categorization
+│   ├── action_plans.py             # Plan of Action CRUD operations
+│   ├── account_discovery.py        # AWS account resource discovery
 │   ├── requirements.txt            # Python dependencies (boto3, beautifulsoup4, requests)
 │   ├── Dockerfile                  # ARM64 container definition
 │   └── test_*.py                   # Testing and debugging scripts
@@ -205,8 +210,9 @@ project-root/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx       # Status breakdown dashboard (75/19/2 display)
 │   │   │   ├── Services.tsx        # Service configuration management
-│   │   │   ├── Deprecations.tsx    # Deprecation data viewer with filters
-│   │   │   └── Timeline.tsx        # Timeline view of upcoming deprecations
+│   │   │   ├── Deprecations.tsx    # Deprecation data viewer with filters + bulk selection
+│   │   │   ├── Timeline.tsx        # Timeline view of upcoming deprecations
+│   │   │   └── PlanOfAction.tsx    # Remediation tracking with ownership assignment
 │   │   ├── App.tsx                 # Main app with navigation and auth
 │   │   ├── AuthModal.tsx           # Cognito login/signup modal
 │   │   ├── auth.ts                 # Cognito User Pool authentication
@@ -1373,6 +1379,126 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 - **JIRA integration** to automatically create migration tickets
 - **Cost analysis** integration with AWS Cost Explorer
 - **Custom dashboards** with service-specific deprecation views
+
+## Plan of Action - From Awareness to Remediation
+
+The Plan of Action feature transforms passive deprecation awareness into actionable team workflows. Instead of just knowing what's deprecated, teams can now assign ownership, set priorities, and track remediation progress.
+
+### Why Plan of Action?
+
+Discovering deprecations is only half the battle. The real challenge is:
+- **Who** is responsible for fixing each deprecation?
+- **When** should it be completed?
+- **What's the priority** compared to other work?
+- **What's the status** of ongoing remediation efforts?
+
+Plan of Action bridges the gap between awareness and action.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Ownership Assignment** | Assign deprecations to team members by email/alias |
+| **Priority Levels** | Low, Medium, High, Critical - prioritize what matters most |
+| **Status Tracking** | Not Started, In Progress, Completed, Blocked |
+| **Target Dates** | Set deadlines for remediation completion |
+| **Notes** | Add migration plans, blockers, or context |
+| **Bulk Selection** | Select multiple deprecations from the Deprecations page and add them to Plan of Action in one action |
+
+### Two Ways to Create Action Plans
+
+**1. From Deprecations Page (Recommended)**
+- Navigate to **Deprecations** in the sidebar
+- Select one or more deprecations using the checkboxes
+- Click **"Add to Plan of Action (N)"** button
+- Fill in owner, priority, target date, and notes
+- All selected items are added with the same assignment
+
+**2. From Plan of Action Page**
+- Navigate to **Plan of Action** in the sidebar
+- Click **"Create Action Plan"**
+- Select a deprecation from the dropdown
+- Fill in assignment details
+
+### Workflow Example
+
+```
+1. Discovery Phase
+   └─ Run "Discover My Resources" to find deprecated resources in your account
+   
+2. Triage Phase
+   └─ Review Deprecations page, filter by status (deprecated, end_of_life)
+   └─ Select high-priority items (e.g., Lambda runtimes blocking soon)
+   
+3. Assignment Phase
+   └─ Click "Add to Plan of Action"
+   └─ Assign to team members: "john@company.com"
+   └─ Set priority: "High" for items blocking in < 3 months
+   └─ Set target date: 2 weeks before block date
+   
+4. Execution Phase
+   └─ Team members view their assignments in Plan of Action
+   └─ Update status as work progresses
+   └─ Add notes about migration approach or blockers
+   
+5. Completion Phase
+   └─ Mark items as "Completed" when remediation is done
+   └─ Delete action plans for resolved deprecations
+```
+
+### Data Model
+
+Action plans are stored in the `deprecation-action-plans` DynamoDB table:
+
+```json
+{
+  "plan_id": "uuid",
+  "service_name": "lambda",
+  "item_id": "runtimes#nodejs18.x",
+  "item_name": "Node.js 18",
+  "owner": "john@company.com",
+  "plan_status": "in_progress",
+  "priority": "high",
+  "target_date": "2025-12-01",
+  "notes": "Migrating to Node.js 20, testing in progress",
+  "created_at": "2025-10-30T10:00:00Z",
+  "updated_at": "2025-11-15T14:30:00Z"
+}
+```
+
+### Querying Action Plans
+
+```bash
+# Get all action plans
+aws dynamodb scan --table-name deprecation-action-plans
+
+# Get action plans by owner
+aws dynamodb query \
+  --table-name deprecation-action-plans \
+  --index-name owner-index \
+  --key-condition-expression "#owner = :owner" \
+  --expression-attribute-names '{"#owner":"owner"}' \
+  --expression-attribute-values '{":owner":{"S":"john@company.com"}}'
+
+# Get action plans by status
+aws dynamodb query \
+  --table-name deprecation-action-plans \
+  --index-name plan-status-index \
+  --key-condition-expression "plan_status = :status" \
+  --expression-attribute-values '{":status":{"S":"blocked"}}'
+```
+
+### Infrastructure
+
+The Plan of Action feature is fully integrated into the CDK deployment:
+
+- **Data Stack** (`cdk/lib/data-stack.ts`): Creates `deprecation-action-plans` table with GSIs for owner and status queries
+- **Infra Stack** (`cdk/lib/infra-stack.ts`): Grants agent IAM permissions to read/write action plans
+- **Agent** (`agent/action_plans.py`): CRUD operations for action plans
+- **Frontend** (`frontend/src/pages/PlanOfAction.tsx`): UI for managing action plans
+- **Frontend** (`frontend/src/pages/Deprecations.tsx`): Bulk selection and "Add to Plan of Action" button
+
+No manual setup required - everything is created automatically during stack deployment.
 
 ## Resources
 
