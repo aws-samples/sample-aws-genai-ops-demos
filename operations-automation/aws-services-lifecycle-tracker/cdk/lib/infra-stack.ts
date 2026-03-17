@@ -160,7 +160,88 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-services-lifecycle/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config/index/*`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans/index/*`,
       ],
+    }));
+
+    // Account Resource Discovery permissions - for scanning customer's actual AWS resources
+    // Read-only permissions for 11 services with version/deprecation lifecycles
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'LambdaDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['lambda:ListFunctions'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'RDSDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['rds:DescribeDBInstances'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'EKSDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['eks:ListClusters', 'eks:DescribeCluster'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'ElastiCacheDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['elasticache:DescribeCacheClusters'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'OpenSearchDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['es:ListDomainNames', 'es:DescribeDomain'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'MSKDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['kafka:ListClustersV2'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DocumentDBDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['rds:DescribeDBClusters'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'NeptuneDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['neptune:DescribeDBClusters'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'GlueDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['glue:GetJobs'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'BeanstalkDiscovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['elasticbeanstalk:DescribeEnvironments'],
+      resources: ['*'],
+    }));
+
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'EC2Discovery',
+      effect: iam.Effect.ALLOW,
+      actions: ['ec2:DescribeInstances'],
+      resources: ['*'],
     }));
 
     // Create S3 bucket for CodeBuild source

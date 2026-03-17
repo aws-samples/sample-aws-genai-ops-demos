@@ -7,13 +7,41 @@ import Box from '@cloudscape-design/components/box';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Button from '@cloudscape-design/components/button';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
-import { getDashboardMetrics, triggerExtraction, DashboardMetrics } from '../api';
+import Popover from '@cloudscape-design/components/popover';
+import { getDashboardMetrics, triggerExtraction, discoverAccountResources, DashboardMetrics } from '../api';
+
+// Services covered by Discovery (account scan)
+const DISCOVERY_SERVICES = [
+  'Lambda (runtimes)',
+  'RDS (engine versions)',
+  'EKS (Kubernetes versions)',
+  'ElastiCache (Redis/Memcached)',
+  'OpenSearch (engine versions)',
+  'MSK (Kafka versions)',
+  'DocumentDB (MongoDB compatibility)',
+  'Neptune (graph DB versions)',
+  'Glue (ETL job versions)',
+  'Elastic Beanstalk (platforms)',
+  'EC2 (older instance families)'
+];
+
+// Services covered by Extraction (documentation)
+const EXTRACTION_SERVICES = [
+  'Lambda',
+  'EKS',
+  'RDS',
+  'ElastiCache',
+  'OpenSearch',
+  'Elastic Beanstalk',
+  'MSK'
+];
 
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [extracting, setExtracting] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   
   // Polling state
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -134,6 +162,58 @@ export default function Dashboard() {
     }
   };
 
+  const handleDiscoverResources = async () => {
+    try {
+      setDiscovering(true);
+      
+      setFlashbarItems([{
+        type: 'info',
+        dismissible: true,
+        dismissLabel: 'Dismiss',
+        onDismiss: () => setFlashbarItems([]),
+        content: 'Scanning your AWS account for resources (Lambda, RDS, EKS, ElastiCache, OpenSearch)...',
+        id: `discover-${Date.now()}`
+      }]);
+      
+      const result = await discoverAccountResources({ include_supported: true });
+      
+      if (result.success) {
+        // Reload metrics to show new data
+        await loadMetrics(false);
+        
+        const summary = result.summary;
+        setFlashbarItems([{
+          type: 'success',
+          dismissible: true,
+          dismissLabel: 'Dismiss',
+          onDismiss: () => setFlashbarItems([]),
+          content: `Discovery complete! Found ${result.items_discovered} resources: ${summary?.needs_attention || 0} need attention, ${summary?.supported || 0} are healthy.`,
+          id: `discover-success-${Date.now()}`
+        }]);
+      } else {
+        setFlashbarItems([{
+          type: 'error',
+          dismissible: true,
+          dismissLabel: 'Dismiss',
+          onDismiss: () => setFlashbarItems([]),
+          content: `Discovery failed: ${result.error}`,
+          id: `discover-error-${Date.now()}`
+        }]);
+      }
+    } catch (err: any) {
+      setFlashbarItems([{
+        type: 'error',
+        dismissible: true,
+        dismissLabel: 'Dismiss',
+        onDismiss: () => setFlashbarItems([]),
+        content: `Failed to discover resources: ${err.message}`,
+        id: `error-${Date.now()}`
+      }]);
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
   if (loading) {
     return (
       <Container>
@@ -153,15 +233,78 @@ export default function Dashboard() {
           <Header
             variant="h1"
             actions={
-              <Button
-                variant="primary"
-                iconName="refresh"
-                loading={extracting}
-                onClick={handleExtractAll}
-                disabled={extracting}
-              >
-                {extracting ? 'Extracting...' : 'Extract All Services'}
-              </Button>
+              <SpaceBetween direction="horizontal" size="xs">
+                <SpaceBetween direction="horizontal" size="xxs">
+                  <Button
+                    variant="normal"
+                    iconName="search"
+                    loading={discovering}
+                    onClick={handleDiscoverResources}
+                    disabled={discovering || extracting}
+                  >
+                    {discovering ? 'Scanning...' : 'Discover My Resources'}
+                  </Button>
+                  <Popover
+                    dismissButton={false}
+                    position="bottom"
+                    size="medium"
+                    triggerType="text"
+                    content={
+                      <SpaceBetween size="xs">
+                        <Box variant="strong">Scans your AWS account for:</Box>
+                        <Box variant="small">
+                          {DISCOVERY_SERVICES.map((service, i) => (
+                            <div key={i}>• {service}</div>
+                          ))}
+                        </Box>
+                        <Box variant="small" color="text-status-info">
+                          Note: Only these {DISCOVERY_SERVICES.length} services are currently supported.
+                        </Box>
+                        <Box variant="small" color="text-body-secondary">
+                          To add more services: edit <code>agent/account_discovery.py</code> and add IAM permissions in <code>cdk/lib/infra-stack.ts</code>.
+                        </Box>
+                      </SpaceBetween>
+                    }
+                  >
+                    <Box color="text-status-info" display="inline">ⓘ</Box>
+                  </Popover>
+                </SpaceBetween>
+                <SpaceBetween direction="horizontal" size="xxs">
+                  <Button
+                    variant="primary"
+                    iconName="refresh"
+                    loading={extracting}
+                    onClick={handleExtractAll}
+                    disabled={extracting || discovering}
+                  >
+                    {extracting ? 'Extracting...' : 'Extract All Services'}
+                  </Button>
+                  <Popover
+                    dismissButton={false}
+                    position="bottom"
+                    size="medium"
+                    triggerType="text"
+                    content={
+                      <SpaceBetween size="xs">
+                        <Box variant="strong">Extracts deprecation info from AWS docs for:</Box>
+                        <Box variant="small">
+                          {EXTRACTION_SERVICES.map((service, i) => (
+                            <div key={i}>• {service}</div>
+                          ))}
+                        </Box>
+                        <Box variant="small" color="text-status-info">
+                          Note: Only these {EXTRACTION_SERVICES.length} services are currently configured.
+                        </Box>
+                        <Box variant="small" color="text-body-secondary">
+                          To add more services: edit <code>scripts/service_configs.json</code> with the service name and AWS documentation URL.
+                        </Box>
+                      </SpaceBetween>
+                    }
+                  >
+                    <Box color="text-status-info" display="inline">ⓘ</Box>
+                  </Popover>
+                </SpaceBetween>
+              </SpaceBetween>
             }
           >
             AWS Services Lifecycle Tracker

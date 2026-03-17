@@ -225,4 +225,98 @@ export const updateServiceConfig = async (serviceName: string, updates: Partial<
   });
 };
 
+export const discoverAccountResources = async (options?: {
+  region?: string;
+  include_supported?: boolean;
+}): Promise<{
+  success: boolean;
+  items_discovered?: number;
+  items_saved?: number;
+  summary?: {
+    total: number;
+    end_of_life: number;
+    deprecated: number;
+    supported: number;
+    needs_attention: number;
+  };
+  error?: string;
+}> => {
+  const result = await invokeAgentWithPayload({
+    action: 'discover_account',
+    region: options?.region,
+    include_supported: options?.include_supported ?? true
+  });
+  return result;
+};
 
+// Action Plan Types
+export interface ActionPlan {
+  plan_id: string;
+  service_name: string;
+  item_id: string;
+  item_name: string;
+  owner: string;
+  plan_status: 'not_started' | 'in_progress' | 'completed' | 'blocked';
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  target_date: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+}
+
+// Action Plan API Functions
+export const getActionPlans = async (filters?: {
+  owner?: string;
+  plan_status?: string;
+}): Promise<ActionPlan[]> => {
+  const result = await invokeAgentWithPayload({
+    action: 'list_action_plans',
+    filters
+  });
+  return result.plans || [];
+};
+
+export const getActionPlan = async (planId: string): Promise<ActionPlan | null> => {
+  const result = await invokeAgentWithPayload({
+    action: 'get_action_plan',
+    plan_id: planId
+  });
+  return result.plan || null;
+};
+
+export const createActionPlan = async (data: {
+  service_name: string;
+  item_id: string;
+  item_name?: string;
+  owner: string;
+  plan_status?: string;
+  priority?: string;
+  target_date?: string;
+  notes?: string;
+}): Promise<{ success: boolean; plan?: ActionPlan; error?: string }> => {
+  return await invokeAgentWithPayload({
+    action: 'create_action_plan',
+    ...data
+  });
+};
+
+export const updateActionPlan = async (
+  planId: string,
+  updates: Partial<ActionPlan>
+): Promise<{ success: boolean; plan?: ActionPlan; error?: string }> => {
+  return await invokeAgentWithPayload({
+    action: 'update_action_plan',
+    plan_id: planId,
+    updates
+  });
+};
+
+export const deleteActionPlan = async (
+  planId: string
+): Promise<{ success: boolean; error?: string }> => {
+  return await invokeAgentWithPayload({
+    action: 'delete_action_plan',
+    plan_id: planId
+  });
+};

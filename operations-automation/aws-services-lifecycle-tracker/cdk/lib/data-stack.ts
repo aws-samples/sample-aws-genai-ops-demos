@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -10,6 +9,7 @@ import * as fs from 'fs';
 export class DataStack extends cdk.Stack {
   public readonly lifecycleTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
+  public readonly actionPlanTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -74,6 +74,47 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // Action Plan table for tracking deprecation remediation
+    this.actionPlanTable = new dynamodb.Table(this, 'ActionPlanTable', {
+      tableName: 'deprecation-action-plans',
+      partitionKey: {
+        name: 'plan_id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // GSI for querying by owner
+    this.actionPlanTable.addGlobalSecondaryIndex({
+      indexName: 'owner-index',
+      partitionKey: {
+        name: 'owner',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'created_at',
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
+    // GSI for querying by status
+    this.actionPlanTable.addGlobalSecondaryIndex({
+      indexName: 'plan-status-index',
+      partitionKey: {
+        name: 'plan_status',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'target_date',
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
     // Outputs for other stacks
     new cdk.CfnOutput(this, 'LifecycleTableName', {
       value: this.lifecycleTable.tableName,
@@ -99,6 +140,18 @@ export class DataStack extends cdk.Stack {
       exportName: 'AWSServicesLifecycleTrackerConfigTableArn',
     });
 
+    new cdk.CfnOutput(this, 'ActionPlanTableName', {
+      value: this.actionPlanTable.tableName,
+      description: 'DynamoDB table for deprecation action plans',
+      exportName: 'AWSServicesLifecycleTrackerActionPlanTableName',
+    });
+
+    new cdk.CfnOutput(this, 'ActionPlanTableArn', {
+      value: this.actionPlanTable.tableArn,
+      description: 'DynamoDB table ARN for action plans',
+      exportName: 'AWSServicesLifecycleTrackerActionPlanTableArn',
+    });
+
     // Custom Resource to populate service configurations
     this.createServiceConfigPopulator();
   }
@@ -116,6 +169,7 @@ export class DataStack extends cdk.Stack {
       code: lambda.Code.fromInline(`
 import json
 import boto3
+import os
 from decimal import Decimal
 
 def handler(event, context):
@@ -134,8 +188,12 @@ def handler(event, context):
         # Get service configurations from event
         services_config = json.loads(event['ResourceProperties']['ServiceConfigs'])
         
+        # Get table name from environment variable or resource properties
+        table_name = os.environ.get('CONFIG_TABLE_NAME') or event['ResourceProperties'].get('TableName')
+        print(f"Using table: {table_name}")
+        
         dynamodb = boto3.resource('dynamodb')
-        config_table = dynamodb.Table('service-extraction-config')
+        config_table = dynamodb.Table(table_name)
         
         print(f"Populating {len(services_config)} service configurations...")
         
@@ -172,14 +230,18 @@ def handler(event, context):
       onEventHandler: populatorFunction,
     });
 
-    // Create custom resource
-    new cdk.CustomResource(this, 'ServiceConfigResource', {
+    // Create custom resource with explicit dependency on the table
+    const configResource = new cdk.CustomResource(this, 'ServiceConfigResource', {
       serviceToken: provider.serviceToken,
       properties: {
         ServiceConfigs: JSON.stringify(serviceConfigs.services),
+        TableName: this.configTable.tableName,
         // Add timestamp to force update on every deployment
         Timestamp: Date.now().toString(),
       },
     });
+
+    // Ensure the custom resource waits for the table to be fully created
+    configResource.node.addDependency(this.configTable);
   }
 }
