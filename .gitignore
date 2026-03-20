@@ -111,7 +111,6 @@ venv.bak/
 
 # Internal documentation and configuration
 samples/
-docs/
 .kiro/
 .hypothesis/
 .ash/
