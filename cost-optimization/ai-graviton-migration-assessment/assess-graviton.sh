@@ -107,6 +107,19 @@ if [ "$SKIP_SETUP" = false ]; then
         exit 1
     fi
 
+    # Get bucket name and project name from CloudFormation outputs
+    echo ""
+    echo "Getting stack outputs..."
+    STACK_NAME="GravitonAssessmentStack-$CURRENT_REGION"
+    OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
+    PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
+    if [[ -z "$OUTPUT_BUCKET" || -z "$PROJECT_NAME" ]]; then
+        echo "      ❌ Failed to get stack outputs"
+        exit 1
+    fi
+    echo "      Output Bucket: $OUTPUT_BUCKET"
+    echo "      CodeBuild Project: $PROJECT_NAME"
+
     # Upload buildspec to S3
     echo ""
     echo "Uploading buildspec to S3..."
@@ -153,21 +166,23 @@ else
     echo "      Region: $CURRENT_REGION"
 fi
 
-# Get bucket name and project name from CloudFormation outputs
-echo ""
-echo "Getting stack outputs..."
-STACK_NAME="GravitonAssessmentStack-$CURRENT_REGION"
-OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
-PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
+# Get bucket name and project name from CloudFormation outputs (only if not already set from deploy path)
 if [[ -z "$OUTPUT_BUCKET" || -z "$PROJECT_NAME" ]]; then
-    echo "      ❌ Failed to get stack outputs"
-    if [ "$SKIP_SETUP" = true ]; then
-        echo "      Stack may not exist. Run without -s to deploy infrastructure first."
+    echo ""
+    echo "Getting stack outputs..."
+    STACK_NAME="GravitonAssessmentStack-$CURRENT_REGION"
+    OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='OutputBucketName'].OutputValue" --output text)
+    PROJECT_NAME=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$CURRENT_REGION" --no-cli-pager --query "Stacks[0].Outputs[?OutputKey=='CodeBuildProjectName'].OutputValue" --output text)
+    if [[ -z "$OUTPUT_BUCKET" || -z "$PROJECT_NAME" ]]; then
+        echo "      ❌ Failed to get stack outputs"
+        if [ "$SKIP_SETUP" = true ]; then
+            echo "      Stack may not exist. Run without -s to deploy infrastructure first."
+        fi
+        exit 1
     fi
-    exit 1
+    echo "      Output Bucket: $OUTPUT_BUCKET"
+    echo "      CodeBuild Project: $PROJECT_NAME"
 fi
-echo "      Output Bucket: $OUTPUT_BUCKET"
-echo "      CodeBuild Project: $PROJECT_NAME"
 
 # Start Graviton assessment build
 echo ""
