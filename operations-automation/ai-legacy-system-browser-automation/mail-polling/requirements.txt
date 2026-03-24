@@ -23,7 +23,6 @@ plyer>=2.1.0; sys_platform == "win32"
 
 # Mail monkey dependencies - macOS
 appscript>=1.2.0; sys_platform == "darwin"
-mactypes>=1.2; sys_platform == "darwin"
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 
 # Mail monkey dependencies - Cross-platform
