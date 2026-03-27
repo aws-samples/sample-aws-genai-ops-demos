@@ -1,6 +1,6 @@
-# AWS GenAI Operations Demos
+# AWS GenAI for Operations Demos
 
-This repository contains deployable code samples demonstrating how generative AI transforms cloud operations across security, cost optimization, resilience, and automation. Each demo provides working implementations that solve real operational challenges - deploy as-is with one click, or adapt to your specific environment and business needs with minimal customization effort.
+This repository contains deployable code samples demonstrating how generative AI drives operational excellence across security, cost optimization, resilience, and automation. Each demo provides working implementations that solve real operational challenges - deploy as-is with one click, or adapt to your specific environment and business needs with minimal customization effort.
 
 ## Available Demos
 
@@ -12,16 +12,15 @@ This repository contains deployable code samples demonstrating how generative AI
 | AI Password Reset Chatbot | Operations Automation | Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
 | AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
 | AWS GenAI Cost Optimization Kiro Power | Cost Optimization | MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration | [cost-optimization/aws-genai-cost-optimization-mcp-server/](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md) |
+| AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 
 ## Roadmap (Coming Soon)
 
 | Demo Name | Pillar | Description | Status |
 |-----------|--------|-------------|--------|
-| Secure Coding with Kiro Hooks | Security | Automated security analysis in development workflows | Planned |
 | Intelligent System Troubleshooting with AWS DevOps Agent | Observability | Identify root causes of system issues and accelerate incident response using AWS DevOps Agent through a realistic Unicorn Rentals microservices architecture | Planned |
 | AWS Health and Support Case Analyzer | Resilience | AI-powered analysis of AWS Health events and Support Cases with intelligent categorization and actionable recommendations | Planned |
-| Agentic Prompt Evaluator | Operations Automation | Agentic AI tool for Bedrock model migration assessment with AgentCore Code Interpreter, automated prompt optimization, and comparative model evaluation | Planned |
 
 ## Repository Structure
 
@@ -31,13 +30,16 @@ cost-optimization/
 └── aws-genai-cost-optimization-mcp-server/
 operations-automation/
 ├── ai-documentation-generation/
+├── ai-lambda-runtime-migration/
 ├── ai-legacy-system-browser-automation/
 ├── ai-password-reset-chatbot/
+├── anycompany-it-demo-portal/
 └── aws-services-lifecycle-tracker/
 resilience/
 └── ai-chaos-engineering-with-fis/
 shared/
-└── scripts/                # Common utilities and scripts
+├── scripts/                # Common prerequisite checks
+└── utils/                  # Shared region/account utilities
 ```
 
 Each demo folder typically contains:
