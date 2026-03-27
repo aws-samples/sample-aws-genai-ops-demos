@@ -1,0 +1,22 @@
+# Agent deployment packages
+agent/*/deployment_package/
+agent/*/deployment_package.zip
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+frontend/.env.production.local
+
+# CDK
+cdk/cdk.out*/
+cdk/node_modules/
+
+# Draw.io temp files
+*.drawio.bkp
+
+# Mock files
+mock/*
+
+# Python
+__pycache__/
+*.pyc
