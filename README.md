@@ -14,12 +14,12 @@ This repository contains deployable code samples demonstrating how generative AI
 | AWS GenAI Cost Optimization Kiro Power | Cost Optimization | MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration | [cost-optimization/aws-genai-cost-optimization-mcp-server/](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md) |
 | AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
+| Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 
 ## Roadmap (Coming Soon)
 
 | Demo Name | Pillar | Description | Status |
 |-----------|--------|-------------|--------|
-| Intelligent System Troubleshooting with AWS DevOps Agent | Observability | Identify root causes of system issues and accelerate incident response using AWS DevOps Agent through a realistic Unicorn Rentals microservices architecture | Planned |
 | AWS Health and Support Case Analyzer | Resilience | AI-powered analysis of AWS Health events and Support Cases with intelligent categorization and actionable recommendations | Planned |
 
 ## Repository Structure
@@ -35,6 +35,8 @@ operations-automation/
 ├── ai-password-reset-chatbot/
 ├── anycompany-it-demo-portal/
 └── aws-services-lifecycle-tracker/
+observability/
+└── eks-investigation-devops-agent/
 resilience/
 └── ai-chaos-engineering-with-fis/
 shared/

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payment-demo
+  labels:
+    app.kubernetes.io/name: payment-demo
+    app.kubernetes.io/part-of: devops-agent-eks

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured Logging Configuration for Payment Processor
+  Requirements: 10.5
+  
+  Configures JSON-formatted structured logging for CloudWatch Logs aggregation.
+  Uses Logstash encoder for JSON output with standard fields for correlation,
+  service identification, and timestamp.
+-->
+<configuration>
+    <!-- Define properties -->
+    <property name="SERVICE_NAME" value="${XRAY_SERVICE_NAME:-payment-processor}" />
+    <property name="ENVIRONMENT" value="${ENVIRONMENT:-${spring.profiles.active:-dev}}" />
+    
+    <!-- Console appender with JSON format -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!-- Add standard fields to all log entries -->
+            <customFields>{"service":"${SERVICE_NAME}","environment":"${ENVIRONMENT}"}</customFields>
+            
+            <!-- Include standard fields -->
+            <includeMdcKeyName>correlationId</includeMdcKeyName>
+            <includeMdcKeyName>merchantId</includeMdcKeyName>
+            <includeMdcKeyName>transactionId</includeMdcKeyName>
+            <includeMdcKeyName>operation</includeMdcKeyName>
+            <includeMdcKeyName>httpMethod</includeMdcKeyName>
+            <includeMdcKeyName>endpoint</includeMdcKeyName>
+            <includeMdcKeyName>statusCode</includeMdcKeyName>
+            <includeMdcKeyName>responseTime</includeMdcKeyName>
+            <includeMdcKeyName>errorCode</includeMdcKeyName>
+            
+            <!-- Field names -->
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSZ</timestampPattern>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <message>message</message>
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <level>level</level>
+                <levelValue>[ignore]</levelValue>
+            </fieldNames>
+            
+            <!-- Include stack traces for exceptions -->
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <maxLength>2048</maxLength>
+                <shortenedClassNameLength>20</shortenedClassNameLength>
+                <exclude>^sun\.reflect\..*\.invoke</exclude>
+                <exclude>^net\.sf\.cglib\.proxy\.MethodProxy\.invoke</exclude>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+    
+    <!-- Root logger -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+    
+    <!-- Application loggers -->
+    <logger name="com.helios.payment" level="INFO" />
+    
+    <!-- Framework loggers - reduce noise -->
+    <logger name="org.springframework" level="WARN" />
+    <logger name="org.hibernate" level="WARN" />
+    <logger name="com.zaxxer.hikari" level="WARN" />
+    
+    <!-- Debug level for dev environment -->
+    <springProfile name="dev">
+        <logger name="com.helios.payment" level="DEBUG" />
+    </springProfile>
+</configuration>

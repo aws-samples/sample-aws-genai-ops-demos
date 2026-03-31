@@ -1,0 +1,43 @@
+{
+  "name": "merchant-portal",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@aws-amplify/ui-react": "^6.1.0",
+    "ajv": "^8.18.0",
+    "aws-amplify": "^6.0.0",
+    "minimatch": "^10.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.22.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "eslint": "^9.9.0",
+    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
+    "eslint-plugin-react-refresh": "^0.4.9",
+    "globals": "^15.9.0",
+    "typescript": "~5.5.3",
+    "typescript-eslint": "^8.0.1",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "minimatch": "^10.2.3",
+    "qs": "^6.14.2",
+    "fast-xml-parser": "^5.3.9",
+    "rollup": "^4.59.0",
+    "ajv": "^8.18.0"
+  }
+}

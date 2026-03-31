@@ -11,6 +11,7 @@ MIN_PYTHON_VERSION=""
 MIN_NODE_VERSION=""
 SKIP_SERVICE_CHECK=false
 REQUIRE_CDK=false
+REQUIRE_KUBECTL=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -36,6 +37,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --require-cdk)
             REQUIRE_CDK=true
+            shift
+            ;;
+        --require-kubectl)
+            REQUIRE_KUBECTL=true
             shift
             ;;
         *)
@@ -89,6 +94,17 @@ if [ "$REQUIRE_CDK" = true ] || [ -n "$MIN_NODE_VERSION" ]; then
         fi
     else
         echo -e "\033[0;31m      ❌ Node.js not found. Install from https://nodejs.org\033[0m"
+        exit 1
+    fi
+fi
+
+# Check kubectl (if required for EKS demos)
+if [ "$REQUIRE_KUBECTL" = true ]; then
+    echo -e "\n\033[0;33mChecking kubectl...\033[0m"
+    if command -v kubectl &> /dev/null; then
+        echo -e "\033[0;32m      ✓ kubectl installed\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/\033[0m"
         exit 1
     fi
 fi

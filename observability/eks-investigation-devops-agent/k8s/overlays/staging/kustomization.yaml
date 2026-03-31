@@ -1,0 +1,71 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: payment-demo
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: staging
+
+# Staging uses base replicas (1 for all services - demo environment)
+
+# Environment-specific patches
+patches:
+  # Update ConfigMap for staging environment
+  - patch: |-
+      - op: replace
+        path: /data/ENVIRONMENT
+        value: "staging"
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "info"
+    target:
+      kind: ConfigMap
+      name: payment-demo-config
+
+  # Update ServiceAccount IRSA annotations for staging
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::STAGING_ACCOUNT_ID:role/MerchantGatewayRole"
+    target:
+      kind: ServiceAccount
+      name: merchant-gateway-sa
+  
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::STAGING_ACCOUNT_ID:role/PaymentProcessorRole"
+    target:
+      kind: ServiceAccount
+      name: payment-processor-sa
+  
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::STAGING_ACCOUNT_ID:role/WebhookServiceRole"
+    target:
+      kind: ServiceAccount
+      name: webhook-service-sa
+
+  # Update NLB tags for staging environment
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/service.beta.kubernetes.io~1aws-load-balancer-additional-resource-tags
+        value: "Project=devops-agent-eks,Environment=staging"
+    target:
+      kind: Service
+      name: merchant-gateway-nlb
+
+images:
+  - name: merchant-gateway
+    newName: STAGING_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/merchant-gateway
+    newTag: staging
+  - name: payment-processor
+    newName: STAGING_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/payment-processor
+    newTag: staging
+  - name: webhook-service
+    newName: STAGING_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/webhook-service
+    newTag: staging

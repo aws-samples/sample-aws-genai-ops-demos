@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-demo-config
+  namespace: payment-demo
+  labels:
+    app.kubernetes.io/name: payment-demo
+    app.kubernetes.io/part-of: devops-agent-eks
+data:
+  # Environment configuration
+  ENVIRONMENT: "dev"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # Service endpoints
+  PAYMENT_PROCESSOR_HOST: "payment-processor"
+  PAYMENT_PROCESSOR_PORT: "8080"
+  WEBHOOK_SERVICE_HOST: "webhook-service"
+  WEBHOOK_SERVICE_PORT: "3000"
+  MERCHANT_GATEWAY_HOST: "merchant-gateway"
+  MERCHANT_GATEWAY_PORT: "3000"
+  
+  # AWS Region - __AWS_REGION__ is replaced by deploy-all.sh at deploy time
+  AWS_REGION: "__AWS_REGION__"
+  
+  # Database configuration (non-sensitive) - replaced by deploy-all.sh at deploy time
+  DB_HOST: "__RDS_ENDPOINT__"
+  DB_PORT: "5432"
+  DB_NAME: "paymentdb"
+  DB_SSL_MODE: "require"
+  
+  # Cognito configuration (non-sensitive) - replaced by deploy-all.sh at deploy time
+  COGNITO_USER_POOL_ID: "__COGNITO_USER_POOL_ID__"
+  COGNITO_CLIENT_ID: "__COGNITO_CLIENT_ID__"
+
+  # Rate limiting defaults
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX_REQUESTS: "100"

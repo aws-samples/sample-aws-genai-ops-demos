@@ -1,0 +1,153 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: payment-demo
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: prod
+
+# All environments use 1 replica to ensure immediate failure on incident injection
+replicas:
+  - name: merchant-gateway
+    count: 1
+  - name: payment-processor
+    count: 1
+  - name: webhook-service
+    count: 1
+
+# Environment-specific patches
+patches:
+  # Update ConfigMap for prod environment
+  - patch: |-
+      - op: replace
+        path: /data/ENVIRONMENT
+        value: "prod"
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "warn"
+    target:
+      kind: ConfigMap
+      name: payment-demo-config
+
+  # Keep HPA limits low for demo environment
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: merchant-gateway-hpa
+  
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: payment-processor-hpa
+
+  # Increase resource limits for production
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+    target:
+      kind: Deployment
+      name: merchant-gateway
+
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+    target:
+      kind: Deployment
+      name: payment-processor
+
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+    target:
+      kind: Deployment
+      name: webhook-service
+
+  # Update ServiceAccount IRSA annotations for prod
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::PROD_ACCOUNT_ID:role/MerchantGatewayRole"
+    target:
+      kind: ServiceAccount
+      name: merchant-gateway-sa
+  
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::PROD_ACCOUNT_ID:role/PaymentProcessorRole"
+    target:
+      kind: ServiceAccount
+      name: payment-processor-sa
+  
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::PROD_ACCOUNT_ID:role/WebhookServiceRole"
+    target:
+      kind: ServiceAccount
+      name: webhook-service-sa
+
+  # Update NLB tags for prod environment
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/service.beta.kubernetes.io~1aws-load-balancer-additional-resource-tags
+        value: "Project=devops-agent-eks,Environment=prod"
+    target:
+      kind: Service
+      name: merchant-gateway-nlb
+
+images:
+  - name: merchant-gateway
+    newName: PROD_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/merchant-gateway
+    newTag: prod
+  - name: payment-processor
+    newName: PROD_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/payment-processor
+    newTag: prod
+  - name: webhook-service
+    newName: PROD_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/webhook-service
+    newTag: prod

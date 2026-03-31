@@ -7,7 +7,8 @@ param(
     [string]$MinPythonVersion = "",
     [string]$MinNodeVersion = "",
     [switch]$SkipServiceCheck = $false,
-    [switch]$RequireCDK = $false
+    [switch]$RequireCDK = $false,
+    [switch]$RequireKubectl = $false
 )
 
 Write-Host "=== GenAI Ops Demo Prerequisites Check (Shared Script) ===" -ForegroundColor Cyan
@@ -51,6 +52,22 @@ if ($RequireCDK -or -not [string]::IsNullOrEmpty($MinNodeVersion)) {
         }
     } else {
         Write-Host "      ERROR: Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Check kubectl (if required for EKS demos)
+if ($RequireKubectl) {
+    Write-Host "`nChecking kubectl..." -ForegroundColor Yellow
+    try {
+        $null = kubectl version --client 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "      OK: kubectl installed" -ForegroundColor Green
+        } else {
+            throw "kubectl not working"
+        }
+    } catch {
+        Write-Host "      ERROR: kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/" -ForegroundColor Red
         exit 1
     }
 }

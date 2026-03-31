@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: merchant-gateway
+  namespace: payment-demo
+  labels:
+    app.kubernetes.io/name: merchant-gateway
+    app.kubernetes.io/component: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: merchant-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: merchant-gateway
+        app.kubernetes.io/component: api-gateway
+    spec:
+      serviceAccountName: merchant-gateway-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: merchant-gateway
+          image: merchant-gateway:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: PAYMENT_PROCESSOR_URL
+              value: "http://payment-processor:8080"
+            - name: AWS_XRAY_DAEMON_ADDRESS
+              value: "xray-daemon.payment-demo.svc.cluster.local:2000"
+            - name: XRAY_SERVICE_NAME
+              value: "merchant-gateway"
+          envFrom:
+            - configMapRef:
+                name: payment-demo-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: merchant-gateway
+                topologyKey: kubernetes.io/hostname

@@ -1,0 +1,23 @@
+{
+  "name": "devops-agent-eks-cdk",
+  "version": "1.0.0",
+  "description": "CDK infrastructure for DevOps Agent EKS Demo",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.175.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.0",
+    "fast-check": "^4.1.1",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.2",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.7.0"
+  }
+}

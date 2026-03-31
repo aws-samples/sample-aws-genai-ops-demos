@@ -1,0 +1,84 @@
+spring:
+  application:
+    name: payment-processor
+  
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:payments}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+
+aws:
+  region: ${AWS_REGION:eu-central-1}
+  sqs:
+    enabled: ${SQS_ENABLED:true}
+    payment-events-queue-url: ${SQS_PAYMENT_EVENTS_QUEUE_URL:}
+
+logging:
+  level:
+    root: INFO
+    com.helios.payment: DEBUG
+  pattern:
+    console: '{"timestamp":"%d{ISO8601}","level":"%level","logger":"%logger","message":"%msg","correlationId":"%X{correlationId}"}%n'
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  
+  jpa:
+    show-sql: true
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: staging
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 10
+
+logging:
+  level:
+    root: WARN
+    com.helios.payment: INFO

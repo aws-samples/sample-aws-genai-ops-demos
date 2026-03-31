@@ -1,0 +1,22 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      java: corretto21
+  pre_build:
+    commands:
+      - echo Building JAR with Maven...
+      - mvn clean package -DskipTests -B -q
+      - echo Logging in to ECR...
+      - ECR_REGISTRY=$(echo $ECR_REPO_URI | cut -d'/' -f1)
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+  build:
+    commands:
+      - echo Building container image...
+      - docker build -t $ECR_REPO_URI:$IMAGE_TAG .
+      - docker tag $ECR_REPO_URI:$IMAGE_TAG $ECR_REPO_URI:latest
+  post_build:
+    commands:
+      - echo Pushing to ECR...
+      - docker push $ECR_REPO_URI:$IMAGE_TAG
+      - docker push $ECR_REPO_URI:latest

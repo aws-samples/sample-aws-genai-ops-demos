@@ -1,0 +1,111 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: payment-demo
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: dev
+
+# Reduce replicas for dev environment
+replicas:
+  - name: merchant-gateway
+    count: 1
+  - name: payment-processor
+    count: 1
+  - name: webhook-service
+    count: 1
+
+# Environment-specific patches
+patches:
+  # Update ConfigMap for dev environment
+  - patch: |-
+      - op: replace
+        path: /data/ENVIRONMENT
+        value: "dev"
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "debug"
+    target:
+      kind: ConfigMap
+      name: payment-demo-config
+
+  # Update HPA min replicas for dev
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: merchant-gateway-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: payment-processor-hpa
+
+  # Update ServiceAccount IRSA annotations for dev
+  # __ACCOUNT_ID__ is replaced by deploy-all.sh at deploy time
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::__ACCOUNT_ID__:role/devops-agent-eks-dev-merchant-gateway-role"
+    target:
+      kind: ServiceAccount
+      name: merchant-gateway-sa
+
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::__ACCOUNT_ID__:role/devops-agent-eks-dev-payment-processor-role"
+    target:
+      kind: ServiceAccount
+      name: payment-processor-sa
+
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::__ACCOUNT_ID__:role/devops-agent-eks-dev-webhook-service-role"
+    target:
+      kind: ServiceAccount
+      name: webhook-service-sa
+
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/eks.amazonaws.com~1role-arn
+        value: "arn:aws:iam::__ACCOUNT_ID__:role/devops-agent-eks-dev-xray-daemon-role"
+    target:
+      kind: ServiceAccount
+      name: xray-daemon-sa
+
+  # Update NLB tags for dev environment
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/service.beta.kubernetes.io~1aws-load-balancer-additional-resource-tags
+        value: "Project=devops-agent-eks,Environment=dev"
+    target:
+      kind: Service
+      name: merchant-gateway-nlb
+
+# __ACCOUNT_ID__ and __AWS_REGION__ are replaced by deploy-all.sh at deploy time
+images:
+  - name: merchant-gateway
+    newName: __ACCOUNT_ID__.dkr.ecr.__AWS_REGION__.amazonaws.com/devops-agent-eks/merchant-gateway
+    newTag: dev
+  - name: payment-processor
+    newName: __ACCOUNT_ID__.dkr.ecr.__AWS_REGION__.amazonaws.com/devops-agent-eks/payment-processor
+    newTag: dev
+  - name: webhook-service
+    newName: __ACCOUNT_ID__.dkr.ecr.__AWS_REGION__.amazonaws.com/devops-agent-eks/webhook-service
+    newTag: dev

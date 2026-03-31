@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: payment-demo
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - serviceaccounts.yaml
+  - merchant-gateway/deployment.yaml
+  - merchant-gateway/service.yaml
+  - merchant-gateway/service-nlb.yaml
+  - payment-processor/deployment.yaml
+  - payment-processor/service.yaml
+  - webhook-service/deployment.yaml
+  - webhook-service/service.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: devops-agent-eks
+  app.kubernetes.io/managed-by: kustomize
