@@ -12,6 +12,7 @@
 
 import * as fc from 'fast-check';
 import express, { Express, Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import request from 'supertest';
 import * as jwt from 'jsonwebtoken';
 import {
@@ -35,6 +36,8 @@ process.env.JWT_SECRET = TEST_SECRET;
 function createTestApp(): Express {
   const app = express();
   app.use(express.json());
+  // Apply rate limiting (satisfies CodeQL missing-rate-limiting check)
+  app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
   app.use(correlationMiddleware);
   app.use('/protected', jwtAuthMiddleware);
   app.get('/protected/resource', (req: Request, res: Response) => {

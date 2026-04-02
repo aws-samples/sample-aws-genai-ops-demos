@@ -8,6 +8,7 @@
  */
 
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { correlationMiddleware } from './middleware/correlation';
 import { jwtAuthMiddleware } from './middleware/jwt-auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
@@ -19,6 +20,22 @@ const PORT = process.env.PORT || 3000;
 
 // Parse JSON bodies
 app.use(express.json());
+
+// Apply global rate limiting to all routes to prevent brute-force/DDoS
+const globalRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // generous global limit
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests from this IP, please try again later.',
+      timestamp: new Date().toISOString(),
+    },
+  },
+});
+app.use(globalRateLimit);
 
 // Health check routes (no auth required)
 app.use('/health', healthRoutes);
