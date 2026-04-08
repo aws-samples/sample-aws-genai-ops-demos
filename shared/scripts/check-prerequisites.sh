@@ -163,11 +163,16 @@ fi
 
 # Check AWS region configuration
 echo -e "\n\033[0;33mChecking AWS region configuration...\033[0m"
-CURRENT_REGION=$(aws configure get region)
+CURRENT_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-}}"
+if [ -z "$CURRENT_REGION" ]; then
+    CURRENT_REGION=$(aws configure get region 2>/dev/null || true)
+fi
 if [ -z "$CURRENT_REGION" ]; then
     echo -e "\033[0;31m      ❌ No AWS region configured\033[0m"
     echo -e ""
-    echo -e "\033[0;33m      Please configure your AWS region using:\033[0m"
+    echo -e "\033[0;33m      Please configure your AWS region using one of:\033[0m"
+    echo -e "\033[0;36m        export AWS_REGION=<your-region>\033[0m"
+    echo -e "\033[0;36m        export AWS_DEFAULT_REGION=<your-region>\033[0m"
     echo -e "\033[0;36m        aws configure set region <your-region>\033[0m"
     echo -e ""
     echo -e "\033[0;90m      For supported regions, see AWS service documentation\033[0m"

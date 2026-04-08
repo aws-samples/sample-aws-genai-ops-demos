@@ -138,35 +138,67 @@ aws eks update-kubeconfig `
     --region $AWS_REGION
 Write-Host "  kubectl configured."
 
-# Grant the deploying IAM principal cluster-admin access via EKS access entries
+# Grant the deploying IAM principal cluster-admin access via EKS access entries.
+# IMPORTANT: sts get-caller-identity may return an assumed-role session ARN
+# (arn:aws:sts::ACCT:assumed-role/ROLE/SESSION) but EKS access entries require
+# the underlying IAM role ARN (arn:aws:iam::ACCT:role/ROLE). We normalise here.
 $CallerArn = aws sts get-caller-identity --query Arn --output text
-Write-Host "  Granting EKS access to $CallerArn..."
+Write-Host "  Caller identity: $CallerArn"
+
+# Normalise assumed-role ARNs → IAM role ARNs (no-op if already an IAM ARN)
+# arn:aws:sts::ACCT:assumed-role/ROLE/SESSION → arn:aws:iam::ACCT:role/ROLE
+$PrincipalArn = $CallerArn -replace ':sts:(.*):assumed-role/([^/]*)/.*', ':iam:$1:role/$2'
+Write-Host "  Granting EKS access to $PrincipalArn..."
 aws eks create-access-entry `
     --cluster-name "$ProjectName-$Environment-cluster" `
-    --principal-arn $CallerArn `
+    --principal-arn $PrincipalArn `
     --type STANDARD `
     --region $AWS_REGION 2>$null | Out-Null
 aws eks associate-access-policy `
     --cluster-name "$ProjectName-$Environment-cluster" `
-    --principal-arn $CallerArn `
+    --principal-arn $PrincipalArn `
     --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy `
     --access-scope type=cluster `
     --region $AWS_REGION 2>$null | Out-Null
 Write-Host "  EKS access granted."
+
+# Associate the required node access policy to the node role access entry.
+# EKS auto-creates an EC2_LINUX access entry for the node role when using
+# API_AND_CONFIG_MAP auth mode, but does NOT auto-associate the worker node
+# policy. Without this, nodes register but kubelet cannot fully authenticate.
+$NodeRoleArn = "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ProjectName}-${Environment}-eks-node-role"
+Write-Host "  Associating node access policy to $NodeRoleArn..."
+aws eks associate-access-policy `
+    --cluster-name "$ProjectName-$Environment-cluster" `
+    --principal-arn $NodeRoleArn `
+    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSWorkerNodeMinimalPolicy `
+    --access-scope type=cluster `
+    --region $AWS_REGION 2>$null | Out-Null
+Write-Host "  Node access policy associated."
 Write-Host ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)
-Write-Host "  Waiting for EKS API access to propagate..."
-for ($i = 1; $i -le 30; $i++) {
+Write-Host "  Waiting for EKS API access to propagate (this can take up to 5 minutes)..."
+$eksAuthConfirmed = $false
+for ($i = 1; $i -le 36; $i++) {
     $null = kubectl get ns default 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  EKS API access confirmed."
+        Write-Host "  EKS API access confirmed after $($i * 10) seconds."
+        $eksAuthConfirmed = $true
         break
     }
-    if ($i -eq 30) {
-        Write-Host "  WARNING: EKS API access not confirmed after 150 seconds. Continuing anyway..." -ForegroundColor Yellow
-    }
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 10
+}
+if (-not $eksAuthConfirmed) {
+    Write-Host ""
+    Write-Host "  ERROR: EKS API access not confirmed after 360 seconds." -ForegroundColor Red
+    Write-Host "  The access entry may still be propagating. You can retry by running:" -ForegroundColor Yellow
+    Write-Host "    kubectl get ns default" -ForegroundColor Yellow
+    Write-Host "  Once that succeeds, re-run this script." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  If the issue persists, verify your caller identity has access:" -ForegroundColor Yellow
+    Write-Host "    aws eks list-access-entries --cluster-name $ProjectName-$Environment-cluster --region $AWS_REGION" -ForegroundColor Yellow
+    exit 1
 }
 Write-Host ""
 
@@ -879,7 +911,7 @@ Set-Content -Path "services/merchant-portal/.env.production.local" -Value $envCo
 
 Write-Host "  Installing frontend dependencies..."
 Push-Location services/merchant-portal
-npm install --silent
+npm install --silent --legacy-peer-deps
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     Write-Host "  ERROR: Frontend npm install failed." -ForegroundColor Red
