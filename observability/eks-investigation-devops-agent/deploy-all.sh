@@ -30,7 +30,7 @@ echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 echo "[prereqs] Running prerequisites check..."
-source "$REPO_ROOT/shared/scripts/check-prerequisites.sh" --require-cdk --require-kubectl --skip-service-check
+source "$REPO_ROOT/shared/scripts/check-prerequisites.sh" --require-cdk --require-kubectl --skip-service-check --min-aws-cli-version 2.34.21
 
 # Check for zip utility (required for CodeBuild source packaging)
 if ! command -v zip &>/dev/null; then
@@ -55,19 +55,13 @@ echo ""
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# DevOps Agent integration (MANDATORY)
+# DevOps Agent setup (Agent Space + webhook)
 # ---------------------------------------------------------------------------
+# Agent Space is created via CLI in the DevOps Agent region (e.g. us-east-1)
+# because AWS::DevOpsAgent CloudFormation resources are not available in all regions.
 if [ -z "$DEVOPS_AGENT_WEBHOOK_URL" ] || [ -z "$DEVOPS_AGENT_WEBHOOK_SECRET" ]; then
-    echo "=============================================="
-    echo " DevOps Agent Setup (Required)"
-    echo "=============================================="
-    echo ""
-    echo "The DevOps Agent webhook is required for this demo."
-    echo "It enables automated incident investigation when alarms fire."
-    echo ""
     source "$SCRIPT_DIR/scripts/setup-devops-agent.sh"
     setup_devops_agent "$PROJECT_NAME"
-    # setup script exports DEVOPS_AGENT_WEBHOOK_URL and DEVOPS_AGENT_WEBHOOK_SECRET
 fi
 
 if [ -z "$DEVOPS_AGENT_WEBHOOK_URL" ] || [ -z "$DEVOPS_AGENT_WEBHOOK_SECRET" ]; then
@@ -79,13 +73,14 @@ if [ -z "$DEVOPS_AGENT_WEBHOOK_URL" ] || [ -z "$DEVOPS_AGENT_WEBHOOK_SECRET" ]; 
     echo "  export DEVOPS_AGENT_WEBHOOK_SECRET=\"...\""
     echo "  bash deploy-all.sh"
     echo ""
-    echo "Or follow the interactive setup prompts above."
     exit 1
 fi
 
 DEVOPS_WEBHOOK_URL="$DEVOPS_AGENT_WEBHOOK_URL"
 DEVOPS_WEBHOOK_SECRET="$DEVOPS_AGENT_WEBHOOK_SECRET"
-echo "DevOps Agent webhook integration: ENABLED"
+DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
+DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
+echo "DevOps Agent webhook: CONFIGURED"
 echo ""
 
 # EKS node architecture — override via EKS_ARCHITECTURE env var, default arm64
@@ -124,10 +119,7 @@ echo ""
 # script) to avoid CloudFormation AlreadyExists conflicts.
 echo "[2/9] Deploying CDK stacks (this takes ~15 minutes)..."
 
-DEVOPS_WEBHOOK_URL="${DEVOPS_AGENT_WEBHOOK_URL:-}"
-DEVOPS_WEBHOOK_SECRET="${DEVOPS_AGENT_WEBHOOK_SECRET:-}"
-
-CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNodeArchitecture=$EKS_ARCHITECTURE -c eksNodeInstanceType=$EKS_INSTANCE_TYPE -c eksNodeDesiredCapacity=2 -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET"
+CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNodeArchitecture=$EKS_ARCHITECTURE -c eksNodeInstanceType=$EKS_INSTANCE_TYPE -c eksNodeDesiredCapacity=2 -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET -c devOpsAgentRegion=$DEVOPS_AGENT_REGION -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
 
 cd cdk
 npx cdk deploy --all \
@@ -162,6 +154,27 @@ aws eks associate-access-policy \
     --access-scope type=cluster \
     --region "$AWS_REGION" >/dev/null 2>&1 || true
 echo "  EKS access granted."
+
+# Grant Failure Simulator Lambda access to EKS cluster
+FAILURE_SIM_LAMBDA_ROLE_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "DevOpsAgentEksFailureSimulatorApi-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='FailureSimulatorLambdaRoleArn'].OutputValue" \
+    --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+if [ -n "$FAILURE_SIM_LAMBDA_ROLE_ARN" ] && [ "$FAILURE_SIM_LAMBDA_ROLE_ARN" != "None" ]; then
+    echo "  Granting EKS access to Failure Simulator Lambda ($FAILURE_SIM_LAMBDA_ROLE_ARN)..."
+    aws eks create-access-entry \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$FAILURE_SIM_LAMBDA_ROLE_ARN" \
+        --type STANDARD \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    aws eks associate-access-policy \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$FAILURE_SIM_LAMBDA_ROLE_ARN" \
+        --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
+        --access-scope type=namespace,namespaces=payment-demo,kube-system \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    echo "  Failure Simulator Lambda EKS access granted (namespaces: payment-demo, kube-system)."
+fi
 echo ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)
@@ -313,7 +326,7 @@ while true; do
         for i in 0 1 2; do
             if [ "${BUILD_IDS[$i]}" = "$BID" ]; then
                 BUILD_PHASE[$i]="$BPHASE"
-                if [ "$BSTATUS" = "SUCCEEDED" ] || [ "$BSTATUS" = "FAILED" ] || [ "$BSTATUS" = "FAULT" ] || [ "$BSTATUS" = "TIMED_OUT" ] || [ "$BSTATUS" = "STOPPED" ]; then
+                if [ "$BSTATUS" = "SUCCEEDED" ] || [ "$BSTATUS" = "FAILED" ] || [ "$BSTATUS" = "FAULT" ] || [ "$BSTATUS" = "TIMED_OUT" ] || [ "$BSTATUS" = "STOPPED" ] || [ "$BSTATUS" = "COMPLETED" ]; then
                     BUILD_DONE[$i]="true"
                     BUILD_STATUS[$i]="$BSTATUS"
                 fi
@@ -534,6 +547,13 @@ if [ -n "$USER_POOL_ID" ] && [ "$USER_POOL_ID" != "None" ]; then
         --username "$DEMO_USERNAME" \
         --region "$AWS_REGION" >/dev/null 2>&1; then
         echo "  Cognito user '$DEMO_USERNAME' already exists."
+        # Ensure password is set correctly (handles redeployments)
+        aws cognito-idp admin-set-user-password \
+            --user-pool-id "$USER_POOL_ID" \
+            --username "$DEMO_USERNAME" \
+            --password "$DEMO_PASSWORD" \
+            --permanent \
+            --region "$AWS_REGION" >/dev/null 2>&1 || true
     else
         echo "  Creating Cognito user '$DEMO_USERNAME'..."
         aws cognito-idp admin-create-user \
@@ -837,6 +857,7 @@ echo ""
 # =============================================================================
 echo "[8/9] Updating CloudFront with API origin..."
 if [ -n "$NLB_HOSTNAME" ]; then
+    # Admin API is wired to CloudFront via cross-stack reference (no extra context needed)
     cd cdk
     npx cdk deploy DevOpsAgentEksFrontend-$AWS_REGION \
         -c environment=$ENVIRONMENT \
@@ -847,6 +868,7 @@ if [ -n "$NLB_HOSTNAME" ]; then
         -c apiGatewayEndpoint=$NLB_HOSTNAME \
         -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL \
         -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET \
+        -c devOpsAgentRegion=${DEVOPS_AGENT_REGION:-us-east-1} \
         --require-approval never \
         --no-cli-pager
     cd ..
@@ -947,14 +969,11 @@ echo "   - Add items to cart and complete a checkout"
 echo "   - View transaction history on the dashboard"
 echo ""
 echo "3. Test the DevOps Agent incident investigation:"
-echo "   a. Inject a database failure:"
-echo "        bash scripts/demo-incident.sh inject"
-echo "   b. Wait ~2 minutes for the CloudWatch alarm to trigger"
-echo "   c. Check alarm and pod status:"
-echo "        bash scripts/demo-incident.sh status"
+echo "   a. Open the DevOps Agent Lab (🧪 icon in the portal)"
+echo "   b. Click 'Inject' on a scenario to trigger a real infrastructure failure"
+echo "   c. Wait ~2 minutes for the CloudWatch alarm to trigger"
 echo "   d. Open the DevOps Agent console to see the automated investigation"
-echo "   e. Rollback when done:"
-echo "        bash scripts/demo-incident.sh rollback"
+echo "   e. Click 'Rollback' in the Simulator when done (or wait for auto-revert)"
 echo ""
 echo "4. Clean up all resources when finished:"
 echo "     bash scripts/cleanup.sh"

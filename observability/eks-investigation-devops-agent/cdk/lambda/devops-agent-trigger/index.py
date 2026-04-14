@@ -59,21 +59,26 @@ def send_to_devops_agent(payload: dict):
         raise
 
 
-def map_alarm_to_priority(alarm_name: str, state_reason: str) -> str:
-    """Map CloudWatch alarm to DevOps Agent priority"""
-    if 'database' in alarm_name.lower() or 'connection' in alarm_name.lower():
+def map_alarm_to_priority(alarm_name: str, alarm_description: str) -> str:
+    """Map CloudWatch alarm to DevOps Agent priority based on alarm metadata."""
+    text = f"{alarm_name} {alarm_description}".lower()
+    if any(w in text for w in ('critical', 'database', 'connection', 'crash')):
         return 'CRITICAL'
-    elif 'error' in alarm_name.lower() or '5xx' in alarm_name.lower():
-        return 'CRITICAL'
-    elif 'latency' in alarm_name.lower():
+    elif any(w in text for w in ('error', '5xx', 'failure', 'dns')):
         return 'HIGH'
+    elif any(w in text for w in ('latency', 'degraded', 'slow')):
+        return 'MEDIUM'
     return 'HIGH'
 
 
 def handler(event, context):
     """
     Triggered by SNS when CloudWatch alarm fires.
-    Sends incident event to DevOps Agent webhook.
+    Sends a generic incident event to DevOps Agent webhook.
+    
+    The payload intentionally does NOT prescribe what to investigate.
+    It forwards the CloudWatch alarm data and lets the DevOps Agent
+    autonomously determine the root cause.
     """
     logger.info(f"Received event: {json.dumps(event)}")
 
@@ -91,52 +96,54 @@ def handler(event, context):
             new_state = alarm_data.get('NewStateValue', 'ALARM')
             reason = alarm_data.get('NewStateReason', '')
             state_change_time = alarm_data.get('StateChangeTime', datetime.utcnow().isoformat())
+            alarm_arn = alarm_data.get('AlarmArn', '')
+            trigger = alarm_data.get('Trigger', {})
         except json.JSONDecodeError:
             alarm_name = 'CloudWatch Alarm'
             alarm_description = message
             new_state = 'ALARM'
             reason = message
             state_change_time = datetime.utcnow().isoformat()
+            alarm_arn = ''
+            trigger = {}
 
         # Only trigger on ALARM state (not OK)
         if new_state != 'ALARM':
             logger.info(f"Skipping non-ALARM state: {new_state}")
             continue
 
-        # Build DevOps Agent incident payload
+        # Build a generic incident payload — let the agent figure out the rest
         incident_payload = {
             'eventType': 'incident',
             'incidentId': f"{alarm_name}-{context.aws_request_id}",
             'action': 'created',
-            'priority': map_alarm_to_priority(alarm_name, reason),
-            'title': f"CRITICAL: {alarm_name}",
-            'description': f"""Database connection error detected on e-commerce payment platform.
-
-IMPACT: Payment processing is failing. Customers cannot complete purchases.
-
-Cluster: {cluster_name}
-Region: {region}
-Namespace: payment-demo
-Alarm: {alarm_name}
-Reason: {reason}
-
-Please investigate:
-1. Check payment-processor pods for database connection errors
-2. Verify RDS instance status and connectivity
-3. Check database credentials and secrets
-4. Review application logs for connection pool exhaustion
-5. Verify security group and network connectivity to RDS""",
+            'priority': map_alarm_to_priority(alarm_name, alarm_description),
+            'title': f"CloudWatch Alarm: {alarm_name}",
+            'description': (
+                f"CloudWatch alarm '{alarm_name}' triggered in {region}.\n\n"
+                f"Description: {alarm_description}\n"
+                f"Reason: {reason}\n\n"
+                f"EKS Cluster: {cluster_name}\n"
+                f"Region: {region}"
+            ),
             'timestamp': state_change_time,
-            'service': 'payment-processor',
+            'service': 'cloudwatch',
             'data': {
                 'alarmName': alarm_name,
+                'alarmArn': alarm_arn,
                 'alarmDescription': alarm_description,
                 'newStateValue': new_state,
                 'newStateReason': reason,
+                'trigger': {
+                    'metricName': trigger.get('MetricName', ''),
+                    'namespace': trigger.get('Namespace', ''),
+                    'statistic': trigger.get('Statistic', ''),
+                    'period': trigger.get('Period', 0),
+                    'threshold': trigger.get('Threshold', 0),
+                },
                 'clusterName': cluster_name,
                 'namespace': 'payment-demo',
                 'region': region,
-                'impact': 'Payment processing unavailable'
             }
         }
 

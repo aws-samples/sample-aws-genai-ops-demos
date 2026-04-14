@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including dev)
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY tsconfig.json ./
@@ -32,7 +32,7 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY package*.json ./
 
 # Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist

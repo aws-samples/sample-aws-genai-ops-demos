@@ -122,33 +122,20 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[6/14] Cleaning up Fluent Bit, EKS cluster, and nodegroups..." -ForegroundColor Cyan
+Write-Host "[6/14] Cleaning up Kubernetes resources before stack deletion..." -ForegroundColor Cyan
 $EKS_CLUSTER = "${PROJECT_NAME}-${ENVIRONMENT}-cluster"
 $clusterExists = aws eks describe-cluster --name $EKS_CLUSTER 2>$null
 if ($LASTEXITCODE -eq 0) {
-    # Delete Fluent Bit resources while cluster is still running
+    # Delete Fluent Bit and K8s resources while cluster is still running
+    # (CloudFormation doesn't manage these — they were applied via kubectl)
     Write-Host "  Deleting Fluent Bit resources..."
     kubectl delete -f k8s/base/fluent-bit/ --ignore-not-found 2>$null
-    Write-Host "  ✓ Fluent Bit resources deleted" -ForegroundColor Green
-
-    # Delete nodegroups first
-    $NODEGROUPS = aws eks list-nodegroups --cluster-name $EKS_CLUSTER --query "nodegroups[*]" --output text 2>$null
-    if ($NODEGROUPS) {
-        foreach ($ng in $NODEGROUPS.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
-            Write-Host "  Deleting nodegroup $ng..."
-            aws eks delete-nodegroup --cluster-name $EKS_CLUSTER --nodegroup-name $ng 2>$null
-            Write-Host "  Waiting for nodegroup deletion..."
-            aws eks wait nodegroup-deleted --cluster-name $EKS_CLUSTER --nodegroup-name $ng 2>$null
-            Write-Host "  ✓ Nodegroup $ng deleted" -ForegroundColor Green
-        }
-    }
-
-    # Delete the cluster
-    Write-Host "  Deleting EKS cluster $EKS_CLUSTER..."
-    aws eks delete-cluster --name $EKS_CLUSTER 2>$null
-    Write-Host "  Waiting for cluster deletion..."
-    aws eks wait cluster-deleted --name $EKS_CLUSTER 2>$null
-    Write-Host "  ✓ EKS cluster deleted" -ForegroundColor Green
+    Write-Host "  Deleting payment-demo namespace resources..."
+    kubectl delete namespace payment-demo --ignore-not-found 2>$null
+    Write-Host "  ✓ Kubernetes resources cleaned up" -ForegroundColor Green
+    # NOTE: Do NOT delete the EKS cluster or nodegroups here.
+    # CloudFormation will handle that in step 9 when we delete the Compute stack.
+    # Deleting EKS resources directly causes ghost state in CloudFormation.
 } else {
     Write-Host "  - EKS cluster not found, skipping" -ForegroundColor Yellow
 }
@@ -265,6 +252,7 @@ Write-Host "[9/14] Destroying CloudFormation stacks (reverse dependency order)..
 
 $STACK_DELETE_ORDER = @(
     "DevOpsAgentEksDevOpsAgent-${REGION}",
+    "DevOpsAgentEksFailureSimulatorApi-${REGION}",
     "DevOpsAgentEksMonitoring-${REGION}",
     "DevOpsAgentEksPipeline-${REGION}",
     "DevOpsAgentEksFrontend-${REGION}",
@@ -480,8 +468,13 @@ if ($DEVOPSAGENT_CLI_AVAILABLE) {
     Write-Host "  - DevOps Agent CLI not available, skipping Agent Space deletion" -ForegroundColor Yellow
 }
 
-# Delete DevOps Agent IAM roles
-foreach ($roleName in @("${PROJECT_NAME}-AgentSpaceRole", "${PROJECT_NAME}-OperatorRole")) {
+# Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)
+foreach ($roleName in @(
+    "${PROJECT_NAME}-AgentSpaceRole",
+    "${PROJECT_NAME}-OperatorRole",
+    "${PROJECT_NAME}-${ENVIRONMENT}-AgentSpaceRole",
+    "${PROJECT_NAME}-${ENVIRONMENT}-OperatorRole"
+)) {
     $roleCheck = aws iam get-role --role-name $roleName 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Deleting IAM role $roleName..."

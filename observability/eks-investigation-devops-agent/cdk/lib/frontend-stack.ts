@@ -8,6 +8,8 @@ export interface FrontendStackProps extends cdk.StackProps {
   environment: string;
   projectName: string;
   apiGatewayEndpoint?: string;
+  adminApiId?: string;
+  adminApiStageName?: string;
 }
 
 export class FrontendStack extends cdk.Stack {
@@ -18,7 +20,7 @@ export class FrontendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: FrontendStackProps) {
     super(scope, id, props);
 
-    const { environment, projectName, apiGatewayEndpoint } = props;
+    const { environment, projectName, apiGatewayEndpoint, adminApiId, adminApiStageName } = props;
 
     // -----------------------------------------------------------------------
     // S3 Bucket — AES256, all public access blocked, destroy on teardown
@@ -69,7 +71,7 @@ export class FrontendStack extends cdk.Stack {
       responseHeadersPolicyName: `${projectName}-${environment}-security-headers`,
       securityHeadersBehavior: {
         contentSecurityPolicy: {
-          contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com; frame-ancestors 'none'",
+          contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com; frame-ancestors 'none'",
           override: true,
         },
         contentTypeOptions: { override: true },
@@ -137,6 +139,27 @@ export class FrontendStack extends cdk.Stack {
 
       additionalBehaviors['/api/*'] = {
         origin: apiOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        responseHeadersPolicy,
+        compress: true,
+      };
+    }
+
+    // Optional Admin API origin (API Gateway) with /admin/* behavior
+    if (adminApiId) {
+      const adminDomain = `${adminApiId}.execute-api.${cdk.Aws.REGION}.amazonaws.com`;
+      const adminOrigin = new origins.HttpOrigin(adminDomain, {
+        originPath: `/${adminApiStageName || 'prod'}`,
+        httpsPort: 443,
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+      });
+
+      additionalBehaviors['/admin/*'] = {
+        origin: adminOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,

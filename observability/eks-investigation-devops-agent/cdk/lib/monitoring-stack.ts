@@ -52,6 +52,14 @@ export class MonitoringStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
+    // CloudWatch Log Group — merchant-gateway (created by Fluent Bit, imported here)
+    // -----------------------------------------------------------------------
+    const merchantGatewayLogGroup = logs.LogGroup.fromLogGroupName(
+      this, 'MerchantGatewayLogGroup',
+      `/aws/eks/${projectName}-${environment}/merchant-gateway`,
+    );
+
+    // -----------------------------------------------------------------------
     // Metric Filter — database connection errors
     // Matches filter pattern from original CloudFormation observability.yaml
     // -----------------------------------------------------------------------
@@ -84,6 +92,29 @@ export class MonitoringStack extends cdk.Stack {
 
     dbConnectionErrorAlarm.addAlarmAction(new cloudwatchActions.SnsAction(criticalAlarmsTopic));
     dbConnectionErrorAlarm.addOkAction(new cloudwatchActions.SnsAction(criticalAlarmsTopic));
+
+    // -----------------------------------------------------------------------
+    // Metric Filter + Alarm — DNS resolution errors
+    // Uses a custom metric published by the Failure Simulator Lambda
+    // (Fluent Bit can't ship logs when DNS is down, so log-based filters won't work)
+    // -----------------------------------------------------------------------
+    const dnsErrorAlarm = new cloudwatch.Alarm(this, 'DnsResolutionErrorAlarm', {
+      alarmName: `${projectName}-${environment}-dns-resolution-errors`,
+      alarmDescription: 'CRITICAL: DNS resolution failures detected - service discovery broken',
+      metric: new cloudwatch.Metric({
+        namespace: `${projectName}/${environment}`,
+        metricName: 'DnsResolutionErrors',
+        statistic: 'Sum',
+        period: cdk.Duration.seconds(60),
+      }),
+      evaluationPeriods: 1,
+      threshold: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    dnsErrorAlarm.addAlarmAction(new cloudwatchActions.SnsAction(criticalAlarmsTopic));
+    dnsErrorAlarm.addOkAction(new cloudwatchActions.SnsAction(criticalAlarmsTopic));
 
     // -----------------------------------------------------------------------
     // Expose properties for cross-stack references

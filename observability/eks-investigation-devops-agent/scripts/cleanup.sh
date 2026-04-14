@@ -114,30 +114,19 @@ else
 fi
 
 echo ""
-echo "[6/14] Cleaning up Fluent Bit, EKS cluster, and nodegroups..."
+echo "[6/14] Cleaning up Kubernetes resources before stack deletion..."
 EKS_CLUSTER="${PROJECT_NAME}-${ENVIRONMENT}-cluster"
 if aws eks describe-cluster --name "$EKS_CLUSTER" &>/dev/null 2>&1; then
-  # Delete Fluent Bit resources while cluster is still running
+  # Delete Fluent Bit and K8s resources while cluster is still running
+  # (CloudFormation doesn't manage these — they were applied via kubectl)
   echo "  Deleting Fluent Bit resources..."
   kubectl delete -f k8s/base/fluent-bit/ --ignore-not-found 2>/dev/null || true
-  echo "  ✓ Fluent Bit resources deleted"
-
-  # Delete nodegroups first
-  NODEGROUPS=$(aws eks list-nodegroups --cluster-name "$EKS_CLUSTER" --query 'nodegroups[*]' --output text 2>/dev/null || echo "")
-  for ng in $NODEGROUPS; do
-    echo "  Deleting nodegroup $ng..."
-    aws eks delete-nodegroup --cluster-name "$EKS_CLUSTER" --nodegroup-name "$ng" 2>/dev/null || true
-    echo "  Waiting for nodegroup deletion..."
-    aws eks wait nodegroup-deleted --cluster-name "$EKS_CLUSTER" --nodegroup-name "$ng" 2>/dev/null || true
-    echo "  ✓ Nodegroup $ng deleted"
-  done
-
-  # Delete the cluster
-  echo "  Deleting EKS cluster $EKS_CLUSTER..."
-  aws eks delete-cluster --name "$EKS_CLUSTER" 2>/dev/null || true
-  echo "  Waiting for cluster deletion..."
-  aws eks wait cluster-deleted --name "$EKS_CLUSTER" 2>/dev/null || true
-  echo "  ✓ EKS cluster deleted"
+  echo "  Deleting payment-demo namespace resources..."
+  kubectl delete namespace payment-demo --ignore-not-found 2>/dev/null || true
+  echo "  ✓ Kubernetes resources cleaned up"
+  # NOTE: Do NOT delete the EKS cluster or nodegroups here.
+  # CloudFormation will handle that in step 9 when we delete the Compute stack.
+  # Deleting EKS resources directly causes ghost state in CloudFormation.
 else
   echo "  - EKS cluster not found, skipping"
 fi
@@ -249,6 +238,7 @@ echo "[9/14] Destroying CloudFormation stacks (reverse dependency order)..."
 
 STACK_DELETE_ORDER=(
   "DevOpsAgentEksDevOpsAgent-${REGION}"
+  "DevOpsAgentEksFailureSimulatorApi-${REGION}"
   "DevOpsAgentEksMonitoring-${REGION}"
   "DevOpsAgentEksPipeline-${REGION}"
   "DevOpsAgentEksFrontend-${REGION}"
@@ -446,8 +436,8 @@ else
   echo "  - DevOps Agent CLI not available, skipping Agent Space deletion"
 fi
 
-# Delete DevOps Agent IAM roles
-for ROLE_NAME in "${PROJECT_NAME}-AgentSpaceRole" "${PROJECT_NAME}-OperatorRole"; do
+# Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)
+for ROLE_NAME in "${PROJECT_NAME}-AgentSpaceRole" "${PROJECT_NAME}-OperatorRole" "${PROJECT_NAME}-${ENVIRONMENT}-AgentSpaceRole" "${PROJECT_NAME}-${ENVIRONMENT}-OperatorRole"; do
   if aws iam get-role --role-name "$ROLE_NAME" &>/dev/null 2>&1; then
     echo "  Deleting IAM role $ROLE_NAME..."
     # Detach managed policies

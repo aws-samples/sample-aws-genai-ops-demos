@@ -115,6 +115,9 @@ samples/
 .hypothesis/
 .ash/
 
+# Reference demo repos (cloned for inspiration, not part of this project)
+**/new_demo_eks_inspiring/
+
 # OS generated files
 .DS_Store
 .DS_Store?

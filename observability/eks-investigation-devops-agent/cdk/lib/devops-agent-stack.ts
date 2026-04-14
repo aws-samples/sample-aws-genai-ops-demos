@@ -7,11 +7,20 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
+/**
+ * DevOpsAgentStack — deploys in the infra region (same as CloudWatch alarms).
+ *
+ * Contains the trigger Lambda (SNS → webhook), Secrets Manager secret, and
+ * SNS topic. The Agent Space itself lives in a separate AgentSpaceStack
+ * deployed in the DevOps Agent region (e.g. us-east-1).
+ */
 export interface DevOpsAgentStackProps extends cdk.StackProps {
   environment: string;
   projectName: string;
   eksClusterName: string;
+  /** Webhook URL — empty string on first deploy (before webhook is generated) */
   webhookUrl: string;
+  /** Webhook HMAC secret — empty string on first deploy */
   webhookSecret: string;
   criticalAlarmsTopicArn: string;
 }
@@ -33,11 +42,14 @@ export class DevOpsAgentStack extends cdk.Stack {
 
     // -----------------------------------------------------------------------
     // Secrets Manager secret for webhook HMAC key
+    // On first deploy webhookSecret may be empty — use a placeholder.
+    // The deploy script will redeploy with the real secret after the user
+    // generates the webhook in the DevOps Agent console.
     // -----------------------------------------------------------------------
     const devOpsAgentSecret = new secretsmanager.Secret(this, 'DevOpsAgentSecret', {
       secretName: `${projectName}-${environment}/devops-agent-webhook-secret`,
       description: 'DevOps Agent webhook HMAC secret key',
-      secretStringValue: cdk.SecretValue.unsafePlainText(webhookSecret),
+      secretStringValue: cdk.SecretValue.unsafePlainText(webhookSecret || 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE'),
     });
 
     // -----------------------------------------------------------------------
@@ -66,7 +78,7 @@ export class DevOpsAgentStack extends cdk.Stack {
     }));
 
     // -----------------------------------------------------------------------
-    // Lambda function — Python 3.12, handler from extracted code
+    // Lambda function — forwards SNS alarm notifications to DevOps Agent webhook
     // -----------------------------------------------------------------------
     const triggerLambda = new lambda.Function(this, 'DevOpsAgentTriggerLambda', {
       functionName: `${projectName}-${environment}-devops-trigger`,
@@ -77,7 +89,7 @@ export class DevOpsAgentStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: {
         EKS_CLUSTER_NAME: eksClusterName,
-        WEBHOOK_URL: webhookUrl,
+        WEBHOOK_URL: webhookUrl || 'NOT_CONFIGURED',
         SECRET_ARN: devOpsAgentSecret.secretArn,
         AWS_REGION_NAME: cdk.Aws.REGION,
       },
@@ -90,7 +102,6 @@ export class DevOpsAgentStack extends cdk.Stack {
       new snsSubscriptions.LambdaSubscription(triggerLambda),
     );
 
-    // Import the critical alarms topic from MonitoringStack and subscribe
     const criticalAlarmsTopic = sns.Topic.fromTopicArn(
       this, 'ImportedCriticalAlarmsTopic', criticalAlarmsTopicArn,
     );

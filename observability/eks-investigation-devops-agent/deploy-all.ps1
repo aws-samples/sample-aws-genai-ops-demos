@@ -30,7 +30,8 @@ Write-Host ""
 # Prerequisites
 # ---------------------------------------------------------------------------
 Write-Host "[prereqs] Running prerequisites check..." -ForegroundColor Yellow
-& "$PSScriptRoot\..\..\shared\scripts\check-prerequisites.ps1" -RequireCDK -RequireKubectl -SkipServiceCheck
+& "$PSScriptRoot\..\..\shared\scripts\check-prerequisites.ps1" -RequireCDK -RequireKubectl -SkipServiceCheck -MinAwsCliVersion "2.34.21"
+if ($LASTEXITCODE -ne 0) { exit 1 }
 Write-Host ""
 
 $AWS_ACCOUNT_ID = aws sts get-caller-identity --query Account --output text
@@ -42,18 +43,16 @@ Write-Host "Environment: $Environment"
 Write-Host ""
 
 # ---------------------------------------------------------------------------
-# DevOps Agent integration (MANDATORY)
+# DevOps Agent setup (Agent Space + webhook)
 # ---------------------------------------------------------------------------
+# Agent Space is created via CLI in the DevOps Agent region (e.g. us-east-1)
+# because AWS::DevOpsAgent CloudFormation resources are not available in all regions.
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
-    Write-Host "==============================================" -ForegroundColor Cyan
-    Write-Host " DevOps Agent Setup (Required)" -ForegroundColor Cyan
-    Write-Host "==============================================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "The DevOps Agent webhook is required for this demo."
-    Write-Host "It enables automated incident investigation when alarms fire."
-    Write-Host ""
     & "$PSScriptRoot\scripts\setup-devops-agent.ps1" -AgentSpaceName $ProjectName
-    # setup script sets env vars in current session if webhook was provided
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: DevOps Agent setup failed." -ForegroundColor Red
+        exit 1
+    }
 }
 
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
@@ -65,13 +64,14 @@ if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET
     Write-Host '  $env:DEVOPS_AGENT_WEBHOOK_SECRET = "..."'
     Write-Host "  .\deploy-all.ps1"
     Write-Host ""
-    Write-Host "Or follow the interactive setup prompts above."
     exit 1
 }
 
 $DevOpsWebhookUrl = $env:DEVOPS_AGENT_WEBHOOK_URL
 $DevOpsWebhookSecret = $env:DEVOPS_AGENT_WEBHOOK_SECRET
-Write-Host "DevOps Agent webhook integration: ENABLED" -ForegroundColor Green
+$DevOpsAgentSpaceId = $env:DEVOPS_AGENT_SPACE_ID ?? ''
+$DevOpsAgentRegion = $env:DEVOPS_AGENT_REGION ?? 'us-east-1'
+Write-Host "DevOps Agent webhook: CONFIGURED" -ForegroundColor Green
 Write-Host ""
 
 # EKS node architecture — override via EKS_ARCHITECTURE env var, default arm64
@@ -106,11 +106,8 @@ Write-Host ""
 # =============================================================================
 # STEP 2: Deploy CDK stacks (initial, no API endpoint yet)
 # =============================================================================
-# NOTE: RDS credentials secret is created by CDK's DatabaseStack (not by this
-# script) to avoid CloudFormation AlreadyExists conflicts.
 Write-Host "[2/9] Deploying CDK stacks (this takes ~15 minutes)..." -ForegroundColor Cyan
 
-# Build CDK context parameters - webhook is always included (mandatory)
 Push-Location cdk
 $cdkArgs = @(
     "npx", "cdk", "deploy", "--all",
@@ -121,6 +118,8 @@ $cdkArgs = @(
     "-c", "eksNodeDesiredCapacity=2",
     "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
     "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",
+    "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
+    "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
     "--require-approval", "never",
     "--no-cli-pager"
 )
@@ -153,6 +152,27 @@ aws eks associate-access-policy `
     --access-scope type=cluster `
     --region $AWS_REGION 2>$null | Out-Null
 Write-Host "  EKS access granted."
+
+# Grant Failure Simulator Lambda access to EKS cluster
+$FailureSimLambdaRoleArn = aws cloudformation describe-stacks `
+    --stack-name "DevOpsAgentEksFailureSimulatorApi-$AWS_REGION" `
+    --query "Stacks[0].Outputs[?OutputKey=='FailureSimulatorLambdaRoleArn'].OutputValue" `
+    --output text --region $AWS_REGION 2>$null
+if ($FailureSimLambdaRoleArn -and $FailureSimLambdaRoleArn -ne "None") {
+    Write-Host "  Granting EKS access to Failure Simulator Lambda ($FailureSimLambdaRoleArn)..."
+    aws eks create-access-entry `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $FailureSimLambdaRoleArn `
+        --type STANDARD `
+        --region $AWS_REGION 2>$null | Out-Null
+    aws eks associate-access-policy `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $FailureSimLambdaRoleArn `
+        --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy `
+        --access-scope type=namespace,namespaces=payment-demo,kube-system `
+        --region $AWS_REGION 2>$null | Out-Null
+    Write-Host "  Failure Simulator Lambda EKS access granted (namespaces: payment-demo, kube-system)."
+}
 Write-Host ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)
@@ -303,11 +323,15 @@ while ($true) {
     }
     if ($PendingIds.Count -eq 0) { break }
 
-    # Batch query
-    $BatchJson = aws codebuild batch-get-builds `
-        --ids @PendingIds `
-        --query 'builds[].[id,buildStatus,currentPhase]' `
-        --output json --region $AWS_REGION | ConvertFrom-Json
+    # Batch query — use Invoke-Expression to handle single/multiple IDs correctly
+    $IdsString = ($PendingIds | ForEach-Object { "`"$_`"" }) -join " "
+    $BatchRaw = Invoke-Expression "aws codebuild batch-get-builds --ids $IdsString --query 'builds[].[id,buildStatus,currentPhase]' --output json --region $AWS_REGION"
+    $BatchJson = $BatchRaw | ConvertFrom-Json
+
+    # Handle single result (not wrapped in outer array)
+    if ($BatchJson -and $BatchJson.Count -gt 0 -and $BatchJson[0] -is [string]) {
+        $BatchJson = @(,$BatchJson)
+    }
 
     foreach ($Row in $BatchJson) {
         $BId = $Row[0]
@@ -316,7 +340,7 @@ while ($true) {
         foreach ($Service in $Services) {
             if ($BuildIds[$Service] -eq $BId) {
                 $BuildPhase[$Service] = $BPhase
-                if ($BStatus -in @("SUCCEEDED", "FAILED", "FAULT", "TIMED_OUT", "STOPPED")) {
+                if ($BStatus -in @("SUCCEEDED", "FAILED", "FAULT", "TIMED_OUT", "STOPPED", "COMPLETED")) {
                     $BuildDone[$Service] = $true
                     $BuildStatus[$Service] = $BStatus
                 }
@@ -505,6 +529,7 @@ $USER_POOL_ID = aws cloudformation describe-stacks `
 
 $COGNITO_SUB = ""
 if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
+    Write-Host "  User Pool ID: $USER_POOL_ID"
     $DEMO_USERNAME = "demo-merchant-1"
     $DEMO_EMAIL = "demo@helios-electronics.com"
     $DEMO_PASSWORD = "DemoPass2026!"
@@ -513,11 +538,14 @@ if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
     # so the merchants.id column MUST equal the Cognito sub UUID.
 
     # Check if user already exists
+    # NOTE: $LASTEXITCODE is unreliable with 2>$null in PowerShell.
+    # Instead, capture stderr via 2>&1 and check for error text.
     $userExists = $false
-    $null = aws cognito-idp admin-get-user `
+    $userCheck = aws cognito-idp admin-get-user `
         --user-pool-id $USER_POOL_ID `
-        --username $DEMO_USERNAME 2>$null
-    if ($LASTEXITCODE -eq 0) { $userExists = $true }
+        --username $DEMO_USERNAME `
+        --no-cli-pager 2>&1
+    if ($userCheck -notmatch "UserNotFoundException") { $userExists = $true }
 
     if (-not $userExists) {
         Write-Host "  Creating Cognito user '$DEMO_USERNAME'..."
@@ -526,16 +554,30 @@ if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
             --username $DEMO_USERNAME `
             --user-attributes Name=email,Value=$DEMO_EMAIL Name=email_verified,Value=true `
             --temporary-password $DEMO_PASSWORD `
-            --message-action SUPPRESS | Out-Null
+            --message-action SUPPRESS --no-cli-pager | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: Failed to create Cognito user '$DEMO_USERNAME'." -ForegroundColor Red
+            exit 1
+        }
 
         aws cognito-idp admin-set-user-password `
             --user-pool-id $USER_POOL_ID `
             --username $DEMO_USERNAME `
             --password $DEMO_PASSWORD `
-            --permanent | Out-Null
+            --permanent --no-cli-pager | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: Failed to set permanent password for '$DEMO_USERNAME'." -ForegroundColor Red
+            exit 1
+        }
         Write-Host "  Cognito user created."
     } else {
         Write-Host "  Cognito user '$DEMO_USERNAME' already exists."
+        # Ensure password is set correctly (handles redeployments)
+        aws cognito-idp admin-set-user-password `
+            --user-pool-id $USER_POOL_ID `
+            --username $DEMO_USERNAME `
+            --password $DEMO_PASSWORD `
+            --permanent 2>$null | Out-Null
     }
 
     # Capture the Cognito sub UUID (this is what appears in JWT access tokens)
@@ -822,6 +864,7 @@ Write-Host ""
 # =============================================================================
 Write-Host "[8/9] Updating CloudFront with API origin..." -ForegroundColor Cyan
 if ($NLB_HOSTNAME) {
+    # Failure Simulator API is wired to CloudFront via cross-stack reference (no extra context needed)
     Push-Location cdk
     $cdkArgs = @(
         "npx", "cdk", "deploy", "DevOpsAgentEksFrontend-$AWS_REGION",
@@ -833,6 +876,8 @@ if ($NLB_HOSTNAME) {
         "-c", "apiGatewayEndpoint=$NLB_HOSTNAME",
         "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
         "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",
+        "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
+        "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
         "--require-approval", "never",
         "--no-cli-pager"
     )
@@ -938,14 +983,11 @@ Write-Host "   - Add items to cart and complete a checkout"
 Write-Host "   - View transaction history on the dashboard"
 Write-Host ""
 Write-Host "3. Test the DevOps Agent incident investigation:"
-Write-Host "   a. Inject a database failure:"
-Write-Host "        .\scripts\demo-incident.ps1 -Action inject"
-Write-Host "   b. Wait ~2 minutes for the CloudWatch alarm to trigger"
-Write-Host "   c. Check alarm and pod status:"
-Write-Host "        .\scripts\demo-incident.ps1 -Action status"
+Write-Host "   a. Open the DevOps Agent Lab (🧪 icon in the portal)"
+Write-Host "   b. Click 'Inject' on a scenario to trigger a real infrastructure failure"
+Write-Host "   c. Wait ~2 minutes for the CloudWatch alarm to trigger"
 Write-Host "   d. Open the DevOps Agent console to see the automated investigation"
-Write-Host "   e. Rollback when done:"
-Write-Host "        .\scripts\demo-incident.ps1 -Action rollback"
+Write-Host "   e. Click 'Rollback' in the Simulator when done (or wait for auto-revert)"
 Write-Host ""
 Write-Host "4. Clean up all resources when finished:"
 Write-Host "     .\scripts\cleanup.ps1"

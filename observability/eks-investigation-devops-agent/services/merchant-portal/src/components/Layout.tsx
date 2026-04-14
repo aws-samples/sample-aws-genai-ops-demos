@@ -88,6 +88,9 @@ export default function Layout() {
           </div>
         </div>
       </footer>
+      <Link to="/lab" className="simulator-fab" title="DevOps Agent Lab — Demo Tool">
+        🧪
+      </Link>
     </div>
   )
 }

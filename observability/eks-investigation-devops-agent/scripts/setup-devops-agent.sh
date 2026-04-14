@@ -1,326 +1,257 @@
 #!/bin/bash
 
 # =============================================================================
-# DevOps Agent Setup Script
+# DevOps Agent Setup Script — GA Version
 # =============================================================================
-# Creates the AWS DevOps Agent Space, IAM roles, and account association.
-# After running this script, generate a generic webhook in the DevOps Agent
-# console (Capabilities → Webhook → Add), then set the env vars:
-#   export DEVOPS_AGENT_WEBHOOK_URL="https://event-ai.us-east-1.api.aws/webhook/generic/<id>"
-#   export DEVOPS_AGENT_WEBHOOK_SECRET="<secret>"
-# and re-run deploy-all.sh to enable the alarm → webhook integration.
+# Creates the Agent Space, IAM roles, Operator App, AWS account association,
+# and prompts for the generic webhook.
+# Uses native GA AWS CLI >= 2.34.21 (command: aws devops-agent).
 #
-# Prerequisites:
-#   - AWS CLI v2 with DevOps Agent service model patched
-#   - IAM permissions: iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy,
-#     aidevops:CreateAgentSpace, aidevops:AssociateService, aidevops:EnableOperatorApp
+# Two IAM roles are created:
+#   1. AgentSpaceRole — monitoring role assumed by DevOps Agent to access AWS
+#      resources (CloudWatch, EKS, RDS, CloudTrail, etc.)
+#   2. OperatorRole — web console role assumed by users for Operator Access
 #
 # Usage:
-#   ./scripts/setup-devops-agent.sh [agent-space-name]
 #   source scripts/setup-devops-agent.sh  # makes setup_devops_agent available
+#   ./scripts/setup-devops-agent.sh       # run directly
 # =============================================================================
 
 setup_devops_agent() {
     AGENT_SPACE_NAME="${1:-devops-agent-eks}"
-    DEVOPS_AGENT_ENDPOINT="https://api.prod.cp.aidevops.us-east-1.api.aws"
-    DEVOPS_AGENT_REGION="us-east-1"
+    DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
 
     echo "=============================================="
-    echo " DevOps Agent Setup"
+    echo " DevOps Agent Setup (GA)"
     echo "=============================================="
     echo ""
 
-    # ---------------------------------------------------------------------------
-    # Validate prerequisites
-    # ---------------------------------------------------------------------------
     AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
     echo "Account:          $AWS_ACCOUNT_ID"
     echo "Agent Space Name: $AGENT_SPACE_NAME"
-    echo "Region:           $DEVOPS_AGENT_REGION (DevOps Agent is us-east-1 only)"
+    echo "Region:           $DEVOPS_AGENT_REGION"
     echo ""
 
-    # Auto-patch AWS CLI with DevOps Agent service model if not already available
-    if ! aws devopsagent help &>/dev/null; then
-        echo "  DevOps Agent CLI not found — patching AWS CLI..."
-        curl -sf -o /tmp/devopsagent.json https://d1co8nkiwcta1g.cloudfront.net/devopsagent.json
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to download DevOps Agent service model."
-            echo "  Manual fix: curl -o devopsagent.json https://d1co8nkiwcta1g.cloudfront.net/devopsagent.json"
-            echo "              aws configure add-model --service-model file://devopsagent.json --service-name devopsagent"
-            return 1
-        fi
-        aws configure add-model --service-model file:///tmp/devopsagent.json --service-name devopsagent
-        echo "  AWS CLI patched with DevOps Agent service model."
-    else
-        echo "  DevOps Agent CLI already available."
-    fi
+    # -----------------------------------------------------------------------
+    # Step 1: Create Agent Space (idempotent)
+    # -----------------------------------------------------------------------
+    echo "[1/6] Creating Agent Space..."
 
-    # ---------------------------------------------------------------------------
-    # Step 1: Create IAM roles
-    # ---------------------------------------------------------------------------
-    echo "[1/4] Creating IAM roles..."
-
-    # --- Agent Space Role ---
-    AGENTSPACE_ROLE="${AGENT_SPACE_NAME}-AgentSpaceRole"
-    if aws iam get-role --role-name "$AGENTSPACE_ROLE" &>/dev/null; then
-        echo "  IAM role '$AGENTSPACE_ROLE' already exists."
-    else
-        echo "  Creating IAM role '$AGENTSPACE_ROLE'..."
-        cat > /tmp/devops-agentspace-trust-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": { "Service": "aidevops.amazonaws.com" },
-      "Action": "sts:AssumeRole",
-      "Condition": {
-        "StringEquals": { "aws:SourceAccount": "$AWS_ACCOUNT_ID" },
-        "ArnLike": { "aws:SourceArn": "arn:aws:aidevops:$DEVOPS_AGENT_REGION:$AWS_ACCOUNT_ID:agentspace/*" }
-      }
-    }
-  ]
-}
-EOF
-        aws iam create-role \
-            --role-name "$AGENTSPACE_ROLE" \
-            --assume-role-policy-document file:///tmp/devops-agentspace-trust-policy.json \
-            --region "$DEVOPS_AGENT_REGION" >/dev/null
-
-        aws iam attach-role-policy \
-            --role-name "$AGENTSPACE_ROLE" \
-            --policy-arn arn:aws:iam::aws:policy/AIOpsAssistantPolicy
-
-        cat > /tmp/devops-agentspace-inline-policy.json << 'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowExpandedAIOpsAssistantPolicy",
-      "Effect": "Allow",
-      "Action": [
-        "aidevops:GetKnowledgeItem",
-        "aidevops:ListKnowledgeItems",
-        "eks:AccessKubernetesApi",
-        "synthetics:GetCanaryRuns",
-        "route53:GetHealthCheckStatus",
-        "resource-explorer-2:Search",
-        "support:CreateCase",
-        "support:DescribeCases"
-      ],
-      "Resource": ["*"]
-    }
-  ]
-}
-EOF
-        aws iam put-role-policy \
-            --role-name "$AGENTSPACE_ROLE" \
-            --policy-name AllowExpandedAIOpsAssistantPolicy \
-            --policy-document file:///tmp/devops-agentspace-inline-policy.json
-
-        echo "  Role '$AGENTSPACE_ROLE' created with AIOpsAssistantPolicy + EKS access."
-    fi
-
-    AGENTSPACE_ROLE_ARN=$(aws iam get-role --role-name "$AGENTSPACE_ROLE" --query 'Role.Arn' --output text)
-    echo "  Role ARN: $AGENTSPACE_ROLE_ARN"
-
-    # --- Operator App Role ---
-    OPERATOR_ROLE="${AGENT_SPACE_NAME}-OperatorRole"
-    if aws iam get-role --role-name "$OPERATOR_ROLE" &>/dev/null; then
-        echo "  IAM role '$OPERATOR_ROLE' already exists."
-    else
-        echo "  Creating IAM role '$OPERATOR_ROLE'..."
-        cat > /tmp/devops-operator-trust-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": { "Service": "aidevops.amazonaws.com" },
-      "Action": "sts:AssumeRole",
-      "Condition": {
-        "StringEquals": { "aws:SourceAccount": "$AWS_ACCOUNT_ID" },
-        "ArnLike": { "aws:SourceArn": "arn:aws:aidevops:$DEVOPS_AGENT_REGION:$AWS_ACCOUNT_ID:agentspace/*" }
-      }
-    }
-  ]
-}
-EOF
-        aws iam create-role \
-            --role-name "$OPERATOR_ROLE" \
-            --assume-role-policy-document file:///tmp/devops-operator-trust-policy.json \
-            --region "$DEVOPS_AGENT_REGION" >/dev/null
-
-        cat > /tmp/devops-operator-inline-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowBasicOperatorActions",
-      "Effect": "Allow",
-      "Action": [
-        "aidevops:GetAgentSpace", "aidevops:GetAssociation", "aidevops:ListAssociations",
-        "aidevops:CreateBacklogTask", "aidevops:GetBacklogTask", "aidevops:UpdateBacklogTask",
-        "aidevops:ListBacklogTasks", "aidevops:ListChildExecutions", "aidevops:ListJournalRecords",
-        "aidevops:DiscoverTopology", "aidevops:InvokeAgent", "aidevops:ListGoals",
-        "aidevops:ListRecommendations", "aidevops:ListExecutions", "aidevops:GetRecommendation",
-        "aidevops:UpdateRecommendation", "aidevops:CreateKnowledgeItem", "aidevops:ListKnowledgeItems",
-        "aidevops:GetKnowledgeItem", "aidevops:UpdateKnowledgeItem", "aidevops:ListPendingMessages",
-        "aidevops:InitiateChatForCase", "aidevops:EndChatForCase", "aidevops:DescribeSupportLevel",
-        "aidevops:ListChats", "aidevops:CreateChat", "aidevops:StreamMessage"
-      ],
-      "Resource": "arn:aws:aidevops:$DEVOPS_AGENT_REGION:$AWS_ACCOUNT_ID:agentspace/*"
-    },
-    {
-      "Sid": "AllowSupportOperatorActions",
-      "Effect": "Allow",
-      "Action": ["support:DescribeCases", "support:InitiateChatForCase", "support:DescribeSupportLevel"],
-      "Resource": "*"
-    }
-  ]
-}
-EOF
-        aws iam put-role-policy \
-            --role-name "$OPERATOR_ROLE" \
-            --policy-name AIDevOpsBasicOperatorActionsPolicy \
-            --policy-document file:///tmp/devops-operator-inline-policy.json
-
-        echo "  Role '$OPERATOR_ROLE' created."
-    fi
-
-    OPERATOR_ROLE_ARN=$(aws iam get-role --role-name "$OPERATOR_ROLE" --query 'Role.Arn' --output text)
-    echo "  Role ARN: $OPERATOR_ROLE_ARN"
-    echo ""
-
-    # Wait for IAM propagation
-    echo "  Waiting 10 seconds for IAM role propagation..."
-    sleep 10
-
-    # ---------------------------------------------------------------------------
-    # Step 2: Create Agent Space (idempotent — check if one already exists)
-    # ---------------------------------------------------------------------------
-    echo "[2/4] Creating Agent Space..."
-
-    EXISTING_SPACES=$(aws devopsagent list-agent-spaces \
-        --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
+    EXISTING_SPACE_ID=$(aws devops-agent list-agent-spaces \
         --region "$DEVOPS_AGENT_REGION" \
-        --query 'agentSpaces[*].agentSpaceId' \
-        --output text 2>/dev/null || echo "")
+        --query "agentSpaces[?name=='$AGENT_SPACE_NAME'].agentSpaceId | [0]" \
+        --output text --no-cli-pager 2>/dev/null || echo "")
 
-    if [ -n "$EXISTING_SPACES" ] && [ "$EXISTING_SPACES" != "None" ]; then
-        AGENT_SPACE_ID=$(echo "$EXISTING_SPACES" | awk '{print $1}')
+    if [ -n "$EXISTING_SPACE_ID" ] && [ "$EXISTING_SPACE_ID" != "None" ]; then
+        AGENT_SPACE_ID="$EXISTING_SPACE_ID"
         echo "  Agent Space already exists: $AGENT_SPACE_ID"
     else
-        AGENT_SPACE_ID=$(aws devopsagent create-agent-space \
+        AGENT_SPACE_ID=$(aws devops-agent create-agent-space \
             --name "$AGENT_SPACE_NAME" \
-            --description "Agent Space for EKS incident investigation demo" \
-            --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
             --region "$DEVOPS_AGENT_REGION" \
             --query 'agentSpace.agentSpaceId' \
-            --output text)
+            --output text --no-cli-pager)
+        if [ -z "$AGENT_SPACE_ID" ]; then
+            echo "  ERROR: Failed to create Agent Space."
+            return 1
+        fi
         echo "  Agent Space created: $AGENT_SPACE_ID"
+        echo "  Waiting for Agent Space to become active..."
+        sleep 10
     fi
+    export DEVOPS_AGENT_SPACE_ID="$AGENT_SPACE_ID"
     echo ""
 
-    # ---------------------------------------------------------------------------
-    # Step 3: Associate AWS account
-    # ---------------------------------------------------------------------------
-    echo "[3/4] Associating AWS account..."
+    # -----------------------------------------------------------------------
+    # Step 2: Create IAM roles (idempotent)
+    # -----------------------------------------------------------------------
+    echo "[2/6] Creating IAM roles..."
 
-    # Check if already associated
-    EXISTING_ASSOC=$(aws devopsagent list-associations \
+    cat > /tmp/devops-agent-trust.json << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Service": "aidevops.amazonaws.com" },
+    "Action": ["sts:AssumeRole", "sts:TagSession"],
+    "Condition": {
+      "StringEquals": { "aws:SourceAccount": "$AWS_ACCOUNT_ID" }
+    }
+  }]
+}
+EOF
+
+    # --- AgentSpaceRole: monitoring role (access to AWS resources) ---
+    AGENTSPACE_ROLE_NAME="${AGENT_SPACE_NAME}-AgentSpaceRole"
+    if ! aws iam get-role --role-name "$AGENTSPACE_ROLE_NAME" --no-cli-pager &>/dev/null; then
+        echo "  Creating '$AGENTSPACE_ROLE_NAME' (monitoring role)..."
+        aws iam create-role \
+            --role-name "$AGENTSPACE_ROLE_NAME" \
+            --assume-role-policy-document file:///tmp/devops-agent-trust.json \
+            --no-cli-pager >/dev/null
+        aws iam attach-role-policy \
+            --role-name "$AGENTSPACE_ROLE_NAME" \
+            --policy-arn "arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy" \
+            --no-cli-pager 2>/dev/null
+        echo "  Created with AIDevOpsAgentAccessPolicy."
+    else
+        echo "  '$AGENTSPACE_ROLE_NAME' already exists."
+    fi
+    AGENTSPACE_ROLE_ARN=$(aws iam get-role --role-name "$AGENTSPACE_ROLE_NAME" --query 'Role.Arn' --output text --no-cli-pager)
+
+    # --- OperatorRole: web console role (Operator Access) ---
+    OPERATOR_ROLE_NAME="${AGENT_SPACE_NAME}-OperatorRole"
+    if ! aws iam get-role --role-name "$OPERATOR_ROLE_NAME" --no-cli-pager &>/dev/null; then
+        echo "  Creating '$OPERATOR_ROLE_NAME' (web console role)..."
+        aws iam create-role \
+            --role-name "$OPERATOR_ROLE_NAME" \
+            --assume-role-policy-document file:///tmp/devops-agent-trust.json \
+            --no-cli-pager >/dev/null
+        aws iam attach-role-policy \
+            --role-name "$OPERATOR_ROLE_NAME" \
+            --policy-arn "arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy" \
+            --no-cli-pager 2>/dev/null
+        echo "  Created with AIDevOpsOperatorAppAccessPolicy."
+    else
+        echo "  '$OPERATOR_ROLE_NAME' already exists."
+    fi
+    OPERATOR_ROLE_ARN=$(aws iam get-role --role-name "$OPERATOR_ROLE_NAME" --query 'Role.Arn' --output text --no-cli-pager)
+
+    echo "  Waiting for IAM propagation..."
+    sleep 10
+    echo ""
+
+    # -----------------------------------------------------------------------
+    # Step 3: Enable Operator App — web console access (idempotent)
+    # -----------------------------------------------------------------------
+    echo "[3/6] Enabling Operator App (web console)..."
+
+    aws devops-agent enable-operator-app \
         --agent-space-id "$AGENT_SPACE_ID" \
-        --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
+        --auth-flow iam \
+        --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
         --region "$DEVOPS_AGENT_REGION" \
-        --query "associations[?serviceId=='aws'].associationId" \
-        --output text 2>/dev/null || echo "")
+        --no-cli-pager >/dev/null 2>&1
+    echo "  Operator App enabled (IAM auth)."
+    echo ""
+
+    # -----------------------------------------------------------------------
+    # Step 4: Associate AWS account as cloud source (idempotent)
+    # -----------------------------------------------------------------------
+    echo "[4/6] Associating AWS account (cloud source)..."
+
+    EXISTING_ASSOC=$(aws devops-agent list-associations \
+        --agent-space-id "$AGENT_SPACE_ID" \
+        --region "$DEVOPS_AGENT_REGION" \
+        --query "associations[?serviceId=='aws'].associationId | [0]" \
+        --output text --no-cli-pager 2>/dev/null || echo "")
 
     if [ -n "$EXISTING_ASSOC" ] && [ "$EXISTING_ASSOC" != "None" ]; then
         echo "  AWS account already associated."
     else
-        aws devopsagent associate-service \
+        ASSOC_CONFIG="{\"aws\":{\"accountId\":\"$AWS_ACCOUNT_ID\",\"accountType\":\"monitor\",\"assumableRoleArn\":\"$AGENTSPACE_ROLE_ARN\"}}"
+        ASSOC_RESULT=$(aws devops-agent associate-service \
             --agent-space-id "$AGENT_SPACE_ID" \
             --service-id aws \
-            --configuration "{
-                \"aws\": {
-                    \"assumableRoleArn\": \"$AGENTSPACE_ROLE_ARN\",
-                    \"accountId\": \"$AWS_ACCOUNT_ID\",
-                    \"accountType\": \"monitor\",
-                    \"resources\": []
-                }
-            }" \
-            --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
-            --region "$DEVOPS_AGENT_REGION" >/dev/null
-        echo "  AWS account $AWS_ACCOUNT_ID associated."
+            --configuration "$ASSOC_CONFIG" \
+            --region "$DEVOPS_AGENT_REGION" \
+            --no-cli-pager 2>&1)
+        if [ $? -ne 0 ]; then
+            echo "  WARNING: Failed to associate AWS account."
+            echo "  $ASSOC_RESULT"
+            echo "  You may need to add the cloud source manually in the DevOps Agent console."
+        else
+            echo "  AWS account $AWS_ACCOUNT_ID associated (monitor)."
+        fi
     fi
     echo ""
 
-    # ---------------------------------------------------------------------------
-    # Step 4: Enable Operator App
-    # ---------------------------------------------------------------------------
-    echo "[4/4] Enabling Operator App..."
-
-    aws devopsagent enable-operator-app \
-        --agent-space-id "$AGENT_SPACE_ID" \
-        --auth-flow iam \
-        --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
-        --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
-        --region "$DEVOPS_AGENT_REGION" 2>/dev/null || echo "  (already enabled)"
-
-    echo "  Operator App enabled."
+    # -----------------------------------------------------------------------
+    # Step 5: Webhook prompt
+    # -----------------------------------------------------------------------
+    echo "[5/6] Webhook Configuration"
     echo ""
-
-    # ---------------------------------------------------------------------------
-    # Summary
-    # ---------------------------------------------------------------------------
-    echo "=============================================="
-    echo " DevOps Agent Setup Complete"
-    echo "=============================================="
+    echo "  Generate a generic webhook in the DevOps Agent console (~30 seconds):"
     echo ""
-    echo "Agent Space ID:   $AGENT_SPACE_ID"
-    echo "Agent Space Role: $AGENTSPACE_ROLE_ARN"
-    echo "Operator Role:    $OPERATOR_ROLE_ARN"
-    echo ""
-
-    # ---------------------------------------------------------------------------
-    # Interactive webhook configuration
-    # ---------------------------------------------------------------------------
-    echo "=============================================="
-    echo " Webhook Configuration"
-    echo "=============================================="
-    echo ""
-    echo "Generate a generic webhook in the DevOps Agent console (~30 seconds):"
-    echo ""
-    echo "  1. Open: https://$DEVOPS_AGENT_REGION.console.aws.amazon.com/aidevops/home#/agent-spaces"
-    echo "  2. Select '$AGENT_SPACE_NAME' → Capabilities → Webhook → Add"
-    echo "  3. Click Next on the wizard, then click 'Generate URL and secret key'"
+    echo "  1. Open: https://$DEVOPS_AGENT_REGION.console.aws.amazon.com/aidevops/home?region=$DEVOPS_AGENT_REGION#/agent-spaces/$AGENT_SPACE_ID"
+    echo "  2. Go to Capabilities > Webhook > Add"
+    echo "  3. Click Next, then 'Generate URL and secret key'"
     echo "  4. Copy the webhook URL and secret key"
     echo ""
 
-    read -rp "Paste the webhook URL (or press Enter to skip): " WEBHOOK_URL
+    read -rp "  Paste the webhook URL (or press Enter to skip): " WEBHOOK_URL
     if [ -n "$WEBHOOK_URL" ]; then
-        read -rp "Paste the webhook secret key: " WEBHOOK_SECRET
+        read -rp "  Paste the webhook secret key: " WEBHOOK_SECRET
         if [ -n "$WEBHOOK_SECRET" ]; then
             export DEVOPS_AGENT_WEBHOOK_URL="$WEBHOOK_URL"
             export DEVOPS_AGENT_WEBHOOK_SECRET="$WEBHOOK_SECRET"
             echo ""
-            echo "  Webhook configured. Environment variables set:"
+            echo "  Webhook configured."
             echo "    DEVOPS_AGENT_WEBHOOK_URL=$DEVOPS_AGENT_WEBHOOK_URL"
             echo "    DEVOPS_AGENT_WEBHOOK_SECRET=****"
-            echo ""
-            echo "  You can now deploy with DevOps Agent integration:"
-            echo "    ./deploy-all.sh dev"
         else
-            echo ""
-            echo "  No secret provided — skipping webhook configuration."
-            echo "  You can set them later before deploying:"
-            echo "    export DEVOPS_AGENT_WEBHOOK_URL=\"<url>\""
-            echo "    export DEVOPS_AGENT_WEBHOOK_SECRET=\"<secret>\""
+            echo "  No secret provided — skipping."
         fi
     else
-        echo "  Skipped. You can configure the webhook later before deploying:"
+        echo "  Skipped. Set env vars before deploying:"
         echo "    export DEVOPS_AGENT_WEBHOOK_URL=\"<url>\""
         echo "    export DEVOPS_AGENT_WEBHOOK_SECRET=\"<secret>\""
+    fi
+    echo ""
+
+    # -----------------------------------------------------------------------
+    # Step 6: Live-update deployed Lambdas (if demo is already deployed)
+    # -----------------------------------------------------------------------
+    echo "[6/6] Updating deployed resources (if demo is already deployed)..."
+
+    # Convention-based names: {projectName}-{env}-devops-trigger, {projectName}-{env}-failure-simulator
+    ENVIRONMENT="dev"
+    TRIGGER_LAMBDA="${AGENT_SPACE_NAME}-${ENVIRONMENT}-devops-trigger"
+    SIMULATOR_LAMBDA="${AGENT_SPACE_NAME}-${ENVIRONMENT}-failure-simulator"
+    SECRET_NAME="${AGENT_SPACE_NAME}-${ENVIRONMENT}/devops-agent-webhook-secret"
+
+    # Check if the demo is deployed by testing if the trigger Lambda exists
+    if aws lambda get-function --function-name "$TRIGGER_LAMBDA" --no-cli-pager >/dev/null 2>&1; then
+        echo "  Updating deployed resources with new Agent Space..."
+
+        # Update webhook secret in Secrets Manager
+        if [ -n "$DEVOPS_AGENT_WEBHOOK_SECRET" ]; then
+            aws secretsmanager update-secret \
+                --secret-id "$SECRET_NAME" \
+                --secret-string "$DEVOPS_AGENT_WEBHOOK_SECRET" \
+                --no-cli-pager >/dev/null 2>&1
+            echo "  Updated Secrets Manager secret."
+        fi
+
+        # Update trigger Lambda env vars (webhook URL)
+        if [ -n "$DEVOPS_AGENT_WEBHOOK_URL" ]; then
+            TRIGGER_ENV=$(aws lambda get-function-configuration \
+                --function-name "$TRIGGER_LAMBDA" \
+                --query 'Environment.Variables' \
+                --output json --no-cli-pager 2>/dev/null)
+            TRIGGER_ENV=$(echo "$TRIGGER_ENV" | jq --arg url "$DEVOPS_AGENT_WEBHOOK_URL" '.WEBHOOK_URL = $url')
+            aws lambda update-function-configuration \
+                --function-name "$TRIGGER_LAMBDA" \
+                --environment "Variables=$TRIGGER_ENV" \
+                --no-cli-pager >/dev/null 2>&1
+            echo "  Updated trigger Lambda (webhook URL)."
+        fi
+
+        # Update simulator Lambda env vars (space ID)
+        SIM_ENV=$(aws lambda get-function-configuration \
+            --function-name "$SIMULATOR_LAMBDA" \
+            --query 'Environment.Variables' \
+            --output json --no-cli-pager 2>/dev/null)
+        SIM_ENV=$(echo "$SIM_ENV" | jq --arg sid "$AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $sid')
+        aws lambda update-function-configuration \
+            --function-name "$SIMULATOR_LAMBDA" \
+            --environment "Variables=$SIM_ENV" \
+            --no-cli-pager >/dev/null 2>&1
+        echo "  Updated simulator Lambda (space ID)."
+
+        echo "  All resources updated. No CDK redeploy needed."
+    else
+        echo "  Demo not yet deployed — run deploy-all.sh to deploy."
     fi
     echo ""
 }

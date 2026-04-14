@@ -9,6 +9,7 @@ import CartPage from './pages/CartPage'
 import CheckoutPage from './pages/CheckoutPage'
 import TransactionsPage from './pages/TransactionsPage'
 import TransactionDetailPage from './pages/TransactionDetailPage'
+import DevOpsAgentLabPage from './pages/DevOpsAgentLabPage'
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
             <Route path="checkout" element={<CheckoutPage />} />
             <Route path="transactions" element={<TransactionsPage />} />
             <Route path="transactions/:id" element={<TransactionDetailPage />} />
+            <Route path="lab" element={<DevOpsAgentLabPage />} />
           </Route>
         </Routes>
       </CartProvider>
