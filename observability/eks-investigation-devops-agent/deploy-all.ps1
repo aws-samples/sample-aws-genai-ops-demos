@@ -139,6 +139,12 @@ Write-Host "  kubectl configured."
 
 # Grant the deploying IAM principal cluster-admin access via EKS access entries
 $CallerArn = aws sts get-caller-identity --query Arn --output text
+# Convert assumed-role ARN to IAM role ARN (EKS access entries need the role ARN)
+# arn:aws:sts::123:assumed-role/RoleName/session → arn:aws:iam::123:role/RoleName
+if ($CallerArn -match 'assumed-role/([^/]+)/') {
+    $RoleName = $Matches[1]
+    $CallerArn = "arn:aws:iam::${AWS_ACCOUNT_ID}:role/$RoleName"
+}
 Write-Host "  Granting EKS access to $CallerArn..."
 aws eks create-access-entry `
     --cluster-name "$ProjectName-$Environment-cluster" `
