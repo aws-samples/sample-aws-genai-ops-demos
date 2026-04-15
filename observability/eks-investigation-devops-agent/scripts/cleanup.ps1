@@ -65,7 +65,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[3/14] Emptying S3 buckets..." -ForegroundColor Cyan
+Write-Host "[3/14] Emptying and deleting S3 buckets..." -ForegroundColor Cyan
 $BUCKETS = @(
     "${PROJECT_NAME}-${ENVIRONMENT}-merchant-portal-${ACCOUNT_ID}",
     "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
@@ -78,7 +78,33 @@ foreach ($bucket in $BUCKETS) {
         aws s3api delete-bucket-policy --bucket $bucket 2>$null
         Write-Host "  Removing all objects from $bucket..."
         aws s3 rm "s3://$bucket" --recursive 2>$null
-        Write-Host "  ✓ $bucket emptied" -ForegroundColor Green
+
+        # Delete all object versions and delete markers (for versioned buckets)
+        Write-Host "  Removing object versions from $bucket..."
+        $versions = aws s3api list-object-versions --bucket $bucket --query "Versions[].{Key:Key,VersionId:VersionId}" --output json --no-cli-pager 2>$null | ConvertFrom-Json
+        if ($versions -and $versions.Count -gt 0) {
+            # s3api delete-objects accepts max 1000 at a time
+            for ($i = 0; $i -lt $versions.Count; $i += 1000) {
+                $batch = $versions[$i..[Math]::Min($i + 999, $versions.Count - 1)]
+                $deletePayload = @{ Objects = $batch; Quiet = $true } | ConvertTo-Json -Compress -Depth 5
+                $deletePayload | Out-File -FilePath "$env:TEMP\s3-delete-batch.json" -Encoding UTF8
+                aws s3api delete-objects --bucket $bucket --delete "file://$env:TEMP\s3-delete-batch.json" --no-cli-pager 2>$null | Out-Null
+            }
+        }
+
+        $deleteMarkers = aws s3api list-object-versions --bucket $bucket --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json --no-cli-pager 2>$null | ConvertFrom-Json
+        if ($deleteMarkers -and $deleteMarkers.Count -gt 0) {
+            for ($i = 0; $i -lt $deleteMarkers.Count; $i += 1000) {
+                $batch = $deleteMarkers[$i..[Math]::Min($i + 999, $deleteMarkers.Count - 1)]
+                $deletePayload = @{ Objects = $batch; Quiet = $true } | ConvertTo-Json -Compress -Depth 5
+                $deletePayload | Out-File -FilePath "$env:TEMP\s3-delete-batch.json" -Encoding UTF8
+                aws s3api delete-objects --bucket $bucket --delete "file://$env:TEMP\s3-delete-batch.json" --no-cli-pager 2>$null | Out-Null
+            }
+        }
+
+        Write-Host "  Deleting bucket $bucket..."
+        aws s3 rb "s3://$bucket" --force 2>$null
+        Write-Host "  ✓ $bucket deleted" -ForegroundColor Green
     } else {
         Write-Host "  - $bucket not found, skipping" -ForegroundColor Yellow
     }
@@ -244,18 +270,19 @@ Write-Host "[9/14] Destroying CloudFormation stacks (reverse dependency order)..
 # deleted.
 #
 # Dependency graph (from app.ts):
+#   FrontendStack imports FailureSimulatorApi.apiId -> delete Frontend FIRST
 #   DevOpsAgent -> Compute (clusterName), Monitoring (criticalAlarmsTopicArn)
+#   FailureSimulatorApi -> Compute (clusterName), Network (vpc, subnets, SG)
 #   Database    -> Network (vpc, subnets, SG)
 #   Compute     -> Network (subnets, SG)
-#   Monitoring, Pipeline, Frontend, Auth -> independent
 #   Network     -> base (deleted last)
 
 $STACK_DELETE_ORDER = @(
     "DevOpsAgentEksDevOpsAgent-${REGION}",
+    "DevOpsAgentEksFrontend-${REGION}",
     "DevOpsAgentEksFailureSimulatorApi-${REGION}",
     "DevOpsAgentEksMonitoring-${REGION}",
     "DevOpsAgentEksPipeline-${REGION}",
-    "DevOpsAgentEksFrontend-${REGION}",
     "DevOpsAgentEksAuth-${REGION}",
     "DevOpsAgentEksDatabase-${REGION}",
     "DevOpsAgentEksCompute-${REGION}",
@@ -402,70 +429,39 @@ if ($LASTEXITCODE -eq 0) {
 
 Write-Host ""
 Write-Host "[14/14] Cleaning up DevOps Agent resources..." -ForegroundColor Cyan
-$DEVOPS_AGENT_ENDPOINT = "https://api.prod.cp.aidevops.us-east-1.api.aws"
-$DEVOPS_AGENT_REGION = "us-east-1"
-
-# Auto-patch AWS CLI with DevOps Agent service model if not already available
-# NOTE: We test with an actual API call (list-agent-spaces) instead of 'help'
-# because 'aws <service> help' is unreliable with custom service models on
-# newer AWS CLI versions.
-$DEVOPSAGENT_CLI_AVAILABLE = $false
-aws devopsagent list-agent-spaces --endpoint-url $DEVOPS_AGENT_ENDPOINT --region $DEVOPS_AGENT_REGION 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    $DEVOPSAGENT_CLI_AVAILABLE = $true
-} else {
-    Write-Host "  DevOps Agent CLI not found - patching AWS CLI..." -ForegroundColor Yellow
-    try {
-        $modelPath = Join-Path $env:TEMP "devopsagent.json"
-        Invoke-WebRequest -Uri "https://d1co8nkiwcta1g.cloudfront.net/devopsagent.json" -OutFile $modelPath -ErrorAction Stop
-        aws configure add-model --service-model "file://$modelPath" --service-name devopsagent 2>$null
-        Write-Host "  AWS CLI patched with DevOps Agent service model." -ForegroundColor Green
-        # Verify the patch worked with an actual API call
-        aws devopsagent list-agent-spaces --endpoint-url $DEVOPS_AGENT_ENDPOINT --region $DEVOPS_AGENT_REGION 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            $DEVOPSAGENT_CLI_AVAILABLE = $true
-        }
-    } catch {
-        Write-Host "  WARNING: Could not download DevOps Agent service model. Skipping Agent Space cleanup." -ForegroundColor Yellow
-    }
-}
+$DEVOPS_AGENT_REGION = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
 
 # Delete only the Agent Space matching our project name (not all spaces in the account)
-if ($DEVOPSAGENT_CLI_AVAILABLE) {
-    $AGENT_SPACE_ID = aws devopsagent list-agent-spaces `
-        --endpoint-url $DEVOPS_AGENT_ENDPOINT `
+$AGENT_SPACE_ID = aws devops-agent list-agent-spaces `
+    --region $DEVOPS_AGENT_REGION `
+    --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" `
+    --output text --no-cli-pager 2>$null
+
+if ($AGENT_SPACE_ID -and $AGENT_SPACE_ID.Trim() -and $AGENT_SPACE_ID -ne "None") {
+    Write-Host "  Deleting Agent Space $AGENT_SPACE_ID ($PROJECT_NAME)..."
+    # Remove associations first
+    $ASSOC_IDS = aws devops-agent list-associations `
+        --agent-space-id $AGENT_SPACE_ID `
         --region $DEVOPS_AGENT_REGION `
-        --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" `
-        --output text 2>$null
-    if ($AGENT_SPACE_ID -and $AGENT_SPACE_ID.Trim() -and $AGENT_SPACE_ID -ne "None") {
-        Write-Host "  Deleting Agent Space $AGENT_SPACE_ID ($PROJECT_NAME)..."
-        # Remove associations first
-        $ASSOC_IDS = aws devopsagent list-associations `
-            --agent-space-id $AGENT_SPACE_ID `
-            --endpoint-url $DEVOPS_AGENT_ENDPOINT `
-            --region $DEVOPS_AGENT_REGION `
-            --query "associations[*].associationId" `
-            --output text 2>$null
-        if ($ASSOC_IDS -and $ASSOC_IDS.Trim() -and $ASSOC_IDS -ne "None") {
-            foreach ($assocId in $ASSOC_IDS.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
-                Write-Host "    Removing association $assocId..."
-                aws devopsagent disassociate-service `
-                    --agent-space-id $AGENT_SPACE_ID `
-                    --association-id $assocId `
-                    --endpoint-url $DEVOPS_AGENT_ENDPOINT `
-                    --region $DEVOPS_AGENT_REGION 2>$null
-            }
+        --query "associations[*].associationId" `
+        --output text --no-cli-pager 2>$null
+    if ($ASSOC_IDS -and $ASSOC_IDS.Trim() -and $ASSOC_IDS -ne "None") {
+        foreach ($assocId in $ASSOC_IDS.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
+            Write-Host "    Removing association $assocId..."
+            aws devops-agent disassociate-service `
+                --agent-space-id $AGENT_SPACE_ID `
+                --association-id $assocId `
+                --region $DEVOPS_AGENT_REGION `
+                --no-cli-pager 2>$null
         }
-        aws devopsagent delete-agent-space `
-            --agent-space-id $AGENT_SPACE_ID `
-            --endpoint-url $DEVOPS_AGENT_ENDPOINT `
-            --region $DEVOPS_AGENT_REGION 2>$null
-        Write-Host "  ✓ Agent Space $AGENT_SPACE_ID deleted" -ForegroundColor Green
-    } else {
-        Write-Host "  - No Agent Space named '$PROJECT_NAME' found" -ForegroundColor Yellow
     }
+    aws devops-agent delete-agent-space `
+        --agent-space-id $AGENT_SPACE_ID `
+        --region $DEVOPS_AGENT_REGION `
+        --no-cli-pager 2>$null
+    Write-Host "  ✓ Agent Space $AGENT_SPACE_ID deleted" -ForegroundColor Green
 } else {
-    Write-Host "  - DevOps Agent CLI not available, skipping Agent Space deletion" -ForegroundColor Yellow
+    Write-Host "  - No Agent Space named '$PROJECT_NAME' found" -ForegroundColor Yellow
 }
 
 # Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)

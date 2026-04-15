@@ -131,7 +131,7 @@ EOF
         --auth-flow iam \
         --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
         --region "$DEVOPS_AGENT_REGION" \
-        --no-cli-pager >/dev/null 2>&1
+        --no-cli-pager >/dev/null 2>&1 || true
     echo "  Operator App enabled (IAM auth)."
     echo ""
 

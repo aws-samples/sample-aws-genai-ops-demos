@@ -59,7 +59,7 @@ else
 fi
 
 echo ""
-echo "[3/14] Emptying S3 buckets..."
+echo "[3/14] Emptying and deleting S3 buckets..."
 BUCKETS=(
   "${PROJECT_NAME}-${ENVIRONMENT}-merchant-portal-${ACCOUNT_ID}"
   "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
@@ -72,7 +72,43 @@ for bucket in "${BUCKETS[@]}"; do
 
     echo "  Removing all objects from $bucket..."
     aws s3 rm "s3://$bucket" --recursive 2>/dev/null || true
-    echo "  ✓ $bucket emptied"
+
+    # Delete all object versions and delete markers (for versioned buckets)
+    echo "  Removing object versions from $bucket..."
+    VERSIONS=$(aws s3api list-object-versions --bucket "$bucket" --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '{"Objects":[]}')
+    if [ "$(echo "$VERSIONS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects',None) or []))" 2>/dev/null)" != "0" ]; then
+      echo "$VERSIONS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+objects = data.get('Objects') or []
+if objects:
+    # s3api delete-objects accepts max 1000 at a time
+    for i in range(0, len(objects), 1000):
+        batch = objects[i:i+1000]
+        print(json.dumps({'Objects': batch, 'Quiet': True}))
+" 2>/dev/null | while read -r batch; do
+        aws s3api delete-objects --bucket "$bucket" --delete "$batch" --no-cli-pager >/dev/null 2>&1 || true
+      done
+    fi
+
+    DELETE_MARKERS=$(aws s3api list-object-versions --bucket "$bucket" --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '{"Objects":[]}')
+    if [ "$(echo "$DELETE_MARKERS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects',None) or []))" 2>/dev/null)" != "0" ]; then
+      echo "$DELETE_MARKERS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+objects = data.get('Objects') or []
+if objects:
+    for i in range(0, len(objects), 1000):
+        batch = objects[i:i+1000]
+        print(json.dumps({'Objects': batch, 'Quiet': True}))
+" 2>/dev/null | while read -r batch; do
+        aws s3api delete-objects --bucket "$bucket" --delete "$batch" --no-cli-pager >/dev/null 2>&1 || true
+      done
+    fi
+
+    echo "  Deleting bucket $bucket..."
+    aws s3 rb "s3://$bucket" --force 2>/dev/null || true
+    echo "  ✓ $bucket deleted"
   else
     echo "  - $bucket not found, skipping"
   fi
@@ -107,7 +143,8 @@ if aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" &>/dev/
   aws rds modify-db-instance \
     --db-instance-identifier "$DB_INSTANCE" \
     --no-deletion-protection \
-    --apply-immediately 2>/dev/null || true
+    --apply-immediately \
+    --no-cli-pager >/dev/null 2>&1 || true
   echo "  ✓ Deletion protection disabled"
 else
   echo "  - RDS instance not found, skipping"
@@ -230,18 +267,19 @@ echo "[9/14] Destroying CloudFormation stacks (reverse dependency order)..."
 # deleted.
 #
 # Dependency graph (from app.ts):
+#   FrontendStack imports FailureSimulatorApi.apiId → delete Frontend FIRST
 #   DevOpsAgent → Compute (clusterName), Monitoring (criticalAlarmsTopicArn)
+#   FailureSimulatorApi → Compute (clusterName), Network (vpc, subnets, SG)
 #   Database    → Network (vpc, subnets, SG)
 #   Compute     → Network (subnets, SG)
-#   Monitoring, Pipeline, Frontend, Auth → independent
 #   Network     → base (deleted last)
 
 STACK_DELETE_ORDER=(
   "DevOpsAgentEksDevOpsAgent-${REGION}"
+  "DevOpsAgentEksFrontend-${REGION}"
   "DevOpsAgentEksFailureSimulatorApi-${REGION}"
   "DevOpsAgentEksMonitoring-${REGION}"
   "DevOpsAgentEksPipeline-${REGION}"
-  "DevOpsAgentEksFrontend-${REGION}"
   "DevOpsAgentEksAuth-${REGION}"
   "DevOpsAgentEksDatabase-${REGION}"
   "DevOpsAgentEksCompute-${REGION}"
@@ -374,66 +412,39 @@ fi
 
 echo ""
 echo "[14/14] Cleaning up DevOps Agent resources..."
-DEVOPS_AGENT_ENDPOINT="https://api.prod.cp.aidevops.us-east-1.api.aws"
-DEVOPS_AGENT_REGION="us-east-1"
-
-# Auto-patch AWS CLI with DevOps Agent service model if not already available
-# NOTE: We test with an actual API call (list-agent-spaces) instead of 'help'
-# because 'aws <service> help' is unreliable with custom service models on
-# newer AWS CLI versions.
-DEVOPSAGENT_CLI_AVAILABLE=false
-if aws devopsagent list-agent-spaces --endpoint-url "$DEVOPS_AGENT_ENDPOINT" --region "$DEVOPS_AGENT_REGION" &>/dev/null 2>&1; then
-    DEVOPSAGENT_CLI_AVAILABLE=true
-else
-    echo "  DevOps Agent CLI not found — patching AWS CLI..."
-    if curl -sf -o /tmp/devopsagent.json https://d1co8nkiwcta1g.cloudfront.net/devopsagent.json 2>/dev/null; then
-        aws configure add-model --service-model file:///tmp/devopsagent.json --service-name devopsagent 2>/dev/null
-        echo "  AWS CLI patched with DevOps Agent service model."
-        # Verify the patch worked with an actual API call
-        if aws devopsagent list-agent-spaces --endpoint-url "$DEVOPS_AGENT_ENDPOINT" --region "$DEVOPS_AGENT_REGION" &>/dev/null 2>&1; then
-            DEVOPSAGENT_CLI_AVAILABLE=true
-        fi
-    else
-        echo "  WARNING: Could not download DevOps Agent service model. Skipping Agent Space cleanup."
-    fi
-fi
+DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
 
 # Delete only the Agent Space matching our project name (not all spaces in the account)
-if [ "$DEVOPSAGENT_CLI_AVAILABLE" = true ]; then
-  AGENT_SPACE_ID=$(aws devopsagent list-agent-spaces \
-      --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
+AGENT_SPACE_ID=$(aws devops-agent list-agent-spaces \
+    --region "$DEVOPS_AGENT_REGION" \
+    --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" \
+    --output text --no-cli-pager 2>/dev/null || echo "")
+
+if [[ -n "$AGENT_SPACE_ID" && "$AGENT_SPACE_ID" != "None" ]]; then
+  echo "  Deleting Agent Space $AGENT_SPACE_ID (${PROJECT_NAME})..."
+  # Remove associations first
+  ASSOC_IDS=$(aws devops-agent list-associations \
+      --agent-space-id "$AGENT_SPACE_ID" \
       --region "$DEVOPS_AGENT_REGION" \
-      --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" \
-      --output text 2>/dev/null || echo "")
-  if [[ -n "$AGENT_SPACE_ID" && "$AGENT_SPACE_ID" != "None" ]]; then
-    echo "  Deleting Agent Space $AGENT_SPACE_ID (${PROJECT_NAME})..."
-    # Remove associations first
-    ASSOC_IDS=$(aws devopsagent list-associations \
-        --agent-space-id "$AGENT_SPACE_ID" \
-        --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
-        --region "$DEVOPS_AGENT_REGION" \
-        --query 'associations[*].associationId' \
-        --output text 2>/dev/null || echo "")
-    for assoc_id in $ASSOC_IDS; do
-      if [[ -n "$assoc_id" && "$assoc_id" != "None" ]]; then
-        echo "    Removing association $assoc_id..."
-        aws devopsagent disassociate-service \
-            --agent-space-id "$AGENT_SPACE_ID" \
-            --association-id "$assoc_id" \
-            --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
-            --region "$DEVOPS_AGENT_REGION" 2>/dev/null || true
-      fi
-    done
-    aws devopsagent delete-agent-space \
-        --agent-space-id "$AGENT_SPACE_ID" \
-        --endpoint-url "$DEVOPS_AGENT_ENDPOINT" \
-        --region "$DEVOPS_AGENT_REGION" 2>/dev/null || true
-    echo "  ✓ Agent Space $AGENT_SPACE_ID deleted"
-  else
-    echo "  - No Agent Space named '${PROJECT_NAME}' found"
-  fi
+      --query 'associations[*].associationId' \
+      --output text --no-cli-pager 2>/dev/null || echo "")
+  for assoc_id in $ASSOC_IDS; do
+    if [[ -n "$assoc_id" && "$assoc_id" != "None" ]]; then
+      echo "    Removing association $assoc_id..."
+      aws devops-agent disassociate-service \
+          --agent-space-id "$AGENT_SPACE_ID" \
+          --association-id "$assoc_id" \
+          --region "$DEVOPS_AGENT_REGION" \
+          --no-cli-pager 2>/dev/null || true
+    fi
+  done
+  aws devops-agent delete-agent-space \
+      --agent-space-id "$AGENT_SPACE_ID" \
+      --region "$DEVOPS_AGENT_REGION" \
+      --no-cli-pager 2>/dev/null || true
+  echo "  ✓ Agent Space $AGENT_SPACE_ID deleted"
 else
-  echo "  - DevOps Agent CLI not available, skipping Agent Space deletion"
+  echo "  - No Agent Space named '${PROJECT_NAME}' found"
 fi
 
 # Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)
