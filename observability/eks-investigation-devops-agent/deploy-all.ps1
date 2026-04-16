@@ -196,17 +196,28 @@ if ($FailureSimLambdaRoleArn -and $FailureSimLambdaRoleArn -ne "None") {
 Write-Host ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)
-Write-Host "  Waiting for EKS API access to propagate..."
-for ($i = 1; $i -le 30; $i++) {
+# EKS access entries can take up to 5 minutes to propagate; retry for up to 6 minutes.
+Write-Host "  Waiting for EKS API access to propagate (this can take up to 5 minutes)..."
+$eksAuthConfirmed = $false
+for ($i = 1; $i -le 36; $i++) {
     $null = kubectl get ns default 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  EKS API access confirmed."
+        Write-Host "  EKS API access confirmed after $($i * 10) seconds."
+        $eksAuthConfirmed = $true
         break
     }
-    if ($i -eq 30) {
-        Write-Host "  WARNING: EKS API access not confirmed after 150 seconds. Continuing anyway..." -ForegroundColor Yellow
-    }
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 10
+}
+if (-not $eksAuthConfirmed) {
+    Write-Host ""
+    Write-Host "  ERROR: EKS API access not confirmed after 360 seconds." -ForegroundColor Red
+    Write-Host "  The access entry may still be propagating. You can retry by running:" -ForegroundColor Yellow
+    Write-Host "    kubectl get ns default" -ForegroundColor Yellow
+    Write-Host "  Once that succeeds, re-run this script." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  If the issue persists, verify your caller identity has access:" -ForegroundColor Yellow
+    Write-Host "    aws eks list-access-entries --cluster-name $ProjectName-$Environment-cluster --region $AWS_REGION" -ForegroundColor Yellow
+    exit 1
 }
 Write-Host ""
 

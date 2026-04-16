@@ -198,17 +198,28 @@ fi
 echo ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)
-echo "  Waiting for EKS API access to propagate..."
-for i in $(seq 1 30); do
+# EKS access entries can take up to 5 minutes to propagate; retry for up to 6 minutes.
+echo "  Waiting for EKS API access to propagate (this can take up to 5 minutes)..."
+EKS_AUTH_CONFIRMED=false
+for i in $(seq 1 36); do
     if kubectl get ns default >/dev/null 2>&1; then
-        echo "  EKS API access confirmed."
+        echo "  EKS API access confirmed after $(( i * 10 )) seconds."
+        EKS_AUTH_CONFIRMED=true
         break
     fi
-    if [ "$i" -eq 30 ]; then
-        echo "  WARNING: EKS API access not confirmed after 150 seconds. Continuing anyway..."
-    fi
-    sleep 5
+    sleep 10
 done
+if [ "$EKS_AUTH_CONFIRMED" = false ]; then
+    echo ""
+    echo "  ERROR: EKS API access not confirmed after 360 seconds."
+    echo "  The access entry may still be propagating. You can retry by running:"
+    echo "    kubectl get ns default"
+    echo "  Once that succeeds, re-run this script."
+    echo ""
+    echo "  If the issue persists, verify your caller identity has access:"
+    echo "    aws eks list-access-entries --cluster-name $PROJECT_NAME-$ENVIRONMENT-cluster --region $AWS_REGION"
+    exit 1
+fi
 echo ""
 
 # Wait for nodes to be ready
