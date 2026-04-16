@@ -161,6 +161,20 @@ aws eks associate-access-policy \
     --region "$AWS_REGION" >/dev/null 2>&1 || true
 echo "  EKS access granted."
 
+# Associate the required node access policy to the node role access entry.
+# EKS auto-creates an EC2_LINUX access entry for the node role when using
+# API_AND_CONFIG_MAP auth mode, but does NOT auto-associate the worker node
+# policy. Without this, nodes register but kubelet cannot fully authenticate.
+NODE_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${ENVIRONMENT}-eks-node-role"
+echo "  Associating node access policy to $NODE_ROLE_ARN..."
+aws eks associate-access-policy \
+    --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+    --principal-arn "$NODE_ROLE_ARN" \
+    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSWorkerNodeMinimalPolicy \
+    --access-scope type=cluster \
+    --region "$AWS_REGION" >/dev/null 2>&1 || true
+echo "  Node access policy associated."
+
 # Grant Failure Simulator Lambda access to EKS cluster
 FAILURE_SIM_LAMBDA_ROLE_ARN=$(aws cloudformation describe-stacks \
     --stack-name "DevOpsAgentEksFailureSimulatorApi-$AWS_REGION" \
