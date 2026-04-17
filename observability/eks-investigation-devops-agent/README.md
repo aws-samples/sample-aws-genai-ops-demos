@@ -12,7 +12,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 - **Duration**: ~25 min deployment + ~10 min demo
 - **Difficulty**: Intermediate
 - **Target Audience**: SREs, DevOps Engineers, Platform Engineers
-- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript)
+- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
 - **Estimated Cost**: ~$6.50/day while running — see [Cost Estimate](#cost-estimate)
 
 ## DevOps Agent Features Demonstrated
@@ -24,6 +24,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **On-demand Chat** | Ask the agent about platform issues → get structured reports with SLA and revenue impact |
 | **Account Usage & Quotas** | Live usage dashboard in the Lab UI (investigation, evaluation, on-demand hours) |
 | **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
+| **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 
 ## Architecture
 
@@ -196,9 +197,9 @@ Open the DevOps Agent Operator Access (link in the Lab UI) to watch the agent:
 
 The Lab's **Logs** section shows a compact summary of each investigation with metrics.
 
-### 5. Demo the Skills feature (optional)
+### 5. Demo the Skills feature
 
-This demonstrates how skills add business context the agent can't discover from infrastructure:
+This demonstrates how custom skills add business context the agent can't discover from infrastructure alone. The demo includes a ready-made skill that teaches the agent about the Helios commerce platform — revenue figures, SLA budgets, merchant tiers, and PCI-DSS requirements — so it can format investigation findings into executive-ready incident reports.
 
 1. In the Lab's **Skills** section, expand the skill card
 2. Copy-paste the fields into the Operator Access Skills page (3 clicks)
@@ -212,7 +213,31 @@ This demonstrates how skills add business context the agent can't discover from 
 
 Without the skill, the agent reports technical findings only. With the skill, it adds business context, SLA tracking, and compliance assessment.
 
-### 6. Rollback
+### 6. Demo the Kiro Power for DevOps Agent
+
+This demonstrates how a developer can leverage the DevOps Agent directly from their IDE to review architecture, map topology, and understand dependencies before making changes — the daily workflow, not just emergency incident response. No need to switch to the AWS console or Operator Access.
+
+**Setup** (one-time): Install the AWS DevOps Agent Power in Kiro:
+
+[![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/powers/aws-devops-agent)
+
+**The demo prompt** — open Kiro in this project and ask:
+
+> *"I'm new to this project. Can you map the Helios payment platform topology — what's running on EKS, what databases and queues it uses, how traffic flows from CloudFront to the backend, and flag anything that looks unhealthy?"*
+
+The Power will:
+1. Discover the Agent Space and trigger an investigation
+2. Stream findings in real-time as the agent maps the topology: EKS services, RDS PostgreSQL, security groups, CloudFront distribution, NLB routing
+3. Deliver a complete architecture overview with health status — all inside Kiro
+
+**Why this matters:** The developer has the CDK stacks, Kubernetes manifests, and service code open in their editor. The Power bridges local workspace knowledge with the agent's live AWS discovery. This is the daily workflow — understanding your architecture before making changes — not just emergency incident response.
+
+**Follow-up prompts to try:**
+- *"Before I change the RDS instance type, what depends on the database and are there any active alarms?"*
+- *"What's the blast radius if I modify the EKS node security group?"*
+- *"The payment-processor pods are in CrashLoopBackOff — can you investigate? Here's what I see in the logs..."* (after injecting a failure from the Lab)
+
+### 7. Rollback
 
 Click **Rollback** on the scenario card, or wait for the auto-revert timer (10 minutes).
 
