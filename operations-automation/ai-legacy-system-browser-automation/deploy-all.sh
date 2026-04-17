@@ -34,7 +34,7 @@ echo "Checking prerequisites..."
 "$SHARED_SCRIPTS_DIR/check-prerequisites.sh" --require-cdk
 
 # Get region using shared utility
-source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+source "$SHARED_SCRIPTS_DIR/../utils/aws-utils.sh"
 REGION=$(get_aws_region)
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)

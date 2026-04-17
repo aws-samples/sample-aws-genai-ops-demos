@@ -16,7 +16,7 @@ shared/
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
     ├── aws-utils.ts                    # AWS utilities (TypeScript)
-    └── get-aws-region.sh               # AWS utilities (Bash)
+    └── aws-utils.sh                    # AWS utilities (Bash)
 ```
 
 ## Utilities
@@ -60,7 +60,7 @@ const accountId = getAccountId();
 
 ```bash
 # Source the utility functions
-source ../../shared/utils/get-aws-region.sh
+source ../../shared/utils/aws-utils.sh
 
 # Get AWS region
 CURRENT_REGION=$(get_aws_region)

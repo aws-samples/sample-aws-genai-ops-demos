@@ -92,7 +92,7 @@ if [ "$SKIP_SETUP" = false ]; then
     ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 
     # Get region using shared utility
-    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    source "$SHARED_SCRIPTS_DIR/../utils/aws-utils.sh"
     CURRENT_REGION=$(get_aws_region)
 
     echo ""
@@ -160,7 +160,7 @@ else
     echo "Skipping infrastructure deployment..."
     
     # Get region using shared utility (prerequisites check was skipped)
-    source "$SHARED_SCRIPTS_DIR/../utils/get-aws-region.sh"
+    source "$SHARED_SCRIPTS_DIR/../utils/aws-utils.sh"
     CURRENT_REGION=$(get_aws_region)
     
     echo "      Region: $CURRENT_REGION"

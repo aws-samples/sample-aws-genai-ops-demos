@@ -163,11 +163,22 @@ fi
 
 # Check AWS region configuration
 echo -e "\n\033[0;33mChecking AWS region configuration...\033[0m"
-CURRENT_REGION=$(aws configure get region)
-if [ -z "$CURRENT_REGION" ]; then
+
+# Source shared region detection utility (env var → CLI config → fallback)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../utils/aws-utils.sh"
+CURRENT_REGION=$(get_aws_region)
+
+# Reject the us-east-1 fallback — if get_aws_region fell back, the user has no region configured
+# We check by verifying that the region came from an actual source, not the fallback
+REGION_FROM_ENV="${AWS_DEFAULT_REGION:-${AWS_REGION:-}}"
+REGION_FROM_CLI=$(aws configure get region 2>/dev/null || true)
+if [ -z "$REGION_FROM_ENV" ] && [ -z "$REGION_FROM_CLI" ]; then
     echo -e "\033[0;31m      ❌ No AWS region configured\033[0m"
     echo -e ""
-    echo -e "\033[0;33m      Please configure your AWS region using:\033[0m"
+    echo -e "\033[0;33m      Please configure your AWS region using one of:\033[0m"
+    echo -e "\033[0;36m        export AWS_REGION=<your-region>\033[0m"
+    echo -e "\033[0;36m        export AWS_DEFAULT_REGION=<your-region>\033[0m"
     echo -e "\033[0;36m        aws configure set region <your-region>\033[0m"
     echo -e ""
     echo -e "\033[0;90m      For supported regions, see AWS service documentation\033[0m"
