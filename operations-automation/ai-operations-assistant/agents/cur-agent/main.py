@@ -8,7 +8,6 @@ NO Strands Agent SDK, NO Agent class, NO @tool decorators.
 """
 import json
 import os
-import time
 import boto3
 from datetime import datetime, timezone
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -78,41 +77,33 @@ def _execute_athena_query(query: str) -> dict:
     response = athena_client.start_query_execution(**start_params)
     query_execution_id = response["QueryExecutionId"]
 
-    # Poll for query completion
-    elapsed = 0
-    while elapsed < ATHENA_MAX_POLL_SECONDS:
-        status_response = athena_client.get_query_execution(
-            QueryExecutionId=query_execution_id
-        )
-        status = status_response["QueryExecution"]["Status"]
-        state = status["State"]
-
-        if state == "SUCCEEDED":
-            # Fetch results
-            results_response = athena_client.get_query_results(
-                QueryExecutionId=query_execution_id
-            )
-            return _parse_athena_results(results_response)
-
-        if state in ("FAILED", "CANCELLED"):
-            reason = status.get("StateChangeReason", "Unknown error")
-            raise RuntimeError(
-                f"Athena query {state.lower()}: {reason}"
-            )
-
-        time.sleep(ATHENA_POLL_INTERVAL_SECONDS)
-        elapsed += ATHENA_POLL_INTERVAL_SECONDS
-
-    # Timeout — cancel the query
+    # Wait for query completion using boto3 waiter (no manual sleep/polling)
+    waiter = athena_client.get_waiter("query_complete")
     try:
-        athena_client.stop_query_execution(QueryExecutionId=query_execution_id)
-    except Exception:
-        pass
+        waiter.wait(
+            QueryExecutionId=query_execution_id,
+            WaiterConfig={"Delay": ATHENA_POLL_INTERVAL_SECONDS, "MaxAttempts": ATHENA_MAX_POLL_SECONDS // ATHENA_POLL_INTERVAL_SECONDS},
+        )
+    except Exception as wait_err:
+        # Check if query failed vs timed out
+        status_response = athena_client.get_query_execution(QueryExecutionId=query_execution_id)
+        state = status_response["QueryExecution"]["Status"]["State"]
+        if state in ("FAILED", "CANCELLED"):
+            reason = status_response["QueryExecution"]["Status"].get("StateChangeReason", "Unknown error")
+            raise RuntimeError(f"Athena query {state.lower()}: {reason}") from wait_err
+        # Timeout — cancel the query
+        try:
+            athena_client.stop_query_execution(QueryExecutionId=query_execution_id)
+        except Exception:
+            pass
+        raise TimeoutError(
+            f"Athena query did not complete within {ATHENA_MAX_POLL_SECONDS} seconds. "
+            f"Query execution ID: {query_execution_id}"
+        ) from wait_err
 
-    raise TimeoutError(
-        f"Athena query did not complete within {ATHENA_MAX_POLL_SECONDS} seconds. "
-        f"Query execution ID: {query_execution_id}"
-    )
+    # Query succeeded — fetch results
+    results_response = athena_client.get_query_results(QueryExecutionId=query_execution_id)
+    return _parse_athena_results(results_response)
 
 
 def _parse_athena_results(results_response: dict) -> dict:

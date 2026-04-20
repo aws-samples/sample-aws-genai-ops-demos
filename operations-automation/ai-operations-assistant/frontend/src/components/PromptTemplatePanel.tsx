@@ -333,7 +333,7 @@ export default function PromptTemplatePanel({ onSubmit }: PromptTemplatePanelPro
                       ? 'YYYY-MM-DD'
                       : `Enter ${param.label.toLowerCase()}`
                   }
-                  type={param.type === 'date' ? 'text' : 'text'}
+                  type={param.type === 'date' ? 'date' : 'text'}
                 />
               )}
             </FormField>

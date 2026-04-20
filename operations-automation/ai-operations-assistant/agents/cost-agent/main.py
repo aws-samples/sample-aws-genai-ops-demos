@@ -35,7 +35,7 @@ CACHE_TTL_SECONDS = 300
 
 def _cache_key(kwargs: dict) -> str:
     """Generate a cache key from the API call parameters."""
-    return hashlib.md5(json.dumps(kwargs, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.md5(json.dumps(kwargs, sort_keys=True, default=str).encode(), usedforsecurity=False).hexdigest()
 
 
 def _get_cached(key: str):
