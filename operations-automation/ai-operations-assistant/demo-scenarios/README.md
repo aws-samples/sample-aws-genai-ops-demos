@@ -87,21 +87,21 @@ Creates resources that correlate with the real CloudWatch health event from Apri
 
 | Resource | Type | Purpose |
 |----------|------|---------|
-| `goat-demo-app-data` | DynamoDB table (on-demand) | Simulates the affected application table |
-| Support case | Resolved case referencing CloudWatch monitoring gaps | Correlates with the Health event |
+| Support case | Resolved case referencing CloudWatch monitoring gaps on Apr 1 | Correlates with the Health event |
+
+No AWS resources are created — only a Support case. Zero cost.
 
 ### Expected Agent Correlations
 
 When you ask G.O.A.T. about the April 1st incident, the orchestration agent should correlate:
 
 - **Health Agent** — Returns the real CloudWatch planned lifecycle event from April 1, 2026
-- **Support Agent** — Returns the demo Support case describing monitoring gaps and missing alarms on the `goat-demo-app-data` table
+- **Support Agent** — Returns the demo Support case describing monitoring gaps and missing alarms
 - **Cost Explorer Agent** — Shows CloudWatch costs around the incident timeframe
-- **CUR Agent** — Provides detailed CloudWatch usage data
 
 ### Important: Health Event Dependency
 
-Scenario B correlates with the **real CloudWatch planned lifecycle event from April 1, 2026** visible in the AWS Health Dashboard. The Health agent queries both account-specific events and public service events to find this correlation. If the event has aged out of the Health API retention window, the Health agent correlation will not be available, though the Support case and DynamoDB table will still be created.
+Scenario B correlates with the **real CloudWatch planned lifecycle event from April 1, 2026** visible in the AWS Health Dashboard. The Health agent queries both account-specific events and public service events to find this correlation. If the event has aged out of the Health API retention window, the Health agent correlation will not be available, though the Support case will still be created.
 
 ### Setup Instructions
 
@@ -129,7 +129,7 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 ### Cost Note
 
-Scenario B creates minimal resources. The DynamoDB table uses on-demand billing with no provisioned capacity, so it costs effectively nothing when idle. Clean up after your demo to remove the table.
+Scenario B creates no billable AWS resources — only a resolved Support case. Zero cost.
 
 ## Cleanup
 

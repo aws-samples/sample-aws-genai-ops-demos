@@ -283,7 +283,7 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 ### Scenario B: CloudWatch Apr 1 Incident Correlation
 
-Creates a DynamoDB table and a resolved Support case referencing a real CloudWatch health event from April 1, 2026, enabling cross-domain incident correlation between Health Dashboard events and Support case data.
+Creates a resolved Support case referencing a real CloudWatch health event from April 1, 2026, enabling cross-domain incident correlation between Health Dashboard events and Support case data. No AWS resources are created — zero cost.
 
 **Setup:**
 
@@ -304,9 +304,9 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 > We had monitoring gaps on April 1st — was there an AWS issue?
 
-**Expected agent correlation:** The orchestration agent correlates the DynamoDB table, the Support case referencing monitoring gaps, and the real CloudWatch planned lifecycle event from April 1, 2026 visible in the Health API.
+**Expected agent correlation:** The orchestration agent correlates the Support case referencing monitoring gaps with the real CloudWatch planned lifecycle event from April 1, 2026 visible in the Health API.
 
-> **Note:** Scenario B depends on the real CloudWatch health event from April 1, 2026 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case and DynamoDB table correlation still demonstrate cross-domain querying.
+> **Note:** Scenario B depends on the real CloudWatch health event from April 1, 2026 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case still demonstrates cross-domain querying. Scenario B creates no billable resources.
 
 ### Cleanup
 
