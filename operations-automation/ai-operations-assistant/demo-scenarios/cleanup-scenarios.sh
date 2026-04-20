@@ -425,35 +425,35 @@ echo ""
 print_cyan "  Region:              $REGION"
 
 if [ ${#TERMINATED_EC2[@]} -gt 0 ]; then
-    EC2_LIST=$(IFS=', '; echo "${TERMINATED_EC2[*]}")
+    EC2_LIST=$(printf '%s, ' "${TERMINATED_EC2[@]}" | sed 's/, $//')
     print_cyan "  Terminated EC2:      $EC2_LIST"
 fi
 if [ ${#DELETED_RDS[@]} -gt 0 ]; then
-    RDS_LIST=$(IFS=', '; echo "${DELETED_RDS[*]}")
+    RDS_LIST=$(printf '%s, ' "${DELETED_RDS[@]}" | sed 's/, $//')
     print_cyan "  Deleted RDS:         $RDS_LIST"
 fi
 if [ ${#DELETED_DB_SUBNET_GROUPS[@]} -gt 0 ]; then
-    DBSG_LIST=$(IFS=', '; echo "${DELETED_DB_SUBNET_GROUPS[*]}")
+    DBSG_LIST=$(printf '%s, ' "${DELETED_DB_SUBNET_GROUPS[@]}" | sed 's/, $//')
     print_cyan "  Deleted DB SubGrp:   $DBSG_LIST"
 fi
 if [ ${#DELETED_EBS[@]} -gt 0 ]; then
-    EBS_LIST=$(IFS=', '; echo "${DELETED_EBS[*]}")
+    EBS_LIST=$(printf '%s, ' "${DELETED_EBS[@]}" | sed 's/, $//')
     print_cyan "  Deleted EBS:         $EBS_LIST"
 fi
 if [ ${#RELEASED_EIP[@]} -gt 0 ]; then
-    EIP_LIST=$(IFS=', '; echo "${RELEASED_EIP[*]}")
+    EIP_LIST=$(printf '%s, ' "${RELEASED_EIP[@]}" | sed 's/, $//')
     print_cyan "  Released EIP:        $EIP_LIST"
 fi
 if [ ${#DELETED_DDB[@]} -gt 0 ]; then
-    DDB_LIST=$(IFS=', '; echo "${DELETED_DDB[*]}")
+    DDB_LIST=$(printf '%s, ' "${DELETED_DDB[@]}" | sed 's/, $//')
     print_cyan "  Deleted DynamoDB:    $DDB_LIST"
 fi
 if [ ${#DELETED_SUBNETS[@]} -gt 0 ]; then
-    SUB_LIST=$(IFS=', '; echo "${DELETED_SUBNETS[*]}")
+    SUB_LIST=$(printf '%s, ' "${DELETED_SUBNETS[@]}" | sed 's/, $//')
     print_cyan "  Deleted Subnets:     $SUB_LIST"
 fi
 if [ ${#DELETED_VPCS[@]} -gt 0 ]; then
-    VPC_LIST=$(IFS=', '; echo "${DELETED_VPCS[*]}")
+    VPC_LIST=$(printf '%s, ' "${DELETED_VPCS[@]}" | sed 's/, $//')
     print_cyan "  Deleted VPCs:        $VPC_LIST"
 fi
 

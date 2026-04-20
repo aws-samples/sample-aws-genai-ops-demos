@@ -123,6 +123,7 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 | Query | What It Demonstrates |
 |-------|---------------------|
 | **"We had monitoring gaps on April 1st — was there an AWS issue?"** | Cross-domain incident correlation (Health + Support + Cost) |
+| "I had a CloudWatch problem in April. Was it linked to a health event or a support case?" | Cross-domain correlation between Health events and Support cases |
 | "Were there any CloudWatch health events recently?" | Health agent returning the real Apr 1 event |
 | "Show me support cases related to CloudWatch" | Support agent returning the monitoring gaps case |
 | "What happened with our monitoring on April 1st?" | Multi-agent investigation of a specific incident |

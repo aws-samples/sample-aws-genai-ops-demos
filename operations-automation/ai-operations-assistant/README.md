@@ -304,6 +304,10 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 > We had monitoring gaps on April 1st — was there an AWS issue?
 
+Other suggested queries for Scenario B:
+- "I had a CloudWatch problem in April. Was it linked to a health event or a support case?"
+- "Show me support cases related to CloudWatch"
+
 **Expected agent correlation:** The orchestration agent correlates the Support case referencing monitoring gaps with the real CloudWatch planned lifecycle event from April 1, 2026 visible in the Health API.
 
 > **Note:** Scenario B depends on the real CloudWatch health event from April 1, 2026 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case still demonstrates cross-domain querying. Scenario B creates no billable resources.

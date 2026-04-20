@@ -52,6 +52,43 @@ def _is_table_not_found_error(error: Exception) -> bool:
     )
 
 
+import re
+
+# Pattern for valid SQL identifiers and date values
+_SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z0-9_\-.:/ ]+$")
+_SAFE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?$")
+
+
+def _sanitize_sql_value(value: str, value_type: str = "string") -> str:
+    """Sanitize a value for safe inclusion in SQL queries.
+
+    Prevents SQL injection by validating format and escaping single quotes.
+    Raises ValueError if the value contains suspicious patterns.
+    """
+    if not value:
+        raise ValueError("Empty value")
+
+    # Block obvious injection patterns
+    dangerous = ["--", ";", "/*", "*/", "xp_", "UNION", "DROP", "DELETE", "INSERT", "UPDATE", "ALTER"]
+    upper_val = value.upper()
+    for pattern in dangerous:
+        if pattern in upper_val:
+            raise ValueError(f"Potentially unsafe SQL value: {value}")
+
+    if value_type == "date":
+        if not _SAFE_DATE.match(value):
+            raise ValueError(f"Invalid date format: {value}")
+        return value
+
+    if value_type == "identifier":
+        if not _SAFE_IDENTIFIER.match(value):
+            raise ValueError(f"Invalid identifier: {value}")
+        return value
+
+    # Escape single quotes for string values
+    return value.replace("'", "''")  # nosemgrep: B608
+
+
 def _execute_athena_query(query: str) -> dict:
     """Execute an Athena query and wait for completion.
 
@@ -190,20 +227,24 @@ def handle_resource_costs(params: dict) -> dict:
         resource_id = params.get("resourceId") or params.get("resource_id")
         max_rows = int(params.get("maxRows") or params.get("max_rows", 50))
 
-        # Build the SQL query
+        # Build the SQL query with sanitized inputs
         conditions = []
         if start_date:
+            safe_start = _sanitize_sql_value(start_date, "date")
             conditions.append(
-                f"line_item_usage_start_date >= TIMESTAMP '{start_date}'"
+                f"line_item_usage_start_date >= TIMESTAMP '{safe_start}'"
             )
         if end_date:
+            safe_end = _sanitize_sql_value(end_date, "date")
             conditions.append(
-                f"line_item_usage_end_date <= TIMESTAMP '{end_date}'"
+                f"line_item_usage_end_date <= TIMESTAMP '{safe_end}'"
             )
         if service:
-            conditions.append(f"product_product_name = '{service}'")
+            safe_service = _sanitize_sql_value(service)
+            conditions.append(f"product_product_name = '{safe_service}'")
         if resource_id:
-            conditions.append(f"line_item_resource_id = '{resource_id}'")
+            safe_resource = _sanitize_sql_value(resource_id)
+            conditions.append(f"line_item_resource_id = '{safe_resource}'")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -267,15 +308,18 @@ def handle_usage_patterns(params: dict) -> dict:
 
         conditions = []
         if start_date:
+            safe_start = _sanitize_sql_value(start_date, "date")
             conditions.append(
-                f"line_item_usage_start_date >= TIMESTAMP '{start_date}'"
+                f"line_item_usage_start_date >= TIMESTAMP '{safe_start}'"
             )
         if end_date:
+            safe_end = _sanitize_sql_value(end_date, "date")
             conditions.append(
-                f"line_item_usage_end_date <= TIMESTAMP '{end_date}'"
+                f"line_item_usage_end_date <= TIMESTAMP '{safe_end}'"
             )
         if service:
-            conditions.append(f"product_product_name = '{service}'")
+            safe_service = _sanitize_sql_value(service)
+            conditions.append(f"product_product_name = '{safe_service}'")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
