@@ -1,0 +1,110 @@
+{
+  "ResultsByTime": [
+    {
+      "TimePeriod": {
+        "Start": "2025-06-01",
+        "End": "2025-06-30"
+      },
+      "Total": {
+        "UnblendedCost": {
+          "Amount": "4523.17",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "1842.35", "Unit": "USD" }
+          }
+        },
+        {
+          "Keys": ["Amazon Relational Database Service"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "1105.62", "Unit": "USD" }
+          }
+        },
+        {
+          "Keys": ["Amazon Simple Storage Service"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "312.44", "Unit": "USD" }
+          }
+        }
+      ]
+    },
+    {
+      "TimePeriod": {
+        "Start": "2025-07-01",
+        "End": "2025-07-31"
+      },
+      "Total": {
+        "UnblendedCost": {
+          "Amount": "4891.03",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [
+        {
+          "Keys": ["Amazon Elastic Compute Cloud - Compute"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "2015.80", "Unit": "USD" }
+          }
+        },
+        {
+          "Keys": ["Amazon Relational Database Service"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "1150.23", "Unit": "USD" }
+          }
+        },
+        {
+          "Keys": ["Amazon Simple Storage Service"],
+          "Metrics": {
+            "UnblendedCost": { "Amount": "340.00", "Unit": "USD" }
+          }
+        }
+      ]
+    }
+  ],
+  "DimensionValueAttributes": [],
+  "Forecast": {
+    "TimePeriod": {
+      "Start": "2025-08-01",
+      "End": "2025-08-31"
+    },
+    "MeanValue": "5120.00",
+    "PredictionIntervalLowerBound": "4800.00",
+    "PredictionIntervalUpperBound": "5440.00"
+  },
+  "Recommendations": [
+    {
+      "recommendationId": "rec-001",
+      "accountId": "123456789012",
+      "region": "us-east-1",
+      "resourceId": "i-0abc123def456789",
+      "resourceType": "EC2 Instance",
+      "currentResourceType": "m5.2xlarge",
+      "recommendedResourceType": "m6g.2xlarge",
+      "estimatedMonthlySavings": {
+        "value": 142.50,
+        "currency": "USD"
+      },
+      "estimatedSavingsPercentage": 18.5,
+      "source": "Cost Optimization Hub"
+    },
+    {
+      "recommendationId": "rec-002",
+      "accountId": "123456789012",
+      "region": "us-west-2",
+      "resourceId": "vol-0def789abc123456",
+      "resourceType": "EBS Volume",
+      "currentResourceType": "gp2 500GB",
+      "recommendedResourceType": "gp3 500GB",
+      "estimatedMonthlySavings": {
+        "value": 24.00,
+        "currency": "USD"
+      },
+      "estimatedSavingsPercentage": 20.0,
+      "source": "Cost Optimization Hub"
+    }
+  ]
+}

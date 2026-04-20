@@ -1,0 +1,25 @@
+{
+  "name": "genai-operations-analytics-tool",
+  "version": "1.0.0",
+  "description": "G.O.A.T. - Multi-agent orchestration for AWS operations analytics",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:properties": "vitest run --dir tests/properties",
+    "test:unit": "vitest run --dir tests/unit",
+    "cdk": "cd infrastructure/cdk && npx cdk"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.20",
+    "aws-cdk": "^2.1030.0",
+    "aws-cdk-lib": "^2.219.0",
+    "constructs": "^10.4.2",
+    "fast-check": "^3.23.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.1",
+    "source-map-support": "^0.5.21"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "caseId": "case-123456789012-2025-001",
+      "displayId": "1234567890",
+      "subject": "EC2 instance unreachable after security group change",
+      "status": "opened",
+      "serviceCode": "amazon-elastic-compute-cloud-linux",
+      "categoryCode": "instance-issue",
+      "severityCode": "high",
+      "submittedBy": "ops-engineer@example.com",
+      "timeCreated": "2025-07-14T16:30:00Z",
+      "recentCommunications": {
+        "communications": [
+          {
+            "caseId": "case-123456789012-2025-001",
+            "body": "We are unable to reach our EC2 instance i-0abc123def456789 via SSH after modifying the security group. The instance status checks are passing.",
+            "submittedBy": "ops-engineer@example.com",
+            "timeCreated": "2025-07-14T16:30:00Z"
+          },
+          {
+            "caseId": "case-123456789012-2025-001",
+            "body": "Thank you for contacting AWS Support. I can see the security group sg-0123456789abcdef was modified to remove the SSH inbound rule. Please re-add port 22 access from your IP range.",
+            "submittedBy": "Amazon Web Services",
+            "timeCreated": "2025-07-14T17:15:00Z"
+          }
+        ]
+      },
+      "language": "en"
+    },
+    {
+      "caseId": "case-123456789012-2025-002",
+      "displayId": "1234567891",
+      "subject": "RDS Multi-AZ failover causing brief connection drops",
+      "status": "resolved",
+      "serviceCode": "amazon-relational-database-service",
+      "categoryCode": "connectivity",
+      "severityCode": "normal",
+      "submittedBy": "dba-team@example.com",
+      "timeCreated": "2025-07-10T09:00:00Z",
+      "recentCommunications": {
+        "communications": [
+          {
+            "caseId": "case-123456789012-2025-002",
+            "body": "Our application experienced brief connection drops during what appears to be an RDS Multi-AZ failover. We need to understand why the failover occurred.",
+            "submittedBy": "dba-team@example.com",
+            "timeCreated": "2025-07-10T09:00:00Z"
+          }
+        ]
+      },
+      "language": "en"
+    }
+  ]
+}

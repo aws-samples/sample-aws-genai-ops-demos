@@ -1,0 +1,115 @@
+{
+  "checks": [
+    {
+      "id": "Qch7DwouX1",
+      "name": "Amazon EBS Public Snapshots",
+      "description": "Checks the permission settings for your Amazon Elastic Block Store (Amazon EBS) volume snapshots and alerts you if any snapshots are marked as public.",
+      "category": "security",
+      "metadata": [
+        "Region",
+        "Snapshot ID",
+        "Status"
+      ]
+    },
+    {
+      "id": "hjLMh88uM8",
+      "name": "Low Utilization Amazon EC2 Instances",
+      "description": "Checks the Amazon Elastic Compute Cloud (Amazon EC2) instances that were running at any time during the last 14 days and alerts you if the daily CPU utilization was 10% or less and network I/O was 5 MB or less on 4 or more days.",
+      "category": "cost_optimizing",
+      "metadata": [
+        "Region",
+        "Instance ID",
+        "Instance Type",
+        "Estimated Monthly Savings",
+        "14-Day Average CPU Utilization",
+        "14-Day Average Network I/O"
+      ]
+    },
+    {
+      "id": "R365s2Qddf",
+      "name": "Amazon RDS Idle DB Instances",
+      "description": "Checks the configuration of your Amazon Relational Database Service (Amazon RDS) for any DB instances that appear to be idle.",
+      "category": "cost_optimizing",
+      "metadata": [
+        "Region",
+        "DB Instance Name",
+        "Multi-AZ",
+        "Instance Type",
+        "Storage Provisioned (GB)",
+        "Days Since Last Connection",
+        "Estimated Monthly Savings"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "checkId": "hjLMh88uM8",
+      "pillar": "cost_optimizing",
+      "status": "warning",
+      "resourcesSummary": {
+        "resourcesProcessed": 24,
+        "resourcesFlagged": 3,
+        "resourcesIgnored": 0,
+        "resourcesSuppressed": 0
+      },
+      "flaggedResources": [
+        {
+          "region": "us-east-1",
+          "resourceId": "i-0abc123def456789",
+          "instanceType": "m5.xlarge",
+          "estimatedMonthlySavings": "$87.60",
+          "averageCpuUtilization": "2.3%",
+          "averageNetworkIO": "1.2 MB"
+        },
+        {
+          "region": "us-west-2",
+          "resourceId": "i-0def456ghi789012",
+          "instanceType": "c5.2xlarge",
+          "estimatedMonthlySavings": "$196.80",
+          "averageCpuUtilization": "4.1%",
+          "averageNetworkIO": "3.8 MB"
+        }
+      ]
+    },
+    {
+      "checkId": "Qch7DwouX1",
+      "pillar": "security",
+      "status": "error",
+      "resourcesSummary": {
+        "resourcesProcessed": 15,
+        "resourcesFlagged": 1,
+        "resourcesIgnored": 0,
+        "resourcesSuppressed": 0
+      },
+      "flaggedResources": [
+        {
+          "region": "us-east-1",
+          "snapshotId": "snap-0abc123def456789",
+          "status": "Public"
+        }
+      ]
+    },
+    {
+      "checkId": "R365s2Qddf",
+      "pillar": "cost_optimizing",
+      "status": "warning",
+      "resourcesSummary": {
+        "resourcesProcessed": 8,
+        "resourcesFlagged": 1,
+        "resourcesIgnored": 0,
+        "resourcesSuppressed": 0
+      },
+      "flaggedResources": [
+        {
+          "region": "us-west-2",
+          "dbInstanceName": "staging-analytics-db",
+          "multiAZ": false,
+          "instanceType": "db.r5.large",
+          "storageProvisionedGB": 100,
+          "daysSinceLastConnection": 32,
+          "estimatedMonthlySavings": "$175.20"
+        }
+      ]
+    }
+  ]
+}

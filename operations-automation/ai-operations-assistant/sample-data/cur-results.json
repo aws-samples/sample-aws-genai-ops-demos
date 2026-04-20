@@ -1,0 +1,93 @@
+{
+  "QueryExecutionId": "a1b2c3d4-5678-90ab-cdef-example11111",
+  "QueryExecution": {
+    "QueryExecutionId": "a1b2c3d4-5678-90ab-cdef-example11111",
+    "Query": "SELECT line_item_product_code, line_item_resource_id, SUM(line_item_unblended_cost) AS total_cost FROM cur_database.cur_table WHERE month = '7' AND year = '2025' GROUP BY line_item_product_code, line_item_resource_id ORDER BY total_cost DESC LIMIT 10",
+    "StatementType": "DML",
+    "Status": {
+      "State": "SUCCEEDED",
+      "SubmissionDateTime": "2025-07-15T12:00:00Z",
+      "CompletionDateTime": "2025-07-15T12:00:08Z"
+    },
+    "Statistics": {
+      "EngineExecutionTimeInMillis": 7200,
+      "DataScannedInBytes": 524288000
+    }
+  },
+  "ResultSet": {
+    "Rows": [
+      {
+        "Data": [
+          { "VarCharValue": "line_item_product_code" },
+          { "VarCharValue": "line_item_resource_id" },
+          { "VarCharValue": "total_cost" }
+        ]
+      },
+      {
+        "Data": [
+          { "VarCharValue": "AmazonEC2" },
+          { "VarCharValue": "i-0abc123def456789" },
+          { "VarCharValue": "612.45" }
+        ]
+      },
+      {
+        "Data": [
+          { "VarCharValue": "AmazonRDS" },
+          { "VarCharValue": "mydb-instance-1" },
+          { "VarCharValue": "487.30" }
+        ]
+      },
+      {
+        "Data": [
+          { "VarCharValue": "AmazonS3" },
+          { "VarCharValue": "my-data-lake-bucket" },
+          { "VarCharValue": "156.22" }
+        ]
+      }
+    ],
+    "ResultSetMetadata": {
+      "ColumnInfo": [
+        {
+          "Name": "line_item_product_code",
+          "Type": "varchar"
+        },
+        {
+          "Name": "line_item_resource_id",
+          "Type": "varchar"
+        },
+        {
+          "Name": "total_cost",
+          "Type": "double"
+        }
+      ]
+    }
+  },
+  "UsagePatterns": [
+    {
+      "resourceId": "i-0abc123def456789",
+      "service": "AmazonEC2",
+      "usageType": "BoxUsage:m5.2xlarge",
+      "region": "us-east-1",
+      "dailyCosts": [
+        { "date": "2025-07-01", "cost": 19.20 },
+        { "date": "2025-07-02", "cost": 19.20 },
+        { "date": "2025-07-03", "cost": 19.20 }
+      ],
+      "averageDailyCost": 19.20,
+      "projectedMonthlyCost": 595.20
+    },
+    {
+      "resourceId": "mydb-instance-1",
+      "service": "AmazonRDS",
+      "usageType": "InstanceUsage:db.r5.large",
+      "region": "us-west-2",
+      "dailyCosts": [
+        { "date": "2025-07-01", "cost": 15.72 },
+        { "date": "2025-07-02", "cost": 15.72 },
+        { "date": "2025-07-03", "cost": 15.72 }
+      ],
+      "averageDailyCost": 15.72,
+      "projectedMonthlyCost": 487.32
+    }
+  ]
+}

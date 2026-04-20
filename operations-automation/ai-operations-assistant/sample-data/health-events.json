@@ -1,0 +1,53 @@
+{
+  "events": [
+    {
+      "arn": "arn:aws:health:us-east-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/abc123",
+      "service": "EC2",
+      "eventTypeCode": "AWS_EC2_OPERATIONAL_ISSUE",
+      "eventTypeCategory": "issue",
+      "region": "us-east-1",
+      "startTime": "2025-07-15T08:30:00Z",
+      "endTime": "2025-07-15T10:45:00Z",
+      "lastUpdatedTime": "2025-07-15T10:45:00Z",
+      "statusCode": "closed",
+      "eventScopeCode": "ACCOUNT_SPECIFIC"
+    },
+    {
+      "arn": "arn:aws:health:us-west-2::event/RDS/AWS_RDS_SCHEDULED_MAINTENANCE/def456",
+      "service": "RDS",
+      "eventTypeCode": "AWS_RDS_SCHEDULED_MAINTENANCE",
+      "eventTypeCategory": "scheduledChange",
+      "region": "us-west-2",
+      "startTime": "2025-07-20T02:00:00Z",
+      "endTime": "2025-07-20T06:00:00Z",
+      "lastUpdatedTime": "2025-07-18T14:00:00Z",
+      "statusCode": "upcoming",
+      "eventScopeCode": "ACCOUNT_SPECIFIC"
+    },
+    {
+      "arn": "arn:aws:health:global::event/IAM/AWS_IAM_OPERATIONAL_NOTIFICATION/ghi789",
+      "service": "IAM",
+      "eventTypeCode": "AWS_IAM_OPERATIONAL_NOTIFICATION",
+      "eventTypeCategory": "accountNotification",
+      "region": "global",
+      "startTime": "2025-07-10T00:00:00Z",
+      "lastUpdatedTime": "2025-07-10T00:00:00Z",
+      "statusCode": "open",
+      "eventScopeCode": "NONE"
+    }
+  ],
+  "affectedEntities": [
+    {
+      "entityValue": "i-0abc123def456789",
+      "eventArn": "arn:aws:health:us-east-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/abc123",
+      "awsAccountId": "123456789012",
+      "statusCode": "RESOLVED"
+    },
+    {
+      "entityValue": "mydb-instance-1",
+      "eventArn": "arn:aws:health:us-west-2::event/RDS/AWS_RDS_SCHEDULED_MAINTENANCE/def456",
+      "awsAccountId": "123456789012",
+      "statusCode": "PENDING"
+    }
+  ]
+}
