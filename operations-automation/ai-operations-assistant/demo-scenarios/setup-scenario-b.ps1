@@ -1,9 +1,9 @@
-# G.O.A.T. Demo Scenario B - DynamoDB Oct 20 Incident Correlation
+# G.O.A.T. Demo Scenario B - CloudWatch Apr 1 Incident Correlation
 #
-# Creates AWS resources that correlate with the real DynamoDB health event
-# from October 20, 2025, enabling cross-domain incident correlation:
+# Creates AWS resources that correlate with the real CloudWatch health event
+# from April 1, 2026, enabling cross-domain incident correlation:
 # - 1x DynamoDB table (goat-demo-app-data) with on-demand billing
-# - 1x resolved Support case referencing DynamoDB throttling errors
+# - 1x resolved Support case referencing CloudWatch monitoring gaps
 #
 # All resources are tagged with goat-demo=true for cleanup.
 # Script is idempotent - safe to re-run after partial failures.
@@ -22,7 +22,7 @@ $warnings = @()
 # ---------------------------------------------------------------------------
 # 1. Verify AWS credentials
 # ---------------------------------------------------------------------------
-Write-Host "=== G.O.A.T. Demo Scenario B - DynamoDB Oct 20 Incident Correlation ===" -ForegroundColor Cyan
+Write-Host "=== G.O.A.T. Demo Scenario B - CloudWatch Apr 1 Incident Correlation ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Verifying AWS credentials..." -ForegroundColor Yellow
 
@@ -105,9 +105,9 @@ if ($supportCheck -match "SubscriptionRequiredException") {
     Write-Host "Creating Support case..." -ForegroundColor Yellow
     try {
         $supportCaseId = aws support create-case `
-            --subject "DynamoDB throttling and 500 errors on Oct 20 - G.O.A.T. demo" `
-            --communication-body "Our application 'goat-demo-app-data' started experiencing ProvisionedThroughputExceededException errors and HTTP 500 responses on October 20, 2025. The DynamoDB table 'goat-demo-app-data' showed elevated throttling metrics. This case was created for demo purposes by the G.O.A.T. provisioning scripts." `
-            --service-code "amazon-dynamodb" `
+            --subject "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" `
+            --communication-body "Our monitoring infrastructure experienced gaps on April 1, 2026 due to the CloudWatch planned lifecycle event (AWS_CLOUDWATCH_PLANNED_LIFECYCLE_EVENT). Several CloudWatch alarms and dashboards were affected. The DynamoDB table 'goat-demo-app-data' metrics stopped reporting during this period. This case was created for demo purposes by the G.O.A.T. provisioning scripts." `
+            --service-code "amazon-cloudwatch" `
             --category-code "other" `
             --severity-code "low" `
             --language "en" `
@@ -167,7 +167,7 @@ if ($warnings.Count -gt 0) {
 
 Write-Host ""
 Write-Host "  Suggested Demo Query:" -ForegroundColor Cyan
-Write-Host "    `"We had application errors on October 20th - was there an AWS issue?`"" -ForegroundColor Green
+Write-Host "    `"We had monitoring gaps on April 1st - was there an AWS issue?`"" -ForegroundColor Green
 Write-Host ""
 Write-Host "  To clean up all demo resources:" -ForegroundColor Gray
 Write-Host "    .\cleanup-scenarios.ps1    (PowerShell)" -ForegroundColor Gray

@@ -79,29 +79,29 @@ Scenario A creates billable AWS resources. Approximate costs while resources are
 
 **Run the cleanup script promptly after your demo to avoid ongoing charges.**
 
-## Scenario B: DynamoDB Oct 20 Incident Correlation
+## Scenario B: CloudWatch Apr 1 Incident Correlation
 
-Creates resources that correlate with the real DynamoDB health event from October 20, 2025, enabling a cross-domain incident investigation demo.
+Creates resources that correlate with the real CloudWatch health event from April 1, 2026, enabling a cross-domain incident investigation demo.
 
 ### What Gets Created
 
 | Resource | Type | Purpose |
 |----------|------|---------|
 | `goat-demo-app-data` | DynamoDB table (on-demand) | Simulates the affected application table |
-| Support case | Resolved case referencing DynamoDB throttling | Correlates with the Health event |
+| Support case | Resolved case referencing CloudWatch monitoring gaps | Correlates with the Health event |
 
 ### Expected Agent Correlations
 
-When you ask G.O.A.T. about the October 20th incident, the orchestration agent should correlate:
+When you ask G.O.A.T. about the April 1st incident, the orchestration agent should correlate:
 
-- **Health Agent** — Returns the real DynamoDB operational event from October 20, 2025
-- **Support Agent** — Returns the demo Support case describing `ProvisionedThroughputExceededException` errors on the `goat-demo-app-data` table
-- **Cost Explorer Agent** — Shows DynamoDB costs around the incident timeframe
-- **CUR Agent** — Provides detailed DynamoDB usage data
+- **Health Agent** — Returns the real CloudWatch planned lifecycle event from April 1, 2026
+- **Support Agent** — Returns the demo Support case describing monitoring gaps and missing alarms on the `goat-demo-app-data` table
+- **Cost Explorer Agent** — Shows CloudWatch costs around the incident timeframe
+- **CUR Agent** — Provides detailed CloudWatch usage data
 
 ### Important: Health Event Dependency
 
-Scenario B correlates with the **real DynamoDB health event from October 20, 2025** visible in the AWS Service Health History. The Health agent queries both account-specific events (Personal Health Dashboard) and public service events (Service Health History) to find this correlation. If the event has aged out of the Health API retention window, the Health agent correlation will not be available, though the Support case and DynamoDB table will still be created.
+Scenario B correlates with the **real CloudWatch planned lifecycle event from April 1, 2026** visible in the AWS Health Dashboard. The Health agent queries both account-specific events and public service events to find this correlation. If the event has aged out of the Health API retention window, the Health agent correlation will not be available, though the Support case and DynamoDB table will still be created.
 
 ### Setup Instructions
 
@@ -122,10 +122,10 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 | Query | What It Demonstrates |
 |-------|---------------------|
-| **"We had application errors on October 20th — was there an AWS issue?"** | Cross-domain incident correlation (Health + Support + Cost) |
-| "Were there any DynamoDB health events recently?" | Health agent returning the real Oct 20 event |
-| "Show me support cases related to DynamoDB" | Support agent returning the throttling case |
-| "What happened with our goat-demo-app-data table?" | Multi-agent investigation of a specific resource |
+| **"We had monitoring gaps on April 1st — was there an AWS issue?"** | Cross-domain incident correlation (Health + Support + Cost) |
+| "Were there any CloudWatch health events recently?" | Health agent returning the real Apr 1 event |
+| "Show me support cases related to CloudWatch" | Support agent returning the monitoring gaps case |
+| "What happened with our monitoring on April 1st?" | Multi-agent investigation of a specific incident |
 
 ### Cost Note
 

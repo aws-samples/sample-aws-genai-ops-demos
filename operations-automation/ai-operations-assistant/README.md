@@ -281,9 +281,9 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 > **Cost note:** Scenario A creates billable resources — 2× EC2 t3.micro, 1× RDS db.t3.micro, 1× EBS 10GB gp2 volume, and 1× Elastic IP. Run the cleanup script after your demo to avoid ongoing charges. All resources are tagged with `goat-demo=true` for easy identification.
 
-### Scenario B: DynamoDB Oct 20 Incident Correlation
+### Scenario B: CloudWatch Apr 1 Incident Correlation
 
-Creates a DynamoDB table and a resolved Support case referencing a real DynamoDB health event from October 20, 2025, enabling cross-domain incident correlation between Health Dashboard events and Support case data.
+Creates a DynamoDB table and a resolved Support case referencing a real CloudWatch health event from April 1, 2026, enabling cross-domain incident correlation between Health Dashboard events and Support case data.
 
 **Setup:**
 
@@ -302,11 +302,11 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 **Suggested demo query:**
 
-> We had application errors on October 20th — was there an AWS issue?
+> We had monitoring gaps on April 1st — was there an AWS issue?
 
-**Expected agent correlation:** The orchestration agent correlates the DynamoDB table, the Support case referencing throttling errors, and the real DynamoDB health event from October 20, 2025 visible in the Health API history.
+**Expected agent correlation:** The orchestration agent correlates the DynamoDB table, the Support case referencing monitoring gaps, and the real CloudWatch planned lifecycle event from April 1, 2026 visible in the Health API.
 
-> **Note:** Scenario B depends on the real DynamoDB health event from October 20, 2025 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case and DynamoDB table correlation still demonstrate cross-domain querying.
+> **Note:** Scenario B depends on the real CloudWatch health event from April 1, 2026 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case and DynamoDB table correlation still demonstrate cross-domain querying.
 
 ### Cleanup
 
@@ -432,7 +432,7 @@ operations-automation/ai-operations-assistant/
 │   ├── README.md                      # Demo scenarios guide with queries
 │   ├── setup-scenario-a.ps1           # Scenario A: Full Account Health Check
 │   ├── setup-scenario-a.sh
-│   ├── setup-scenario-b.ps1           # Scenario B: DynamoDB Incident Correlation
+│   ├── setup-scenario-b.ps1           # Scenario B: CloudWatch Incident Correlation
 │   ├── setup-scenario-b.sh
 │   ├── cleanup-scenarios.ps1          # Remove all demo resources
 │   └── cleanup-scenarios.sh
