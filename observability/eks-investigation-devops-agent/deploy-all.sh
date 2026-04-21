@@ -141,11 +141,11 @@ echo "  kubectl configured."
 
 # Grant the deploying IAM principal cluster-admin access via EKS access entries
 CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
-# Convert assumed-role ARN to IAM role ARN (EKS access entries need the role ARN)
+# Convert assumed-role session ARN to IAM role ARN (EKS access entries need the role ARN)
 # arn:aws:sts::123:assumed-role/RoleName/session → arn:aws:iam::123:role/RoleName
-if [[ "$CALLER_ARN" == *"assumed-role"* ]]; then
-    ROLE_NAME=$(echo "$CALLER_ARN" | cut -d'/' -f2)
-    CALLER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}"
+# Also handles pathed roles: assumed-role/path/RoleName/session → role/path/RoleName
+if [[ "$CALLER_ARN" == *":assumed-role/"* ]]; then
+    CALLER_ARN=$(echo "$CALLER_ARN" | sed 's|arn:aws:sts|arn:aws:iam|;s|:assumed-role/|:role/|;s|/[^/]*$||')
 fi
 echo "  Granting EKS access to $CALLER_ARN..."
 aws eks create-access-entry \
