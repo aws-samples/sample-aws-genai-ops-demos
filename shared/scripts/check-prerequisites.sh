@@ -165,8 +165,9 @@ fi
 echo -e "\n\033[0;33mChecking AWS region configuration...\033[0m"
 
 # Source shared region detection utility (env var → CLI config → fallback)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../utils/aws-utils.sh"
+_PREREQ_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_PREREQ_SCRIPT_DIR/../utils/aws-utils.sh"
+unset _PREREQ_SCRIPT_DIR
 CURRENT_REGION=$(get_aws_region)
 
 # Reject the us-east-1 fallback — if get_aws_region fell back, the user has no region configured
