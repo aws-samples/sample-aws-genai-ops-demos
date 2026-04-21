@@ -421,15 +421,3 @@ See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more 
 ## License
 
 This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENSE) file.
-
-## Contributing
-
-See [CONTRIBUTING](../../CONTRIBUTING.md) for more information.
-
-## Security
-
-See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
-
-## License
-
-This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENSE) file.
