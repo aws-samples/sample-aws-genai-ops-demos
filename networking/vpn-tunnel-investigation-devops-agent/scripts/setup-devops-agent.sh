@@ -9,7 +9,7 @@
 #   2. Creates an Agent Space
 #   3. Associates the AWS account
 #   4. Enables the Operator App
-#   5. Creates a generic webhook (for alarm → agent integration)
+#   5. Prompts you to create a webhook in the AWS DevOps Agent console
 #   6. Prints webhook URL + secret for use with deploy.sh
 #
 # Reference: https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-cli-onboarding-guide.html
@@ -170,25 +170,29 @@ echo ""
 echo "=== Step 4: Enable Operator App ==="
 # ============================================================
 
-OPERATOR_URL=$(aws devops-agent enable-operator-app \
+aws devops-agent enable-operator-app \
   --agent-space-id "$AGENT_SPACE_ID" \
   --auth-flow iam \
   --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
-  --region "$REGION" \
-  --query 'operatorApp.url' --output text 2>/dev/null || echo "")
+  --region "$REGION" > /dev/null
+
+OPERATOR_URL="https://${AGENT_SPACE_ID}.aidevops.global.app.aws/home"
+CONSOLE_URL="https://${REGION}.console.aws.amazon.com/aidevops/home?region=${REGION}#/agent-spaces/${AGENT_SPACE_ID}?view=capabilities"
 
 echo "  ✅ Operator App enabled"
-[[ -n "$OPERATOR_URL" ]] && echo "  URL: $OPERATOR_URL"
+echo "  Operator App URL (for viewing investigations later):"
+echo "    $OPERATOR_URL"
 
 # ============================================================
 echo ""
 echo "=== Step 5: Create webhook ==="
-echo "  ⚠️  You need to create the webhook in the DevOps Agent console."
+echo "  ⚠️  You need to create the webhook in the AWS DevOps Agent console."
 echo ""
-echo "  1. Open the Operator App URL above (or go to the DevOps Agent console)"
-echo "  2. Navigate to: Settings → Webhooks → Create webhook"
-echo "  3. Choose 'Generic' webhook type"
-echo "  4. Copy the Webhook URL and Secret"
+echo "  1. Open the AWS DevOps Agent console:"
+echo "    $CONSOLE_URL"
+echo "  2. Under Webhooks, click Add"
+echo "  3. Copy the Webhook URL and Webhook Secret shown"
+echo "     (save these — they won't be shown again)"
 echo ""
 read -p "  Paste your Webhook URL: " WEBHOOK_URL
 read -p "  Paste your Webhook Secret: " WEBHOOK_SECRET
@@ -203,6 +207,7 @@ echo "  Agent Space Name: $AGENT_SPACE_NAME"
 echo "  Region         : $REGION"
 echo "  Account        : $ACCOUNT_ID"
 echo "  Operator App   : $OPERATOR_URL"
+echo "  Console        : $CONSOLE_URL"
 echo ""
 echo "  Use these with deploy.sh:"
 echo "  --webhook-url '$WEBHOOK_URL'"
@@ -212,6 +217,7 @@ echo "  Full deploy command:"
 echo "  bash deploy.sh \\"
 echo "    --region $REGION \\"
 echo "    --key-pair <your-key-pair> \\"
+echo "    --key-file <path-to-key-file> \\"
 echo "    --webhook-url '$WEBHOOK_URL' \\"
 echo "    --webhook-secret '$WEBHOOK_SECRET'"
 echo "============================================"

@@ -51,8 +51,8 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/aws-samples/aws-site-to-site-vpn-devops-agent-demo.git
-cd aws-site-to-site-vpn-devops-agent-demo
+git clone https://github.com/aws-samples/sample-aws-genai-ops-demos.git
+cd sample-aws-genai-ops-demos/networking/vpn-tunnel-investigation-devops-agent
 ```
 
 ### 2. Set up DevOps Agent
@@ -69,12 +69,11 @@ The script automates steps 1–4 and pauses at step 5 for you to create the webh
 2. Creates an Agent Space named `vpn-demo-agent-space`
 3. Associates your AWS account with the Agent Space
 4. Enables the Operator App with IAM auth
-5. **Pauses** — the script prints an Operator App URL and asks you to create a webhook:
-   1. Open the Operator App URL in your browser
-   2. Navigate to **Settings → Webhooks → Create webhook**
-   3. Select **Generic** webhook type
-   4. Copy the **Webhook URL** and **Webhook Secret** shown in the console
-   5. Paste them back into the terminal when prompted
+5. **Pauses** — the script prints an AWS DevOps Agent console URL and asks you to create a webhook:
+   1. Open the **AWS DevOps Agent console** URL printed by the script
+   2. Under **Webhooks**, click **Add**
+   3. Copy the **Webhook URL** and **Webhook Secret** shown (save these — they won't be shown again)
+   4. Paste them back into the terminal when prompted
 
 Save the webhook URL and secret — you'll need them in the next step.
 
@@ -164,15 +163,22 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
 
 **4c. Register in DevOps Agent:**
 
-1. Open the Operator App URL (from step 2)
-2. Navigate to **Settings → MCP Servers → Add server**
-3. Enter the endpoint URL and API key from step 4b
-4. Go to **Settings → Tools** and enable the three MCP tools:
-   - `get_service_dependencies`
-   - `get_cost_impact`
-   - `get_compliance_status`
+MCP server registration and tool enablement are done in the **AWS DevOps Agent console** (not the Operator App).
 
-> **Important:** Registering the MCP server endpoint alone is not enough — you must also enable the individual tools in **Settings → Tools** so the Agent can invoke them during investigations.
+1. Open the **AWS DevOps Agent console** → select your Agent Space → **Capabilities**
+2. Under **MCP Server**, click **Add**
+3. Click **Register** to register a new MCP server:
+   - **Name**: `vpn-demo-mcp-server`
+   - **Endpoint URL**: *(the endpoint URL from step 4b)*
+   - **Authorization flow**: select **API Key**
+   - **API Key Name**: `vpn-demo-mcp-key`
+   - **API Key Header**: `x-api-key`
+   - **API Key Value**: *(the API key from step 4b)*
+4. After registration, click **Add** next to the registered server
+5. Select all three tools: `get_service_dependencies`, `get_cost_impact`, `get_compliance_status`
+6. Click **Save**
+
+> **Note:** After saving, the console shows a webhook URL and secret for the MCP server. You do not need these for this demo — the alarm webhook from step 2 is the one that triggers investigations. The MCP server is called by the agent during investigations, not the other way around.
 
 ## How the Incident Detection Works
 
