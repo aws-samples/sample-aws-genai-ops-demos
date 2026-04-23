@@ -10,6 +10,7 @@ import { FrontendStack } from '../lib/frontend-stack';
 import { MonitoringStack } from '../lib/monitoring-stack';
 import { DevOpsAgentStack } from '../lib/devops-agent-stack';
 import { FailureSimulatorApiStack } from '../lib/failure-simulator-api-stack';
+import { McpServerStack } from '../lib/mcp-server-stack';
 
 // ---------------------------------------------------------------------------
 // Region detection — matches shared/scripts/check-prerequisites.sh priority:
@@ -137,6 +138,20 @@ const failureSimulatorApiStack = new FailureSimulatorApiStack(app, `DevOpsAgentE
   devOpsAgentRegion: app.node.tryGetContext('devOpsAgentRegion') || 'us-east-1',
   devOpsAgentSpaceId: app.node.tryGetContext('devOpsAgentSpaceId') || '',
   description: 'DevOps Agent EKS Demo Failure Simulator API Stack',
+});
+
+// McpServerStack — infrastructure for the Payment Transaction Insights MCP server
+// hosted on AgentCore Runtime. Provides read-only access to the payment database
+// so DevOps Agent can assess business impact during incidents.
+const mcpServerStack = new McpServerStack(app, `DevOpsAgentEksMcpServer-${region}`, {
+  env,
+  environment,
+  projectName,
+  vpc: networkStack.vpc,
+  privateComputeSubnets: networkStack.privateComputeSubnets,
+  databaseSecurityGroup: networkStack.databaseSecurityGroup,
+  rdsEndpoint: databaseStack.rdsEndpoint,
+  description: 'DevOps Agent EKS Demo MCP Server Infrastructure Stack',
 });
 
 // FrontendStack depends on FailureSimulatorApi (adminApiId, adminApiStageName)

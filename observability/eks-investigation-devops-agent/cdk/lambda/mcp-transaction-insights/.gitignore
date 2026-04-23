@@ -1,0 +1,12 @@
+# Vendored Python dependencies (installed by deploy script)
+pg8000/
+pg8000-*.dist-info/
+scramp/
+scramp-*.dist-info/
+asn1crypto/
+asn1crypto-*.dist-info/
+dateutil/
+python_dateutil-*.dist-info/
+six.py
+six-*.dist-info/
+__pycache__/

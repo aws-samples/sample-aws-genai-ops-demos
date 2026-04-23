@@ -12,7 +12,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 - **Duration**: ~25 min deployment + ~10 min demo
 - **Difficulty**: Intermediate
 - **Target Audience**: SREs, DevOps Engineers, Platform Engineers
-- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
+- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, Amazon Bedrock AgentCore Gateway, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
 - **Estimated Cost**: ~$6.50/day while running — see [Cost Estimate](#cost-estimate)
 
 ## DevOps Agent Features Demonstrated
@@ -25,6 +25,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Account Usage & Quotas** | Live usage dashboard in the Lab UI (investigation, evaluation, on-demand hours) |
 | **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
+| **Custom MCP Server Integration** | Agent queries a custom MCP server via AgentCore Gateway to assess business impact from the payment database during incidents |
 
 ## Architecture
 
@@ -33,8 +34,8 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 The platform has three layers:
 
 - **Application Layer** — CloudFront serves the React portal from S3 and routes API traffic through an NLB to three microservices running on EKS (Merchant Gateway, Payment Processor, Webhook Service), backed by RDS PostgreSQL and SQS for async webhook delivery.
-- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → Amazon DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis.
-- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (9 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
+- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → Amazon DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis. A custom MCP server powered by AgentCore Gateway and Lambda gives the agent read-only access to the payment database, enabling business impact assessment (transaction volumes, failure rates, processing gaps) alongside infrastructure diagnostics.
+- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (10 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture documentation including network design, security model, and data flows.
 
@@ -44,6 +45,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 - kubectl v1.31+
 - Node.js 20+ with npm
 - `zip` utility
+- `jq` utility
 - Git
 
 No local Docker or Java required — container images are built in the cloud via AWS CodeBuild.
@@ -84,10 +86,11 @@ bash deploy-all.sh
 The deployment script:
 1. Creates the DevOps Agent Space, IAM roles, Operator Access, and account association (in the DevOps Agent region)
 2. Prompts for the webhook URL and secret (generated in the DevOps Agent console)
-3. Deploys 9 CDK stacks (EKS, RDS, CloudFront, monitoring, etc.) in current region
+3. Deploys 10 CDK stacks (EKS, RDS, CloudFront, monitoring, MCP server infra, etc.) in current region
 4. Builds 3 container images via CodeBuild
-5. Applies Kubernetes manifests and seeds the database
+5. Applies Kubernetes manifests and seeds the database (including the MCP read-only DB user)
 6. Builds and deploys the React frontend
+7. Deploys the Payment Transaction Insights MCP server via AgentCore Gateway and registers it with DevOps Agent
 
 Total: ~25 minutes.
 
@@ -155,7 +158,8 @@ The Lab is a built-in demo control center accessible via the 🧪 icon in the po
 |---------|-------------|-------------|
 | 🔥 Scenarios | `POST/DELETE /admin/scenarios/{id}/inject` | kubectl → EKS |
 | Status cards | `GET /admin/status` | kubectl + CloudWatch |
-| 🧠 Skills | N/A (copy-paste to Operator Access) | Static content in UI |
+| 🧠 Skills | N/A (copy-paste to DevOps Agent Console) | Static content in UI |
+| 🔌 MCP Tools | N/A (enable in DevOps Agent Console) | Static content in UI |
 | 📋 Logs | `GET /admin/logs` | DevOps Agent API (list-backlog-tasks, list-executions, list-journal-records) |
 | 📊 Usage | `GET /admin/usage` | DevOps Agent API (get-account-usage) |
 
@@ -213,7 +217,44 @@ This demonstrates how custom skills add business context the agent can't discove
 
 Without the skill, the agent reports technical findings only. With the skill, it adds business context, SLA tracking, and compliance assessment.
 
-### 6. Demo the Kiro Power for DevOps Agent
+### 6. Demo the Custom MCP Server Integration
+
+DevOps Agent natively reads CloudWatch logs and metrics — it can tell you *what broke* and *how often*. But logs can't answer the questions that matter most during an outage: how many transactions failed, which merchants are affected, and how long payment processing has been stalled. That information lives in the database, not in logs. Worse, when processing stops entirely, there are no errors to log — the absence of successful transactions is invisible to traditional observability.
+
+This demo bridges that gap with a custom MCP server that gives the agent read-only access to the payment database through AgentCore Gateway. The agent goes from reporting "Payment Processor pods are in CrashLoopBackOff" to reporting "payment processing has been stalled for 12 minutes, 847 transactions are stuck, 3 merchants affected." The first is an ops finding. The second is something you can hand to a VP.
+
+The infrastructure is designed for private connectivity — the Gateway is accessible via a VPC endpoint (PrivateLink), and the Lambda runs in private subnets with a locked-down security group. A private connection (VPC Lattice) is created during deployment for DevOps Agent to reach the Gateway without traversing the public internet. The MCP server is registered with OAuth (Cognito client credentials) for authentication.
+
+**Setup**: The MCP server infrastructure is fully automated during deployment (step 10). Tools must be manually enabled in the DevOps Agent Console — open Capabilities → MCP Servers → pay-txn-mcp → select the tools you want the agent to use. The Lab's MCP Tools section has step-by-step instructions.
+
+**MCP Tools — what the agent can (and can't) access:**
+
+| Tool | What It Returns | Why It Matters |
+|------|----------------|----------------|
+| `get_transaction_summary` | Transaction counts and totals grouped by status for the last N minutes (max 60 min) | Shows whether payments are flowing normally or stalled — the health pulse of the business |
+| `get_recent_failures` | Failed transactions with error codes, merchant names, and amounts (max 50 rows, max 60 min) | Identifies which merchants are affected and the nature of failures during an outage |
+| `get_processing_gap` | Time since last successfully captured payment + count/value of stuck authorizations | Detects the *absence of activity* — the signal that's invisible in logs and metrics |
+| `get_incident_impact` | Post-incident analysis over an absolute time range: transaction counts by status, dollar amounts, affected merchants, baseline comparison, and state transition latency | Enables post-mortem business impact reports — "what was the cost of the incident between 14:00 and 14:25?" |
+
+These are the *only* operations available. There is no `run_query` tool — the agent cannot execute arbitrary SQL. Each tool runs a fixed, parameterized query with clamped inputs. The Lambda connects as a dedicated `mcp_readonly` PostgreSQL user with `default_transaction_read_only = on`, and its security group restricts egress to RDS (port 5432) and Secrets Manager (HTTPS) only. This gives the agent a narrow, read-only window into business state without exposing the full database.
+
+The Payment Processor records every state transition (PENDING → AUTHORIZED → CAPTURED, etc.) in a `transaction_events` table with timestamps. This enables `get_incident_impact` to measure how long transactions were stuck and compare capture latency during an incident against the baseline.
+
+**The demo flow:**
+
+1. Establish a baseline — open **Chat** in Operator Access and ask:
+   > *"What's the current state of payment processing on the EKS cluster? Check both infrastructure health and transaction activity."*
+   The agent queries CloudWatch (native) and the MCP server (custom) to show healthy infrastructure alongside normal transaction flow.
+
+2. Inject the **Database Connection Failure** scenario from the Lab
+3. Wait ~2 minutes for the automated investigation to start
+4. Ask the business impact question:
+   > *"What's the business impact of this incident? How many transactions are affected and what's the revenue exposure?"*
+   The agent uses the MCP tools to discover: no successful captures since the outage started, transactions stuck in AUTHORIZED, and which merchants are affected — business impact evidence that isn't in logs or metrics.
+
+**Why this matters:** Logs tell you what failed. Metrics tell you how often. But the database tells you what *didn't happen* — the absence of successful transactions, the growing backlog of stuck payments. That's the gap the MCP server fills.
+
+### 7. Demo the Kiro Power for DevOps Agent
 
 This demonstrates how a developer can leverage the DevOps Agent directly from their IDE to review architecture, map topology, and understand dependencies before making changes — the daily workflow, not just emergency incident response. No need to switch to the AWS console or Operator Access.
 
@@ -237,7 +278,7 @@ The Power will:
 - *"What's the blast radius if I modify the EKS node security group?"*
 - *"The payment-processor pods are in CrashLoopBackOff — can you investigate? Here's what I see in the logs..."* (after injecting a failure from the Lab)
 
-### 7. Rollback
+### 8. Rollback
 
 Click **Rollback** on the scenario card, or wait for the auto-revert timer (10 minutes).
 
@@ -256,17 +297,19 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `DevOpsAgentEksMonitoring-{region}` | Observability | CloudWatch log groups, metric filters, alarms, SNS topic |
 | `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook, Secrets Manager |
 | `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab API | API Gateway, Lambda (kubectl), DynamoDB (timers) |
+| `DevOpsAgentEksMcpServer-{region}` | MCP server infra | AgentCore Gateway, Lambda (VPC), Secrets Manager (read-only DB creds), Cognito (OAuth), VPC endpoint |
 
 ## Project Structure
 
 ```
 ├── deploy-all.sh / .ps1              # One-command deployment
 ├── cdk/
-│   ├── bin/app.ts                    # CDK entry point (9 stacks, region-suffixed)
+│   ├── bin/app.ts                    # CDK entry point (10 stacks, region-suffixed)
 │   ├── lib/                          # Stack definitions
 │   └── lambda/
 │       ├── devops-agent-trigger/     # Alarm → webhook Lambda
-│       └── failure-simulator-api/    # Lab API Lambda (inject/rollback/status/usage/logs)
+│       ├── failure-simulator-api/    # Lab API Lambda (inject/rollback/status/usage/logs)
+│       └── mcp-transaction-insights/ # Payment DB query Lambda (AgentCore Gateway target)
 ├── k8s/                              # Kubernetes manifests (Kustomize)
 │   ├── base/                         # Deployments, services, configmap, Fluent Bit
 │   └── overlays/dev|staging|prod     # Environment-specific patches
@@ -277,6 +320,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   └── webhook-service/              # Node.js 20 + TypeScript (EKS)
 ├── scripts/
 │   ├── setup-devops-agent.sh / .ps1  # Agent Space + IAM + webhook setup (6 steps)
+│   ├── deploy-mcp-server.sh          # MCP server deployment to AgentCore Runtime
 │   └── cleanup.sh / .ps1             # Delete all resources
 └── docs/
     ├── ARCHITECTURE.md               # Full architecture documentation
@@ -341,7 +385,7 @@ bash scripts/cleanup.sh              # Bash
 .\scripts\cleanup.ps1                # PowerShell
 ```
 
-The cleanup script deletes all resources in reverse dependency order: CloudFormation stacks, ECR images, EKS kubectl-managed resources, RDS instance, S3 buckets, Secrets Manager secrets, CloudWatch log groups, DevOps Agent Space, and IAM roles.
+The cleanup script deletes all resources in reverse dependency order: AgentCore Gateway MCP server registration, private connections, CloudFormation stacks, ECR images, EKS kubectl-managed resources, RDS instance, S3 buckets, Secrets Manager secrets, CloudWatch log groups, DevOps Agent Space, and IAM roles.
 
 ## Contributing
 
