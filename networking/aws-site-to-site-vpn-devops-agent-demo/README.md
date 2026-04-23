@@ -1,4 +1,4 @@
-# Intelligent Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent
+# Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent
 
 *Automated root-cause analysis and business-context enrichment for AWS Site-to-Site VPN failures — powered by Amazon DevOps Agent.*
 
@@ -45,6 +45,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 - **EC2 key pair** in your target region
 - **bash** 4+ and **jq**
 - No existing DevOps Agent Space needed — the setup script creates one
+- **Supported regions**: us-east-1, us-west-2, ap-southeast-2, ap-northeast-1, eu-central-1, eu-west-1
 
 ## Quick Start
 
@@ -52,7 +53,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 
 ```bash
 git clone https://github.com/aws-samples/sample-aws-genai-ops-demos.git
-cd sample-aws-genai-ops-demos/networking/vpn-tunnel-investigation-devops-agent
+cd sample-aws-genai-ops-demos/networking/aws-site-to-site-vpn-devops-agent-demo
 ```
 
 ### 2. Set up DevOps Agent
@@ -71,7 +72,7 @@ The script automates steps 1–4 and pauses at step 5 for you to create the webh
 4. Enables the Operator App with IAM auth
 5. **Pauses** — the script prints an AWS DevOps Agent console URL and asks you to create a webhook:
    1. Open the **AWS DevOps Agent console** URL printed by the script
-   2. Under **Webhooks**, click **Add**
+   2. Under **Webhooks**, click **Add webhook**
    3. Copy the **Webhook URL** and **Webhook Secret** shown (save these — they won't be shown again)
    4. Paste them back into the terminal when prompted
 

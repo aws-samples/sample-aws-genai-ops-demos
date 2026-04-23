@@ -15,7 +15,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
-| Intelligent Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Networking | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [networking/vpn-tunnel-investigation-devops-agent/](networking/vpn-tunnel-investigation-devops-agent/README.md) |
+| Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Networking | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [networking/aws-site-to-site-vpn-devops-agent-demo/](networking/aws-site-to-site-vpn-devops-agent-demo/README.md) |
 
 ## Roadmap (Coming Soon)
 
@@ -39,7 +39,7 @@ operations-automation/
 observability/
 └── eks-investigation-devops-agent/
 networking/
-└── vpn-tunnel-investigation-devops-agent/
+└── aws-site-to-site-vpn-devops-agent-demo/
 resilience/
 └── ai-chaos-engineering-with-fis/
 shared/
