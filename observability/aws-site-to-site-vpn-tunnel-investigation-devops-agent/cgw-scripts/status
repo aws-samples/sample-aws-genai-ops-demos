@@ -1,4 +1,14 @@
 #!/bin/bash
+STATE_FILE="/opt/vpn-demo/active"
+
+echo "=== Active Scenario ==="
+if [ -f "$STATE_FILE" ]; then
+  echo "$(cat "$STATE_FILE")"
+else
+  echo "None"
+fi
+
+echo ""
 echo "=== IPsec Status ==="
 ipsec whack --status 2>&1 | grep -E "ESTABLISHED|Total" || echo "ipsec not running"
 

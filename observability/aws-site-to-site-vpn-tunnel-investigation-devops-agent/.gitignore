@@ -1,0 +1,14 @@
+# Internal project tracking (contain account IDs and secrets)
+PROJECT-STATUS.md
+TESTING-PROGRESS.md
+
+# Python
+__pycache__/
+*.pyc
+
+# CDK
+cdk.out*
+.venv/
+
+# Keys
+*.pem

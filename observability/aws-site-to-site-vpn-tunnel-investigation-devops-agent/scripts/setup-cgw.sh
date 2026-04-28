@@ -1,99 +1,67 @@
 #!/usr/bin/env bash
-# deploy.sh — Full deployment: CFN stack + CGW configuration + alarms
-# For console users who already deployed the stack, use: scripts/setup-cgw.sh
-set -e
+# setup-cgw.sh — Configure the CGW instance after stack deployment
+# Configures libreswan + GoBGP, creates per-tunnel alarms, installs inject scripts
+#
+# Usage: ./setup-cgw.sh --key-file <path> [--region <region>]
+set -euo pipefail
 
-STACK_NAME="vpn-devops-demo"
-ROUTING="bgp"
-REGION=""
-KEY_PAIR=""
 KEY_FILE=""
-WEBHOOK_URL=""
-WEBHOOK_SECRET=""
-
-usage() {
-  echo "Usage: $0 --region <region> --key-file <path> [--stack-name <name>] [--key-pair <name>] [--routing bgp|static] [--webhook-url <url>] [--webhook-secret <secret>]"
-  exit 1
-}
+REGION=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --region) REGION="$2"; shift 2;;
-    --stack-name) STACK_NAME="$2"; shift 2;;
-    --key-pair) KEY_PAIR="$2"; shift 2;;
     --key-file) KEY_FILE="$2"; shift 2;;
-    --routing) ROUTING="$2"; shift 2;;
-    --webhook-url) WEBHOOK_URL="$2"; shift 2;;
-    --webhook-secret) WEBHOOK_SECRET="$2"; shift 2;;
-    -h|--help) usage;;
-    *) usage;;
+    --region) REGION="$2"; shift 2;;
+    -h|--help) echo "Usage: $0 --key-file <path> [--region <region>]"; exit 0;;
+    *) echo "Unknown option: $1"; exit 1;;
   esac
 done
 
-[[ -z "$REGION" ]] && echo "ERROR: --region is required" && usage
-[[ -z "$KEY_FILE" ]] && echo "ERROR: --key-file is required" && usage
-[[ ! -f "$KEY_FILE" ]] && echo "ERROR: key file not found: $KEY_FILE" && exit 1
-[[ "$ROUTING" != "bgp" && "$ROUTING" != "static" ]] && echo "ERROR: --routing must be bgp or static" && usage
+[[ -z "$KEY_FILE" ]] && { echo "ERROR: --key-file is required"; exit 1; }
+[[ ! -f "$KEY_FILE" ]] && { echo "ERROR: key file not found: $KEY_FILE"; exit 1; }
+[[ -z "$REGION" ]] && REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null)}}"
+[[ -z "$REGION" ]] && { echo "ERROR: --region required (or set via 'aws configure' or AWS_DEFAULT_REGION)"; exit 1; }
 
-if [[ -z "$KEY_PAIR" ]]; then
-  echo "Available key pairs in $REGION:"
-  aws ec2 describe-key-pairs --region "$REGION" --query 'KeyPairs[].KeyName' --output table
-  read -rp "Enter key pair name: " KEY_PAIR
-  [[ -z "$KEY_PAIR" ]] && echo "ERROR: key pair required" && exit 1
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STACK_NAME="VpnDemoStack-$REGION"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $KEY_FILE"
 SSH_USER="ec2-user"
 
 # =============================================================================
-echo "==> Step 1: Deploy CloudFormation stack..."
-PARAMS="RoutingType=$ROUTING KeyPairName=$KEY_PAIR"
-[[ -n "$WEBHOOK_URL" ]] && PARAMS="$PARAMS DevOpsAgentWebhookUrl=$WEBHOOK_URL"
-[[ -n "$WEBHOOK_SECRET" ]] && PARAMS="$PARAMS DevOpsAgentWebhookSecret=$WEBHOOK_SECRET"
-
-aws cloudformation deploy \
-  --region "$REGION" \
-  --template-file "$SCRIPT_DIR/vpn-demo.yaml" \
-  --stack-name "$STACK_NAME" \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides $PARAMS
-
-# =============================================================================
-echo "==> Step 2: Fetch stack outputs..."
+echo "==> Fetching stack outputs..."
 get_output() {
   aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text --no-cli-pager
 }
 
 VPN_ID=$(get_output VpnConnectionId)
 CGW_EIP=$(get_output CgwPublicIp)
 CLOUD_PRIVATE_IP=$(get_output CloudInstancePrivateIp)
 SNS_TOPIC_ARN=$(get_output AlarmSnsTopicArn)
+ROUTING=$(get_output RoutingType)
 
-echo "  VPN: $VPN_ID | CGW: $CGW_EIP | Cloud: $CLOUD_PRIVATE_IP"
-
-# =============================================================================
-# From here, same as scripts/setup-cgw.sh
-# =============================================================================
+echo "  VPN: $VPN_ID | CGW: $CGW_EIP | Cloud: $CLOUD_PRIVATE_IP | Routing: $ROUTING"
 
 run_ssh() { ssh $SSH_OPTS "${SSH_USER}@${CGW_EIP}" "$1"; }
 
-echo "==> Step 3: Wait for SSH on $CGW_EIP..."
+# =============================================================================
+echo "==> Waiting for SSH on $CGW_EIP..."
 for i in {1..30}; do
   ssh $SSH_OPTS -o ConnectTimeout=5 "${SSH_USER}@${CGW_EIP}" "true" 2>/dev/null && break
   sleep 10; echo "  Waiting... $((i*10))s"
 done
 
-echo "==> Step 4: Wait for UserData to complete..."
+# =============================================================================
+echo "==> Waiting for UserData to complete..."
 for i in {1..30}; do
   run_ssh "grep -q USERDATA_COMPLETE /var/log/vpn-userdata.log 2>/dev/null" && echo "  Done." && break
   sleep 10; echo "  Packages installing... ($i/30)"
 done
 
-echo "==> Step 5: Fetch VPN tunnel details..."
+# =============================================================================
+echo "==> Fetching VPN tunnel details..."
 VPN_JSON=$(aws ec2 describe-vpn-connections --region "$REGION" \
-  --vpn-connection-ids "$VPN_ID" --query 'VpnConnections[0]' --output json)
+  --vpn-connection-ids "$VPN_ID" --query 'VpnConnections[0]' --output json --no-cli-pager)
 
 T1_IP=$(echo "$VPN_JSON" | jq -r '.Options.TunnelOptions[0].OutsideIpAddress')
 T2_IP=$(echo "$VPN_JSON" | jq -r '.Options.TunnelOptions[1].OutsideIpAddress')
@@ -103,7 +71,7 @@ T2_PSK=$(echo "$VPN_JSON" | jq -r '.Options.TunnelOptions[1].PreSharedKey')
 echo "  Tunnel 1: $T1_IP | Tunnel 2: $T2_IP"
 
 # =============================================================================
-echo "==> Step 6: Configure Libreswan on CGW..."
+echo "==> Configuring Libreswan on CGW..."
 run_ssh "sudo bash -s" <<EOF
 set -e
 
@@ -180,7 +148,7 @@ EOF
 
 # =============================================================================
 if [[ "$ROUTING" == "bgp" ]]; then
-  echo "==> Step 7: Configure GoBGP..."
+  echo "==> Configuring GoBGP..."
   run_ssh "sudo bash -s" <<EOF
 set -e
 
@@ -219,7 +187,7 @@ After=network.target ipsec.service
 
 [Service]
 ExecStart=/usr/local/bin/gobgpd -f /etc/gobgp.toml -r
-ExecStartPost=/bin/bash -c 'sleep 5 && /usr/local/bin/gobgp global rib add 172.16.0.0/16 origin igp -a ipv4'
+ExecStartPost=/bin/bash -c 'sleep 5 && /usr/local/bin/gobgp global rib add 172.16.0.0/16 origin igp -a ipv4 && ip route replace 10.0.0.0/16 via 169.254.10.1 dev vti1'
 Restart=always
 RestartSec=5
 
@@ -236,17 +204,17 @@ echo "=== BGP ==="
 /usr/local/bin/gobgp neighbor
 EOF
 else
-  echo "==> Step 7: Adding static route..."
+  echo "==> Adding static route..."
   run_ssh "sudo ip route add 10.0.0.0/16 via 169.254.10.1 dev vti1"
 fi
 
 # =============================================================================
-echo "==> Step 8: Install inject/rollback scripts on CGW..."
+echo "==> Installing inject/rollback scripts on CGW..."
 scp $SSH_OPTS "$SCRIPT_DIR/cgw-scripts/"* "${SSH_USER}@${CGW_EIP}:/tmp/"
 run_ssh "sudo mkdir -p /opt/vpn-demo && sudo cp /tmp/inject /tmp/rollback /tmp/status /tmp/list /opt/vpn-demo/ && sudo chmod +x /opt/vpn-demo/*"
 
 # =============================================================================
-echo "==> Step 9: Create per-tunnel CloudWatch alarms..."
+echo "==> Creating per-tunnel CloudWatch alarms..."
 for TNUM in 1 2; do
   TIP=$([[ $TNUM -eq 1 ]] && echo "$T1_IP" || echo "$T2_IP")
   aws cloudwatch put-metric-alarm --region "$REGION" \
@@ -255,7 +223,7 @@ for TNUM in 1 2; do
     --dimensions "Name=VpnId,Value=$VPN_ID" "Name=TunnelIpAddress,Value=$TIP" \
     --statistic Maximum --period 60 --evaluation-periods 1 \
     --threshold 1 --comparison-operator LessThanThreshold \
-    --treat-missing-data breaching --alarm-actions "$SNS_TOPIC_ARN"
+    --treat-missing-data breaching --alarm-actions "$SNS_TOPIC_ARN" --no-cli-pager
   echo "  Created: vpn-demo-tunnel${TNUM}-down"
 done
 
@@ -264,8 +232,8 @@ aws cloudwatch put-metric-alarm --region "$REGION" \
   --metrics '[{"Id":"m1","MetricStat":{"Metric":{"Namespace":"AWS/VPN","MetricName":"TunnelDataIn","Dimensions":[{"Name":"VpnId","Value":"'"$VPN_ID"'"}]},"Period":300,"Stat":"Sum"},"ReturnData":false},{"Id":"m2","MetricStat":{"Metric":{"Namespace":"AWS/VPN","MetricName":"TunnelDataOut","Dimensions":[{"Name":"VpnId","Value":"'"$VPN_ID"'"}]},"Period":300,"Stat":"Sum"},"ReturnData":false},{"Id":"throughput","Expression":"(m1+m2)*8/300","Label":"VPN Throughput bps","ReturnData":true}]' \
   --comparison-operator LessThanThreshold --threshold 100 \
   --evaluation-periods 1 --datapoints-to-alarm 1 \
-  --treat-missing-data breaching --alarm-actions "$SNS_TOPIC_ARN"
-aws cloudwatch disable-alarm-actions --region "$REGION" --alarm-names vpn-demo-throughput-drop
+  --treat-missing-data breaching --alarm-actions "$SNS_TOPIC_ARN" --no-cli-pager
+aws cloudwatch disable-alarm-actions --region "$REGION" --alarm-names vpn-demo-throughput-drop --no-cli-pager
 echo "  Created: vpn-demo-throughput-drop (actions disabled — enable only for throughput-degradation scenario)"
 
 VPN_LOG_GROUP=$(get_output VpnLogGroupName)
@@ -273,36 +241,33 @@ aws logs put-metric-filter --region "$REGION" \
   --log-group-name "$VPN_LOG_GROUP" \
   --filter-name vpn-demo-route-withdrawn \
   --filter-pattern '"WITHDRAWN"' \
-  --metric-transformations metricName=RouteWithdrawn,metricNamespace=VPNDemo,metricValue=1,defaultValue=0
+  --metric-transformations metricName=RouteWithdrawn,metricNamespace=VPNDemo,metricValue=1,defaultValue=0 --no-cli-pager
 
 aws cloudwatch put-metric-alarm --region "$REGION" \
   --alarm-name vpn-demo-route-withdrawn \
   --namespace VPNDemo --metric-name RouteWithdrawn \
   --statistic Sum --period 60 --evaluation-periods 1 \
   --threshold 1 --comparison-operator GreaterThanOrEqualToThreshold \
-  --treat-missing-data notBreaching --alarm-actions "$SNS_TOPIC_ARN"
-aws cloudwatch disable-alarm-actions --region "$REGION" --alarm-names vpn-demo-route-withdrawn
+  --treat-missing-data notBreaching --alarm-actions "$SNS_TOPIC_ARN" --no-cli-pager
+aws cloudwatch disable-alarm-actions --region "$REGION" --alarm-names vpn-demo-route-withdrawn --no-cli-pager
 echo "  Created: vpn-demo-route-withdrawn (actions disabled — enable only for bgp-route-withdraw scenario)"
 
 # =============================================================================
-echo "==> Step 10: Start baseline ping traffic (for throughput alarm)..."
+echo "==> Starting baseline ping traffic (for throughput alarm)..."
 CGW_PRIVATE_IP=$(run_ssh "ip -4 addr show ens5 | grep inet | awk '{print \$2}' | cut -d/ -f1")
 run_ssh "nohup ping -I $CGW_PRIVATE_IP $CLOUD_PRIVATE_IP -i 0.5 > /dev/null 2>&1 &"
 echo "  Baseline ping: $CGW_PRIVATE_IP → $CLOUD_PRIVATE_IP (every 0.5s)"
+
+# =============================================================================
 echo ""
 echo "============================================"
-echo "  VPN Demo Ready"
+echo "  CGW configured — demo ready!"
 echo "============================================"
-echo "  VPN Connection : $VPN_ID"
-echo "  CGW (SSH)      : ssh -i $KEY_FILE ${SSH_USER}@$CGW_EIP"
-echo "  Cloud Instance : $CLOUD_PRIVATE_IP"
-echo "  Tunnel 1       : $T1_IP"
-echo "  Tunnel 2       : $T2_IP"
-echo "  Routing        : $ROUTING"
+echo "  SSH into CGW:  ssh -i $KEY_FILE ${SSH_USER}@$CGW_EIP"
 echo ""
-echo "  Commands on CGW:"
-echo "    sudo /opt/vpn-demo/list"
-echo "    sudo /opt/vpn-demo/status"
-echo "    sudo /opt/vpn-demo/inject <scenario>"
+echo "  Commands:"
+echo "    sudo /opt/vpn-demo/list              # See scenarios"
+echo "    sudo /opt/vpn-demo/status            # Check tunnel/BGP state"
+echo "    sudo /opt/vpn-demo/inject <scenario> # Break something"
 echo "    sudo /opt/vpn-demo/rollback <scenario>"
 echo "============================================"

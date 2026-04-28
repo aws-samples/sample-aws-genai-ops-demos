@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 SCENARIO="$1"
+STATE_FILE="/opt/vpn-demo/active"
 BACKUP="/tmp/vpn-demo-backup"
 IPSEC_CONF="/etc/ipsec.d/vpn-demo.conf"
 IPSEC_SECRETS="/etc/ipsec.d/vpn-demo.secrets"
@@ -8,10 +9,27 @@ GOBGP="/usr/local/bin/gobgp"
 
 [ -z "$SCENARIO" ] && echo "Usage: $0 <scenario>" && exit 1
 
+# Check if a scenario is already active
+if [ -f "$STATE_FILE" ]; then
+  ACTIVE=$(cat "$STATE_FILE")
+  echo "WARNING: $ACTIVE is already active."
+  echo "Rollback first: sudo /opt/vpn-demo/rollback $ACTIVE"
+  exit 1
+fi
+
+# Validate scenario name before proceeding
+case "$SCENARIO" in
+  psk-mismatch|dpd-timeout|proposal-mismatch|traffic-selector|tunnel-down|throughput-degradation|bgp-down|bgp-asn-mismatch|bgp-hold-timer|bgp-route-withdraw) ;;
+  *) echo "Unknown scenario: $SCENARIO"; echo "Run 'list' to see available scenarios"; exit 1 ;;
+esac
+
 mkdir -p "$BACKUP"
 cp -f "$IPSEC_CONF" "$BACKUP/" 2>/dev/null || true
 cp -f "$IPSEC_SECRETS" "$BACKUP/" 2>/dev/null || true
 cp -f /etc/gobgp.toml "$BACKUP/" 2>/dev/null || true
+
+# Record active scenario before injection so rollback works even if inject fails mid-way
+echo "$SCENARIO" > "$STATE_FILE"
 
 case "$SCENARIO" in
   psk-mismatch)
@@ -47,12 +65,12 @@ case "$SCENARIO" in
     ;;
   tunnel-down)
     ipsec auto --down tunnel1 || true
+    ipsec auto --delete tunnel1 || true
     ipsec auto --down tunnel2 || true
+    ipsec auto --delete tunnel2 || true
     echo "Expected: CloudWatch TunnelState = 0"
     ;;
   throughput-degradation)
-    # Use prio qdisc with tc filters to exempt BGP (TCP 179) from impairment.
-    # This prevents BGP hold-timer expiry and tunnel cascade.
     for DEV in vti1 vti2; do
       tc qdisc add dev $DEV root handle 1: prio bands 3 priomap 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
       tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip dport 179 0xffff flowid 1:1
@@ -84,10 +102,6 @@ case "$SCENARIO" in
     $GOBGP global rib del 172.16.0.0/16 -a ipv4
     echo "Expected: 'Route status WITHDRAWN'"
     ;;
-  *)
-    echo "Unknown scenario: $SCENARIO"
-    echo "Run 'list' to see available scenarios"
-    exit 1
-    ;;
 esac
+
 echo "Injected: $SCENARIO"

@@ -9,8 +9,8 @@
 #   2. Creates an Agent Space
 #   3. Associates the AWS account
 #   4. Enables the Operator App
-#   5. Prompts you to create a webhook in the AWS DevOps Agent console
-#   6. Prints webhook URL + secret for use with deploy.sh
+#   5. Creates a generic webhook (for alarm → agent integration)
+#   6. Prints webhook URL + secret for use with deploy-all.sh
 #
 # Reference: https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-cli-onboarding-guide.html
 set -euo pipefail
@@ -34,9 +34,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$REGION" ]] && { echo "ERROR: --region is required"; usage; }
+[[ -z "$REGION" ]] && REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null)}}"
+[[ -z "$REGION" ]] && { echo "ERROR: --region is required (or set via 'aws configure' or AWS_DEFAULT_REGION)"; usage; }
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
 echo "Account: $ACCOUNT_ID  Region: $REGION"
 echo ""
 
@@ -69,12 +70,12 @@ EOF
 aws iam create-role \
   --role-name DevOpsAgentRole-AgentSpace \
   --assume-role-policy-document "file://$TMPDIR/agentspace-trust.json" \
-  --query 'Role.Arn' --output text 2>/dev/null || \
-  aws iam get-role --role-name DevOpsAgentRole-AgentSpace --query 'Role.Arn' --output text
+  --query 'Role.Arn' --output text --no-cli-pager 2>/dev/null || \
+  aws iam get-role --role-name DevOpsAgentRole-AgentSpace --query 'Role.Arn' --output text --no-cli-pager
 
 aws iam attach-role-policy \
   --role-name DevOpsAgentRole-AgentSpace \
-  --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy 2>/dev/null || true
+  --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager 2>/dev/null || true
 
 cat > "$TMPDIR/agentspace-inline.json" << EOF
 {
@@ -93,7 +94,7 @@ EOF
 aws iam put-role-policy \
   --role-name DevOpsAgentRole-AgentSpace \
   --policy-name AllowCreateServiceLinkedRoles \
-  --policy-document "file://$TMPDIR/agentspace-inline.json" 2>/dev/null || true
+  --policy-document "file://$TMPDIR/agentspace-inline.json" --no-cli-pager 2>/dev/null || true
 
 AGENTSPACE_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/DevOpsAgentRole-AgentSpace"
 echo "  ✅ $AGENTSPACE_ROLE_ARN"
@@ -120,12 +121,12 @@ EOF
 aws iam create-role \
   --role-name DevOpsAgentRole-WebappAdmin \
   --assume-role-policy-document "file://$TMPDIR/operator-trust.json" \
-  --query 'Role.Arn' --output text 2>/dev/null || \
-  aws iam get-role --role-name DevOpsAgentRole-WebappAdmin --query 'Role.Arn' --output text
+  --query 'Role.Arn' --output text --no-cli-pager 2>/dev/null || \
+  aws iam get-role --role-name DevOpsAgentRole-WebappAdmin --query 'Role.Arn' --output text --no-cli-pager
 
 aws iam attach-role-policy \
   --role-name DevOpsAgentRole-WebappAdmin \
-  --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy 2>/dev/null || true
+  --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager 2>/dev/null || true
 
 OPERATOR_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/DevOpsAgentRole-WebappAdmin"
 echo "  ✅ $OPERATOR_ROLE_ARN"
@@ -142,7 +143,7 @@ AGENT_SPACE_ID=$(aws devops-agent create-agent-space \
   --name "$AGENT_SPACE_NAME" \
   --description "Agent Space for VPN tunnel investigation demo" \
   --region "$REGION" \
-  --query 'agentSpace.agentSpaceId' --output text)
+  --query 'agentSpace.agentSpaceId' --output text --no-cli-pager)
 
 echo "  ✅ Agent Space ID: $AGENT_SPACE_ID"
 
@@ -161,7 +162,7 @@ aws devops-agent associate-service \
       \"accountType\": \"monitor\"
     }
   }" \
-  --region "$REGION" > /dev/null
+  --region "$REGION" --no-cli-pager > /dev/null
 
 echo "  ✅ Account $ACCOUNT_ID associated"
 
@@ -170,29 +171,28 @@ echo ""
 echo "=== Step 4: Enable Operator App ==="
 # ============================================================
 
-aws devops-agent enable-operator-app \
+OPERATOR_URL=$(aws devops-agent enable-operator-app \
   --agent-space-id "$AGENT_SPACE_ID" \
   --auth-flow iam \
   --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
-  --region "$REGION" > /dev/null
-
-OPERATOR_URL="https://${AGENT_SPACE_ID}.aidevops.global.app.aws/home"
-CONSOLE_URL="https://${REGION}.console.aws.amazon.com/aidevops/home?region=${REGION}#/agent-spaces/${AGENT_SPACE_ID}?view=capabilities"
+  --region "$REGION" \
+  --query 'operatorApp.url' --output text --no-cli-pager 2>/dev/null || echo "")
 
 echo "  ✅ Operator App enabled"
-echo "  Operator App URL (for viewing investigations later):"
-echo "    $OPERATOR_URL"
+[[ -n "$OPERATOR_URL" ]] && echo "  URL: $OPERATOR_URL"
 
 # ============================================================
 echo ""
 echo "=== Step 5: Create webhook ==="
 echo "  ⚠️  You need to create the webhook in the AWS DevOps Agent console."
 echo ""
-echo "  1. Open the AWS DevOps Agent console:"
-echo "    $CONSOLE_URL"
-echo "  2. Under Webhooks, click Add webhook"
-echo "  3. Copy the Webhook URL and Webhook Secret shown"
-echo "     (save these — they won't be shown again)"
+echo "  1. Open the AWS DevOps Agent console: https://console.aws.amazon.com/aidevops/"
+echo "  2. Select your Agent Space: $AGENT_SPACE_NAME"
+echo "  3. Go to the Capabilities tab"
+echo "  4. In the Webhooks section, click Add webhook"
+echo "  5. Click Next through the schema and HMAC steps"
+echo "  6. Click 'Generate URL and secret key'"
+echo "  7. Copy the Webhook URL and Secret key, then click Add"
 echo ""
 read -p "  Paste your Webhook URL: " WEBHOOK_URL
 read -p "  Paste your Webhook Secret: " WEBHOOK_SECRET
@@ -207,17 +207,15 @@ echo "  Agent Space Name: $AGENT_SPACE_NAME"
 echo "  Region         : $REGION"
 echo "  Account        : $ACCOUNT_ID"
 echo "  Operator App   : $OPERATOR_URL"
-echo "  Console        : $CONSOLE_URL"
 echo ""
-echo "  Use these with deploy.sh:"
+echo "  Use these with deploy-all.sh:"
 echo "  --webhook-url '$WEBHOOK_URL'"
 echo "  --webhook-secret '$WEBHOOK_SECRET'"
 echo ""
 echo "  Full deploy command:"
-echo "  bash deploy.sh \\"
-echo "    --region $REGION \\"
+echo "  bash deploy-all.sh \\"
+echo "    --key-file <your-key-file> \\"
 echo "    --key-pair <your-key-pair> \\"
-echo "    --key-file <path-to-key-file> \\"
 echo "    --webhook-url '$WEBHOOK_URL' \\"
 echo "    --webhook-secret '$WEBHOOK_SECRET'"
 echo "============================================"

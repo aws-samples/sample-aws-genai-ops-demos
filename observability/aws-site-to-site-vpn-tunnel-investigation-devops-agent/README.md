@@ -1,10 +1,10 @@
-# Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent
+# Intelligent Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent
 
-*Automated root-cause analysis and business-context enrichment for AWS Site-to-Site VPN failures — powered by Amazon DevOps Agent.*
+*Automated root-cause analysis and business-context enrichment for AWS Site-to-Site VPN tunnel failures — powered by Amazon DevOps Agent.*
 
 ## Overview
 
-AWS Site-to-Site VPN tunnels fail for dozens of reasons — pre-shared key mismatches, IKE proposal incompatibilities, dead-peer-detection timeouts, BGP session drops, and subtle throughput degradation. When a tunnel goes down at 2 AM, an on-call engineer must sift through CloudWatch metrics, VPN tunnel logs, and IPsec configuration to find the root cause. That manual triage is slow, error-prone, and expensive.
+AWS Site-to-Site VPN tunnels fail for dozens of reasons — pre-shared key mismatches, IKE proposal incompatibilities, dead-peer-detection timeouts, BGP session drops, BGP route withdrawals, and subtle throughput degradation. When a tunnel goes down at 2 AM, an on-call engineer must sift through CloudWatch metrics, VPN tunnel logs, and IPsec configuration to find the root cause. That manual triage is slow, error-prone, and expensive.
 
 This demo deploys a fully self-contained VPN environment — two VPCs, a Libreswan/GoBGP customer gateway on Amazon Linux 2023, per-tunnel CloudWatch alarms, and a throughput alarm — then lets you inject 10 realistic failure scenarios and watch Amazon DevOps Agent automatically investigate each one. The agent reads VPN tunnel logs, correlates CloudWatch metrics, identifies the root cause, and enriches its findings with business context from an MCP server that provides service dependency, cost impact, and compliance data.
 
@@ -15,7 +15,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 - **Duration**: ~25 minutes total (Agent Space setup + infrastructure deployment)
 - **Difficulty**: Intermediate
 - **Audience**: DevOps engineers, SREs, cloud architects evaluating Amazon DevOps Agent
-- **Key technologies**: AWS Site-to-Site VPN, CloudWatch, SNS, Lambda, CloudFormation, Libreswan, GoBGP, Amazon DevOps Agent, MCP (Model Context Protocol)
+- **Key technologies**: AWS Site-to-Site VPN, CloudWatch, SNS, Lambda, AWS CDK (Python), Libreswan, GoBGP, Amazon DevOps Agent, MCP (Model Context Protocol)
 - **Cost**: ~$0.12/hr (VPN connection + 2× t3.micro instances + public IPv4 addresses + CloudWatch/Lambda/SNS)
 - **Failure scenarios**: 10 total — 5 IKE scenarios + 3 BGP scenarios + 1 route withdrawal scenario + 1 throughput scenario (run last two with dedicated alarms enabled)
 - **Routing modes**: BGP (dynamic routing)
@@ -41,19 +41,27 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 
 ## Prerequisites
 
-- **AWS CLI** v2.34.21+ with credentials configured
-- **EC2 key pair** in your target region
-- **bash** 4+ and **jq**
+- **AWS CLI** v2.34.21+ with credentials and region configured (`aws configure`)
+- **Node.js** 18+ (for AWS CDK)
+- **Python** 3.9+ (for AWS CDK)
+- **EC2 key pair** in your target region ([create one](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-key-pairs.html) if you don't have one):
+  ```bash
+  aws ec2 create-key-pair --key-name vpn-demo-key \
+    --query 'KeyMaterial' --output text > ~/.ssh/vpn-demo-key.pem
+  chmod 400 ~/.ssh/vpn-demo-key.pem
+  ```
+- **bash** 4+ and **jq** (or PowerShell 7+ on Windows — use `deploy-all.ps1` instead)
 - No existing DevOps Agent Space needed — the setup script creates one
-- **Supported regions**: us-east-1, us-west-2, ap-southeast-2, ap-northeast-1, eu-central-1, eu-west-1
 
 ## Quick Start
+
+> **Windows users**: Replace `bash deploy-all.sh` with `.\deploy-all.ps1` in the commands below. All parameters are the same (use `-KeyFile` instead of `--key-file`, `-WebhookUrl` instead of `--webhook-url`, etc.).
 
 ### 1. Clone the repository
 
 ```bash
 git clone https://github.com/aws-samples/sample-aws-genai-ops-demos.git
-cd sample-aws-genai-ops-demos/networking/aws-site-to-site-vpn-devops-agent-demo
+cd sample-aws-genai-ops-demos/observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent
 ```
 
 ### 2. Set up DevOps Agent
@@ -61,7 +69,13 @@ cd sample-aws-genai-ops-demos/networking/aws-site-to-site-vpn-devops-agent-demo
 Run the setup script to create IAM roles, an Agent Space, and configure the webhook:
 
 ```bash
-bash scripts/setup-devops-agent.sh --region us-east-1
+bash scripts/setup-devops-agent.sh
+```
+
+The script uses your configured AWS region (`aws configure get region`). To use a different region, pass `--region`:
+
+```bash
+bash scripts/setup-devops-agent.sh --region us-west-2
 ```
 
 The script automates steps 1–4 and pauses at step 5 for you to create the webhook:
@@ -70,116 +84,108 @@ The script automates steps 1–4 and pauses at step 5 for you to create the webh
 2. Creates an Agent Space named `vpn-demo-agent-space`
 3. Associates your AWS account with the Agent Space
 4. Enables the Operator App with IAM auth
-5. **Pauses** — the script prints an AWS DevOps Agent console URL and asks you to create a webhook:
-   1. Open the **AWS DevOps Agent console** URL printed by the script
-   2. Under **Webhooks**, click **Add webhook**
-   3. Copy the **Webhook URL** and **Webhook Secret** shown (save these — they won't be shown again)
-   4. Paste them back into the terminal when prompted
+5. **Pauses** — asks you to create a webhook in the AWS DevOps Agent console:
+   1. Open the [AWS DevOps Agent console](https://console.aws.amazon.com/aidevops/)
+   2. Select your Agent Space (`vpn-demo-agent-space`)
+   3. Go to the **Capabilities** tab
+   4. In the **Webhooks** section, click **Add webhook**
+   5. Click **Next** through the schema and HMAC steps
+   6. Click **Generate URL and secret key**
+   7. Copy the **Webhook URL** and **Secret key**, then click **Add**
+   8. Paste them back into the terminal when prompted
 
 Save the webhook URL and secret — you'll need them in the next step.
 
 ### 3. Deploy the VPN infrastructure
 
 ```bash
-bash deploy.sh \
-  --region us-east-1 \
-  --key-pair my-key-pair \
+bash deploy-all.sh \
   --key-file ~/.ssh/my-key.pem \
+  --key-pair my-key-pair \
   --webhook-url 'https://your-webhook-url' \
   --webhook-secret 'your-webhook-secret'
 ```
 
 | Flag | Required | Description |
 |---|---|---|
-| `--region` | Yes | AWS region |
-| `--key-pair` | Yes | EC2 key pair name (must exist in the region) |
 | `--key-file` | Yes | Path to the private key file for SSH access to the CGW |
-| `--webhook-url` | Yes | DevOps Agent webhook URL from step 2 |
-| `--webhook-secret` | Yes | DevOps Agent webhook secret from step 2 |
-| `--stack-name` | No | CloudFormation stack name (default: vpn-devops-demo) |
+| `--key-pair` | No | EC2 key pair name (prompted if not provided) |
+| `--webhook-url` | No | DevOps Agent webhook URL from step 2 (omit to skip webhook setup) |
+| `--webhook-secret` | No | DevOps Agent webhook secret from step 2 |
+| `--routing` | No | `bgp` (default) or `static` |
+
+> **Note**: The region is detected automatically from your AWS CLI configuration (`aws configure get region`). To deploy in a different region, run `export AWS_DEFAULT_REGION=us-west-2` before the deploy command.
 
 The deploy script:
-1. Creates the CloudFormation stack (2 VPCs, VPN connection, SNS topic, webhook Lambda)
-2. SSHes into the CGW instance and configures Libreswan (IPsec) + GoBGP (BGP)
-3. Installs inject/rollback/status/list scripts on the CGW
-4. Creates 4 CloudWatch alarms (2 per-tunnel, 1 throughput, 1 route-withdrawn)
-5. Starts baseline ping traffic for the throughput alarm
-
-> **Console alternative**: You can deploy the infrastructure from the AWS Console instead of the CLI:
-> 1. Go to **CloudFormation → Create stack → Upload a template file** → upload `vpn-demo.yaml`
-> 2. Fill in the parameters: key pair name, webhook URL, webhook secret
-> 3. Click **Create stack** and wait for it to complete
-> 4. Then configure the CGW from your terminal:
->    ```bash
->    bash scripts/setup-cgw.sh <stack-name> <region> <key-file>
->    ```
+1. Checks prerequisites (AWS CLI, credentials, region)
+2. Deploys the CDK stack (2 VPCs, VPN connection, SNS topic, webhook Lambda)
+3. SSHes into the CGW instance and configures Libreswan (IPsec) + GoBGP (BGP)
+4. Installs inject/rollback/status/list scripts on the CGW
+5. Creates 4 CloudWatch alarms (2 per-tunnel, 1 throughput, 1 route-withdrawn)
+6. Starts baseline ping traffic for the throughput alarm
 
 ### 4. Deploy the MCP Server
 
 The MCP server gives DevOps Agent business context (service dependencies, cost impact, compliance status) during investigations. It runs as a Lambda function behind API Gateway.
 
-**4a. Package and deploy:**
+**4a. Deploy via CDK:**
 
 ```bash
-# Set your account ID
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION=$(aws configure get region)
 
-# Create an S3 bucket for the Lambda package
-aws s3 mb s3://my-mcp-bucket-${AWS_ACCOUNT_ID} --region us-east-1
-
-# Package and upload
-cd mcp-server
-zip app.zip app.py
-aws s3 cp app.zip s3://my-mcp-bucket-${AWS_ACCOUNT_ID}/app.zip
-cd ..
+# Set PYTHONPATH so CDK app can import shared utilities
+export PYTHONPATH="$(cd ../.. && pwd)"
 
 # Deploy the MCP server stack
-aws cloudformation deploy \
-  --template-file mcp-server/template.yaml \
-  --stack-name vpn-devops-mcp-server \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-    S3Bucket=my-mcp-bucket-${AWS_ACCOUNT_ID} \
-    S3Key=app.zip \
-  --region us-east-1
+cd infrastructure/cdk
+pip install -r requirements.txt
+npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$REGION --no-cli-pager
+npx cdk deploy VpnDemoMcpServer-$REGION --require-approval never --no-cli-pager
+cd ../..
 ```
+
+> **Note**: If you already ran `deploy-all.sh` (step 3), CDK bootstrap is already done and will be skipped automatically.
 
 **4b. Get the endpoint URL and API key:**
 
 ```bash
+REGION=$(aws configure get region)
+
 # Endpoint URL
 aws cloudformation describe-stacks \
-  --stack-name vpn-devops-mcp-server \
+  --stack-name VpnDemoMcpServer-$REGION \
   --query "Stacks[0].Outputs[?OutputKey=='McpEndpoint'].OutputValue" \
-  --output text --region us-east-1
+  --output text --no-cli-pager
 
 # API key
 API_KEY_ID=$(aws cloudformation describe-stacks \
-  --stack-name vpn-devops-mcp-server \
+  --stack-name VpnDemoMcpServer-$REGION \
   --query "Stacks[0].Outputs[?OutputKey=='ApiKeyId'].OutputValue" \
-  --output text --region us-east-1)
+  --output text --no-cli-pager)
 aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
-  --query 'value' --output text --region us-east-1
+  --query 'value' --output text --no-cli-pager
 ```
 
 **4c. Register in DevOps Agent:**
 
-MCP server registration and tool enablement are done in the **AWS DevOps Agent console** (not the Operator App).
-
-1. Open the **AWS DevOps Agent console** → select your Agent Space → **Capabilities**
-2. Under **MCP Server**, click **Add**
-3. Click **Register** to register a new MCP server:
-   - **Name**: `vpn-demo-mcp-server`
-   - **Endpoint URL**: *(the endpoint URL from step 4b)*
-   - **Authorization flow**: select **API Key**
-   - **API Key Name**: `vpn-demo-mcp-key`
-   - **API Key Header**: `x-api-key`
-   - **API Key Value**: *(the API key from step 4b)*
-4. After registration, click **Add** next to the registered server
-5. Select all three tools: `get_service_dependencies`, `get_cost_impact`, `get_compliance_status`
-6. Click **Save**
-
-> **Note:** After saving, the console shows a webhook URL and secret for the MCP server. You do not need these for this demo — the alarm webhook from step 2 is the one that triggers investigations. The MCP server is called by the agent during investigations, not the other way around.
+1. Open the [AWS DevOps Agent console](https://console.aws.amazon.com/aidevops/)
+2. Select your Agent Space (`vpn-demo-agent-space`)
+3. Go to the **Capabilities** tab
+4. In the **MCP Server** section, click **Add source**
+5. Select **Register** under "New MCP Server Registration"
+6. Enter the MCP server details:
+   - **Name**: `vpn-devops-mcp-server`
+   - **Endpoint**: the endpoint URL from step 4b
+7. Select **API Key** as the authorization flow
+8. Enter the API key details:
+   - **API Key Name**: `vpn-mcp-api-key` (a label to identify this key — can be any name)
+   - **API Key Value**: the API key from step 4b
+9. Click **Add** to register
+10. On the tool selection screen, select all three tools and click **Save**:
+    - `get_service_dependencies`
+    - `get_cost_impact`
+    - `get_compliance_status`
+11. A "Configure Webhook Connection" dialog appears with a capability webhook URL — click **Close** (this webhook is not needed for this demo; we use the Agent Space webhook created in step 2)
 
 ## How the Incident Detection Works
 
@@ -222,19 +228,19 @@ The `inject-failure.sh` script injects realistic failures **on the customer gate
 
 ```bash
 # Inject a failure
-bash scripts/inject-failure.sh psk-mismatch vpn-devops-demo us-east-1 --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
 
 # Rollback
-bash scripts/inject-failure.sh psk-mismatch vpn-devops-demo us-east-1 --key-file ~/.ssh/my-key.pem --rollback
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
 
 # Check IPsec/BGP status
-bash scripts/inject-failure.sh status vpn-devops-demo us-east-1 --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh status --key-file ~/.ssh/my-key.pem
 
 # List all scenarios
 bash scripts/inject-failure.sh list
 ```
 
-Replace `psk-mismatch` with any scenario name from the tables below. The stack name defaults to `vpn-devops-demo` if you didn't change it during deployment.
+Replace `psk-mismatch` with any scenario name from the tables below. The script auto-detects your region from `aws configure`.
 
 ### IKE Scenarios (5)
 
@@ -245,7 +251,7 @@ These scenarios break the IPsec tunnel at the IKE negotiation layer. Each one pr
 | 1 | psk-mismatch | Customer rotates the pre-shared key on the CGW but forgets to update AWS | Reads VPN tunnel logs, identifies PSK mismatch as root cause |
 | 2 | dpd-timeout | Firewall on CGW blocks IKE traffic (UDP 500/4500) | Identifies DPD timeout pattern, distinguishes from PSK or proposal issues |
 | 3 | proposal-mismatch | CGW configured with an unsupported IKE proposal (wrong DH group) | Finds "No Proposal Match" in logs, identifies the specific incompatible parameter |
-| 4 | traffic-selector | CGW changes its local subnet, excluding BGP tunnel IPs from the IPsec SA | IPsec stays up but BGP breaks — agent traces the root cause to traffic selector mismatch. Best demonstrated with **on-demand chat** |
+| 4 | traffic-selector | CGW changes its local subnet, excluding BGP tunnel IPs from the IPsec SA | IPsec stays up but BGP breaks — agent traces the root cause to traffic selector mismatch. Best demonstrated with **on-demand chat**: open the investigation in the Operator App, then use the Chat panel on the left sidebar to steer the agent — *"In the last 5 minutes, BGP sessions dropped on our VPN — the CGW subnet was changed. Can you investigate?"* (See [On Demand DevOps Tasks](https://docs.aws.amazon.com/devopsagent/latest/userguide/working-with-devops-agent-on-demand-devops-tasks.html) for more on Chat.) |
 | 5 | tunnel-down | CGW deliberately shuts down both IPsec tunnels | Identifies CGW-initiated tunnel teardown vs AWS-side failure |
 
 ### BGP Scenarios (3)
@@ -264,10 +270,10 @@ These scenarios use specialized alarms that are deployed with actions **disabled
 
 | # | Scenario | What It Simulates | What the Agent Finds |
 |---|---|---|---|
-| 9 | bgp-route-withdraw | CGW stops advertising a network prefix (e.g., after a routing policy change) | Finds Route status WITHDRAWN in VPN logs, identifies the specific prefix removed, detects black hole condition if static routes persist |
+| 9 | bgp-route-withdraw | CGW stops advertising a network prefix (e.g., after a routing policy change) | Finds Route status WITHDRAWN in VPN logs, identifies the specific prefix removed, detects black hole condition if static routes persist. Best demonstrated with **on-demand chat**: open the investigation in the Operator App, then use the Chat panel on the left sidebar — *"In the last 5 minutes, a BGP route was withdrawn for 172.16.0.0/16 — can you investigate?"* |
 | 10 | throughput-degradation | Network path degradation on CGW causing packet loss on VPN traffic | Throughput alarm fires while tunnels remain UP — agent investigates performance degradation, not just outages |
 
-> **Note on bgp-route-withdraw**: If run after other BGP scenarios, the agent may link the alert to the prior investigation. If this happens, use **on-demand chat** in the Operator App to ask: "A BGP route was withdrawn for 172.16.0.0/16 — can you investigate?" This also demonstrates the on-demand chat feature.
+> **Note on bgp-route-withdraw**: If run after other BGP scenarios, the agent may link the alert to the prior investigation. If this happens, open the investigation and use the Chat panel on the left sidebar to ask: "A BGP route was withdrawn for 172.16.0.0/16 — can you investigate?" This also demonstrates the on-demand chat feature.
 
 > **Throughput alarm**: The throughput alarm is deployed with actions **disabled** by default. Most scenarios cause traffic to drop (triggering a noisy second alarm), so it should only be enabled when testing `throughput-degradation`. Enable it right before injecting, and disable it after rollback:
 > ```bash
@@ -308,33 +314,44 @@ After completing the [Quick Start](#quick-start) deployment:
 ### 1. Pick a scenario and inject
 
 ```bash
-bash scripts/inject-failure.sh psk-mismatch vpn-devops-demo us-east-1 --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
 ```
+
+> **Note**: The script automatically checks tunnel health and CloudWatch alarm state before injecting. If anything is unhealthy (previous scenario not fully recovered), it warns you and asks to confirm.
 
 ### 2. Watch the agent investigate
 
 Open the Operator App. Within 1–3 minutes, the agent receives the alarm webhook and begins its investigation — reading VPN logs, checking metrics, querying the MCP server, and producing a root-cause analysis.
 
+> **Tip — Steer the investigation**: Use on-demand chat in the Operator App to guide the agent. For example, "I changed the IKE proposal on the CGW — can you check for proposal mismatches?" produces more targeted results than the automatic alarm-triggered investigation alone.
+
 ### 3. Rollback
 
 ```bash
-bash scripts/inject-failure.sh psk-mismatch vpn-devops-demo us-east-1 --key-file ~/.ssh/my-key.pem --rollback
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
 ```
 
-### 4. Repeat
+### 4. Inject the next scenario
 
-Resolve the current investigation in the Operator App, wait for alarms to return to OK, then inject the next scenario.
+Resolve the current investigation in the Operator App, then inject the next scenario. The script checks that tunnels are healthy and alarms have returned to OK before proceeding — if they haven't, it warns you and you can wait or continue.
 
-> **Tip — Running multiple scenarios**: If you inject multiple failures back-to-back, DevOps Agent will correlate them as related incidents on the same VPN connection — which is correct production behavior, but may not produce a standalone RCA for each scenario. For clean, independent investigations, wait between scenarios.
+> **Tip — Back-to-back scenarios**: DevOps Agent may correlate alarms from consecutive scenarios as related incidents on the same VPN connection. This is expected production behavior. If you want each scenario to produce a standalone investigation, allow a few minutes between scenarios or resolve the previous investigation in the Operator App before injecting.
 
 ## Project Structure
 
 ```
 aws-site-to-site-vpn-devops-agent-demo/
-├── deploy.sh                        # One-command deployment (CFN + CGW config + alarms)
-├── vpn-demo.yaml                    # CloudFormation template
+├── deploy-all.sh                    # Bash deployment (CDK + CGW config + alarms)
+├── deploy-all.ps1                   # PowerShell deployment
+├── ARCHITECTURE.md                  # Architecture diagram and design
 ├── architecture.drawio              # Editable architecture diagram (draw.io)
 ├── architecture.drawio.png          # Architecture diagram image
+├── infrastructure/cdk/              # AWS CDK infrastructure (Python)
+│   ├── app.py                       # CDK app entry point (solution tracking here)
+│   ├── lib/vpn_demo_stack.py        # VPN infrastructure stack
+│   ├── lib/mcp_server_stack.py      # MCP server stack
+│   ├── requirements.txt             # Python CDK dependencies
+│   └── cdk.json                     # CDK configuration
 ├── cgw-scripts/                     # Installed on CGW at /opt/vpn-demo/
 │   ├── inject                       # Inject a failure scenario
 │   ├── rollback                     # Reverse a failure scenario
@@ -342,29 +359,27 @@ aws-site-to-site-vpn-devops-agent-demo/
 │   └── list                         # List available scenarios
 ├── scripts/
 │   ├── setup-devops-agent.sh        # Create Agent Space + IAM roles + webhook
-│   ├── setup-cgw.sh                 # Configure CGW (for Console-deployed stacks)
+│   ├── setup-cgw.sh                 # Configure CGW (standalone, for advanced users)
 │   ├── inject-failure.sh            # SSH wrapper to run inject/rollback from your laptop
-│   └── cleanup.sh                   # Delete alarms + CloudFormation stack
+│   └── cleanup.sh                   # Delete alarms + CDK stacks
 ├── mcp-server/
-│   ├── app.py                       # MCP server Lambda (JSON-RPC 2.0)
-│   └── template.yaml                # MCP server CloudFormation
+│   └── app.py                       # MCP server Lambda (JSON-RPC 2.0)
 └── README.md
 ```
 
 | File | Description |
 |---|---|
-| **deploy.sh** | End-to-end deployment: creates the CloudFormation stack, SSHes into the CGW to configure Libreswan (IPsec) and GoBGP (BGP), creates 4 CloudWatch alarms (2 per-tunnel, 1 throughput, 1 route-withdrawn with metric filter), starts baseline ping traffic, and installs the cgw-scripts. |
-| **vpn-demo.yaml** | CloudFormation template that creates two VPCs (cloud 10.0.0.0/16 + on-prem 172.16.0.0/16), a Site-to-Site VPN with tunnel logging, an SNS topic, and a conditional webhook Lambda that sends HMAC-signed payloads to DevOps Agent. Installs Libreswan, GoBGP, iptables-nft, and iproute-tc via UserData. |
-| **cgw-scripts/inject** | Runs on the CGW. Backs up IPsec/BGP config, then injects one of 10 failure scenarios. |
-| **cgw-scripts/rollback** | Runs on the CGW. Reverses the injected failure — restores config backups, removes iptables/tc rules, restarts services as needed. |
-| **cgw-scripts/status** | Runs on the CGW. Prints IPsec tunnel status, VTI interface state, tunnel reachability, and GoBGP neighbor/route table. |
+| **deploy-all.sh / .ps1** | End-to-end deployment: checks prerequisites, deploys CDK stack, SSHes into the CGW to configure Libreswan (IPsec) and GoBGP (BGP), creates 4 CloudWatch alarms, starts baseline ping traffic, and installs the cgw-scripts. |
+| **infrastructure/cdk/** | Python CDK project with two stacks: `VpnDemoStack-{region}` (VPN infrastructure) and `VpnDemoMcpServer-{region}` (MCP server). Solution adoption tracking is in `app.py`. |
+| **cgw-scripts/inject** | Runs on the CGW. Backs up IPsec/BGP config, validates scenario name, records active state, then injects one of 10 failure scenarios. |
+| **cgw-scripts/rollback** | Runs on the CGW. Checks state file, verifies injection is present on the system, reverses the failure, clears state, and verifies the system is clean. |
+| **cgw-scripts/status** | Runs on the CGW. Prints active scenario, IPsec tunnel status, VTI interface state, tunnel reachability, and GoBGP neighbor/route table. |
 | **cgw-scripts/list** | Runs on the CGW. Prints all 10 scenarios grouped by category with usage examples. |
 | **scripts/setup-devops-agent.sh** | Creates the IAM roles (AgentSpace + Operator App), creates an Agent Space, associates your AWS account, enables the Operator App, and prompts you to create a webhook in the console. |
-| **scripts/setup-cgw.sh** | Standalone CGW configuration script — same as deploy.sh post-CFN steps. Use this if you deployed the CloudFormation stack via the AWS Console instead of deploy.sh. |
+| **scripts/setup-cgw.sh** | Standalone CGW configuration script — same as deploy-all.sh post-CDK steps. Use this if you deployed the CDK stack separately. |
 | **scripts/inject-failure.sh** | SSH wrapper that runs inject/rollback/status on the CGW from your laptop. Looks up the CGW IP from CloudFormation outputs automatically. |
-| **scripts/cleanup.sh** | Deletes the 4 CloudWatch alarms, the metric filter, and the CloudFormation stack. |
-| **mcp-server/app.py** | MCP server implementing JSON-RPC 2.0 with 3 tools: get_service_dependencies (dependent services, on-call team), get_cost_impact (revenue loss, SLA breach status), get_compliance_status (PCI-DSS/SOC 2 reporting requirements). |
-| **mcp-server/template.yaml** | CloudFormation template for the MCP server: Lambda function, API Gateway REST API with API key authentication, usage plan. |
+| **scripts/cleanup.sh** | Deletes the 4 CloudWatch alarms, the metric filter, and the CDK stacks. |
+| **mcp-server/app.py** | MCP server implementing JSON-RPC 2.0 with 3 tools: get_service_dependencies (dependent services, on-call team), get_cost_impact (revenue loss, SLA breach status), get_compliance_status (PCI-DSS/SOC 2 reporting requirements). Packaged automatically by CDK. |
 
 ## Cost Estimate
 
@@ -377,35 +392,34 @@ aws-site-to-site-vpn-devops-agent-demo/
 | Lambda, SNS, CloudWatch Logs | < $0.01 |
 | **Total** | **~$0.12/hr** |
 
-> **Tip**: Run `bash scripts/cleanup.sh vpn-devops-demo us-east-1` when done to avoid ongoing charges.
+This demo is designed to be deployed, tested, and torn down. If left running continuously, the monthly cost would be ~$88/month ($0.12 × 730 hours). Run `bash scripts/cleanup.sh $(aws configure get region)` when done to avoid ongoing charges.
 
 ## Troubleshooting
 
 | Issue | Cause | Fix |
 |---|---|---|
 | SSH not connecting to CGW | Instance not ready or wrong key | Wait 2-3 minutes after stack creation for the instance to boot. Verify the key file matches the key pair used during deployment. The CGW instance is in the simulated on-prem VPC but runs in AWS — it has internet access via its own Internet Gateway. |
-| Tunnels not establishing | Libreswan config or PSK issue | Run `inject-failure.sh status <stack> <region> --key-file <path>` to check IPsec status. Verify security group allows UDP 500/4500 inbound. |
+| Tunnels not establishing | Libreswan config or PSK issue | Run `inject-failure.sh status --key-file <path>` to check IPsec status. Verify security group allows UDP 500/4500 inbound. |
 | Alarm not firing | Alarm not created or wrong dimensions | Verify alarms exist: `aws cloudwatch describe-alarms --alarm-name-prefix vpn-demo --region <region>`. Check the VPN ID and tunnel IP dimensions match. |
-| BGP not establishing | GoBGP not installed or wrong ASN | Run `inject-failure.sh status <stack> <region> --key-file <path>` to check BGP summary. Verify `--routing bgp` was used during deployment. |
+| BGP not establishing | GoBGP not installed or wrong ASN | Run `inject-failure.sh status --key-file <path>` to check BGP summary. Verify `--routing bgp` was used during deployment. |
 | GoBGP not installed | Deployed with `--routing static` | Redeploy with `--routing bgp` to enable GoBGP configuration. |
 | Webhook not triggering agent | Lambda not subscribed to SNS or wrong URL/secret | Check the Lambda function `vpn-demo-webhook` exists (only created when `--webhook-url` is provided). Verify SNS subscription is confirmed. |
-| Throughput alarm not firing | No baseline traffic or wrong metric math | Verify ping traffic is running on the CGW: `inject-failure.sh status <stack> <region> --key-file <path>`. The alarm uses `(m1+m2)*8/300 < 100 bps` with 1 evaluation period. |
+| Throughput alarm not firing | No baseline traffic or wrong metric math | Verify ping traffic is running on the CGW: `inject-failure.sh status --key-file <path>`. The alarm uses `(m1+m2)*8/300 < 100 bps` with 1 evaluation period. |
 | Route-withdrawn alarm not firing | Metric filter not created or alarm actions disabled | Verify the metric filter exists: `aws logs describe-metric-filters --log-group-name /vpn-demo/tunnel-logs --region <region>`. Ensure alarm actions are enabled: `aws cloudwatch enable-alarm-actions --alarm-names vpn-demo-route-withdrawn --region <region>`. |
 | MCP server returning 403 | Missing or invalid API key | Retrieve the API key value using the `ApiKeyId` output and verify it matches what's registered in DevOps Agent. |
 
 ## Cleanup
 
 ```bash
-# Delete alarms and CloudFormation stack
-bash scripts/cleanup.sh vpn-devops-demo us-east-1
+REGION=$(aws configure get region)
 
-# Delete the MCP server stack
-aws cloudformation delete-stack --stack-name vpn-devops-mcp-server --region us-east-1
+# Delete alarms, metric filter, and both CDK stacks (VPN + MCP server)
+bash scripts/cleanup.sh $REGION
 
-# (Optional) Delete the Agent Space
-aws devops-agent delete-agent-space --agent-space-id <id> --region us-east-1
+# Delete the Agent Space
+aws devops-agent delete-agent-space --agent-space-id <id> --region $REGION
 
-# (Optional) Delete IAM roles created by setup script
+# Delete IAM roles created by setup script
 aws iam detach-role-policy --role-name DevOpsAgentRole-AgentSpace \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
 aws iam delete-role-policy --role-name DevOpsAgentRole-AgentSpace \
@@ -417,9 +431,11 @@ aws iam detach-role-policy --role-name DevOpsAgentRole-WebappAdmin \
 aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
 ```
 
+> **Note**: The Agent Space ID was printed by `setup-devops-agent.sh` during step 2. If you don't have it, find it in the [DevOps Agent console](https://console.aws.amazon.com/aidevops/).
+
 ## Contributing
 
-See [CONTRIBUTING](../../CONTRIBUTING.md) for more information.
+We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
 
 ## Security
 
