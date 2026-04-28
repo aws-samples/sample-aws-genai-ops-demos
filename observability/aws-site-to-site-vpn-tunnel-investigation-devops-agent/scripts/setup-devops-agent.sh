@@ -73,6 +73,11 @@ aws iam create-role \
   --query 'Role.Arn' --output text --no-cli-pager 2>/dev/null || \
   aws iam get-role --role-name DevOpsAgentRole-AgentSpace --query 'Role.Arn' --output text --no-cli-pager
 
+# Always update trust policy to match current region (role may exist from a different region)
+aws iam update-assume-role-policy \
+  --role-name DevOpsAgentRole-AgentSpace \
+  --policy-document "file://$TMPDIR/agentspace-trust.json" --no-cli-pager
+
 aws iam attach-role-policy \
   --role-name DevOpsAgentRole-AgentSpace \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager 2>/dev/null || true
@@ -124,6 +129,11 @@ aws iam create-role \
   --query 'Role.Arn' --output text --no-cli-pager 2>/dev/null || \
   aws iam get-role --role-name DevOpsAgentRole-WebappAdmin --query 'Role.Arn' --output text --no-cli-pager
 
+# Always update trust policy to match current region (role may exist from a different region)
+aws iam update-assume-role-policy \
+  --role-name DevOpsAgentRole-WebappAdmin \
+  --policy-document "file://$TMPDIR/operator-trust.json" --no-cli-pager
+
 aws iam attach-role-policy \
   --role-name DevOpsAgentRole-WebappAdmin \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager 2>/dev/null || true
@@ -171,15 +181,15 @@ echo ""
 echo "=== Step 4: Enable Operator App ==="
 # ============================================================
 
-OPERATOR_URL=$(aws devops-agent enable-operator-app \
+aws devops-agent enable-operator-app \
   --agent-space-id "$AGENT_SPACE_ID" \
   --auth-flow iam \
   --operator-app-role-arn "$OPERATOR_ROLE_ARN" \
-  --region "$REGION" \
-  --query 'operatorApp.url' --output text --no-cli-pager 2>/dev/null || echo "")
+  --region "$REGION" --no-cli-pager > /dev/null
 
+OPERATOR_URL="https://${AGENT_SPACE_ID}.aidevops.global.app.aws/home"
 echo "  ✅ Operator App enabled"
-[[ -n "$OPERATOR_URL" ]] && echo "  URL: $OPERATOR_URL"
+echo "  URL: $OPERATOR_URL"
 
 # ============================================================
 echo ""

@@ -50,12 +50,18 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
     --query 'KeyMaterial' --output text > ~/.ssh/vpn-demo-key.pem
   chmod 400 ~/.ssh/vpn-demo-key.pem
   ```
+  PowerShell:
+  ```powershell
+  mkdir -Force $HOME\.ssh
+  aws ec2 create-key-pair --key-name vpn-demo-key `
+    --query 'KeyMaterial' --output text | Set-Content -Path $HOME\.ssh\vpn-demo-key.pem -Encoding ASCII
+  ```
 - **bash** 4+ and **jq** (or PowerShell 7+ on Windows — use `deploy-all.ps1` instead)
 - No existing DevOps Agent Space needed — the setup script creates one
 
 ## Quick Start
 
-> **Windows users**: Replace `bash deploy-all.sh` with `.\deploy-all.ps1` in the commands below. All parameters are the same (use `-KeyFile` instead of `--key-file`, `-WebhookUrl` instead of `--webhook-url`, etc.).
+> **Windows users**: PowerShell (`.ps1`) versions are provided for all scripts. Use `.\setup-devops-agent.ps1` (step 2), `.\deploy-all.ps1` (step 3), `.\scripts\inject-failure.ps1` (scenarios), and `.\scripts\cleanup.ps1` (cleanup). Parameters use PowerShell syntax (e.g., `-KeyFile` instead of `--key-file`).
 
 ### 1. Clone the repository
 
@@ -138,13 +144,15 @@ export PYTHONPATH="$(cd ../.. && pwd)"
 
 # Deploy the MCP server stack
 cd infrastructure/cdk
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$REGION --no-cli-pager
 npx cdk deploy VpnDemoMcpServer-$REGION --require-approval never --no-cli-pager
 cd ../..
 ```
 
-> **Note**: If you already ran `deploy-all.sh` (step 3), CDK bootstrap is already done and will be skipped automatically.
+> **Note**: If you already ran `deploy-all.sh` (step 3), the virtual environment and CDK bootstrap are already done and will be reused automatically.
 
 **4b. Get the endpoint URL and API key:**
 
@@ -177,9 +185,13 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
    - **Name**: `vpn-devops-mcp-server`
    - **Endpoint**: the endpoint URL from step 4b
 7. Select **API Key** as the authorization flow
-8. Enter the API key details:
-   - **API Key Name**: `vpn-mcp-api-key` (a label to identify this key — can be any name)
-   - **API Key Value**: the API key from step 4b
+8. Enter the API key details (in the order shown in the console):
+   - **API Key Name**: `vpn-mcp-api-key` (a label — can be any name)
+   - **API Key Header**: `x-api-key`
+   - **API Key Value**: run this command to get it:
+     ```bash
+     aws apigateway get-api-key --api-key <ApiKeyId-from-step-4b> --include-value --query 'value' --output text --no-cli-pager
+     ```
 9. Click **Add** to register
 10. On the tool selection screen, select all three tools and click **Save**:
     - `get_service_dependencies`
@@ -323,7 +335,7 @@ bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
 
 Open the Operator App. Within 1–3 minutes, the agent receives the alarm webhook and begins its investigation — reading VPN logs, checking metrics, querying the MCP server, and producing a root-cause analysis.
 
-> **Tip — Steer the investigation**: Use on-demand chat in the Operator App to guide the agent. For example, "I changed the IKE proposal on the CGW — can you check for proposal mismatches?" produces more targeted results than the automatic alarm-triggered investigation alone.
+> **Tip — Steer the investigation**: Use on-demand chat in the Operator App to guide the agent. For example, "I changed the IKE proposal on the CGW — can you check for proposal mismatches?" produces more targeted results than the automatic alarm-triggered investigation alone. If the agent explores unrelated paths (e.g., inspecting EC2 UserData), use the Chat panel to refocus it on the VPN tunnel logs and metrics.
 
 ### 3. Rollback
 
@@ -361,7 +373,8 @@ aws-site-to-site-vpn-devops-agent-demo/
 │   ├── setup-devops-agent.sh        # Create Agent Space + IAM roles + webhook
 │   ├── setup-cgw.sh                 # Configure CGW (standalone, for advanced users)
 │   ├── inject-failure.sh            # SSH wrapper to run inject/rollback from your laptop
-│   └── cleanup.sh                   # Delete alarms + CDK stacks
+│   ├── cleanup.sh                   # Delete alarms + CDK stacks
+│   └── verify-cleanup.sh           # Check for leftover demo resources
 ├── mcp-server/
 │   └── app.py                       # MCP server Lambda (JSON-RPC 2.0)
 └── README.md
@@ -410,16 +423,37 @@ This demo is designed to be deployed, tested, and torn down. If left running con
 
 ## Cleanup
 
+### Step 1: Run the cleanup script
+
+Deletes CloudWatch alarms, metric filter, and both CDK stacks (VPN + MCP server). Optionally deletes CDK bootstrap resources.
+
+```bash
+bash scripts/cleanup.sh $(aws configure get region)
+# Windows: .\scripts\cleanup.ps1 -Region <region>
+```
+
+### Step 2: Delete remaining resources
+
+The cleanup script cannot delete the MCP server registration (needs service name), Agent Space (needs ID), IAM roles, or key pair. Delete them manually in this order:
+
+**Option A: CLI**
+
 ```bash
 REGION=$(aws configure get region)
 
-# Delete alarms, metric filter, and both CDK stacks (VPN + MCP server)
-bash scripts/cleanup.sh $REGION
+# 1. Disassociate MCP server from agent space (must be done BEFORE deregister or agent space delete)
+#    First, get the association ID:
+#    aws devops-agent list-associations --agent-space-id <id> --region $REGION --no-cli-pager
+#    Find the MCP server entry and note the associationId and serviceId
+aws devops-agent disassociate-service --agent-space-id <id> --association-id <association-id> --region $REGION --no-cli-pager
 
-# Delete the Agent Space
-aws devops-agent delete-agent-space --agent-space-id <id> --region $REGION
+# 2. Deregister MCP server (account-level, can only be done after disassociation)
+aws devops-agent deregister-service --service-id <service-id> --region $REGION --no-cli-pager
 
-# Delete IAM roles created by setup script
+# 3. Delete the Agent Space
+aws devops-agent delete-agent-space --agent-space-id <id> --region $REGION --no-cli-pager
+
+# 4. Delete IAM roles created by setup script
 aws iam detach-role-policy --role-name DevOpsAgentRole-AgentSpace \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
 aws iam delete-role-policy --role-name DevOpsAgentRole-AgentSpace \
@@ -429,9 +463,29 @@ aws iam delete-role --role-name DevOpsAgentRole-AgentSpace
 aws iam detach-role-policy --role-name DevOpsAgentRole-WebappAdmin \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy
 aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
+
+# 5. Delete the key pair
+aws ec2 delete-key-pair --key-name vpn-demo-key --region $REGION
 ```
 
-> **Note**: The Agent Space ID was printed by `setup-devops-agent.sh` during step 2. If you don't have it, find it in the [DevOps Agent console](https://console.aws.amazon.com/aidevops/).
+> Replace `<id>` with your Agent Space ID (printed by `setup-devops-agent.sh` during step 2, or find it in the [DevOps Agent console](https://console.aws.amazon.com/aidevops/)). Replace `<association-id>` and `<service-id>` with values from the `list-associations` command above.
+
+**Option B: Console**
+
+1. **MCP Server — Remove from Agent Space**: Open [DevOps Agent console](https://console.aws.amazon.com/aidevops/) → select your Agent Space → Capabilities → MCP Servers → select the server → **Remove**
+2. **MCP Server — Deregister**: In the DevOps Agent console → Capability Providers → find the MCP server → **Deregister**
+3. **Agent Space**: Select your Agent Space → **Delete**
+4. **IAM Roles**: Open [IAM console](https://console.aws.amazon.com/iam/) → Roles → search `DevOpsAgentRole` → delete `DevOpsAgentRole-AgentSpace` and `DevOpsAgentRole-WebappAdmin`
+5. **Key Pair**: Open [EC2 console](https://console.aws.amazon.com/ec2/) → Key Pairs → delete `vpn-demo-key` (or whatever name you used)
+
+> **CDK bootstrap resources**: The cleanup script will prompt you to optionally delete the CDK bootstrap bucket (`cdk-hnb659fds-assets-*`) and `CDKToolkit` stack. These are shared across all CDK apps in your account/region — only delete them if you have no other CDK apps in this region. To delete manually via console: Open [S3 console](https://console.aws.amazon.com/s3/) → select the `cdk-hnb659fds-assets-*` bucket → Empty (type "permanently delete") → Delete (type bucket name). Then open [CloudFormation console](https://console.aws.amazon.com/cloudformation/) → delete the `CDKToolkit` stack.
+
+### Step 3: Verify cleanup
+
+```bash
+bash scripts/verify-cleanup.sh <region>
+# Windows: .\scripts\verify-cleanup.ps1 -Region <region>
+```
 
 ## Contributing
 

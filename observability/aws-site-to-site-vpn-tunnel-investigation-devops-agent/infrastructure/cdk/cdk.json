@@ -1,5 +1,5 @@
 {
-  "app": "python3 app.py",
+  "app": ".venv/bin/python3 app.py",
   "watch": {
     "include": ["**"],
     "exclude": ["README.md", "cdk.out", "**/__pycache__", "*.pyc"]

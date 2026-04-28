@@ -63,9 +63,10 @@ STACK_NAME="VpnDemoStack-$REGION"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export PYTHONPATH="$REPO_ROOT"
 
-# Install CDK dependencies
-pip3 install -q -r "$CDK_DIR/requirements.txt" 2>/dev/null || \
-  pip3 install -q -r "$CDK_DIR/requirements.txt" --break-system-packages 2>/dev/null
+# Install CDK dependencies in virtual environment
+python3 -m venv "$CDK_DIR/.venv"
+source "$CDK_DIR/.venv/bin/activate"
+pip install -r "$CDK_DIR/requirements.txt"
 
 # Bootstrap CDK (idempotent)
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)

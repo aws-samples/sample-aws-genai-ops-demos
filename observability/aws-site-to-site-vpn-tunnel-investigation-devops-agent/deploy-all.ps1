@@ -14,7 +14,7 @@ param(
     [string]$WebhookSecret = ""
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if (-not (Test-Path $KeyFile)) {
@@ -61,16 +61,19 @@ $cdkDir = "$ScriptDir/infrastructure/cdk"
 $repoRoot = (Resolve-Path "$ScriptDir/../..").Path
 $env:PYTHONPATH = $repoRoot
 
-# Install CDK dependencies
-pip3 install -q -r "$cdkDir\requirements.txt" 2>$null
+# Install CDK dependencies in virtual environment
+python3 -m venv "$cdkDir\.venv"
+& "$cdkDir\.venv\Scripts\Activate.ps1"
+pip install -r "$cdkDir\requirements.txt"
 
 # Bootstrap CDK (idempotent)
 $accountId = aws sts get-caller-identity --query Account --output text --no-cli-pager
 Push-Location $cdkDir
-npx -y cdk bootstrap "aws://$accountId/$region" --no-cli-pager
+npx -y cdk bootstrap "aws://$accountId/$region" --no-cli-pager --app ".venv\Scripts\python.exe app.py"
 
 # Deploy with context params (direct call, no Invoke-Expression)
 $cdkArgs = @("deploy", $stackName, "--require-approval", "never", "--no-cli-pager",
+    "--app", ".venv\Scripts\python.exe app.py",
     "--context", "keyPairName=$KeyPair", "--context", "routingType=$Routing")
 if (-not [string]::IsNullOrEmpty($WebhookUrl)) {
     $cdkArgs += @("--context", "webhookUrl=$WebhookUrl")
@@ -295,9 +298,12 @@ foreach ($tnum in 1, 2) {
     Write-Host "  Created: vpn-demo-tunnel${tnum}-down"
 }
 
+$metricsJson = '[{"Id":"m1","MetricStat":{"Metric":{"Namespace":"AWS/VPN","MetricName":"TunnelDataIn","Dimensions":[{"Name":"VpnId","Value":"' + $vpnId + '"}]},"Period":300,"Stat":"Sum"},"ReturnData":false},{"Id":"m2","MetricStat":{"Metric":{"Namespace":"AWS/VPN","MetricName":"TunnelDataOut","Dimensions":[{"Name":"VpnId","Value":"' + $vpnId + '"}]},"Period":300,"Stat":"Sum"},"ReturnData":false},{"Id":"throughput","Expression":"(m1+m2)*8/300","Label":"VPN Throughput bps","ReturnData":true}]'
+$metricsFile = Join-Path $env:TEMP "vpn-demo-metrics.json"
+$metricsJson | Set-Content -Path $metricsFile -Encoding ASCII -NoNewline
 aws cloudwatch put-metric-alarm --region $region `
     --alarm-name vpn-demo-throughput-drop `
-    --metrics "[{`"Id`":`"m1`",`"MetricStat`":{`"Metric`":{`"Namespace`":`"AWS/VPN`",`"MetricName`":`"TunnelDataIn`",`"Dimensions`":[{`"Name`":`"VpnId`",`"Value`":`"$vpnId`"}]},`"Period`":300,`"Stat`":`"Sum`"},`"ReturnData`":false},{`"Id`":`"m2`",`"MetricStat`":{`"Metric`":{`"Namespace`":`"AWS/VPN`",`"MetricName`":`"TunnelDataOut`",`"Dimensions`":[{`"Name`":`"VpnId`",`"Value`":`"$vpnId`"}]},`"Period`":300,`"Stat`":`"Sum`"},`"ReturnData`":false},{`"Id`":`"throughput`",`"Expression`":`"(m1+m2)*8/300`",`"Label`":`"VPN Throughput bps`",`"ReturnData`":true}]" `
+    --metrics "file://$($metricsFile.Replace('\', '/'))" `
     --comparison-operator LessThanThreshold --threshold 100 `
     --evaluation-periods 1 --datapoints-to-alarm 1 `
     --treat-missing-data breaching --alarm-actions $snsTopicArn --no-cli-pager
@@ -348,6 +354,6 @@ Write-Host "    sudo /opt/vpn-demo/inject <scenario>"
 Write-Host "    sudo /opt/vpn-demo/rollback <scenario>"
 Write-Host ""
 Write-Host "  Or from your laptop:"
-Write-Host "    bash scripts/inject-failure.sh <scenario> --key-file $KeyFile"
-Write-Host "    bash scripts/inject-failure.sh <scenario> --key-file $KeyFile --rollback"
+Write-Host "    .\scripts\inject-failure.ps1 <scenario> -KeyFile $KeyFile"
+Write-Host "    .\scripts\inject-failure.ps1 <scenario> -KeyFile $KeyFile -Rollback"
 Write-Host "========================================" -ForegroundColor Green
