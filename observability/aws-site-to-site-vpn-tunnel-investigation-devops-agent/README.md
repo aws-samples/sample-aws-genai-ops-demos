@@ -61,7 +61,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 
 ## Quick Start
 
-> **Windows users**: PowerShell (`.ps1`) versions are provided for all scripts. Use `.\setup-devops-agent.ps1` (step 2), `.\deploy-all.ps1` (step 3), `.\scripts\inject-failure.ps1` (scenarios), and `.\scripts\cleanup.ps1` (cleanup). Parameters use PowerShell syntax (e.g., `-KeyFile` instead of `--key-file`).
+> **Windows users**: PowerShell (`.ps1`) versions are provided for all scripts. Use `.\scripts\setup-devops-agent.ps1` (step 2), `.\deploy-all.ps1` (step 4), `.\scripts\inject-failure.ps1` (scenarios), and `.\scripts\cleanup.ps1` (cleanup). Parameters use PowerShell syntax (e.g., `-KeyFile` instead of `--key-file`).
 
 ### 1. Clone the repository
 
@@ -100,41 +100,13 @@ The script automates steps 1–4 and pauses at step 5 for you to create the webh
    7. Copy the **Webhook URL** and **Secret key**, then click **Add**
    8. Paste them back into the terminal when prompted
 
-Save the webhook URL and secret — you'll need them in the next step.
+Save the webhook URL and secret — you'll need them in step 4.
 
-### 3. Deploy the VPN infrastructure
-
-```bash
-bash deploy-all.sh \
-  --key-file ~/.ssh/my-key.pem \
-  --key-pair my-key-pair \
-  --webhook-url 'https://your-webhook-url' \
-  --webhook-secret 'your-webhook-secret'
-```
-
-| Flag | Required | Description |
-|---|---|---|
-| `--key-file` | Yes | Path to the private key file for SSH access to the CGW |
-| `--key-pair` | No | EC2 key pair name (prompted if not provided) |
-| `--webhook-url` | No | DevOps Agent webhook URL from step 2 (omit to skip webhook setup) |
-| `--webhook-secret` | No | DevOps Agent webhook secret from step 2 |
-| `--routing` | No | `bgp` (default) or `static` |
-
-> **Note**: The region is detected automatically from your AWS CLI configuration (`aws configure get region`). To deploy in a different region, run `export AWS_DEFAULT_REGION=us-west-2` before the deploy command.
-
-The deploy script:
-1. Checks prerequisites (AWS CLI, credentials, region)
-2. Deploys the CDK stack (2 VPCs, VPN connection, SNS topic, webhook Lambda)
-3. SSHes into the CGW instance and configures Libreswan (IPsec) + GoBGP (BGP)
-4. Installs inject/rollback/status/list scripts on the CGW
-5. Creates 4 CloudWatch alarms (2 per-tunnel, 1 throughput, 1 route-withdrawn)
-6. Starts baseline ping traffic for the throughput alarm
-
-### 4. Deploy the MCP Server
+### 3. Deploy the MCP Server
 
 The MCP server gives DevOps Agent business context (service dependencies, cost impact, compliance status) during investigations. It runs as a Lambda function behind API Gateway.
 
-**4a. Deploy via CDK:**
+**3a. Deploy via CDK:**
 
 ```bash
 REGION=$(aws configure get region)
@@ -152,9 +124,7 @@ npx cdk deploy VpnDemoMcpServer-$REGION --require-approval never --no-cli-pager
 cd ../..
 ```
 
-> **Note**: If you already ran `deploy-all.sh` (step 3), the virtual environment and CDK bootstrap are already done and will be reused automatically.
-
-**4b. Get the endpoint URL and API key:**
+**3b. Get the endpoint URL and API key:**
 
 ```bash
 REGION=$(aws configure get region)
@@ -174,7 +144,7 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
   --query 'value' --output text --no-cli-pager
 ```
 
-**4c. Register in DevOps Agent:**
+**3c. Register in DevOps Agent:**
 
 1. Open the [AWS DevOps Agent console](https://console.aws.amazon.com/aidevops/)
 2. Select your Agent Space (`vpn-demo-agent-space`)
@@ -183,14 +153,14 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
 5. Select **Register** under "New MCP Server Registration"
 6. Enter the MCP server details:
    - **Name**: `vpn-devops-mcp-server`
-   - **Endpoint**: the endpoint URL from step 4b
+   - **Endpoint**: the endpoint URL from step 3b
 7. Select **API Key** as the authorization flow
 8. Enter the API key details (in the order shown in the console):
    - **API Key Name**: `vpn-mcp-api-key` (a label — can be any name)
    - **API Key Header**: `x-api-key`
    - **API Key Value**: run this command to get it:
      ```bash
-     aws apigateway get-api-key --api-key <ApiKeyId-from-step-4b> --include-value --query 'value' --output text --no-cli-pager
+     aws apigateway get-api-key --api-key <ApiKeyId-from-step-3b> --include-value --query 'value' --output text --no-cli-pager
      ```
 9. Click **Add** to register
 10. On the tool selection screen, select all three tools and click **Save**:
@@ -198,6 +168,32 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
     - `get_cost_impact`
     - `get_compliance_status`
 11. A "Configure Webhook Connection" dialog appears with a capability webhook URL — click **Close** (this webhook is not needed for this demo; we use the Agent Space webhook created in step 2)
+
+### 4. Deploy the VPN infrastructure
+
+```bash
+bash deploy-all.sh \
+  --key-file ~/.ssh/my-key.pem \
+  --key-pair my-key-pair \
+  --webhook-url 'https://your-webhook-url' \
+  --webhook-secret 'your-webhook-secret'
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--key-file` | Yes | Path to the private key file for SSH access to the CGW |
+| `--key-pair` | Yes | EC2 key pair name (prompted if not provided) |
+| `--webhook-url` | Yes | DevOps Agent webhook URL from step 2 |
+| `--webhook-secret` | Yes | DevOps Agent webhook secret from step 2 |
+| `--routing` | No | `bgp` (default) or `static` |
+
+The deploy script:
+1. Checks prerequisites (AWS CLI, credentials, region)
+2. Deploys the CDK stack (2 VPCs, VPN connection, SNS topic, webhook Lambda)
+3. SSHes into the CGW instance and configures Libreswan (IPsec) + GoBGP (BGP)
+4. Installs inject/rollback/status/list scripts on the CGW
+5. Creates 4 CloudWatch alarms (2 per-tunnel, 1 throughput, 1 route-withdrawn)
+6. Starts baseline ping traffic for the throughput alarm
 
 ## How the Incident Detection Works
 
@@ -371,10 +367,14 @@ aws-site-to-site-vpn-devops-agent-demo/
 │   └── list                         # List available scenarios
 ├── scripts/
 │   ├── setup-devops-agent.sh        # Create Agent Space + IAM roles + webhook
+│   ├── setup-devops-agent.ps1       # PowerShell version
 │   ├── setup-cgw.sh                 # Configure CGW (standalone, for advanced users)
 │   ├── inject-failure.sh            # SSH wrapper to run inject/rollback from your laptop
+│   ├── inject-failure.ps1           # PowerShell version
 │   ├── cleanup.sh                   # Delete alarms + CDK stacks
-│   └── verify-cleanup.sh           # Check for leftover demo resources
+│   ├── cleanup.ps1                  # PowerShell version
+│   ├── verify-cleanup.sh           # Check for leftover demo resources
+│   └── verify-cleanup.ps1          # PowerShell version
 ├── mcp-server/
 │   └── app.py                       # MCP server Lambda (JSON-RPC 2.0)
 └── README.md
@@ -388,10 +388,11 @@ aws-site-to-site-vpn-devops-agent-demo/
 | **cgw-scripts/rollback** | Runs on the CGW. Checks state file, verifies injection is present on the system, reverses the failure, clears state, and verifies the system is clean. |
 | **cgw-scripts/status** | Runs on the CGW. Prints active scenario, IPsec tunnel status, VTI interface state, tunnel reachability, and GoBGP neighbor/route table. |
 | **cgw-scripts/list** | Runs on the CGW. Prints all 10 scenarios grouped by category with usage examples. |
-| **scripts/setup-devops-agent.sh** | Creates the IAM roles (AgentSpace + Operator App), creates an Agent Space, associates your AWS account, enables the Operator App, and prompts you to create a webhook in the console. |
+| **scripts/setup-devops-agent.sh / .ps1** | Creates the IAM roles (AgentSpace + Operator App), creates an Agent Space, associates your AWS account, enables the Operator App, and prompts you to create a webhook in the console. |
 | **scripts/setup-cgw.sh** | Standalone CGW configuration script — same as deploy-all.sh post-CDK steps. Use this if you deployed the CDK stack separately. |
-| **scripts/inject-failure.sh** | SSH wrapper that runs inject/rollback/status on the CGW from your laptop. Looks up the CGW IP from CloudFormation outputs automatically. |
-| **scripts/cleanup.sh** | Deletes the 4 CloudWatch alarms, the metric filter, and the CDK stacks. |
+| **scripts/inject-failure.sh / .ps1** | SSH wrapper that runs inject/rollback/status on the CGW from your laptop. Looks up the CGW IP from CloudFormation outputs automatically. |
+| **scripts/cleanup.sh / .ps1** | Deletes the 4 CloudWatch alarms, the metric filter, and the CDK stacks. |
+| **scripts/verify-cleanup.sh / .ps1** | Checks for leftover demo resources (stacks, alarms, Agent Space, IAM roles, key pairs). |
 | **mcp-server/app.py** | MCP server implementing JSON-RPC 2.0 with 3 tools: get_service_dependencies (dependent services, on-call team), get_cost_impact (revenue loss, SLA breach status), get_compliance_status (PCI-DSS/SOC 2 reporting requirements). Packaged automatically by CDK. |
 
 ## Cost Estimate
@@ -436,10 +437,13 @@ bash scripts/cleanup.sh $(aws configure get region)
 
 The cleanup script cannot delete the MCP server registration (needs service name), Agent Space (needs ID), IAM roles, or key pair. Delete them manually in this order:
 
-**Option A: CLI**
+**Option A: CLI (Bash)**
 
 ```bash
 REGION=$(aws configure get region)
+
+# Find your Agent Space ID
+aws devops-agent list-agent-spaces --region $REGION --no-cli-pager
 
 # 1. Disassociate MCP server from agent space (must be done BEFORE deregister or agent space delete)
 #    First, get the association ID:
@@ -468,9 +472,42 @@ aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
 aws ec2 delete-key-pair --key-name vpn-demo-key --region $REGION
 ```
 
-> Replace `<id>` with your Agent Space ID (printed by `setup-devops-agent.sh` during step 2, or find it in the [DevOps Agent console](https://console.aws.amazon.com/aidevops/)). Replace `<association-id>` and `<service-id>` with values from the `list-associations` command above.
+> Replace `<id>` with your Agent Space ID (printed by `setup-devops-agent.sh` during step 2, or run `list-agent-spaces` above to find it). Replace `<association-id>` and `<service-id>` with values from the `list-associations` command above.
 
-**Option B: Console**
+**Option B: CLI (PowerShell)**
+
+```powershell
+$Region = aws configure get region
+
+# Find your Agent Space ID
+aws devops-agent list-agent-spaces --region $Region --no-cli-pager
+
+# 1. Disassociate MCP server from agent space
+#    First, get the association ID:
+#    aws devops-agent list-associations --agent-space-id "<id>" --region $Region --no-cli-pager
+aws devops-agent disassociate-service --agent-space-id "<id>" --association-id "<association-id>" --region $Region --no-cli-pager
+
+# 2. Deregister MCP server
+aws devops-agent deregister-service --service-id "<service-id>" --region $Region --no-cli-pager
+
+# 3. Delete the Agent Space
+aws devops-agent delete-agent-space --agent-space-id "<id>" --region $Region --no-cli-pager
+
+# 4. Delete IAM roles
+aws iam detach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
+aws iam delete-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles
+aws iam delete-role --role-name DevOpsAgentRole-AgentSpace
+
+aws iam detach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy
+aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
+
+# 5. Delete the key pair
+aws ec2 delete-key-pair --key-name vpn-demo-key --region $Region
+```
+
+> **PowerShell note**: Use quotes around placeholder values (e.g., `"<id>"`) to avoid parser errors with angle brackets.
+
+**Option C: Console**
 
 1. **MCP Server — Remove from Agent Space**: Open [DevOps Agent console](https://console.aws.amazon.com/aidevops/) → select your Agent Space → Capabilities → MCP Servers → select the server → **Remove**
 2. **MCP Server — Deregister**: In the DevOps Agent console → Capability Providers → find the MCP server → **Deregister**
