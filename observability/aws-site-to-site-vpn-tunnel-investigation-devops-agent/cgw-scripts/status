@@ -1,0 +1,33 @@
+#!/bin/bash
+STATE_FILE="/opt/vpn-demo/active"
+
+echo "=== Active Scenario ==="
+if [ -f "$STATE_FILE" ]; then
+  echo "$(cat "$STATE_FILE")"
+else
+  echo "None"
+fi
+
+echo ""
+echo "=== IPsec Status ==="
+ipsec whack --status 2>&1 | grep -E "ESTABLISHED|Total" || echo "ipsec not running"
+
+echo ""
+echo "=== VTI Interfaces ==="
+ip -br addr show vti1 2>/dev/null || echo "vti1 not found"
+ip -br addr show vti2 2>/dev/null || echo "vti2 not found"
+
+echo ""
+echo "=== Tunnel Reachability ==="
+ping -c 1 -W 2 169.254.10.1 >/dev/null 2>&1 && echo "Tunnel1: reachable" || echo "Tunnel1: unreachable"
+ping -c 1 -W 2 169.254.10.5 >/dev/null 2>&1 && echo "Tunnel2: reachable" || echo "Tunnel2: unreachable"
+
+echo ""
+echo "=== BGP Status ==="
+if systemctl is-active --quiet gobgpd; then
+  /usr/local/bin/gobgp neighbor
+  echo ""
+  /usr/local/bin/gobgp global rib -a ipv4
+else
+  echo "GoBGP not running"
+fi
