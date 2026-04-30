@@ -36,7 +36,14 @@ CGW_EIP=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$RE
 SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $KEY_FILE ec2-user@${CGW_EIP}"
 
 case "$ACTION" in
-  status) $SSH "sudo /opt/vpn-demo/status" ;;
+  status)
+    $SSH "sudo /opt/vpn-demo/status"
+    echo ""
+    echo "=== CloudWatch Alarms ==="
+    aws cloudwatch describe-alarms --alarm-name-prefix vpn-demo \
+      --query 'MetricAlarms[].{Name:AlarmName,State:StateValue}' \
+      --output table --region "$REGION" --no-cli-pager 2>/dev/null || true
+    ;;
   *)
     # Enable dedicated alarms before inject, disable after rollback
     if [[ "$ACTION" == "throughput-degradation" ]]; then

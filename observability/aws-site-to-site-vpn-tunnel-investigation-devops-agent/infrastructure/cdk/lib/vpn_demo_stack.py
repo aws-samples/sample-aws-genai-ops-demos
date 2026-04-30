@@ -22,6 +22,7 @@ class VpnDemoStack(cdk.Stack):
         routing_type: str,
         webhook_url: str,
         webhook_secret: str,
+        ssh_cidr: str = "0.0.0.0/0",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -72,7 +73,7 @@ class VpnDemoStack(cdk.Stack):
             vpc_id=cloud_vpc.ref,
             security_group_ingress=[
                 {"ipProtocol": "icmp", "fromPort": -1, "toPort": -1, "cidrIp": "172.16.0.0/16"},
-                {"ipProtocol": "tcp", "fromPort": 22, "toPort": 22, "cidrIp": "0.0.0.0/0"},
+                {"ipProtocol": "tcp", "fromPort": 22, "toPort": 22, "cidrIp": ssh_cidr},
             ],
         )
 
@@ -125,7 +126,7 @@ class VpnDemoStack(cdk.Stack):
             vpc_id=onprem_vpc.ref,
             security_group_ingress=[
                 {"ipProtocol": "icmp", "fromPort": -1, "toPort": -1, "cidrIp": "10.0.0.0/16"},
-                {"ipProtocol": "tcp", "fromPort": 22, "toPort": 22, "cidrIp": "0.0.0.0/0"},
+                {"ipProtocol": "tcp", "fromPort": 22, "toPort": 22, "cidrIp": ssh_cidr},
                 {"ipProtocol": "udp", "fromPort": 500, "toPort": 500, "cidrIp": "0.0.0.0/0"},
                 {"ipProtocol": "udp", "fromPort": 4500, "toPort": 4500, "cidrIp": "0.0.0.0/0"},
             ],
@@ -137,6 +138,7 @@ class VpnDemoStack(cdk.Stack):
         userdata.add_commands(
             "exec > /var/log/vpn-userdata.log 2>&1",
             "set -e",
+            "yum clean packages",
             "yum install -y libreswan iptables-nft iproute-tc",
             "ipsec initnss 2>/dev/null || true",
             "curl -sL https://github.com/osrg/gobgp/releases/download/v3.30.0/gobgp_3.30.0_linux_amd64.tar.gz | tar xz -C /usr/local/bin",

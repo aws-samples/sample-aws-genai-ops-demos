@@ -11,7 +11,9 @@ param(
     [ValidateSet("bgp","static")]
     [string]$Routing = "bgp",
     [string]$WebhookUrl = "",
-    [string]$WebhookSecret = ""
+    [string]$WebhookSecret = "",
+    [string]$SshCidr = "",
+    [switch]$SshOpen
 )
 
 $ErrorActionPreference = "Continue"
@@ -38,6 +40,21 @@ if ([string]::IsNullOrEmpty($KeyPair)) {
     }
 }
 
+# Resolve SSH CIDR
+if ($SshOpen) {
+    $SshCidr = "0.0.0.0/0"
+    Write-Host "  WARNING: SSH open to 0.0.0.0/0 (not recommended for production)" -ForegroundColor Yellow
+} elseif ([string]::IsNullOrEmpty($SshCidr)) {
+    try {
+        $myIp = (Invoke-WebRequest -Uri "https://checkip.amazonaws.com" -TimeoutSec 5 -UseBasicParsing).Content.Trim()
+        $SshCidr = "$myIp/32"
+        Write-Host "  SSH restricted to your IP: $SshCidr"
+    } catch {
+        $SshCidr = "0.0.0.0/0"
+        Write-Host "  WARNING: Could not detect your IP - SSH open to 0.0.0.0/0" -ForegroundColor Yellow
+    }
+}
+
 # =============================================================================
 Write-Host ""
 Write-Host "==> Step 2: Deploy VPN infrastructure via CDK..." -ForegroundColor Cyan
@@ -48,11 +65,9 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Node.js is required for CDK. Install from https://nodejs.org" -ForegroundColor Red
     exit 1
 }
-if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        Write-Host "ERROR: Python 3 is required for CDK. Install from https://python.org" -ForegroundColor Red
-        exit 1
-    }
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: Python 3 is required for CDK. Install from https://python.org" -ForegroundColor Red
+    exit 1
 }
 
 $cdkDir = "$ScriptDir/infrastructure/cdk"
@@ -62,7 +77,7 @@ $repoRoot = (Resolve-Path "$ScriptDir/../..").Path
 $env:PYTHONPATH = $repoRoot
 
 # Install CDK dependencies in virtual environment
-python3 -m venv "$cdkDir\.venv"
+python -m venv "$cdkDir\.venv"
 & "$cdkDir\.venv\Scripts\Activate.ps1"
 pip install -r "$cdkDir\requirements.txt"
 
@@ -74,7 +89,7 @@ npx -y cdk bootstrap "aws://$accountId/$region" --no-cli-pager --app ".venv\Scri
 # Deploy with context params (direct call, no Invoke-Expression)
 $cdkArgs = @("deploy", $stackName, "--require-approval", "never", "--no-cli-pager",
     "--app", ".venv\Scripts\python.exe app.py",
-    "--context", "keyPairName=$KeyPair", "--context", "routingType=$Routing")
+    "--context", "keyPairName=$KeyPair", "--context", "routingType=$Routing", "--context", "sshCidr=$SshCidr")
 if (-not [string]::IsNullOrEmpty($WebhookUrl)) {
     $cdkArgs += @("--context", "webhookUrl=$WebhookUrl")
 }
@@ -122,6 +137,10 @@ for ($i = 1; $i -le 30; $i++) {
     if ($LASTEXITCODE -eq 0) { Write-Host "  Done."; break }
     Start-Sleep -Seconds 10
     Write-Host "  Packages installing... ($i/30)"
+}
+if ($i -gt 30) {
+    Write-Host "ERROR: UserData did not complete after 5 minutes. Check /var/log/vpn-userdata.log on the CGW." -ForegroundColor Red
+    exit 1
 }
 
 # =============================================================================
@@ -213,11 +232,16 @@ ping -c 1 -W 3 169.254.10.1 >/dev/null && echo "Tunnel1: OK" || echo "Tunnel1: F
 ping -c 1 -W 3 169.254.10.5 >/dev/null && echo "Tunnel2: OK" || echo "Tunnel2: FAIL"
 "@
 
-$libreswanScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo bash -s"
+$libreswanScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//' | sudo bash -s"
 
 # =============================================================================
 if ($Routing -eq "bgp") {
     Write-Host "==> Step 8: Configure GoBGP..." -ForegroundColor Cyan
+    ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "test -f /usr/local/bin/gobgpd" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: gobgpd not found on CGW. UserData may have failed." -ForegroundColor Red
+        exit 1
+    }
     $bgpScript = @"
 set -e
 cat > /etc/gobgp.toml <<TOML
@@ -271,7 +295,7 @@ sleep 15
 echo "=== BGP ==="
 /usr/local/bin/gobgp neighbor
 "@
-    $bgpScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo bash -s"
+    $bgpScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//' | sudo bash -s"
 } else {
     Write-Host "==> Step 8: Adding static route..." -ForegroundColor Cyan
     ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo ip route add 10.0.0.0/16 via 169.254.10.1 dev vti1"

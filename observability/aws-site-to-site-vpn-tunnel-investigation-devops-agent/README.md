@@ -186,6 +186,10 @@ bash deploy-all.sh \
 | `--webhook-url` | Yes | DevOps Agent webhook URL from step 2 |
 | `--webhook-secret` | Yes | DevOps Agent webhook secret from step 2 |
 | `--routing` | No | `bgp` (default) or `static` |
+| `--ssh-cidr` | No | CIDR to restrict SSH access (e.g., `10.0.0.0/8`). Default: auto-detects your public IP. |
+| `--ssh-open` | No | Allow SSH from `0.0.0.0/0` (not recommended) |
+
+> **SSH access**: By default, the deploy script auto-detects your public IP and restricts SSH access to that IP only. If you're behind a NAT or VPN, use `--ssh-cidr` to specify the correct CIDR. Use `--ssh-open` only for quick testing — in production, use [SSM Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html) instead of SSH for CGW access.
 
 The deploy script:
 1. Checks prerequisites (AWS CLI, credentials, region)
@@ -283,7 +287,7 @@ These scenarios use specialized alarms that are deployed with actions **disabled
 
 > **Note on bgp-route-withdraw**: If run after other BGP scenarios, the agent may link the alert to the prior investigation. If this happens, open the investigation and use the Chat panel on the left sidebar to ask: "A BGP route was withdrawn for 172.16.0.0/16 — can you investigate?" This also demonstrates the on-demand chat feature.
 
-> **Throughput alarm**: The throughput alarm is deployed with actions **disabled** by default. Most scenarios cause traffic to drop (triggering a noisy second alarm), so it should only be enabled when testing `throughput-degradation`. Enable it right before injecting, and disable it after rollback:
+> **Throughput alarm**: The throughput alarm is deployed with actions **disabled** by default. Most scenarios cause traffic to drop (triggering a noisy second alarm), so it should only be enabled when testing `throughput-degradation`. The throughput alarm uses a 5-minute evaluation period — expect 5–6 minutes before it fires, compared to ~1 minute for other scenarios. Enable it right before injecting, and disable it after rollback:
 > ```bash
 > # Enable before throughput test
 > aws cloudwatch enable-alarm-actions --alarm-names vpn-demo-throughput-drop --region <region>

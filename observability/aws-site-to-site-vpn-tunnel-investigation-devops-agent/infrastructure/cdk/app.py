@@ -16,6 +16,7 @@ key_pair_name = app.node.try_get_context("keyPairName") or ""
 routing_type = app.node.try_get_context("routingType") or "bgp"
 webhook_url = app.node.try_get_context("webhookUrl") or ""
 webhook_secret = app.node.try_get_context("webhookSecret") or ""
+ssh_cidr = app.node.try_get_context("sshCidr") or "0.0.0.0/0"
 
 # Main stack — solution adoption tracking here only (per steering)
 VpnDemoStack(
@@ -28,6 +29,7 @@ VpnDemoStack(
     routing_type=routing_type,
     webhook_url=webhook_url,
     webhook_secret=webhook_secret,
+    ssh_cidr=ssh_cidr,
 )
 
 # MCP server stack — no tracking (secondary stack)

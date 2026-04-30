@@ -12,9 +12,11 @@ KEY_FILE=""
 ROUTING="bgp"
 WEBHOOK_URL=""
 WEBHOOK_SECRET=""
+SSH_CIDR=""
+SSH_OPEN=""
 
 usage() {
-  echo "Usage: $0 --key-file <path> [--key-pair <name>] [--routing bgp|static] [--webhook-url <url>] [--webhook-secret <secret>]"
+  echo "Usage: $0 --key-file <path> [--key-pair <name>] [--routing bgp|static] [--webhook-url <url>] [--webhook-secret <secret>] [--ssh-cidr <cidr>] [--ssh-open]"
   exit 1
 }
 
@@ -25,6 +27,8 @@ while [[ $# -gt 0 ]]; do
     --routing) ROUTING="$2"; shift 2;;
     --webhook-url) WEBHOOK_URL="$2"; shift 2;;
     --webhook-secret) WEBHOOK_SECRET="$2"; shift 2;;
+    --ssh-cidr) SSH_CIDR="$2"; shift 2;;
+    --ssh-open) SSH_OPEN="yes"; shift;;
     -h|--help) usage;;
     *) echo "Unknown option: $1"; usage;;
   esac
@@ -45,6 +49,21 @@ if [[ -z "$KEY_PAIR" ]]; then
   aws ec2 describe-key-pairs --region "$REGION" --query 'KeyPairs[].KeyName' --output table --no-cli-pager
   read -rp "Enter key pair name: " KEY_PAIR
   [[ -z "$KEY_PAIR" ]] && echo "ERROR: key pair required" && exit 1
+fi
+
+# Resolve SSH CIDR
+if [[ "$SSH_OPEN" == "yes" ]]; then
+  SSH_CIDR="0.0.0.0/0"
+  echo "  ⚠ SSH open to 0.0.0.0/0 (not recommended for production)"
+elif [[ -z "$SSH_CIDR" ]]; then
+  MY_IP=$(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
+  if [[ -n "$MY_IP" ]]; then
+    SSH_CIDR="${MY_IP}/32"
+    echo "  SSH restricted to your IP: $SSH_CIDR"
+  else
+    SSH_CIDR="0.0.0.0/0"
+    echo "  ⚠ Could not detect your IP — SSH open to 0.0.0.0/0"
+  fi
 fi
 
 # =============================================================================
@@ -75,7 +94,7 @@ npx -y cdk bootstrap "aws://$ACCOUNT_ID/$REGION" --no-cli-pager
 
 # Deploy with context params (array-based to avoid eval/shell injection)
 CDK_ARGS=(npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager)
-CDK_ARGS+=(--context "keyPairName=$KEY_PAIR" --context "routingType=$ROUTING")
+CDK_ARGS+=(--context "keyPairName=$KEY_PAIR" --context "routingType=$ROUTING" --context "sshCidr=$SSH_CIDR")
 [[ -n "$WEBHOOK_URL" ]] && CDK_ARGS+=(--context "webhookUrl=$WEBHOOK_URL")
 [[ -n "$WEBHOOK_SECRET" ]] && CDK_ARGS+=(--context "webhookSecret=$WEBHOOK_SECRET")
 "${CDK_ARGS[@]}"
@@ -117,6 +136,10 @@ for i in {1..30}; do
   run_ssh "grep -q USERDATA_COMPLETE /var/log/vpn-userdata.log 2>/dev/null" && echo "  Done." && break
   sleep 10; echo "  Packages installing... ($i/30)"
 done
+if [[ $i -eq 30 ]]; then
+  echo "ERROR: UserData did not complete after 5 minutes. Check /var/log/vpn-userdata.log on the CGW." >&2
+  exit 1
+fi
 
 # =============================================================================
 echo "==> Step 6: Fetch VPN tunnel details..."
@@ -211,6 +234,7 @@ EOF
 # =============================================================================
 if [[ "$ROUTING" == "bgp" ]]; then
   echo "==> Step 8: Configure GoBGP..."
+  run_ssh "test -f /usr/local/bin/gobgpd" || { echo "ERROR: gobgpd not found on CGW. UserData may have failed." >&2; exit 1; }
   run_ssh "sudo bash -s" <<EOF
 set -e
 

@@ -62,6 +62,11 @@ $sshTarget = "ec2-user@$cgwEip"
 
 if ($Action -eq "status") {
     ssh @sshOpts $sshTarget "sudo /opt/vpn-demo/status"
+    Write-Host ""
+    Write-Host "=== CloudWatch Alarms ==="
+    aws cloudwatch describe-alarms --alarm-name-prefix vpn-demo `
+        --query 'MetricAlarms[].{Name:AlarmName,State:StateValue}' `
+        --output table --region $Region --no-cli-pager 2>$null
     exit 0
 }
 
