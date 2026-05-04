@@ -458,13 +458,14 @@ REGION=$(aws configure get region)
 # Find your Agent Space ID
 aws devops-agent list-agent-spaces --region $REGION --no-cli-pager
 
-# 1. Disassociate MCP server from agent space (must be done BEFORE deregister or agent space delete)
-#    First, get the association ID:
-#    aws devops-agent list-associations --agent-space-id <id> --region $REGION --no-cli-pager
-#    Find the MCP server entry and note the associationId and serviceId
+# 1. List associations to find the MCP server's associationId and serviceId
+aws devops-agent list-associations --agent-space-id <id> --region $REGION --no-cli-pager
+# Look for the entry with "mcpserver" in configuration — note its associationId and serviceId
+
+# 2. Disassociate MCP server from agent space (must be done BEFORE deregister or agent space delete)
 aws devops-agent disassociate-service --agent-space-id <id> --association-id <association-id> --region $REGION --no-cli-pager
 
-# 2. Deregister MCP server (account-level, can only be done after disassociation)
+# 3. Deregister MCP server (account-level, can only be done after disassociation)
 aws devops-agent deregister-service --service-id <service-id> --region $REGION --no-cli-pager
 
 # 3. Delete the Agent Space
@@ -495,12 +496,14 @@ $Region = aws configure get region
 # Find your Agent Space ID
 aws devops-agent list-agent-spaces --region $Region --no-cli-pager
 
-# 1. Disassociate MCP server from agent space
-#    First, get the association ID:
-#    aws devops-agent list-associations --agent-space-id "<id>" --region $Region --no-cli-pager
+# 1. List associations to find the MCP server's associationId and serviceId
+aws devops-agent list-associations --agent-space-id "<id>" --region $Region --no-cli-pager
+# Look for the entry with "mcpserver" in configuration — note its associationId and serviceId
+
+# 2. Disassociate MCP server from agent space (must be done BEFORE deregister or agent space delete)
 aws devops-agent disassociate-service --agent-space-id "<id>" --association-id "<association-id>" --region $Region --no-cli-pager
 
-# 2. Deregister MCP server
+# 3. Deregister MCP server
 aws devops-agent deregister-service --service-id "<service-id>" --region $Region --no-cli-pager
 
 # 3. Delete the Agent Space
@@ -533,7 +536,7 @@ aws ec2 delete-key-pair --key-name vpn-demo-key --region $Region
 ### Step 3: Verify cleanup
 
 ```bash
-bash scripts/verify-cleanup.sh <region>
+bash scripts/verify-cleanup.sh $(aws configure get region)
 # Windows: .\scripts\verify-cleanup.ps1 -Region <region>
 ```
 
