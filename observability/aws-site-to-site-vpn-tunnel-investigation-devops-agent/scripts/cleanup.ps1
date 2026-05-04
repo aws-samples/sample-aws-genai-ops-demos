@@ -48,8 +48,26 @@ Write-Host ">> WARNING: The next step deletes CDK bootstrap resources that are S
 Write-Host ">> If you have other CDK apps in $Region, DO NOT delete these." -ForegroundColor Yellow -BackgroundColor Black
 $confirm = Read-Host ">> Delete CDK bootstrap resources ($cdkBucket + CDKToolkit stack)? [y/N]"
 if ($confirm -eq "y" -or $confirm -eq "Y") {
-    Write-Host ">> Deleting CDK bootstrap bucket: $cdkBucket ..."
-    aws s3 rb "s3://$cdkBucket" --force --region $Region --no-cli-pager 2>$null
+    Write-Host ">> Emptying CDK bootstrap bucket: $cdkBucket (including versioned objects)..."
+    # CDK bootstrap bucket has versioning enabled — must delete all versions and delete markers
+    $versions = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "Versions[].{Key:Key,VersionId:VersionId}" --output json 2>$null | ConvertFrom-Json
+    if ($versions -and $versions.Count -gt 0) {
+        $deleteJson = @{ Objects = $versions } | ConvertTo-Json -Compress -Depth 5
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        Set-Content -Path $tmpFile -Value $deleteJson -Encoding ASCII
+        aws s3api delete-objects --bucket $cdkBucket --region $Region --no-cli-pager --delete "file://$($tmpFile.Replace('\','/'))" 2>$null | Out-Null
+        Remove-Item $tmpFile -Force
+    }
+    $markers = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json 2>$null | ConvertFrom-Json
+    if ($markers -and $markers.Count -gt 0) {
+        $deleteJson = @{ Objects = $markers } | ConvertTo-Json -Compress -Depth 5
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        Set-Content -Path $tmpFile -Value $deleteJson -Encoding ASCII
+        aws s3api delete-objects --bucket $cdkBucket --region $Region --no-cli-pager --delete "file://$($tmpFile.Replace('\','/'))" 2>$null | Out-Null
+        Remove-Item $tmpFile -Force
+    }
+    Write-Host ">> Deleting CDK bootstrap bucket..."
+    aws s3api delete-bucket --bucket $cdkBucket --region $Region --no-cli-pager 2>$null
     Write-Host ">> Deleting CDKToolkit stack..."
     aws cloudformation delete-stack --stack-name CDKToolkit --region $Region --no-cli-pager 2>$null
     aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $Region --no-cli-pager 2>$null

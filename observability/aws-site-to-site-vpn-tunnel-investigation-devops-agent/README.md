@@ -42,7 +42,8 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 ## Prerequisites
 
 - **AWS CLI** v2.34.21+ with credentials and region configured (`aws configure`)
-- **Node.js** 18+ (for AWS CDK)
+- **Git** (for cloning the repository)
+- **Node.js** 20+ (for AWS CDK)
 - **Python** 3.9+ (for AWS CDK)
 - **EC2 key pair** in your target region ([create one](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-key-pairs.html) if you don't have one):
   ```bash
@@ -343,7 +344,15 @@ Open the Operator App. Within 1–3 minutes, the agent receives the alarm webhoo
 bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
 ```
 
-### 4. Inject the next scenario
+### 4. Verify alarms returned to OK
+
+```bash
+bash scripts/inject-failure.sh status --key-file ~/.ssh/my-key.pem
+```
+
+Wait until all alarms show `OK` before injecting the next scenario. The throughput alarm may take up to 5 minutes to recover due to its 300-second evaluation period.
+
+### 5. Inject the next scenario
 
 Resolve the current investigation in the Operator App, then inject the next scenario. The script checks that tunnels are healthy and alarms have returned to OK before proceeding — if they haven't, it warns you and you can wait or continue.
 
