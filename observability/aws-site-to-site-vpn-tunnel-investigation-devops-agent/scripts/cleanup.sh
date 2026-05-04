@@ -71,8 +71,9 @@ if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
   echo "  Done."
 else
   echo ">> Skipped. To delete later:"
-  echo "   CLI:     aws s3 rb s3://$CDK_BUCKET --force --region $REGION"
-  echo "            aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION"
+  echo "   CLI:     1. Empty bucket (versioned): aws s3api list-object-versions --bucket $CDK_BUCKET --region $REGION (then delete-objects for all versions)"
+  echo "            2. Delete bucket: aws s3api delete-bucket --bucket $CDK_BUCKET --region $REGION"
+  echo "            3. Delete stack: aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION"
   echo "   Console: Open https://console.aws.amazon.com/s3/"
   echo "            1. Select bucket '$CDK_BUCKET'"
   echo "            2. Click 'Empty', type 'permanently delete', click Empty"

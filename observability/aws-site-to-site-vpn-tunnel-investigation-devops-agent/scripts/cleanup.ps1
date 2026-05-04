@@ -50,22 +50,19 @@ $confirm = Read-Host ">> Delete CDK bootstrap resources ($cdkBucket + CDKToolkit
 if ($confirm -eq "y" -or $confirm -eq "Y") {
     Write-Host ">> Emptying CDK bootstrap bucket: $cdkBucket (including versioned objects)..."
     # CDK bootstrap bucket has versioning enabled — must delete all versions and delete markers
-    $versions = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "Versions[].{Key:Key,VersionId:VersionId}" --output json 2>$null | ConvertFrom-Json
-    if ($versions -and $versions.Count -gt 0) {
-        $deleteJson = @{ Objects = $versions } | ConvertTo-Json -Compress -Depth 5
-        $tmpFile = [System.IO.Path]::GetTempFileName()
-        Set-Content -Path $tmpFile -Value $deleteJson -Encoding ASCII
+    # Use raw JSON from AWS CLI directly (avoids PowerShell 5.1 ConvertTo-Json array issues)
+    $tmpFile = [System.IO.Path]::GetTempFileName()
+    $versions = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "Versions[].{Key:Key,VersionId:VersionId}" --output json 2>$null
+    if ($versions -and $versions -ne "null") {
+        Set-Content -Path $tmpFile -Value "{`"Objects`":$versions}" -Encoding ASCII
         aws s3api delete-objects --bucket $cdkBucket --region $Region --no-cli-pager --delete "file://$($tmpFile.Replace('\','/'))" 2>$null | Out-Null
-        Remove-Item $tmpFile -Force
     }
-    $markers = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json 2>$null | ConvertFrom-Json
-    if ($markers -and $markers.Count -gt 0) {
-        $deleteJson = @{ Objects = $markers } | ConvertTo-Json -Compress -Depth 5
-        $tmpFile = [System.IO.Path]::GetTempFileName()
-        Set-Content -Path $tmpFile -Value $deleteJson -Encoding ASCII
+    $markers = aws s3api list-object-versions --bucket $cdkBucket --region $Region --no-cli-pager --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json 2>$null
+    if ($markers -and $markers -ne "null") {
+        Set-Content -Path $tmpFile -Value "{`"Objects`":$markers}" -Encoding ASCII
         aws s3api delete-objects --bucket $cdkBucket --region $Region --no-cli-pager --delete "file://$($tmpFile.Replace('\','/'))" 2>$null | Out-Null
-        Remove-Item $tmpFile -Force
     }
+    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
     Write-Host ">> Deleting CDK bootstrap bucket..."
     aws s3api delete-bucket --bucket $cdkBucket --region $Region --no-cli-pager 2>$null
     Write-Host ">> Deleting CDKToolkit stack..."
@@ -74,6 +71,13 @@ if ($confirm -eq "y" -or $confirm -eq "Y") {
     Write-Host "  Done."
 } else {
     Write-Host ">> Skipped. To delete later:"
-    Write-Host "   aws s3 rb s3://$cdkBucket --force --region $Region"
-    Write-Host "   aws cloudformation delete-stack --stack-name CDKToolkit --region $Region"
+    Write-Host "   CLI:     1. Empty bucket (versioned): aws s3api list-object-versions --bucket $cdkBucket --region $Region (then delete-objects for all versions)"
+    Write-Host "            2. Delete bucket: aws s3api delete-bucket --bucket $cdkBucket --region $Region"
+    Write-Host "            3. Delete stack:  aws cloudformation delete-stack --stack-name CDKToolkit --region $Region"
+    Write-Host "   Console: Open https://console.aws.amazon.com/s3/"
+    Write-Host "            1. Select bucket '$cdkBucket'"
+    Write-Host "            2. Click 'Empty', type 'permanently delete', click Empty"
+    Write-Host "            3. Click 'Delete', type the bucket name, click Delete bucket"
+    Write-Host "            Then open https://console.aws.amazon.com/cloudformation/ (region: $Region)"
+    Write-Host "            4. Select stack 'CDKToolkit', click Delete"
 }

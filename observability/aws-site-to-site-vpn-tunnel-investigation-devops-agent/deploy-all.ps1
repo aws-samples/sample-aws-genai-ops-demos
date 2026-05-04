@@ -77,7 +77,9 @@ $repoRoot = (Resolve-Path "$ScriptDir/../..").Path
 $env:PYTHONPATH = $repoRoot
 
 # Install CDK dependencies in virtual environment
-python -m venv "$cdkDir\.venv"
+if (-not (Test-Path "$cdkDir\.venv\Scripts\Activate.ps1")) {
+    python -m venv "$cdkDir\.venv"
+}
 & "$cdkDir\.venv\Scripts\Activate.ps1"
 pip install -r "$cdkDir\requirements.txt"
 
@@ -305,7 +307,7 @@ echo "=== BGP ==="
 Write-Host "==> Step 9: Install inject/rollback scripts on CGW..." -ForegroundColor Cyan
 # =============================================================================
 scp $sshOpts.Split(" ") "$ScriptDir/cgw-scripts/*" "${sshUser}@${cgwEip}:/tmp/"
-ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo mkdir -p /opt/vpn-demo && sudo cp /tmp/inject /tmp/rollback /tmp/status /tmp/list /opt/vpn-demo/ && sudo chmod +x /opt/vpn-demo/*"
+ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo mkdir -p /opt/vpn-demo && for f in inject rollback status list; do sudo sed 's/\r$//' /tmp/`$f > /opt/vpn-demo/`$f; done && sudo chmod +x /opt/vpn-demo/*"
 
 # =============================================================================
 Write-Host "==> Step 10: Create per-tunnel CloudWatch alarms..." -ForegroundColor Cyan

@@ -26,9 +26,9 @@ if ($Action -eq "list") {
     Write-Host "  bgp-down                 - Stop BGP daemon"
     Write-Host "  bgp-asn-mismatch         - Change local ASN from 65000 to 65999"
     Write-Host "  bgp-hold-timer           - Block TCP 179 to prevent BGP keepalives"
-    Write-Host "  bgp-route-withdraw       - Withdraw 172.16.0.0/16 route advertisement"
     Write-Host ""
-    Write-Host "=== Throughput Scenario (run last) ==="
+    Write-Host "=== Dedicated-Alarm Scenarios (enable alarm actions first) ==="
+    Write-Host "  bgp-route-withdraw       - Withdraw 172.16.0.0/16 route advertisement"
     Write-Host "  throughput-degradation   - Add 1000ms delay + 99% packet loss on non-BGP traffic"
     Write-Host ""
     Write-Host "Usage:"
@@ -136,6 +136,9 @@ if ($Rollback) {
     if (-not [string]::IsNullOrEmpty($alarm)) {
         aws cloudwatch enable-alarm-actions --alarm-names $alarm --region $Region --no-cli-pager
         Write-Host "Enabled alarm: $alarm"
+        if ($Action -eq "throughput-degradation") {
+            Write-Host "Note: This alarm uses a 5-minute evaluation period - expect 5-6 minutes before it fires." -ForegroundColor Yellow
+        }
     }
     ssh @sshOpts $sshTarget "sudo /opt/vpn-demo/inject $Action"
 }

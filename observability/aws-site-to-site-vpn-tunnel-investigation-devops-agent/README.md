@@ -125,6 +125,23 @@ npx cdk deploy VpnDemoMcpServer-$REGION --require-approval never --no-cli-pager
 cd ../..
 ```
 
+PowerShell:
+```powershell
+$Region = aws configure get region
+
+# Set PYTHONPATH so CDK app can import shared utilities
+$env:PYTHONPATH = (Resolve-Path ..\..\).Path
+
+# Deploy the MCP server stack
+Push-Location infrastructure\cdk
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output text)/$Region" --app ".venv\Scripts\python.exe app.py" --no-cli-pager
+npx cdk deploy "VpnDemoMcpServer-$Region" --require-approval never --app ".venv\Scripts\python.exe app.py" --no-cli-pager
+Pop-Location
+```
+
 **3b. Get the endpoint URL and API key:**
 
 ```bash
@@ -142,6 +159,25 @@ API_KEY_ID=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='ApiKeyId'].OutputValue" \
   --output text --no-cli-pager)
 aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
+  --query 'value' --output text --no-cli-pager
+```
+
+PowerShell:
+```powershell
+$Region = aws configure get region
+
+# Endpoint URL
+aws cloudformation describe-stacks `
+  --stack-name "VpnDemoMcpServer-$Region" `
+  --query "Stacks[0].Outputs[?OutputKey=='McpEndpoint'].OutputValue" `
+  --output text --no-cli-pager
+
+# API key
+$ApiKeyId = aws cloudformation describe-stacks `
+  --stack-name "VpnDemoMcpServer-$Region" `
+  --query "Stacks[0].Outputs[?OutputKey=='ApiKeyId'].OutputValue" `
+  --output text --no-cli-pager
+aws apigateway get-api-key --api-key $ApiKeyId --include-value `
   --query 'value' --output text --no-cli-pager
 ```
 
@@ -430,7 +466,7 @@ This demo is designed to be deployed, tested, and torn down. If left running con
 | Alarm not firing | Alarm not created or wrong dimensions | Verify alarms exist: `aws cloudwatch describe-alarms --alarm-name-prefix vpn-demo --region <region>`. Check the VPN ID and tunnel IP dimensions match. |
 | BGP not establishing | GoBGP not installed or wrong ASN | Run `inject-failure.sh status --key-file <path>` to check BGP summary. Verify `--routing bgp` was used during deployment. |
 | GoBGP not installed | Deployed with `--routing static` | Redeploy with `--routing bgp` to enable GoBGP configuration. |
-| Webhook not triggering agent | Lambda not subscribed to SNS or wrong URL/secret | Check the Lambda function `vpn-demo-webhook` exists (only created when `--webhook-url` is provided). Verify SNS subscription is confirmed. |
+| Webhook not triggering agent | Lambda not subscribed to SNS or wrong URL/secret | Check the webhook Lambda exists: `aws lambda list-functions --query "Functions[?starts_with(FunctionName,'VpnDemoStack')].FunctionName" --region <region> --no-cli-pager`. Verify SNS subscription is confirmed. |
 | Throughput alarm not firing | No baseline traffic or wrong metric math | Verify ping traffic is running on the CGW: `inject-failure.sh status --key-file <path>`. The alarm uses `(m1+m2)*8/300 < 100 bps` with 1 evaluation period. |
 | Route-withdrawn alarm not firing | Metric filter not created or alarm actions disabled | Verify the metric filter exists: `aws logs describe-metric-filters --log-group-name /vpn-demo/tunnel-logs --region <region>`. Ensure alarm actions are enabled: `aws cloudwatch enable-alarm-actions --alarm-names vpn-demo-route-withdrawn --region <region>`. |
 | MCP server returning 403 | Missing or invalid API key | Retrieve the API key value using the `ApiKeyId` output and verify it matches what's registered in DevOps Agent. |
@@ -468,10 +504,10 @@ aws devops-agent disassociate-service --agent-space-id <id> --association-id <as
 # 3. Deregister MCP server (account-level, can only be done after disassociation)
 aws devops-agent deregister-service --service-id <service-id> --region $REGION --no-cli-pager
 
-# 3. Delete the Agent Space
+# 4. Delete the Agent Space
 aws devops-agent delete-agent-space --agent-space-id <id> --region $REGION --no-cli-pager
 
-# 4. Delete IAM roles created by setup script
+# 5. Delete IAM roles created by setup script
 aws iam detach-role-policy --role-name DevOpsAgentRole-AgentSpace \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
 aws iam delete-role-policy --role-name DevOpsAgentRole-AgentSpace \
@@ -482,7 +518,7 @@ aws iam detach-role-policy --role-name DevOpsAgentRole-WebappAdmin \
   --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy
 aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
 
-# 5. Delete the key pair
+# 6. Delete the key pair
 aws ec2 delete-key-pair --key-name vpn-demo-key --region $REGION
 ```
 
@@ -506,10 +542,10 @@ aws devops-agent disassociate-service --agent-space-id "<id>" --association-id "
 # 3. Deregister MCP server
 aws devops-agent deregister-service --service-id "<service-id>" --region $Region --no-cli-pager
 
-# 3. Delete the Agent Space
+# 4. Delete the Agent Space
 aws devops-agent delete-agent-space --agent-space-id "<id>" --region $Region --no-cli-pager
 
-# 4. Delete IAM roles
+# 5. Delete IAM roles
 aws iam detach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
 aws iam delete-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles
 aws iam delete-role --role-name DevOpsAgentRole-AgentSpace
@@ -517,7 +553,7 @@ aws iam delete-role --role-name DevOpsAgentRole-AgentSpace
 aws iam detach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy
 aws iam delete-role --role-name DevOpsAgentRole-WebappAdmin
 
-# 5. Delete the key pair
+# 6. Delete the key pair
 aws ec2 delete-key-pair --key-name vpn-demo-key --region $Region
 ```
 

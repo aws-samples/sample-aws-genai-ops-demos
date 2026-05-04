@@ -110,6 +110,7 @@ case "$ACTION" in
       fi
 
       [[ -n "$ALARM" ]] && aws cloudwatch enable-alarm-actions --alarm-names "$ALARM" --region "$REGION" --no-cli-pager && echo "Enabled alarm: $ALARM"
+      [[ "$ACTION" == "throughput-degradation" ]] && echo "Note: This alarm uses a 5-minute evaluation period — expect 5-6 minutes before it fires."
       $SSH "sudo /opt/vpn-demo/inject $ACTION"
     fi
     ;;
