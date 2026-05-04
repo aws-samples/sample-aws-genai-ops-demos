@@ -55,7 +55,7 @@ No local Docker or Java required — container images are built in the cloud via
 ### 1. Clone the repository and navigate to the demo
 
 ```bash
-git clone https://github.com/<org>/sample-aws-genai-ops-demos.git
+git clone https://github.com/aws-samples/sample-aws-genai-ops-demos.git
 cd sample-aws-genai-ops-demos/observability/eks-investigation-devops-agent
 ```
 
