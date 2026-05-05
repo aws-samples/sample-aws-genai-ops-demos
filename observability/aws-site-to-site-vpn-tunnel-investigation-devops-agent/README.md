@@ -51,7 +51,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
     --query 'KeyMaterial' --output text > ~/.ssh/vpn-demo-key.pem
   chmod 400 ~/.ssh/vpn-demo-key.pem
   ```
-  PowerShell:
+  **PowerShell (Windows):**
   ```powershell
   mkdir -Force $HOME\.ssh
   aws ec2 create-key-pair --key-name vpn-demo-key `
@@ -125,7 +125,7 @@ npx cdk deploy VpnDemoMcpServer-$REGION --require-approval never --no-cli-pager
 cd ../..
 ```
 
-PowerShell:
+**PowerShell (Windows):**
 ```powershell
 $Region = aws configure get region
 
@@ -162,7 +162,7 @@ aws apigateway get-api-key --api-key "$API_KEY_ID" --include-value \
   --query 'value' --output text --no-cli-pager
 ```
 
-PowerShell:
+**PowerShell (Windows):**
 ```powershell
 $Region = aws configure get region
 
@@ -195,10 +195,7 @@ aws apigateway get-api-key --api-key $ApiKeyId --include-value `
 8. Enter the API key details (in the order shown in the console):
    - **API Key Name**: `vpn-mcp-api-key` (a label — can be any name)
    - **API Key Header**: `x-api-key`
-   - **API Key Value**: run this command to get it:
-     ```bash
-     aws apigateway get-api-key --api-key <ApiKeyId-from-step-3b> --include-value --query 'value' --output text --no-cli-pager
-     ```
+   - **API Key Value**: the API key from step 3b
 9. Click **Add** to register
 10. On the tool selection screen, select all three tools and click **Save**:
     - `get_service_dependencies`
