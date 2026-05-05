@@ -363,6 +363,11 @@ After completing the [Quick Start](#quick-start) deployment:
 bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
 ```
 
+**PowerShell (Windows):**
+```powershell
+.\scripts\inject-failure.ps1 psk-mismatch -KeyFile $HOME\.ssh\vpn-demo-key.pem
+```
+
 > **Note**: The script automatically checks tunnel health and CloudWatch alarm state before injecting. If anything is unhealthy (previous scenario not fully recovered), it warns you and asks to confirm.
 
 ### 2. Watch the agent investigate
@@ -377,10 +382,20 @@ Open the Operator App. Within 1–3 minutes, the agent receives the alarm webhoo
 bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
 ```
 
+**PowerShell (Windows):**
+```powershell
+.\scripts\inject-failure.ps1 psk-mismatch -KeyFile $HOME\.ssh\vpn-demo-key.pem -Rollback
+```
+
 ### 4. Verify alarms returned to OK
 
 ```bash
 bash scripts/inject-failure.sh status --key-file ~/.ssh/my-key.pem
+```
+
+**PowerShell (Windows):**
+```powershell
+.\scripts\inject-failure.ps1 status -KeyFile $HOME\.ssh\vpn-demo-key.pem
 ```
 
 Wait until all alarms show `OK` before injecting the next scenario. The throughput alarm may take up to 5 minutes to recover due to its 300-second evaluation period.
