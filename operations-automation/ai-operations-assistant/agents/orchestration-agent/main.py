@@ -157,6 +157,7 @@ When calling tools:
 - For "this month" cost queries: use startDate as the 1st of current month, endDate as {today}
 - Cost Explorer data has a 24-48 hour delay — if current month returns $0, explain this to the user and suggest querying the previous month instead
 - For cost queries: make ONE call with the right parameters. Do NOT retry with different date ranges — the agent handles retries internally. If the call fails, report the error and suggest the user try again in 2-3 minutes.
+- For support cases: when correlating with a health event or incident, use action="describe_cases" with maxResults=20 and do NOT filter by date — support cases about an incident may be created days after the event. Look for cases matching the service name in the subject or serviceCode.
 
 When a question spans multiple domains, call multiple tools and correlate the results.
 For example, if a user asks about a service outage's cost impact, query both Health
