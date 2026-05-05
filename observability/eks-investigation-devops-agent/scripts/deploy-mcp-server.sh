@@ -59,6 +59,40 @@ deploy_mcp_server() {
     echo "  ✓ Lambda environment updated"
 
     # -----------------------------------------------------------------------
+    # Sync mcp_readonly DB password (in case CDK regenerated the secret)
+    # -----------------------------------------------------------------------
+    echo "  Syncing mcp_readonly DB password..."
+    local MCP_SECRET_ARN=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --query "Stacks[0].Outputs[?OutputKey=='McpSecretArn'].OutputValue" \
+        --output text --region "$REGION" 2>/dev/null || echo "")
+    if [ -n "$MCP_SECRET_ARN" ] && [ "$MCP_SECRET_ARN" != "None" ]; then
+        local MCP_DB_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id "$MCP_SECRET_ARN" --region "$REGION" \
+            --query SecretString --output text --no-cli-pager 2>/dev/null | jq -r '.password // empty')
+        local ADMIN_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id "devops-agent-eks-dev-rds-credentials" --region "$REGION" \
+            --query SecretString --output text --no-cli-pager 2>/dev/null | jq -r '.password // empty')
+        if [ -n "$MCP_DB_PASSWORD" ] && [ -n "$ADMIN_PASSWORD" ] && [ -n "$RDS_ENDPOINT" ]; then
+            kubectl run db-sync-mcp-pw --rm -i --restart=Never \
+                --namespace=payment-demo \
+                --image=postgres:15 \
+                --env="PGPASSWORD=${ADMIN_PASSWORD}" \
+                -- psql -h "$RDS_ENDPOINT" -U paymentadmin -d paymentdb -c \
+                "CREATE ROLE mcp_readonly WITH LOGIN PASSWORD '${MCP_DB_PASSWORD}'; GRANT CONNECT ON DATABASE paymentdb TO mcp_readonly; GRANT USAGE ON SCHEMA public TO mcp_readonly; GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_readonly; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_readonly;" \
+                >/dev/null 2>&1 \
+            || kubectl run db-sync-mcp-pw2 --rm -i --restart=Never \
+                --namespace=payment-demo \
+                --image=postgres:15 \
+                --env="PGPASSWORD=${ADMIN_PASSWORD}" \
+                -- psql -h "$RDS_ENDPOINT" -U paymentadmin -d paymentdb -c \
+                "ALTER ROLE mcp_readonly WITH PASSWORD '${MCP_DB_PASSWORD}';" \
+                >/dev/null 2>&1 \
+            && echo "  ✓ mcp_readonly password synced" || echo "  ⚠ Could not sync mcp_readonly password (nodes may not be ready)"
+        fi
+    fi
+
+    # -----------------------------------------------------------------------
     # Get Gateway endpoint and OAuth credentials
     # Wait for Gateway authorizer to be ready (can take a minute after CDK deploy)
     # -----------------------------------------------------------------------
