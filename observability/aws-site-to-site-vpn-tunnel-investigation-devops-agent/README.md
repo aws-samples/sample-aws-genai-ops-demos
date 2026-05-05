@@ -57,7 +57,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
   aws ec2 create-key-pair --key-name vpn-demo-key `
     --query 'KeyMaterial' --output text | Set-Content -Path $HOME\.ssh\vpn-demo-key.pem -Encoding ASCII
   ```
-- **bash** 4+ and **jq** (or PowerShell 7+ on Windows — use `deploy-all.ps1` instead)
+- **bash** 4+ and **jq** (or PowerShell 5.1+ on Windows — use `deploy-all.ps1` instead)
 - No existing DevOps Agent Space needed — the setup script creates one
 
 ## Quick Start
