@@ -1282,3 +1282,53 @@
   opacity: 1;
   text-decoration: underline;
 }
+
+
+/* ── MCP Tools Table ── */
+.mcp-tools-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.825rem;
+  margin-bottom: 1.5rem;
+}
+
+.mcp-tools-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: var(--light);
+  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+}
+
+.mcp-tools-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.mcp-tools-table code {
+  font-size: 0.78rem;
+  background: var(--light);
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.mcp-tools-table em {
+  font-style: italic;
+}
+
+.mcp-setup-steps {
+  padding-left: 1.25rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.8;
+  font-size: 0.85rem;
+}
+
+.mcp-setup-steps li {
+  margin-bottom: 0.25rem;
+}

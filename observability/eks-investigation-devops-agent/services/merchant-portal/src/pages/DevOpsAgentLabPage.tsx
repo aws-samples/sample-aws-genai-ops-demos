@@ -150,6 +150,7 @@ export default function DevOpsAgentLabPage() {
   const [search, setSearch] = useState('')
   const [expandedScenario, setExpandedScenario] = useState<string | null>(null)
   const [skillExpanded, setSkillExpanded] = useState(false)
+  const [mcpExpanded, setMcpExpanded] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [usage, setUsage] = useState<any>(null)
 
@@ -163,11 +164,12 @@ export default function DevOpsAgentLabPage() {
 
   const scenariosRef = useRef<HTMLDivElement>(null)
   const skillsRef = useRef<HTMLDivElement>(null)
+  const mcpRef = useRef<HTMLDivElement>(null)
   const logsRef = useRef<HTMLDivElement>(null)
   const usageRef = useRef<HTMLDivElement>(null)
 
   const scrollToSection = (id: string) => {
-    const refs: Record<string, React.RefObject<HTMLDivElement | null>> = { scenarios: scenariosRef, skills: skillsRef, logs: logsRef, usage: usageRef }
+    const refs: Record<string, React.RefObject<HTMLDivElement | null>> = { scenarios: scenariosRef, skills: skillsRef, mcp: mcpRef, logs: logsRef, usage: usageRef }
     refs[id]?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
@@ -182,7 +184,7 @@ export default function DevOpsAgentLabPage() {
       },
       { rootMargin: '-80px 0px -60% 0px', threshold: 0 }
     )
-    for (const ref of [scenariosRef, skillsRef, logsRef, usageRef]) {
+    for (const ref of [scenariosRef, skillsRef, mcpRef, logsRef, usageRef]) {
       if (ref.current) observer.observe(ref.current)
     }
     return () => observer.disconnect()
@@ -279,6 +281,7 @@ export default function DevOpsAgentLabPage() {
         {[
           { id: 'scenarios', icon: '🔥', label: 'Scenarios' },
           { id: 'skills', icon: '🧠', label: 'Skills' },
+          { id: 'mcp', icon: '🔌', label: 'MCP Tools' },
           ...(logs.length > 0 ? [{ id: 'logs', icon: '📋', label: 'Logs' }] : []),
           ...(usage ? [{ id: 'usage', icon: '📊', label: 'Usage' }] : []),
         ].map(({ id, icon, label }) => (
@@ -454,7 +457,120 @@ export default function DevOpsAgentLabPage() {
         </div>
       </div>
 
-      {/* ── Section 3: Logs ── */}
+      {/* ── Section 3: MCP Tools ── */}
+      <div className="lab-section" id="mcp" ref={mcpRef}>
+        <div className="lab-section-header">
+          <h2>🔌 MCP Tools</h2>
+          <p className="lab-section-description">
+            A custom MCP server gives the agent read-only access to the payment database via AgentCore Gateway.
+            Logs tell you what broke — these tools tell you what it <em>cost</em>.
+          </p>
+        </div>
+
+        <div className="skill-card">
+          <div className="skill-card-header" onClick={() => setMcpExpanded(!mcpExpanded)}>
+            <div className="skill-info">
+              <span className="skill-name">pay-txn-mcp</span>
+              <span className="skill-description">
+                4 read-only tools that query the payment database — transaction volumes, failure details, processing gaps, and post-incident impact analysis. Connected via private connectivity (VPC Lattice + PrivateLink). No arbitrary SQL — fixed parameterized queries only.
+              </span>
+              <div className="scenario-feature-tag">
+                <span className="feature-label">AWS DevOps Agent feature showcased:</span> Custom MCP Server via AgentCore Gateway
+              </div>
+            </div>
+            <span className="skill-toggle">{mcpExpanded ? '▾' : '▸'}</span>
+          </div>
+
+          {mcpExpanded && (
+            <div className="skill-expanded">
+              <div className="skill-instructions">
+                <h3>Available Tools</h3>
+                <p className="skill-instructions-subtitle">
+                  These tools are registered but not enabled by default. Enable them in the DevOps Agent Console to let the agent query the payment database during investigations.
+                </p>
+
+                <table className="mcp-tools-table">
+                  <thead>
+                    <tr><th>Tool</th><th>What It Returns</th><th>Why It Matters</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>get_transaction_summary</code></td>
+                      <td>Transaction counts and totals grouped by status (last N minutes, max 60)</td>
+                      <td>Health pulse — are payments flowing or stalled?</td>
+                    </tr>
+                    <tr>
+                      <td><code>get_recent_failures</code></td>
+                      <td>Failed transactions with error codes, merchant names, amounts (max 50 rows)</td>
+                      <td>Which merchants are affected and why</td>
+                    </tr>
+                    <tr>
+                      <td><code>get_processing_gap</code></td>
+                      <td>Time since last captured payment + stuck authorization count</td>
+                      <td>Detects the <em>absence</em> of activity — invisible in logs</td>
+                    </tr>
+                    <tr>
+                      <td><code>get_incident_impact</code></td>
+                      <td>Post-incident analysis: transactions by status, affected merchants, 24h baseline comparison</td>
+                      <td>Full business impact report for any past time window</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3>Enable in the DevOps Agent Console</h3>
+                <ol className="mcp-setup-steps">
+                  <li>Open the <strong>DevOps Agent Console</strong> → <strong>Capabilities</strong> (left nav)</li>
+                  <li>Under <strong>MCP Servers</strong>, find <strong>pay-txn-mcp</strong></li>
+                  <li>Click <strong>Edit</strong> and select the tools you want to enable</li>
+                  <li>Save — the agent can now use these tools in Chat and during investigations</li>
+                </ol>
+
+                <div className="skill-actions">
+                  <a href={devOpsAgentUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+                    Open DevOps Agent Console ↗
+                  </a>
+                </div>
+
+                <h3>🎯 Prompts to try</h3>
+                <div className="skill-field">
+                  <div className="skill-field-header">
+                    <span className="skill-field-label">During an active incident</span>
+                    <button className="skill-copy-btn" onClick={() => copyToClipboard('What\'s the transaction volume over the last 60 minutes and how does the current processing gap compare to the pre-incident rate?', 'mcp-prompt-1')}>
+                      {copiedField === 'mcp-prompt-1' ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <code className="skill-field-value">What's the transaction volume over the last 60 minutes and how does the current processing gap compare to the pre-incident rate?</code>
+                </div>
+
+                <div className="skill-field">
+                  <div className="skill-field-header">
+                    <span className="skill-field-label">Post-incident analysis</span>
+                    <button className="skill-copy-btn" onClick={() => copyToClipboard('Analyze the business impact of the incident between [START_TIME] and [END_TIME]. How many transactions were affected, which merchants were impacted, and how does it compare to the normal baseline?', 'mcp-prompt-2')}>
+                      {copiedField === 'mcp-prompt-2' ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <code className="skill-field-value">Analyze the business impact of the incident between [START_TIME] and [END_TIME]. How many transactions were affected, which merchants were impacted, and how does it compare to the normal baseline?</code>
+                </div>
+
+                <div className="skill-next-step">
+                  <h3>💡 Combine with Skills</h3>
+                  <p>
+                    MCP tools provide the raw data — transaction counts, failure rates, processing gaps.
+                    Skills provide the business context — SLA budgets, severity rules, report format.
+                    When both are enabled, the agent can produce a complete executive-ready incident report
+                    with real transaction data, revenue impact calculations, and compliance assessment.
+                    For example, after an investigation completes, ask the agent in Chat to
+                    "produce a post-incident report for the last outage" — it will combine MCP data with the
+                    skill's reporting template.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Section 4: Logs ── */}
       {logs.length > 0 && (
         <div className="lab-section" id="logs" ref={logsRef}>
           <div className="lab-section-header">

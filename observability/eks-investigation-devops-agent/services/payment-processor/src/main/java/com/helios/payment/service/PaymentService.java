@@ -3,10 +3,12 @@ package com.helios.payment.service;
 import com.helios.payment.dto.PaymentRequest;
 import com.helios.payment.dto.TransactionFilterRequest;
 import com.helios.payment.entity.Transaction;
+import com.helios.payment.entity.TransactionEvent;
 import com.helios.payment.entity.TransactionStatus;
 import com.helios.payment.event.EventPublisher;
 import com.helios.payment.exception.InvalidStateTransitionException;
 import com.helios.payment.exception.TransactionNotFoundException;
+import com.helios.payment.repository.TransactionEventRepository;
 import com.helios.payment.repository.TransactionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,7 @@ import java.util.UUID;
 public class PaymentService {
 
     private final TransactionRepository transactionRepository;
+    private final TransactionEventRepository transactionEventRepository;
     private final TransactionStateMachine stateMachine;
     private final PaymentValidationService validationService;
     private final EventPublisher eventPublisher;
@@ -50,6 +53,7 @@ public class PaymentService {
 
         transaction = transactionRepository.save(transaction);
         log.info("Created transaction: {}", transaction.getId());
+        recordEvent(transaction);
 
         // Simulate authorization
         TransactionStatus previousStatus = transaction.getStatus();
@@ -58,6 +62,7 @@ public class PaymentService {
         transaction = transactionRepository.save(transaction);
         
         log.info("Authorized transaction: {}", transaction.getId());
+        recordEvent(transaction);
         
         // Publish event
         eventPublisher.publishStateChange(transaction, previousStatus);
@@ -78,6 +83,7 @@ public class PaymentService {
         transaction = transactionRepository.save(transaction);
         
         log.info("Captured transaction: {}", transaction.getId());
+        recordEvent(transaction);
         
         // Publish event
         eventPublisher.publishStateChange(transaction, previousStatus);
@@ -98,6 +104,7 @@ public class PaymentService {
         transaction = transactionRepository.save(transaction);
         
         log.info("Refunded transaction: {}", transaction.getId());
+        recordEvent(transaction);
         
         // Publish event
         eventPublisher.publishStateChange(transaction, previousStatus);
@@ -152,5 +159,15 @@ public class PaymentService {
     private Transaction findByIdAndMerchantId(UUID transactionId, UUID merchantId) {
         return transactionRepository.findByIdAndMerchantId(transactionId, merchantId)
                 .orElseThrow(() -> new TransactionNotFoundException(transactionId));
+    }
+
+    /**
+     * Record a state transition event for post-incident analysis.
+     */
+    private void recordEvent(Transaction transaction) {
+        transactionEventRepository.save(TransactionEvent.builder()
+                .transactionId(transaction.getId())
+                .status(transaction.getStatus())
+                .build());
     }
 }

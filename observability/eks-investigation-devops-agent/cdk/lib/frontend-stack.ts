@@ -27,7 +27,7 @@ export class FrontendStack extends cdk.Stack {
     // Matches original CloudFormation cloudfront-s3.yaml WebsiteBucket
     // -----------------------------------------------------------------------
     const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
-      bucketName: `${projectName}-${environment}-merchant-portal-${cdk.Aws.ACCOUNT_ID}`,
+      bucketName: `${projectName}-${environment}-portal-${cdk.Aws.ACCOUNT_ID}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,

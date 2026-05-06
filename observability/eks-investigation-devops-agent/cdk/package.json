@@ -8,6 +8,7 @@
     "cdk": "cdk"
   },
   "dependencies": {
+    "@aws-cdk/aws-bedrock-agentcore-alpha": "^2.250.0-alpha.0",
     "@aws-cdk/lambda-layer-kubectl-v31": "^2.0.0",
     "aws-cdk-lib": "^2.248.0",
     "constructs": "^10.4.2"

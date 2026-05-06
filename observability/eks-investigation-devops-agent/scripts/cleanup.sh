@@ -3,7 +3,7 @@
 # DevOps Agent EKS Demo - Complete Cleanup Script
 # Deletes all deployed infrastructure with zero leftover resources or costs
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 
 PROJECT_NAME="${PROJECT_NAME:-devops-agent-eks}"
 ENVIRONMENT="${ENVIRONMENT:-dev}"
@@ -38,7 +38,7 @@ if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
 fi
 
 echo ""
-echo "[1/14] Installing CDK dependencies..."
+echo "[1/15] Installing CDK dependencies..."
 if [ -d "cdk" ]; then
   echo "  Running npm install in cdk/..."
   cd cdk && npm install --silent && cd ..
@@ -48,7 +48,7 @@ else
 fi
 
 echo ""
-echo "[2/14] Cleaning up CodeBuild source bundles..."
+echo "[2/15] Cleaning up CodeBuild source bundles..."
 CFN_BUCKET="${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
 if aws s3api head-bucket --bucket "$CFN_BUCKET" 2>/dev/null; then
   echo "  Removing codebuild-sources/ from $CFN_BUCKET..."
@@ -59,8 +59,9 @@ else
 fi
 
 echo ""
-echo "[3/14] Emptying and deleting S3 buckets..."
+echo "[3/15] Emptying and deleting S3 buckets..."
 BUCKETS=(
+  "${PROJECT_NAME}-${ENVIRONMENT}-portal-${ACCOUNT_ID}"
   "${PROJECT_NAME}-${ENVIRONMENT}-merchant-portal-${ACCOUNT_ID}"
   "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
 )
@@ -114,12 +115,57 @@ if objects:
   fi
 done
 
+# Clean up CloudFront distribution and associated policies
+echo "  Cleaning up CloudFront resources..."
+CF_DIST_ID=$(aws cloudfront list-distributions \
+    --query "DistributionList.Items[?Comment=='Merchant Portal - ${ENVIRONMENT}'].Id | [0]" \
+    --output text --no-cli-pager 2>/dev/null || echo "")
+if [ -n "$CF_DIST_ID" ] && [ "$CF_DIST_ID" != "None" ]; then
+    echo "  Disabling CloudFront distribution $CF_DIST_ID..."
+    CF_ETAG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query ETag --output text --no-cli-pager)
+    aws cloudfront get-distribution-config --id "$CF_DIST_ID" --no-cli-pager --output json \
+        | jq '.DistributionConfig.Enabled = false | .DistributionConfig' > /tmp/cf-disable.json
+    aws cloudfront update-distribution --id "$CF_DIST_ID" --if-match "$CF_ETAG" \
+        --distribution-config file:///tmp/cf-disable.json --no-cli-pager >/dev/null 2>&1 || true
+    echo "  Waiting for distribution to disable (up to 10 minutes)..."
+    aws cloudfront wait distribution-deployed --id "$CF_DIST_ID" 2>/dev/null || true
+    CF_ETAG=$(aws cloudfront get-distribution --id "$CF_DIST_ID" --query ETag --output text --no-cli-pager)
+    aws cloudfront delete-distribution --id "$CF_DIST_ID" --if-match "$CF_ETAG" --no-cli-pager 2>/dev/null || true
+    echo "  ✓ CloudFront distribution deleted"
+    rm -f /tmp/cf-disable.json
+fi
+
+# Delete orphaned CloudFront policies
+for CP_ID in $(aws cloudfront list-cache-policies --type custom \
+    --query "CachePolicyList.Items[?CachePolicy.CachePolicyConfig.Name=='${PROJECT_NAME}-${ENVIRONMENT}-cache-policy'].CachePolicy.Id" \
+    --output text --no-cli-pager 2>/dev/null || echo ""); do
+    [ -z "$CP_ID" ] || [ "$CP_ID" = "None" ] && continue
+    CP_ETAG=$(aws cloudfront get-cache-policy --id "$CP_ID" --query ETag --output text --no-cli-pager 2>/dev/null || echo "")
+    [ -n "$CP_ETAG" ] && [ "$CP_ETAG" != "None" ] && aws cloudfront delete-cache-policy --id "$CP_ID" --if-match "$CP_ETAG" --no-cli-pager 2>/dev/null || true
+done
+for RHP_ID in $(aws cloudfront list-response-headers-policies --type custom \
+    --query "ResponseHeadersPolicyList.Items[?ResponseHeadersPolicy.ResponseHeadersPolicyConfig.Name=='${PROJECT_NAME}-${ENVIRONMENT}-security-headers'].ResponseHeadersPolicy.Id" \
+    --output text --no-cli-pager 2>/dev/null || echo ""); do
+    [ -z "$RHP_ID" ] || [ "$RHP_ID" = "None" ] && continue
+    RHP_ETAG=$(aws cloudfront get-response-headers-policy --id "$RHP_ID" --query ETag --output text --no-cli-pager 2>/dev/null || echo "")
+    [ -n "$RHP_ETAG" ] && [ "$RHP_ETAG" != "None" ] && aws cloudfront delete-response-headers-policy --id "$RHP_ID" --if-match "$RHP_ETAG" --no-cli-pager 2>/dev/null || true
+done
+for OAC_ID in $(aws cloudfront list-origin-access-controls \
+    --query "OriginAccessControlList.Items[?Name=='${PROJECT_NAME}-${ENVIRONMENT}-oac'].Id" \
+    --output text --no-cli-pager 2>/dev/null || echo ""); do
+    [ -z "$OAC_ID" ] || [ "$OAC_ID" = "None" ] && continue
+    OAC_ETAG=$(aws cloudfront get-origin-access-control --id "$OAC_ID" --query ETag --output text --no-cli-pager 2>/dev/null || echo "")
+    [ -n "$OAC_ETAG" ] && [ "$OAC_ETAG" != "None" ] && aws cloudfront delete-origin-access-control --id "$OAC_ID" --if-match "$OAC_ETAG" --no-cli-pager 2>/dev/null || true
+done
+echo "  ✓ CloudFront policies cleaned up"
+
 echo ""
-echo "[4/14] Deleting ECR images..."
+echo "[4/15] Deleting ECR images..."
 REPOS=(
   "${PROJECT_NAME}/merchant-gateway"
   "${PROJECT_NAME}/payment-processor"
   "${PROJECT_NAME}/webhook-service"
+  "${PROJECT_NAME}/mcp-server"
   "${PROJECT_NAME}-${ENVIRONMENT}/merchant-gateway"
   "${PROJECT_NAME}-${ENVIRONMENT}/payment-processor"
   "${PROJECT_NAME}-${ENVIRONMENT}/webhook-service"
@@ -136,7 +182,7 @@ for repo in "${REPOS[@]}"; do
 done
 
 echo ""
-echo "[5/14] Disabling RDS deletion protection..."
+echo "[5/15] Disabling RDS deletion protection..."
 DB_INSTANCE="${PROJECT_NAME}-${ENVIRONMENT}-postgres"
 if aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" &>/dev/null; then
   echo "  Disabling deletion protection on $DB_INSTANCE..."
@@ -151,7 +197,7 @@ else
 fi
 
 echo ""
-echo "[6/14] Cleaning up Kubernetes resources before stack deletion..."
+echo "[6/15] Cleaning up Kubernetes resources before stack deletion..."
 EKS_CLUSTER="${PROJECT_NAME}-${ENVIRONMENT}-cluster"
 if aws eks describe-cluster --name "$EKS_CLUSTER" &>/dev/null 2>&1; then
   # Delete Fluent Bit and K8s resources while cluster is still running
@@ -179,7 +225,7 @@ if aws iam get-role --role-name "$EKS_NODE_ROLE" &>/dev/null 2>&1; then
 fi
 
 echo ""
-echo "[7/14] Cleaning up orphaned VPC endpoints..."
+echo "[7/15] Cleaning up orphaned VPC endpoints..."
 VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=${PROJECT_NAME}" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "None")
 # Fallback: query the NetworkStack CloudFormation output if tag lookup fails
 if [[ "$VPC_ID" == "None" || -z "$VPC_ID" ]]; then
@@ -226,7 +272,7 @@ else
 fi
 
 echo ""
-echo "[8/14] Cleaning up orphaned load balancers, target groups, and security groups..."
+echo "[8/15] Cleaning up orphaned load balancers, target groups, and security groups..."
 if [[ "$VPC_ID" != "None" && "$VPC_ID" != "" ]]; then
   # Delete load balancers in the VPC
   LB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" --output text 2>/dev/null || echo "")
@@ -259,7 +305,7 @@ else
 fi
 
 echo ""
-echo "[9/14] Destroying CloudFormation stacks (reverse dependency order)..."
+echo "[9/15] Destroying CloudFormation stacks (reverse dependency order)..."
 # CDK's --all flag cannot delete the conditional DevOpsAgent stack (it is not
 # in the synth output when the webhook URL context is absent).  We therefore
 # delete stacks directly via CloudFormation in explicit reverse-dependency
@@ -278,6 +324,7 @@ STACK_DELETE_ORDER=(
   "DevOpsAgentEksDevOpsAgent-${REGION}"
   "DevOpsAgentEksFrontend-${REGION}"
   "DevOpsAgentEksFailureSimulatorApi-${REGION}"
+  "DevOpsAgentEksMcpServer-${REGION}"
   "DevOpsAgentEksMonitoring-${REGION}"
   "DevOpsAgentEksPipeline-${REGION}"
   "DevOpsAgentEksAuth-${REGION}"
@@ -293,9 +340,51 @@ for stack in "${STACK_DELETE_ORDER[@]}"; do
     continue
   fi
   echo "  Deleting $stack ($STATUS)..."
-  aws cloudformation delete-stack --stack-name "$stack" 2>/dev/null || true
+
+  # Network stack: AgentCore private connection ENIs are service-managed and
+  # cannot be force-detached. After the private connection is deleted (step 14),
+  # they typically release within a few minutes but can take up to several hours.
+  # Strategy: poll for up to 5 minutes, then fall back to retain-and-cleanup.
+  if [[ "$stack" == *"Network"* && "$VPC_ID" != "None" && -n "$VPC_ID" ]]; then
+    echo "  Waiting for AgentCore ENIs to release (up to 5 minutes)..."
+    ENI_CLEAR="false"
+    for attempt in $(seq 1 30); do  # 30 × 10s = 5 minutes
+      # Exclude NAT Gateway ENIs — they're stack-managed and deleted automatically
+      IN_USE_ENIS=$(aws ec2 describe-network-interfaces \
+          --filters "Name=vpc-id,Values=${VPC_ID}" "Name=status,Values=in-use" \
+          --query "NetworkInterfaces[?!contains(Description,'NAT Gateway')].NetworkInterfaceId" \
+          --output text 2>/dev/null || echo "")
+      if [[ -z "$IN_USE_ENIS" ]]; then
+        echo "  ✓ All non-stack ENIs released"
+        ENI_CLEAR="true"
+        break
+      fi
+      echo "  ENIs still in-use ($attempt/30)... waiting 10s"
+      sleep 10
+    done
+
+    # Delete any available (detached) ENIs
+    AVAIL_ENIS=$(aws ec2 describe-network-interfaces \
+        --filters "Name=vpc-id,Values=${VPC_ID}" "Name=status,Values=available" \
+        --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null || echo "")
+    for eni in $AVAIL_ENIS; do
+      aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null || true
+    done
+
+    if [[ "$ENI_CLEAR" == "true" ]]; then
+      aws cloudformation delete-stack --stack-name "$stack" 2>/dev/null || true
+    else
+      echo "  ⚠ AgentCore ENIs still attached (service-managed, cannot force-detach)."
+      echo "    Deleting stack with subnet retention. Run this later to finish cleanup:"
+      echo "      aws cloudformation delete-stack --stack-name $stack"
+      aws cloudformation delete-stack --stack-name "$stack" \
+          --retain-resources Vpc8378EB38 VpcPrivateComputeSubnet1Subnet106EC80E VpcPrivateComputeSubnet2Subnet2118056D 2>/dev/null || true
+    fi
+  else
+    aws cloudformation delete-stack --stack-name "$stack" 2>/dev/null || true
+  fi
+
   aws cloudformation wait stack-delete-complete --stack-name "$stack" 2>/dev/null || true
-  # Verify deletion succeeded
   FINAL=$(aws cloudformation describe-stacks --stack-name "$stack" --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DELETE_COMPLETE")
   if [[ "$FINAL" == "DELETE_FAILED" ]]; then
     echo "  ⚠ $stack stuck in DELETE_FAILED — will retry in step 11"
@@ -313,7 +402,7 @@ if aws cloudformation describe-stacks --stack-name "$PROJECT_NAME" &>/dev/null; 
 fi
 
 echo ""
-echo "[10/14] Cleaning up remaining S3 buckets (if any survived stack deletion)..."
+echo "[10/15] Cleaning up remaining S3 buckets (if any survived stack deletion)..."
 for bucket in "${BUCKETS[@]}"; do
   if aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
     echo "  Force-deleting bucket $bucket..."
@@ -324,7 +413,7 @@ for bucket in "${BUCKETS[@]}"; do
 done
 
 echo ""
-echo "[11/14] Cleaning up any orphaned stacks in DELETE_FAILED state..."
+echo "[11/15] Cleaning up any orphaned stacks in DELETE_FAILED state..."
 FAILED_STACKS=""
 # Check for both legacy CloudFormation and CDK stack name patterns
 for pattern in "$PROJECT_NAME" "DevOpsAgentEks"; do
@@ -355,8 +444,35 @@ else
   echo "  - No orphaned stacks found"
 fi
 
+# Clean up orphaned Cognito user pools (created by AgentCore Gateway CDK construct)
+echo "  Cleaning up orphaned Cognito user pools..."
+for POOL_ID in $(aws cognito-idp list-user-pools --max-results 20 --region "$REGION" --query "UserPools[?contains(Name,'mcp')].Id" --output text --no-cli-pager 2>/dev/null); do
+  DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id "$POOL_ID" --region "$REGION" --query "UserPool.Domain" --output text --no-cli-pager 2>/dev/null || echo "")
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ]; then
+    aws cognito-idp delete-user-pool-domain --domain "$DOMAIN" --user-pool-id "$POOL_ID" --region "$REGION" --no-cli-pager 2>/dev/null || true
+  fi
+  aws cognito-idp delete-user-pool --user-pool-id "$POOL_ID" --region "$REGION" --no-cli-pager 2>/dev/null || true
+  echo "  Deleted Cognito pool $POOL_ID"
+done
+
 echo ""
-echo "[12/14] Deleting Secrets Manager secret..."
+echo "[12/15] Deleting Secrets Manager secret..."
+
+# Clean up orphaned IAM roles (after all stacks are deleted)
+echo "  Cleaning up orphaned IAM roles..."
+for ROLE in $(aws iam list-roles --query "Roles[?contains(RoleName,'${PROJECT_NAME}-${ENVIRONMENT}')].RoleName" --output text --no-cli-pager 2>/dev/null); do
+  for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do
+    aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
+  done
+  for P in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[*]' --output text 2>/dev/null); do
+    aws iam delete-role-policy --role-name "$ROLE" --policy-name "$P" 2>/dev/null || true
+  done
+  for IP in $(aws iam list-instance-profiles-for-role --role-name "$ROLE" --query 'InstanceProfiles[*].InstanceProfileName' --output text 2>/dev/null); do
+    aws iam remove-role-from-instance-profile --instance-profile-name "$IP" --role-name "$ROLE" 2>/dev/null || true
+  done
+  aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+done
+echo "  ✓ IAM roles cleaned up"
 SECRET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-rds-credentials"
 if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" &>/dev/null 2>&1; then
   echo "  Deleting $SECRET_NAME (force, no recovery window)..."
@@ -372,9 +488,16 @@ if aws secretsmanager describe-secret --secret-id "$WEBHOOK_SECRET_NAME" &>/dev/
   aws secretsmanager delete-secret --secret-id "$WEBHOOK_SECRET_NAME" --force-delete-without-recovery 2>/dev/null || true
   echo "  ✓ Webhook secret deleted"
 fi
+# Clean up MCP server read-only DB credentials secret
+MCP_SECRET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-mcp-readonly-credentials"
+if aws secretsmanager describe-secret --secret-id "$MCP_SECRET_NAME" &>/dev/null 2>&1; then
+  echo "  Deleting $MCP_SECRET_NAME (force, no recovery window)..."
+  aws secretsmanager delete-secret --secret-id "$MCP_SECRET_NAME" --force-delete-without-recovery 2>/dev/null || true
+  echo "  ✓ MCP secret deleted"
+fi
 
 echo ""
-echo "[13/14] Cleaning up CloudWatch log groups and kubeconfig..."
+echo "[13/15] Cleaning up CloudWatch log groups and kubeconfig..."
 # Delete EKS, Lambda, and CodeBuild log groups created outside CloudFormation
 LOG_GROUPS=$(aws logs describe-log-groups \
   --log-group-name-prefix "/aws/eks/${PROJECT_NAME}" \
@@ -411,8 +534,69 @@ else
 fi
 
 echo ""
-echo "[14/14] Cleaning up DevOps Agent resources..."
+echo "[14/15] Cleaning up AgentCore Gateway MCP server..."
 DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
+
+# Disassociate MCP services from ALL agent spaces, then deregister
+echo "  Disassociating MCP services from agent spaces..."
+for SPACE in $(aws devops-agent list-agent-spaces --region "$DEVOPS_AGENT_REGION" --query 'agentSpaces[*].agentSpaceId' --output text --no-cli-pager 2>/dev/null); do
+    for AID in $(aws devops-agent list-associations --agent-space-id "$SPACE" --region "$DEVOPS_AGENT_REGION" --no-cli-pager --output json 2>/dev/null | jq -r '.associations[] | select(.configuration.mcpserver != null) | .associationId' 2>/dev/null); do
+        aws devops-agent disassociate-service --agent-space-id "$SPACE" --association-id "$AID" --region "$DEVOPS_AGENT_REGION" --no-cli-pager 2>/dev/null || true
+    done
+done
+
+# Deregister all MCP services matching our project
+for SID in $(aws devops-agent list-services --region "$DEVOPS_AGENT_REGION" --no-cli-pager --output json 2>/dev/null | jq -r '.services[].serviceId' 2>/dev/null); do
+    aws devops-agent deregister-service --service-id "$SID" --region "$DEVOPS_AGENT_REGION" --no-cli-pager 2>/dev/null || true
+done
+echo "  ✓ MCP services deregistered"
+
+# Delete private connections
+for CONN_NAME in "mcp-gw-conn" "mcp-gateway-conn" "mcp-paytxninsights" "mcp-test-conn"; do
+    CONN_EXISTS=$(aws devops-agent describe-private-connection --name "$CONN_NAME" --region "$DEVOPS_AGENT_REGION" --query "status" --output text --no-cli-pager 2>/dev/null || echo "GONE")
+    if [ "$CONN_EXISTS" != "GONE" ] && [ "$CONN_EXISTS" != "None" ]; then
+        echo "  Deleting private connection '$CONN_NAME' (status: $CONN_EXISTS)..."
+        aws devops-agent delete-private-connection --name "$CONN_NAME" --region "$DEVOPS_AGENT_REGION" --no-cli-pager 2>/dev/null || true
+    fi
+done
+echo "  Waiting for private connections to fully delete..."
+for CONN_NAME in "mcp-gw-conn" "mcp-gateway-conn" "mcp-paytxninsights" "mcp-test-conn"; do
+    for i in $(seq 1 36); do  # up to 6 minutes
+        STATUS=$(aws devops-agent describe-private-connection --name "$CONN_NAME" --region "$DEVOPS_AGENT_REGION" --query "status" --output text --no-cli-pager 2>/dev/null || echo "GONE")
+        if [ "$STATUS" = "GONE" ] || [ "$STATUS" = "None" ]; then
+            break
+        fi
+        if [ "$i" -eq 1 ]; then
+            echo "  Waiting for '$CONN_NAME' ($STATUS)..."
+        fi
+        sleep 10
+    done
+done
+echo "  ✓ Private connections deleted"
+
+# Delete orphaned AgentCore runtimes from test deployments
+for RT in $(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" --no-cli-pager --output json 2>/dev/null | jq -r '.agentRuntimes[] | select(.agentRuntimeName | test("paytxn")) | .agentRuntimeId' 2>/dev/null); do
+    echo "  Deleting AgentCore runtime $RT..."
+    aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id "$RT" --region "$REGION" --no-cli-pager 2>/dev/null || true
+done
+
+# Wait for private connection ENIs to release (they block VPC/subnet deletion)
+echo "  Waiting for private connection ENIs to release (up to 5 minutes)..."
+sleep 60
+for i in $(seq 1 24); do
+    REMAINING=$(aws devops-agent describe-private-connection --name mcp-gw-conn --region "$DEVOPS_AGENT_REGION" --query status --output text --no-cli-pager 2>/dev/null || echo "GONE")
+    if [ "$REMAINING" = "GONE" ] || [ "$REMAINING" = "None" ]; then
+        echo "  ✓ Private connections fully deleted"
+        break
+    fi
+    if [ "$i" -eq 24 ]; then
+        echo "  WARNING: Private connections may still have ENIs. VPC deletion might fail."
+    fi
+    sleep 10
+done
+
+echo ""
+echo "[15/15] Cleaning up DevOps Agent resources..."
 
 # Delete only the Agent Space matching our project name (not all spaces in the account)
 AGENT_SPACE_ID=$(aws devops-agent list-agent-spaces \

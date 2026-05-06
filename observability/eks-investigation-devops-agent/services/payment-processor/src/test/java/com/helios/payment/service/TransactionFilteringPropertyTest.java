@@ -4,6 +4,7 @@ import com.helios.payment.dto.TransactionFilterRequest;
 import com.helios.payment.entity.Transaction;
 import com.helios.payment.entity.TransactionStatus;
 import com.helios.payment.event.EventPublisher;
+import com.helios.payment.repository.TransactionEventRepository;
 import com.helios.payment.repository.TransactionRepository;
 import net.jqwik.api.*;
 import net.jqwik.api.constraints.IntRange;
@@ -43,10 +44,11 @@ class TransactionFilteringPropertyTest {
 
     void setUp() {
         transactionRepository = mock(TransactionRepository.class);
+        TransactionEventRepository transactionEventRepository = mock(TransactionEventRepository.class);
         TransactionStateMachine stateMachine = new TransactionStateMachine();
         PaymentValidationService validationService = new PaymentValidationService();
         EventPublisher eventPublisher = mock(EventPublisher.class);
-        paymentService = new PaymentService(transactionRepository, stateMachine, validationService, eventPublisher);
+        paymentService = new PaymentService(transactionRepository, transactionEventRepository, stateMachine, validationService, eventPublisher);
     }
 
     @Provide
