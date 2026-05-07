@@ -121,7 +121,30 @@ aws s3 mb "s3://$BUCKET_NAME" --region $AWS_REGION 2>$null
 # region the 'mb' above silently no-ops. CodeBuild refuses cross-region source
 # downloads and would fail ~18s into the first build (DOWNLOAD_SOURCE phase)
 # with a BucketRegionError. Fail fast here with an actionable message.
-$BucketLocation = aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>$null
+#
+# Also handles the case where 'mb' failed for another reason (e.g., S3 name
+# cooldown after a recent DeleteBucket) so we abort instead of marching into
+# the CDK deploy with a bucket that doesn't exist.
+$BucketLocationRaw = (aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>&1) -join "`n"
+$BucketLocationExit = $LASTEXITCODE
+
+if ($BucketLocationExit -ne 0) {
+    Write-Host ""
+    Write-Host "ERROR: Could not verify S3 bucket '$BUCKET_NAME'." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  $BucketLocationRaw"
+    Write-Host ""
+    if ($BucketLocationRaw -match 'NoSuchBucket') {
+        Write-Host "The bucket does not exist. 'aws s3 mb' above likely failed silently."
+        Write-Host "A common cause is the S3 name-reuse cooldown after a recent DeleteBucket"
+        Write-Host "(can take several minutes). Wait a bit and re-run deploy-all.ps1, or try:"
+        Write-Host "  aws s3 mb s3://$BUCKET_NAME --region $AWS_REGION"
+    }
+    Write-Host ""
+    exit 1
+}
+
+$BucketLocation = $BucketLocationRaw
 # us-east-1 reports as 'None' (historical quirk of the S3 API)
 if (-not $BucketLocation -or $BucketLocation -eq 'None') {
     $BucketLocation = 'us-east-1'
