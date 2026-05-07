@@ -334,6 +334,7 @@ All costs approximate, based on `us-east-1` pricing.
 | CDK fails with **`SSM parameter /cdk-bootstrap/hnb659fds/version not found`** | Account/region is not CDK-bootstrapped | Run `npx cdk bootstrap aws://<account-id>/<region>` once, then re-run `deploy-all.sh` |
 | CDK bootstrap "S3 bucket already exists" | Broken CDK bootstrap stack | Run `npx cdk bootstrap --force` or delete the orphaned S3 bucket `cdk-hnb659fds-assets-*` and re-bootstrap. See [CDK bootstrap troubleshooting](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-troubleshoot.html) |
 | Deploy targeted the wrong region | `AWS_REGION` unset, so CLI fell back to `aws configure get region` | `export AWS_REGION=<intended-region>` and `export AWS_DEFAULT_REGION=<same>` before running the script |
+| CodeBuild fails in **DOWNLOAD_SOURCE** with `BucketRegionError` (builds fail in ~18s) | The CodeBuild sources S3 bucket (`devops-agent-eks-cfn-templates-<account>`) exists in a different region than this deploy, left over from a previous attempt. CodeBuild cannot pull sources cross-region. | Delete the misplaced bucket and re-run: `aws s3 rm s3://devops-agent-eks-cfn-templates-<account> --recursive --region <old-region>` then `aws s3 rb s3://devops-agent-eks-cfn-templates-<account> --region <old-region>`. The deploy script now detects this upfront. |
 
 ## Recreating the Agent Space
 

@@ -126,6 +126,31 @@ echo "[1/9] Installing CDK dependencies and preparing S3 bucket..."
 BUCKET_NAME="$PROJECT_NAME-cfn-templates-$AWS_ACCOUNT_ID"
 aws s3 mb "s3://$BUCKET_NAME" --region "$AWS_REGION" 2>/dev/null || true
 
+# Verify the bucket lives in the target region. S3 bucket names are globally
+# unique, so if a previous deploy attempt created this bucket in a different
+# region the 'mb' above silently no-ops. CodeBuild refuses cross-region source
+# downloads and would fail ~18s into the first build (DOWNLOAD_SOURCE phase)
+# with a BucketRegionError. Fail fast here with an actionable message.
+BUCKET_LOCATION=$(aws s3api get-bucket-location --bucket "$BUCKET_NAME" \
+    --query 'LocationConstraint' --output text 2>/dev/null || echo "")
+# us-east-1 reports as 'None' (historical quirk of the S3 API)
+if [ "$BUCKET_LOCATION" = "None" ] || [ -z "$BUCKET_LOCATION" ]; then
+    BUCKET_LOCATION="us-east-1"
+fi
+if [ "$BUCKET_LOCATION" != "$AWS_REGION" ]; then
+    echo ""
+    echo "ERROR: S3 bucket '$BUCKET_NAME' exists in '$BUCKET_LOCATION' but this deploy targets '$AWS_REGION'."
+    echo ""
+    echo "This typically happens after a previous deploy attempt ran against a different region."
+    echo "CodeBuild in '$AWS_REGION' cannot pull sources from a bucket in '$BUCKET_LOCATION'."
+    echo ""
+    echo "Fix: delete the misplaced bucket, then re-run deploy-all.sh:"
+    echo "  aws s3 rm s3://$BUCKET_NAME --recursive --region $BUCKET_LOCATION"
+    echo "  aws s3 rb s3://$BUCKET_NAME --region $BUCKET_LOCATION"
+    echo ""
+    exit 1
+fi
+
 cd cdk && npm install && cd ..
 echo "  done."
 echo ""
