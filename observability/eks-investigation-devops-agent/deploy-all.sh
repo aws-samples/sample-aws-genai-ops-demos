@@ -101,6 +101,24 @@ echo ""
 
 ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
+# ---------------------------------------------------------------------------
+# CDK bootstrap pre-flight
+# ---------------------------------------------------------------------------
+# The CDK deploy step (~15 min) fails late with a confusing "SSM parameter
+# /cdk-bootstrap/hnb659fds/version not found" error if this account/region has
+# never been bootstrapped. Check upfront so the user sees the fix in seconds.
+if ! aws ssm get-parameter \
+        --name /cdk-bootstrap/hnb659fds/version \
+        --region "$AWS_REGION" >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: CDK is not bootstrapped in $AWS_REGION for account $AWS_ACCOUNT_ID."
+    echo ""
+    echo "Run this once, then re-run deploy-all.sh:"
+    echo "  npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION"
+    echo ""
+    exit 1
+fi
+
 # =============================================================================
 # STEP 1: Install CDK dependencies and create S3 bucket for CodeBuild sources
 # =============================================================================
