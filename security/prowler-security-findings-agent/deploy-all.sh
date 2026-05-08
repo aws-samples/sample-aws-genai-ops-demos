@@ -61,7 +61,18 @@ DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-eu.amazon.nova-pro-v1:0}"
 SCAN_SCHEDULE="${SCAN_SCHEDULE:-cron(0 6 * * ? *)}"
 
-CDK_CONTEXT="-c devOpsAgentWebhookUrl=$DEVOPS_AGENT_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_AGENT_WEBHOOK_SECRET -c devOpsAgentRegion=$DEVOPS_AGENT_REGION -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID -c bedrockModelId=$BEDROCK_MODEL_ID -c scanSchedule=$SCAN_SCHEDULE"
+# Pass CDK context as an array so values with spaces or shell metacharacters
+# survive expansion. SCAN_SCHEDULE in particular contains `*` and `?` which
+# bash would otherwise word-split and glob-expand at the deploy call site,
+# breaking the argv CDK receives.
+CDK_CONTEXT=(
+    -c "devOpsAgentWebhookUrl=$DEVOPS_AGENT_WEBHOOK_URL"
+    -c "devOpsAgentWebhookSecret=$DEVOPS_AGENT_WEBHOOK_SECRET"
+    -c "devOpsAgentRegion=$DEVOPS_AGENT_REGION"
+    -c "devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
+    -c "bedrockModelId=$BEDROCK_MODEL_ID"
+    -c "scanSchedule=$SCAN_SCHEDULE"
+)
 
 # Step 1: install CDK deps
 echo "[1/6] Installing CDK dependencies..."
@@ -88,7 +99,7 @@ npx cdk deploy \
     "ProwlerSecurityScanner-$AWS_REGION" \
     "ProwlerSecurityIngest-$AWS_REGION" \
     "ProwlerSecurityApi-$AWS_REGION" \
-    $CDK_CONTEXT \
+    "${CDK_CONTEXT[@]}" \
     --require-approval never \
     --no-cli-pager
 cd "$SCRIPT_DIR"
@@ -137,7 +148,7 @@ echo ""
 echo "[6/6] Deploying Frontend stack..."
 cd "$SCRIPT_DIR/cdk"
 npx cdk deploy "ProwlerSecurityFrontend-$AWS_REGION" \
-    $CDK_CONTEXT \
+    "${CDK_CONTEXT[@]}" \
     --require-approval never \
     --no-cli-pager
 cd "$SCRIPT_DIR"
