@@ -7,59 +7,23 @@
 3. For the findings that matter (CRITICAL / HIGH / failing), produce an AI-generated remediation playbook with Amazon Bedrock Nova Pro, and feed it into Amazon DevOps Agent so the investigation starts with concrete next steps.
 4. Expose the whole thing as a modern single-page dashboard.
 
-## Data flow
+## High-level view
 
-```
-                                      ┌─────────────────────────┐
-  EventBridge (cron daily) ──────────►│                         │
-                                      │   ECS Fargate Prowler   │──► S3 raw-reports/{scan}/*.ocsf.json
-  POST /scans (from dashboard) ──────►│     (SecurityAudit +    │
-                                      │      ViewOnlyAccess)    │──► Security Hub (ASFF, via -S flag)
-                                      └─────────────────────────┘
-                                                                                │
-                                                                                ▼
-                                                                    S3 ObjectCreated event
-                                                                                │
-                                                                                ▼
-                                                            ┌────────────────────────────────────────┐
-                                                            │   ingest-findings Lambda               │
-                                                            │   Parse OCSF → DynamoDB BatchWriteItem │
-                                                            └───────────┬────────────────────────────┘
-                                                                        │
-                                  severity ∈ {CRITICAL, HIGH}            │ all findings
-                                  status == FAIL                         │
-                                                                        │
-                       ┌────────────────────────────┬────────────────────┤
-                       │                            │                    │
-                       ▼                            ▼                    ▼
-    ┌─────────────────────────────┐      ┌───────────────────┐   ┌──────────────────────────┐
-    │ remediation-context Lambda  │      │ SNS topic         │   │ DynamoDB findings table  │
-    │ - Bedrock Converse Nova Pro │      │ (trigger)         │   │ GSI: severity-index      │
-    │ - Writes markdown to S3     │      └─────────┬─────────┘   │ GSI: status-index        │
-    │ - Updates DynamoDB with     │                │             └──────────────────────────┘
-    │   remediation_s3_key         │               ▼                    ▲
-    └─────────────────────────────┘    ┌──────────────────────┐          │
-                                       │ devops-agent-trigger │          │
-                                       │  Lambda (HMAC-SHA256)│          │
-                                       └─────────┬────────────┘          │
-                                                 │                       │
-                                                 ▼                       │
-                                       Amazon DevOps Agent               │
-                                       webhook (payload includes         │
-                                       Nova remediation markdown)        │
-                                                                         │
-                                                                         │
-    React Dashboard (CloudFront + S3 + OAC)                              │
-         │                                                               │
-         │ SigV4 with Cognito Identity Pool credentials                  │
-         ▼                                                               │
-    dashboard-api Lambda (Function URL, IAM auth)────────────────────────┤
-         │                                                               │
-         ├─ GET /findings                                                │
-         ├─ GET /findings/{uid} → presigned URL to remediation markdown ─┤
-         ├─ GET /scans                                                   │
-         └─ POST /scans → ecs:RunTask (Prowler on-demand) ───────────────┘
-```
+![Architecture Overview](architecture-overview.drawio.svg)
+
+## Detailed view
+
+![Detailed Architecture](architecture.drawio.svg)
+
+The detailed diagram adds what the overview omits:
+
+- All 7 CDK stacks mapped to their resources (Scanner, Ingest + AI Remediation, Dispatch, Cost events, Dashboard), plus the outer AWS Cloud boundary and the nested VPC with its 2 public subnets.
+- Both directions of the DevOps Agent integration: the outbound HMAC-SHA256 webhook dispatch and the inbound SigV4 `aidevops` REST poll used by the Investigations tab.
+- The IAM roles that each Lambda and the Fargate task assume, with their key permissions inline.
+- The cost-events subsystem: every billable action (Bedrock Converse, DevOps Agent dispatch, Fargate scan) writes one row to a dedicated DynamoDB table surfaced on the Cost page.
+- Security Hub as an external destination that receives ASFF findings via Prowler's `-S` flag.
+
+The editable source is at [`architecture.drawio`](architecture.drawio). Both SVGs are draw.io exports with the source diagram embedded (`File > Export as > SVG… > Include a copy of my diagram`), so they are round-trip editable — open the `.svg` directly in draw.io to edit.
 
 ## Authentication & authorization
 

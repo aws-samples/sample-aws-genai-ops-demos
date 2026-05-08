@@ -21,39 +21,17 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
 
 ## Architecture
 
-![Architecture Diagram](docs/architecture.drawio.svg)
+![Architecture Overview](docs/architecture-overview.drawio.svg)
 
-```
-                           ┌─────────────────────────┐
-  EventBridge schedule ───►│                         │     raw-reports/{scan}/*.ocsf.json
-  (on-demand from UI) ────►│   ECS Fargate Prowler   │────────────────► S3 (raw-reports)
-                           │     (SecurityAudit)     │                         │
-                           └─────────────────────────┘                         ▼
-                                                                   S3 ObjectCreated
-                                                                         │
-                                                                         ▼
-                                                          ┌─────────────────────────┐
-                                                          │  ingest-findings Lambda │
-                                                          │  OCSF → DynamoDB        │
-                                                          └──────────┬──────────────┘
-                                                                     │
-                      ┌──────────────────────────────────────────────┤
-                      │ severity ∈ {CRITICAL, HIGH}                   │ all findings
-                      ▼                                               ▼
-  ┌──────────────────────────────────┐                  DynamoDB (prowler-security-findings)
-  │  remediation-context Lambda      │                             │
-  │  Bedrock Converse (Nova Pro)     │                             │
-  │  → markdown playbook to S3       │                             │
-  └─────────────┬────────────────────┘                             │
-                │                                                   │
-                │              SNS ──► devops-agent-trigger Lambda  │
-                │                             (HMAC-SHA256)         │
-                │                             │                     │
-                │                             ▼                     ▼
-                │                   Amazon DevOps Agent   React Dashboard
-                │                   webhook (with Nova    (CloudFront + Cognito +
-                └───────────────────►  remediation MD)    SigV4 to dashboard-api)
-```
+Five stages, all inside the customer AWS account:
+
+- **Scan** — an ECS Fargate Prowler task runs on a schedule or on demand, writing OCSF JSON findings to S3 and ASFF findings to Security Hub (via the `-S` flag).
+- **Ingest** — an S3 ObjectCreated event triggers the `ingest-findings` Lambda, which parses OCSF and upserts every finding into DynamoDB, indexed by severity and status for fast dashboard queries.
+- **Contextualize** — on demand from the dashboard, the `remediation-context` Lambda calls Amazon Bedrock Nova Pro via the Converse API and produces a status-aware markdown playbook (Impact, Root cause, Remediation steps with bash and CDK v2 snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
+- **Dispatch** — clicking _Investigate_ publishes the finding to SNS, which triggers an HMAC-SHA256-signing Lambda that POSTs the incident (with the Nova playbook embedded) to the Amazon DevOps Agent webhook. The dashboard then polls the agent's backlog tasks and journal records back through SigV4 so you can watch the investigation in real time.
+- **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + OAC) authenticates via Cognito User Pool + Identity Pool and calls an IAM-authenticated Lambda Function URL over SigV4. Six pages: Dashboard, Findings, Finding Detail, Compliance, Cost, Investigations.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture, including the VPC design, IAM roles, the cost-events subsystem, and the full bi-directional DevOps Agent integration.
 
 ## Prerequisites
 
@@ -188,7 +166,9 @@ prowler-security-findings-agent/
 │           └── Compliance.tsx
 └── docs/
     ├── ARCHITECTURE.md
-    ├── architecture.drawio
+    ├── architecture-overview.drawio          # AWS-shape high-level pipeline
+    ├── architecture-overview.drawio.svg
+    ├── architecture.drawio                   # detailed view with VPC + IAM + cost subsystem
     └── architecture.drawio.svg
 ```
 

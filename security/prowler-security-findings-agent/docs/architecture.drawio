@@ -1,45 +1,244 @@
-<mxfile host="app.diagrams.net" type="embed">
-  <diagram id="prowler-security" name="Prowler + DevOps Agent + Bedrock Nova">
-    <mxGraphModel dx="1200" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="880" pageHeight="520" math="0" shadow="0">
+<mxfile host="app.diagrams.net" modified="2026-05-08T18:00:00.000Z" agent="claude" version="21.7.4" type="device">
+  <diagram id="prowler-detailed" name="Detailed">
+    <mxGraphModel dx="1900" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1200" math="0" shadow="0">
       <root>
-        <mxCell id="0"/>
-        <mxCell id="1" parent="0"/>
-        <mxCell id="trigger" value="EventBridge schedule + UI" style="rounded=1;fillColor=#e1f5fe;strokeColor=#0277bd" vertex="1" parent="1">
-          <mxGeometry x="30" y="70" width="170" height="60" as="geometry"/>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="Prowler Security Findings Agent — Detailed Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="400" y="20" width="1100" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="scanner" value="ECS Fargate · Prowler" style="rounded=1;fillColor=#fff3e0;strokeColor=#ef6c00" vertex="1" parent="1">
-          <mxGeometry x="230" y="60" width="200" height="80" as="geometry"/>
+        <mxCell id="subtitle" value="7 CDK stacks · IAM least privilege · bi-directional DevOps Agent integration" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=0;fontColor=#545B64;" parent="1" vertex="1">
+          <mxGeometry x="400" y="60" width="1100" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="rawbucket" value="S3 raw-reports (OCSF)" style="rounded=1;fillColor=#ede7f6;strokeColor=#4527a0" vertex="1" parent="1">
-          <mxGeometry x="470" y="60" width="170" height="80" as="geometry"/>
+
+        <!-- AWS Cloud outer container -->
+        <mxCell id="aws-cloud" value="AWS Cloud — customer account (single region)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=36;fontColor=#AAB7B8;dashed=0;" parent="1" vertex="1">
+          <mxGeometry x="60" y="100" width="1760" height="1020" as="geometry" />
         </mxCell>
-        <mxCell id="ingest" value="ingest-findings Lambda" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
-          <mxGeometry x="680" y="60" width="170" height="80" as="geometry"/>
+
+        <!-- Zone: Scanner with nested VPC -->
+        <mxCell id="zone-scanner" value="Scanner" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4E8;strokeColor=#D97706;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#D97706;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="100" y="160" width="500" height="420" as="geometry" />
         </mxCell>
-        <mxCell id="dynamodb" value="DynamoDB findings (GSIs)" style="rounded=1;fillColor=#fce4ec;strokeColor=#ad1457" vertex="1" parent="1">
-          <mxGeometry x="680" y="180" width="170" height="60" as="geometry"/>
+        <mxCell id="vpc" value="VPC · 2 public subnets · no NAT" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc;strokeColor=#248814;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#248814;dashed=0;" parent="1" vertex="1">
+          <mxGeometry x="130" y="300" width="440" height="250" as="geometry" />
         </mxCell>
-        <mxCell id="remediation" value="remediation-context (Bedrock Nova Pro)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
-          <mxGeometry x="470" y="180" width="170" height="60" as="geometry"/>
+
+        <!-- Scanner icons -->
+        <mxCell id="eventbridge" value="EventBridge&#xa;cron(0 6 * * ? *)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="1" vertex="1">
+          <mxGeometry x="160" y="210" width="60" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="rembucket" value="S3 remediations (markdown)" style="rounded=1;fillColor=#ede7f6;strokeColor=#4527a0" vertex="1" parent="1">
-          <mxGeometry x="280" y="180" width="170" height="60" as="geometry"/>
+        <mxCell id="ecr" value="ECR&#xa;Prowler image" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.elastic_container_registry;" parent="1" vertex="1">
+          <mxGeometry x="340" y="210" width="60" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="sns" value="SNS critical/high trigger" style="rounded=1;fillColor=#fff3e0;strokeColor=#ef6c00" vertex="1" parent="1">
-          <mxGeometry x="470" y="270" width="170" height="60" as="geometry"/>
+        <mxCell id="codebuild" value="CodeBuild&#xa;image build" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.codebuild;" parent="1" vertex="1">
+          <mxGeometry x="480" y="210" width="60" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="devops_trigger" value="devops-agent-trigger (HMAC)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
-          <mxGeometry x="680" y="270" width="170" height="60" as="geometry"/>
+        <mxCell id="fargate" value="ECS Fargate task&#xa;Prowler scan (~7 min)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.fargate;" parent="1" vertex="1">
+          <mxGeometry x="240" y="380" width="60" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="devops_agent" value="Amazon DevOps Agent" style="rounded=1;fillColor=#fbe9e7;strokeColor=#bf360c" vertex="1" parent="1">
-          <mxGeometry x="680" y="360" width="170" height="60" as="geometry"/>
+        <mxCell id="iam-fargate" value="IAM role&#xa;SecurityAudit + ViewOnlyAccess&#xa;+ ProwlerExtras" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management_iam_role;" parent="1" vertex="1">
+          <mxGeometry x="400" y="380" width="60" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="dashboard" value="React Dashboard (CloudFront + Cognito)" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0" vertex="1" parent="1">
-          <mxGeometry x="30" y="360" width="200" height="80" as="geometry"/>
+
+        <!-- Zone: Ingest + AI -->
+        <mxCell id="zone-ingest" value="Ingest + AI Remediation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E9F5EB;strokeColor=#5AA65D;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#5AA65D;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="640" y="160" width="500" height="420" as="geometry" />
         </mxCell>
-        <mxCell id="api" value="dashboard-api (Function URL, IAM)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
-          <mxGeometry x="280" y="360" width="170" height="80" as="geometry"/>
+
+        <mxCell id="s3-raw" value="S3 raw-reports&#xa;OCSF JSON · 90d TTL" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" parent="1" vertex="1">
+          <mxGeometry x="680" y="210" width="60" height="60" as="geometry" />
         </mxCell>
+        <mxCell id="lambda-ingest" value="ingest-findings&#xa;OCSF → DynamoDB" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="820" y="210" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ddb-findings" value="DynamoDB findings&#xa;2 GSIs" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" parent="1" vertex="1">
+          <mxGeometry x="980" y="210" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-rem" value="remediation-context&#xa;on-demand Bedrock" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="820" y="380" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="bedrock" value="Bedrock Converse&#xa;Nova Pro (region profile)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#01A88D;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.bedrock;" parent="1" vertex="1">
+          <mxGeometry x="980" y="380" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-rem" value="S3 remediations&#xa;markdown playbooks" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" parent="1" vertex="1">
+          <mxGeometry x="680" y="380" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Zone: Dispatch -->
+        <mxCell id="zone-dispatch" value="Dispatch (outbound webhook)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#D45D5D;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="1180" y="160" width="500" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="sns" value="SNS trigger topic&#xa;critical/high" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.simple_notification_service;" parent="1" vertex="1">
+          <mxGeometry x="1220" y="230" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-trigger" value="devops-agent-trigger&#xa;HMAC-SHA256 signer" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="1380" y="230" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="secrets" value="Secrets Manager&#xa;webhook secret" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.secrets_manager;" parent="1" vertex="1">
+          <mxGeometry x="1540" y="230" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Zone: Cost events -->
+        <mxCell id="zone-cost" value="Cost events subsystem" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4ECFA;strokeColor=#8B5CB7;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#8B5CB7;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="1180" y="450" width="500" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="ddb-cost" value="DynamoDB cost-events&#xa;by-date GSI · TTL 90d" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" parent="1" vertex="1">
+          <mxGeometry x="1380" y="490" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cost-note" value="Every billable action (Bedrock Converse, webhook dispatch, scan)&#xa;writes one row. Read by GET /cost/events &amp; /cost/summary." style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#545B64;fontStyle=2;" parent="1" vertex="1">
+          <mxGeometry x="1200" y="555" width="460" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- Zone: Dashboard -->
+        <mxCell id="zone-dashboard" value="Dashboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF5FB;strokeColor=#3B8AC4;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#3B8AC4;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="100" y="640" width="1080" height="290" as="geometry" />
+        </mxCell>
+        <mxCell id="user" value="Security&#xa;Engineer" style="sketch=0;points=[[0,0.5,0],[1,0.5,0],[0.5,0,0],[0.5,1,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#232F3E;strokeColor=#232F3E;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;shape=mxgraph.aws4.user;" parent="1" vertex="1">
+          <mxGeometry x="135" y="740" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cloudfront" value="CloudFront + S3 + OAC&#xa;React/Cloudscape SPA" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudfront;" parent="1" vertex="1">
+          <mxGeometry x="260" y="735" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cognito-user" value="Cognito User Pool&#xa;admin-create-user" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cognito;" parent="1" vertex="1">
+          <mxGeometry x="420" y="690" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cognito-id" value="Cognito Identity Pool&#xa;temp STS credentials" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cognito;" parent="1" vertex="1">
+          <mxGeometry x="420" y="790" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-api" value="dashboard-api&#xa;Lambda Function URL · IAM auth" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="620" y="735" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="iam-api" value="IAM role&#xa;DDB Query · S3 · ecs:RunTask&#xa;sns:Publish · aidevops:List*" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management_iam_role;" parent="1" vertex="1">
+          <mxGeometry x="760" y="735" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="dashboard-pages" value="Dashboard pages&#xa;Findings · Compliance · Cost · Investigations" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B8AC4;strokeWidth=1;fontSize=10;fontStyle=0;fontColor=#3B8AC4;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
+          <mxGeometry x="900" y="740" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="dashboard-note" value="Generate Bedrock Insights · Investigate with DevOps Agent buttons" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#3B8AC4;fontStyle=2;" parent="1" vertex="1">
+          <mxGeometry x="900" y="795" width="260" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- External systems outside AWS Cloud -->
+        <mxCell id="devops-agent" value="Amazon DevOps Agent&#xa;(AWS-managed service)&#xa;incoming webhook + outgoing REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
+          <mxGeometry x="1300" y="660" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="security-hub" value="AWS Security Hub&#xa;(same account)&#xa;receives ASFF via -S flag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
+          <mxGeometry x="1300" y="790" width="240" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows: Scanner zone -->
+        <mxCell id="e-eb-fg" value="RunTask" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D97706;fontSize=10;fontColor=#D97706;" parent="1" source="eventbridge" target="fargate" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ecr-fg" value="pull image" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D97706;fontSize=10;fontColor=#D97706;" parent="1" source="ecr" target="fargate" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cb-ecr" value="push image" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D97706;fontSize=10;fontColor=#D97706;dashed=1;" parent="1" source="codebuild" target="ecr" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-fg-iam" value="assumes" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D97706;fontSize=10;fontColor=#D97706;" parent="1" source="fargate" target="iam-fargate" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-fg-s3raw" value="PutObject&#xa;OCSF + CSV + HTML" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D97706;fontSize=10;fontColor=#D97706;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="fargate" target="s3-raw" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-fg-sh" value="ASFF (-S flag)" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D45D5D;fontSize=10;fontColor=#D45D5D;dashed=1;" parent="1" source="fargate" target="security-hub" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows: Ingest + AI zone -->
+        <mxCell id="e-s3raw-ing" value="S3 ObjectCreated" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;dashed=1;" parent="1" source="s3-raw" target="lambda-ingest" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ing-ddb" value="BatchWriteItem" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;" parent="1" source="lambda-ingest" target="ddb-findings" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-rem-br" value="Converse" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;" parent="1" source="lambda-rem" target="bedrock" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-rem-s3rem" value="put markdown" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;" parent="1" source="lambda-rem" target="s3-rem" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-rem-ddb" value="UpdateItem&#xa;remediation_s3_key" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;" parent="1" source="lambda-rem" target="ddb-findings" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows: Dispatch zone -->
+        <mxCell id="e-ddb-sns" value="Publish&#xa;CRITICAL/HIGH" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D45D5D;fontSize=10;fontColor=#D45D5D;" parent="1" source="ddb-findings" target="sns" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-sns-trig" value="SNS→Lambda" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D45D5D;fontSize=10;fontColor=#D45D5D;dashed=1;" parent="1" source="sns" target="lambda-trigger" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-trig-sec" value="GetSecretValue" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D45D5D;fontSize=10;fontColor=#D45D5D;" parent="1" source="lambda-trigger" target="secrets" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-trig-devops" value="HMAC-SHA256&#xa;POST (outbound)" style="endArrow=classic;html=1;rounded=1;strokeWidth=3;strokeColor=#D45D5D;fontSize=11;fontColor=#D45D5D;fontStyle=1;" parent="1" source="lambda-trigger" target="devops-agent" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows: Dashboard zone -->
+        <mxCell id="e-user-cf" value="HTTPS" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="user" target="cloudfront" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cf-cognito-user" value="auth" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="cloudfront" target="cognito-user" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cognito-flow" value="ID token" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="cognito-user" target="cognito-id" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-cognito-api" value="SigV4 creds" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="cognito-id" target="lambda-api" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-iam" value="assumes" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="iam-api" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-pages" value="JSON" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="iam-api" target="dashboard-pages" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dashboard → data / actions -->
+        <mxCell id="e-api-ddb" value="Query GSI" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="ddb-findings" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-rem" value="POST /insights&#xa;sync invoke" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="lambda-rem" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-sns" value="POST /investigate&#xa;Publish" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="sns" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-devops" value="SigV4 aidevops&#xa;(inbound poll)" style="endArrow=classic;html=1;rounded=1;strokeWidth=3;strokeColor=#3B8AC4;fontSize=11;fontColor=#3B8AC4;fontStyle=1;" parent="1" source="lambda-api" target="devops-agent" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-s3rem" value="presign / GetObject" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="s3-rem" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-cost" value="Query cost-events" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="ddb-cost" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-api-fargate" value="POST /scans&#xa;ecs:RunTask" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;" parent="1" source="lambda-api" target="fargate" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Cost events writes -->
+        <mxCell id="e-ing-cost" value="log scan" style="endArrow=classic;html=1;rounded=1;strokeWidth=1;strokeColor=#8B5CB7;fontSize=9;fontColor=#8B5CB7;dashed=1;" parent="1" source="lambda-ingest" target="ddb-cost" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-rem-cost" value="log Bedrock" style="endArrow=classic;html=1;rounded=1;strokeWidth=1;strokeColor=#8B5CB7;fontSize=9;fontColor=#8B5CB7;dashed=1;" parent="1" source="lambda-rem" target="ddb-cost" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-trig-cost" value="log dispatch" style="endArrow=classic;html=1;rounded=1;strokeWidth=1;strokeColor=#8B5CB7;fontSize=9;fontColor=#8B5CB7;dashed=1;" parent="1" source="lambda-trigger" target="ddb-cost" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;• Solid line = synchronous AWS API call&lt;br&gt;• Dashed line = event-driven (S3 ObjectCreated, SNS, CodeBuild push)&lt;br&gt;• Thick red arrow = outbound HMAC webhook    •    Thick blue arrow = inbound SigV4 REST poll&lt;br&gt;• Colors match the zone each arrow starts in" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8F9FA;strokeColor=#AAB7B8;fontSize=11;fontColor=#545B64;align=left;verticalAlign=middle;spacingLeft=10;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="100" y="950" width="1080" height="110" as="geometry" />
+        </mxCell>
+
       </root>
     </mxGraphModel>
   </diagram>
