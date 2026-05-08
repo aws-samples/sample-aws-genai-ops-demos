@@ -65,7 +65,7 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
   ```bash
   npx cdk bootstrap aws://<account-id>/<region>
   ```
-- **Bedrock model access** — enable the `amazon.nova-pro-v1:0` model in your region via the Bedrock console (Model access > Manage model access).
+- **Bedrock model access** — enable **Amazon Nova Pro** in your region via the Bedrock console (Model access > Manage model access). The demo uses the region-matched cross-region inference profile (`us.amazon.nova-pro-v1:0` / `eu.amazon.nova-pro-v1:0` / `apac.amazon.nova-pro-v1:0`), which requires the base model to be enabled in every region the profile covers — the console lets you enable them in one click.
 - **Amazon DevOps Agent** is available in `us-east-1`, `us-west-2`, and `eu-west-1`. If your infrastructure region is different, set `DEVOPS_AGENT_REGION` before deploying.
 
 ## Quick Start
@@ -78,7 +78,10 @@ cd sample-aws-genai-ops-demos/security/prowler-security-findings-agent
 export AWS_REGION=eu-west-1
 export AWS_DEFAULT_REGION=eu-west-1
 export DEVOPS_AGENT_REGION=eu-west-1
-export BEDROCK_MODEL_ID=amazon.nova-pro-v1:0   # default
+# Bedrock model ID defaults to the Nova Pro cross-region inference profile
+# for your deploy region (eu.* in EU, us.* in US, apac.* in APAC). Override
+# only if you want a specific model or an on-demand (non-profile) ID.
+# export BEDROCK_MODEL_ID=us.amazon.nova-pro-v1:0
 
 # Deploy
 bash deploy-all.sh          # macOS / Linux
@@ -234,7 +237,7 @@ Destroys all 7 stacks in reverse dependency order and (after confirmation) delet
 
 | Problem | Cause | Fix |
 |---|---|---|
-| `amazon.nova-pro-v1:0` is not available | Model access not enabled | Bedrock console > Model access > Manage → enable Nova Pro. Re-deploy. |
+| `The provided model identifier is invalid` or `isn't supported` when calling Converse | Model access not enabled in the inference-profile regions | Enable Nova Pro in Bedrock console > Model access > Manage across the regions the selected profile covers (`us.*` → all US regions, `eu.*` → all EU regions, `apac.*` → all APAC regions). |
 | CodeBuild fails to pull `toniblyx/prowler` | Docker Hub rate limits | Re-run `bash scripts/build-scanner-image.sh`; or switch to an ECR Public mirror in `scanner/Dockerfile`. |
 | Fargate task fails with `AccessDenied` on S3 | Bucket region mismatch | Confirm `RawReportsBucket` is in the same region as the scanner task; rerun `deploy-all.sh`. |
 | DevOps Agent never receives incidents | Webhook URL/secret still placeholders | Run `bash scripts/setup-devops-agent.sh` — it live-updates the deployed Lambda and Secrets Manager. |

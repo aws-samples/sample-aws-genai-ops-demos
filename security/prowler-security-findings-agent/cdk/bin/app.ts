@@ -24,10 +24,19 @@ const webhookUrl = app.node.tryGetContext('devOpsAgentWebhookUrl') || '';
 const webhookSecret = app.node.tryGetContext('devOpsAgentWebhookSecret') || '';
 const devOpsAgentRegion = app.node.tryGetContext('devOpsAgentRegion') || 'us-east-1';
 const devOpsAgentSpaceId = app.node.tryGetContext('devOpsAgentSpaceId') || '';
-// Default to a cross-region inference profile — required for Nova Pro in
-// most regions (direct on-demand modelId fails with "isn't supported").
-// Override with -c bedrockModelId=... if you need a different profile or region-specific model.
-const bedrockModelId = app.node.tryGetContext('bedrockModelId') || 'eu.amazon.nova-pro-v1:0';
+// Default to the Nova Pro cross-region inference profile for the stack's
+// region. Direct on-demand model IDs fail with "isn't supported" in most
+// regions, and the profile prefix itself is region-gated — `eu.*` only
+// resolves in EU regions, `us.*` only in US regions, `apac.*` only in APAC.
+// Pick the right prefix from the deploy region so the demo works out of the
+// box anywhere Nova Pro is available. Override with -c bedrockModelId=...
+// for non-standard models or custom profiles.
+const bedrockInferencePrefix =
+    region.startsWith('eu-') ? 'eu' :
+    region.startsWith('ap-') ? 'apac' :
+    region.startsWith('us-gov-') ? 'us-gov' :
+    'us';
+const bedrockModelId = app.node.tryGetContext('bedrockModelId') || `${bedrockInferencePrefix}.amazon.nova-pro-v1:0`;
 const scanSchedule = app.node.tryGetContext('scanSchedule') || 'cron(0 6 * * ? *)';
 // autoInvestigate=true → ingest Lambda auto-publishes every CRITICAL/HIGH to the
 // DevOps Agent webhook. Default false: TAM-driven, click a finding to investigate.

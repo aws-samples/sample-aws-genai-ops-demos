@@ -15,7 +15,10 @@ $AwsRegion = $global:AWS_REGION
 $AccountId = $global:AWS_ACCOUNT_ID
 
 $DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
-$BedrockModelId = if ($env:BEDROCK_MODEL_ID) { $env:BEDROCK_MODEL_ID } else { "eu.amazon.nova-pro-v1:0" }
+# BedrockModelId is resolved by cdk/bin/app.ts from the deploy region when
+# not set — the inference-profile prefix (eu./us./apac.) is region-gated, so
+# leaving it empty here lets CDK pick the right profile for any region.
+$BedrockModelId = if ($env:BEDROCK_MODEL_ID) { $env:BEDROCK_MODEL_ID } else { "" }
 $ScanSchedule = if ($env:SCAN_SCHEDULE) { $env:SCAN_SCHEDULE } else { "cron(0 6 * * ? *)" }
 
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {

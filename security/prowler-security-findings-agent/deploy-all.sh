@@ -58,7 +58,10 @@ fi
 # there. Override by exporting DEVOPS_AGENT_REGION before running this script.
 DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-$AWS_REGION}"
 DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
-BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-eu.amazon.nova-pro-v1:0}"
+# BEDROCK_MODEL_ID is resolved by cdk/bin/app.ts from the deploy region when
+# not set — the inference-profile prefix (eu./us./apac.) is region-gated, so
+# leaving it empty here lets CDK pick the right profile for any region.
+BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-}"
 SCAN_SCHEDULE="${SCAN_SCHEDULE:-cron(0 6 * * ? *)}"
 
 # Pass CDK context as an array so values with spaces or shell metacharacters
