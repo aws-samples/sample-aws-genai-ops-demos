@@ -1,7 +1,10 @@
 #!/bin/bash
 # Tear down everything this demo deployed.
 
-set -euo pipefail
+# set -eo pipefail (no -u): shared/utils/aws-utils.sh references
+# $AWS_DEFAULT_REGION unguarded, which aborts under `set -u` when the
+# caller only has `aws configure set region` and no env var exported.
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -15,6 +18,17 @@ echo " Prowler Security Demo — Cleanup"
 echo "=============================================="
 echo "Account: $ACCOUNT_ID  Region: $REGION  DevOps Agent region: $DEVOPS_AGENT_REGION"
 echo ""
+
+# CDK synth needs to resolve every stack's assets before it can destroy
+# anything. The FrontendStack references `frontend/dist` as a BucketDeployment
+# source; if the user has never built the frontend (or cleaned the build
+# output), synth fails with CannotFindAsset and every destroy call aborts.
+# Stub a placeholder so synth resolves and destroy proceeds — the files will
+# be deleted along with the bucket anyway.
+if [ ! -f "$SCRIPT_DIR/../frontend/dist/index.html" ]; then
+    mkdir -p "$SCRIPT_DIR/../frontend/dist"
+    echo '<!doctype html><html><body>cleanup placeholder</body></html>' > "$SCRIPT_DIR/../frontend/dist/index.html"
+fi
 
 cd "$SCRIPT_DIR/../cdk"
 STACKS=(

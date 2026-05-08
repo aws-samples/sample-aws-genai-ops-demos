@@ -5,6 +5,18 @@ $RepoRoot = (Resolve-Path "$ScriptDir\..\..\..").Path
 $Region = $global:AWS_REGION
 $DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
 
+# CDK synth needs to resolve every stack's assets before it can destroy
+# anything. The FrontendStack references frontend/dist as a BucketDeployment
+# source; if the user has never built the frontend (or cleaned the build
+# output), synth fails with CannotFindAsset and every destroy call aborts.
+# Stub a placeholder so synth resolves and destroy proceeds — the files will
+# be deleted along with the bucket anyway.
+$DistDir = "$ScriptDir\..\frontend\dist"
+if (-not (Test-Path "$DistDir\index.html")) {
+    New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+    "<!doctype html><html><body>cleanup placeholder</body></html>" | Out-File -Encoding utf8 "$DistDir\index.html"
+}
+
 Push-Location "$ScriptDir\..\cdk"
 $Stacks = @(
   "ProwlerSecurityFrontend-$Region",
