@@ -1,10 +1,7 @@
 #!/bin/bash
 # Tear down everything this demo deployed.
 
-# set -eo pipefail (no -u): shared/utils/aws-utils.sh references
-# $AWS_DEFAULT_REGION unguarded, which aborts under `set -u` when the
-# caller only has `aws configure set region` and no env var exported.
-set -eo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
