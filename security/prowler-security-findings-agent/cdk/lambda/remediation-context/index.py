@@ -52,22 +52,68 @@ use placeholders like <account-id> or <resource-arn>."""
 
 
 def _build_user_prompt(item: dict) -> str:
-    return (
-        "Here is the Prowler finding (OCSF):\n"
-        f"- finding_uid: {item.get('finding_uid')}\n"
-        f"- severity: {item.get('severity')}\n"
-        f"- status: {item.get('status')}\n"
-        f"- check_id: {item.get('check_id')}\n"
-        f"- check_title: {item.get('check_title')}\n"
-        f"- check_description: {item.get('check_description')}\n"
-        f"- service: {item.get('service_name')}\n"
-        f"- resource: {item.get('resource_uid')}\n"
-        f"- region: {item.get('region')}\n"
-        f"- compliance: {', '.join(item.get('compliance_frameworks') or [])}\n"
-        f"- status_extended: {item.get('status_extended')}\n"
-        "\nRaw OCSF payload (truncated):\n"
-        f"{(item.get('raw') or '')[:8000]}"
-    )
+    # Give Nova the Prowler-native remediation, categories, notes, and
+    # control IDs up front. This keeps the model from reinventing guidance
+    # the scanner has already produced and lets it expand on concrete
+    # references rather than on-the-fly approximations.
+    parts = [
+        "Here is the Prowler finding (OCSF):",
+        f"- finding_uid: {item.get('finding_uid')}",
+        f"- severity: {item.get('severity')}",
+        f"- status: {item.get('status')}",
+        f"- check_id: {item.get('check_id')}",
+        f"- check_title: {item.get('check_title')}",
+        f"- check_description: {item.get('check_description')}",
+        f"- service: {item.get('service_name')}",
+        f"- resource: {item.get('resource_uid')}",
+        f"- region: {item.get('region')}",
+        f"- compliance: {', '.join(item.get('compliance_frameworks') or [])}",
+        f"- status_extended: {item.get('status_extended')}",
+    ]
+    risk_details = item.get('risk_details')
+    if risk_details:
+        parts.append(f"- risk_details: {risk_details}")
+    categories = item.get('categories')
+    if categories:
+        parts.append(f"- categories: {', '.join(categories)}")
+    notes = item.get('notes')
+    if notes:
+        parts.append(f"- notes: {notes}")
+    finding_types = item.get('finding_types')
+    if finding_types:
+        parts.append(f"- finding_types: {', '.join(finding_types)}")
+
+    # Include per-framework control IDs if present — auditors care about the
+    # exact control that failed, not just the framework name.
+    controls = item.get('compliance_controls')
+    if isinstance(controls, dict) and controls:
+        parts.append("- compliance_controls:")
+        for fw, ids in list(controls.items())[:20]:
+            if isinstance(ids, list):
+                parts.append(f"    {fw}: {', '.join(ids[:10])}")
+
+    guidance = item.get('remediation_guidance')
+    if guidance:
+        parts.append("")
+        parts.append(
+            "Prowler's canonical remediation guidance (use this as the baseline and "
+            "elaborate on it; do not reinvent the steps):"
+        )
+        parts.append(guidance)
+
+    remediation_url = item.get('remediation_url')
+    if remediation_url:
+        parts.append(f"Prowler reference: {remediation_url}")
+    additional_urls = item.get('additional_urls')
+    if additional_urls:
+        parts.append(f"Additional references: {', '.join(additional_urls[:5])}")
+
+    parts.extend([
+        "",
+        "Raw OCSF payload (truncated):",
+        (item.get('raw') or '')[:8000],
+    ])
+    return "\n".join(parts)
 
 
 def handler(event, context):

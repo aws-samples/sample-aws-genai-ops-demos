@@ -110,6 +110,8 @@ export interface Finding {
   region?: string;
   account_id?: string;
   compliance_frameworks?: string[];
+  /** Full mapping framework → control IDs (populated since PR #21). */
+  compliance_controls?: Record<string, string[]>;
   scan_id?: string;
   last_seen_at?: string;
   remediation_s3_key?: string;
@@ -117,6 +119,20 @@ export interface Finding {
   /** Bedrock-generated remediation markdown, inlined by the detail endpoint. */
   remediation_markdown?: string;
   remediation_generated_at?: string;
+  /** Prowler-native remediation guidance (from OCSF `remediation.desc`). */
+  remediation_guidance?: string;
+  /** Primary Prowler Hub documentation URL for the check. */
+  remediation_url?: string;
+  /** Additional reference URLs (AWS docs, vendor docs) from Prowler. */
+  additional_urls?: string[];
+  /** Functional categories Prowler groups the check under. */
+  categories?: string[];
+  /** Free-form note Prowler attaches (typically the AWS pillar). */
+  notes?: string;
+  /** ASFF-style types the finding maps to in Security Hub. */
+  finding_types?: string[];
+  /** Prowler risk description in business language. */
+  risk_details?: string;
   /** Truncated OCSF JSON from Prowler — only returned by the detail endpoint. */
   raw?: string;
 }

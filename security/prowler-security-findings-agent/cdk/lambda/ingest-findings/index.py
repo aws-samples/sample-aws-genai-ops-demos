@@ -232,21 +232,59 @@ def _to_item(finding: dict[str, Any], scan_id: str, now: str) -> dict[str, Any]:
     resource_uid = _resource_uid(finding)
     finding_uid = f"{check_id}:{resource_uid}"
     # Prowler compliance lives in unmapped.compliance as a dict mapping
-    # framework name → list of control IDs. Extract just the framework names
-    # for the UI — deduped, normalized.
+    # framework name → list of control IDs. Keep the full map (control IDs
+    # are the actionable detail auditors need) and derive the sorted framework
+    # list for quick-filter chips in the UI.
     unmapped = finding.get('unmapped') or {}
     frameworks: list[str] = []
+    compliance_controls: dict[str, list[str]] = {}
     if isinstance(unmapped, dict):
         raw_compliance = unmapped.get('compliance')
         if isinstance(raw_compliance, dict):
             frameworks = sorted({str(k) for k in raw_compliance.keys()})
+            for fw, ctrls in raw_compliance.items():
+                if isinstance(ctrls, list):
+                    compliance_controls[str(fw)] = [str(c) for c in ctrls if c]
+                elif ctrls:
+                    compliance_controls[str(fw)] = [str(ctrls)]
         elif isinstance(raw_compliance, list):
             frameworks = [str(x) for x in raw_compliance]
     cloud = finding.get('cloud') or {}
     account = cloud.get('account') if isinstance(cloud, dict) else {}
     region = cloud.get('region') if isinstance(cloud, dict) else None
 
-    return {
+    # Prowler's own canonical remediation guidance — the same text the Prowler
+    # Hub web page shows. Surfacing it structured rather than burying it inside
+    # `raw` means the UI can render it as a first-class section and Nova can
+    # build on top of it instead of reinventing it.
+    remediation = finding.get('remediation') or {}
+    remediation_guidance = remediation.get('desc') or ''
+    references = remediation.get('references') or []
+    remediation_url = references[0] if isinstance(references, list) and references else ''
+
+    # Extra context pulled from unmapped / finding_info. All of this is data
+    # Prowler already produces; we just promote it from `raw` to structured
+    # attributes so the dashboard can filter and display them.
+    additional_urls: list[str] = []
+    categories: list[str] = []
+    notes = ''
+    if isinstance(unmapped, dict):
+        raw_urls = unmapped.get('additional_urls')
+        if isinstance(raw_urls, list):
+            additional_urls = [str(u) for u in raw_urls if u]
+        raw_cats = unmapped.get('categories')
+        if isinstance(raw_cats, list):
+            categories = [str(c) for c in raw_cats if c]
+        notes = unmapped.get('notes') or ''
+
+    finding_types: list[str] = []
+    raw_types = finding_info.get('types') if isinstance(finding_info, dict) else None
+    if isinstance(raw_types, list):
+        finding_types = [str(t) for t in raw_types if t]
+
+    risk_details = finding.get('risk_details') or ''
+
+    item: dict[str, Any] = {
         'finding_uid': finding_uid,
         'scan_id': scan_id,
         'last_seen_at': now,
@@ -263,6 +301,26 @@ def _to_item(finding: dict[str, Any], scan_id: str, now: str) -> dict[str, Any]:
         'compliance_frameworks': frameworks,
         'raw': json.dumps(finding)[:350_000],  # DynamoDB item limit safety
     }
+    # Only write optional Prowler-native fields when non-empty so the table
+    # stays lean for checks that do not supply them. The UI treats the absence
+    # of an attribute as "no Prowler guidance for this check".
+    if remediation_guidance:
+        item['remediation_guidance'] = remediation_guidance
+    if remediation_url:
+        item['remediation_url'] = remediation_url
+    if additional_urls:
+        item['additional_urls'] = additional_urls
+    if categories:
+        item['categories'] = categories
+    if notes:
+        item['notes'] = notes
+    if finding_types:
+        item['finding_types'] = finding_types
+    if risk_details:
+        item['risk_details'] = risk_details
+    if compliance_controls:
+        item['compliance_controls'] = compliance_controls
+    return item
 
 
 def handler(event, context):

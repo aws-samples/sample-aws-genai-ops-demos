@@ -504,6 +504,116 @@ export default function FindingDetail() {
             <Tabs
               tabs={[
                 {
+                  id: 'overview',
+                  label: 'Overview',
+                  content: (
+                    <div style={{ padding: '12px 16px' }}>
+                      <SpaceBetween size="l">
+                        {/* Description */}
+                        <div className="soc-markdown">
+                          {item.check_description ? (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.check_description}</ReactMarkdown>
+                          ) : (
+                            <Box color="text-status-inactive">No description provided.</Box>
+                          )}
+                        </div>
+
+                        {item.status_extended && (
+                          <div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Status detail from Prowler</div>
+                            <div className="soc-markdown">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.status_extended}</ReactMarkdown>
+                            </div>
+                          </div>
+                        )}
+
+                        {item.risk_details && (
+                          <div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Risk</div>
+                            <div className="soc-markdown">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.risk_details}</ReactMarkdown>
+                            </div>
+                          </div>
+                        )}
+
+                        {item.remediation_guidance && (
+                          <div style={{ padding: '12px 14px', background: 'rgba(79,143,255,0.05)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Prowler remediation guidance</div>
+                            <div className="soc-markdown">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.remediation_guidance}</ReactMarkdown>
+                            </div>
+                            {item.remediation_url && (
+                              <div style={{ marginTop: 10 }}>
+                                <a href={item.remediation_url} target="_blank" rel="noopener noreferrer" style={{ color: COLOR.accent, fontSize: 12 }}>
+                                  Read the full Prowler documentation →
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {item.additional_urls && item.additional_urls.length > 0 && (
+                          <div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Additional references</div>
+                            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: COLOR.accent }}>
+                              {item.additional_urls.map((u) => (
+                                <li key={u}><a href={u} target="_blank" rel="noopener noreferrer" style={{ color: COLOR.accent }}>{u}</a></li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {((item.categories && item.categories.length > 0) || item.notes || (item.finding_types && item.finding_types.length > 0)) && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+                            {item.categories && item.categories.length > 0 && (
+                              <div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Categories</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                  {item.categories.map((c) => (
+                                    <span key={c} className="soc-severity-chip" style={{ background: 'rgba(140,100,200,0.15)', color: '#B48CE6', border: '1px solid #B48CE6' }}>{c}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {item.notes && (
+                              <div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Notes</div>
+                                <div style={{ fontSize: 12, color: COLOR.fg }}>{item.notes}</div>
+                              </div>
+                            )}
+                            {item.finding_types && item.finding_types.length > 0 && (
+                              <div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Finding types</div>
+                                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: COLOR.fg }}>
+                                  {item.finding_types.map((t) => (<li key={t}>{t}</li>))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {item.compliance_controls && Object.keys(item.compliance_controls).length > 0 && (
+                          <div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Compliance controls</div>
+                            <div style={{ display: 'grid', gap: 8 }}>
+                              {Object.entries(item.compliance_controls).sort(([a],[b]) => a.localeCompare(b)).map(([fw, ids]) => (
+                                <div key={fw} style={{ padding: '8px 12px', background: 'rgba(79,143,255,0.03)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: COLOR.accent, marginBottom: 4 }}>{fw}</div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {ids.map((id) => (
+                                      <code key={id} style={{ fontSize: 10.5, padding: '2px 6px', background: 'rgba(79,143,255,0.1)', color: COLOR.fg, borderRadius: 3 }}>{id}</code>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </SpaceBetween>
+                    </div>
+                  ),
+                },
+                {
                   id: 'remediation',
                   label: 'Bedrock Insights',
                   content: (
@@ -662,26 +772,6 @@ export default function FindingDetail() {
                           </>
                         )}
                       </SpaceBetween>
-                    </div>
-                  ),
-                },
-                {
-                  id: 'description',
-                  label: 'Description',
-                  content: (
-                    <div style={{ padding: '12px 16px' }} className="soc-markdown">
-                      {item.check_description ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.check_description}</ReactMarkdown>
-                      ) : (
-                        <Box color="text-status-inactive">No description provided.</Box>
-                      )}
-                      {item.status_extended && (
-                        <>
-                          <hr style={{ borderColor: COLOR.border, margin: '18px 0' }} />
-                          <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Status detail from Prowler</div>
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.status_extended}</ReactMarkdown>
-                        </>
-                      )}
                     </div>
                   ),
                 },
