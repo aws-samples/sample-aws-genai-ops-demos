@@ -1,0 +1,46 @@
+<mxfile host="app.diagrams.net" type="embed">
+  <diagram id="prowler-security" name="Prowler + DevOps Agent + Bedrock Nova">
+    <mxGraphModel dx="1200" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="880" pageHeight="520" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="trigger" value="EventBridge schedule + UI" style="rounded=1;fillColor=#e1f5fe;strokeColor=#0277bd" vertex="1" parent="1">
+          <mxGeometry x="30" y="70" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="scanner" value="ECS Fargate · Prowler" style="rounded=1;fillColor=#fff3e0;strokeColor=#ef6c00" vertex="1" parent="1">
+          <mxGeometry x="230" y="60" width="200" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="rawbucket" value="S3 raw-reports (OCSF)" style="rounded=1;fillColor=#ede7f6;strokeColor=#4527a0" vertex="1" parent="1">
+          <mxGeometry x="470" y="60" width="170" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="ingest" value="ingest-findings Lambda" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
+          <mxGeometry x="680" y="60" width="170" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="dynamodb" value="DynamoDB findings (GSIs)" style="rounded=1;fillColor=#fce4ec;strokeColor=#ad1457" vertex="1" parent="1">
+          <mxGeometry x="680" y="180" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="remediation" value="remediation-context (Bedrock Nova Pro)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
+          <mxGeometry x="470" y="180" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="rembucket" value="S3 remediations (markdown)" style="rounded=1;fillColor=#ede7f6;strokeColor=#4527a0" vertex="1" parent="1">
+          <mxGeometry x="280" y="180" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="sns" value="SNS critical/high trigger" style="rounded=1;fillColor=#fff3e0;strokeColor=#ef6c00" vertex="1" parent="1">
+          <mxGeometry x="470" y="270" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="devops_trigger" value="devops-agent-trigger (HMAC)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
+          <mxGeometry x="680" y="270" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="devops_agent" value="Amazon DevOps Agent" style="rounded=1;fillColor=#fbe9e7;strokeColor=#bf360c" vertex="1" parent="1">
+          <mxGeometry x="680" y="360" width="170" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="dashboard" value="React Dashboard (CloudFront + Cognito)" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0" vertex="1" parent="1">
+          <mxGeometry x="30" y="360" width="200" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="api" value="dashboard-api (Function URL, IAM)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#1b5e20" vertex="1" parent="1">
+          <mxGeometry x="280" y="360" width="170" height="80" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

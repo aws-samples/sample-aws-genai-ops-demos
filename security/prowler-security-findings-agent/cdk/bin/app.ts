@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+import 'source-map-support/register';
+import * as cdk from 'aws-cdk-lib';
+import { DataStack } from '../lib/data-stack';
+import { AuthStack } from '../lib/auth-stack';
+import { ScannerStack } from '../lib/scanner-stack';
+import { IngestStack } from '../lib/ingest-stack';
+import { DevOpsAgentStack } from '../lib/devops-agent-stack';
+import { ApiStack } from '../lib/api-stack';
+import { FrontendStack } from '../lib/frontend-stack';
+import { getRegion } from '../../../../shared/utils/aws-utils';
+
+const app = new cdk.App();
+
+const region = getRegion();
+const env = {
+  account: process.env.CDK_DEFAULT_ACCOUNT,
+  region,
+};
+
+// Context values — passed from deploy-all.sh. Empty strings are placeholders for
+// first-deploy (before the DevOps Agent webhook has been generated).
+const webhookUrl = app.node.tryGetContext('devOpsAgentWebhookUrl') || '';
+const webhookSecret = app.node.tryGetContext('devOpsAgentWebhookSecret') || '';
+const devOpsAgentRegion = app.node.tryGetContext('devOpsAgentRegion') || 'us-east-1';
+const devOpsAgentSpaceId = app.node.tryGetContext('devOpsAgentSpaceId') || '';
+// Default to a cross-region inference profile — required for Nova Pro in
+// most regions (direct on-demand modelId fails with "isn't supported").
+// Override with -c bedrockModelId=... if you need a different profile or region-specific model.
+const bedrockModelId = app.node.tryGetContext('bedrockModelId') || 'eu.amazon.nova-pro-v1:0';
+const scanSchedule = app.node.tryGetContext('scanSchedule') || 'cron(0 6 * * ? *)';
+// autoInvestigate=true → ingest Lambda auto-publishes every CRITICAL/HIGH to the
+// DevOps Agent webhook. Default false: TAM-driven, click a finding to investigate.
+const autoInvestigate = (app.node.tryGetContext('autoInvestigate') || 'false') === 'true';
+
+// 1. Data — DynamoDB findings table + S3 raw-reports and remediations buckets
+const dataStack = new DataStack(app, `ProwlerSecurityData-${region}`, {
+  env,
+  description: 'Prowler Security Findings: DynamoDB findings table + S3 buckets for raw reports and Nova remediations',
+});
+
+// 2. Auth — Cognito User Pool + Identity Pool (dashboard login)
+const authStack = new AuthStack(app, `ProwlerSecurityAuth-${region}`, {
+  env,
+  description: 'Prowler Security Findings: Cognito User Pool + Identity Pool for dashboard authentication',
+});
+
+// 3. DevOps Agent — SNS topic + HMAC Lambda + Secrets Manager webhook secret
+const devOpsAgentStack = new DevOpsAgentStack(app, `ProwlerSecurityDevOpsAgent-${region}`, {
+  env,
+  webhookUrl,
+  webhookSecret,
+  devOpsAgentRegion,
+  devOpsAgentSpaceId,
+  remediationsBucketName: dataStack.remediationsBucket.bucketName,
+  costEventsTableName: dataStack.costEventsTable.tableName,
+  description: 'Prowler Security Findings: SNS + Lambda bridge to Amazon DevOps Agent webhook',
+});
+devOpsAgentStack.addDependency(dataStack);
+
+// 4. Scanner — Prowler ECR + ECS Fargate + EventBridge schedule + CodeBuild image build
+// Main stack → carries the Solution Adoption Tracking ID for the whole demo.
+const scannerStack = new ScannerStack(app, `ProwlerSecurityScanner-${region}`, {
+  env,
+  rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
+  scanSchedule,
+  description: 'Prowler Security Findings + DevOps Agent + Bedrock Nova remediation (uksb-do9bhieqqh)(tag:prowler-security-findings-agent,security)',
+});
+scannerStack.addDependency(dataStack);
+
+// 5. Ingest — S3 event → ingest-findings Lambda → DynamoDB + remediation-context Lambda (Bedrock Nova) + SNS fan-out
+const ingestStack = new IngestStack(app, `ProwlerSecurityIngest-${region}`, {
+  env,
+  findingsTableName: dataStack.findingsTable.tableName,
+  rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
+  remediationsBucketName: dataStack.remediationsBucket.bucketName,
+  costEventsTableName: dataStack.costEventsTable.tableName,
+  devOpsAgentTriggerTopicArn: devOpsAgentStack.triggerTopicArn,
+  bedrockModelId,
+  autoInvestigate,
+  description: 'Prowler Security Findings: ingest Lambda + Bedrock Nova remediation context + SNS fan-out',
+});
+ingestStack.addDependency(dataStack);
+ingestStack.addDependency(devOpsAgentStack);
+
+// 6. API — dashboard-api Lambda with Function URL (IAM auth, SigV4 from browser)
+const apiStack = new ApiStack(app, `ProwlerSecurityApi-${region}`, {
+  env,
+  findingsTableName: dataStack.findingsTable.tableName,
+  costEventsTableName: dataStack.costEventsTable.tableName,
+  remediationsBucketName: dataStack.remediationsBucket.bucketName,
+  scannerClusterArn: scannerStack.clusterArn,
+  scannerTaskDefinitionArn: scannerStack.taskDefinitionArn,
+  scannerSubnetIds: scannerStack.subnetIds,
+  scannerSecurityGroupId: scannerStack.securityGroupId,
+  authenticatedRoleArn: authStack.authenticatedRoleArn,
+  devOpsAgentTopicArn: devOpsAgentStack.triggerTopicArn,
+  devOpsAgentRegion,
+  devOpsAgentSpaceId,
+  remediationLambdaArn: ingestStack.remediationLambdaArn,
+  remediationLambdaName: ingestStack.remediationLambdaName,
+  description: 'Prowler Security Findings: dashboard-api Lambda URL (SigV4) for the React dashboard',
+});
+apiStack.addDependency(dataStack);
+apiStack.addDependency(authStack);
+apiStack.addDependency(scannerStack);
+apiStack.addDependency(devOpsAgentStack);
+apiStack.addDependency(ingestStack);
+
+// 7. Frontend — CloudFront + S3 + OAC hosting the React/Cloudscape dashboard
+new FrontendStack(app, `ProwlerSecurityFrontend-${region}`, {
+  env,
+  userPoolId: authStack.userPool.userPoolId,
+  userPoolClientId: authStack.userPoolClient.userPoolClientId,
+  identityPoolId: authStack.identityPool.ref,
+  apiFunctionUrl: apiStack.functionUrl,
+  region,
+  description: 'Prowler Security Findings: CloudFront + S3 dashboard with SigV4 to dashboard-api',
+});
+
+app.synth();

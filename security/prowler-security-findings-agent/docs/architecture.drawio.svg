@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="520" viewBox="0 0 880 520" font-family="Helvetica, Arial, sans-serif" font-size="12">
+  <rect width="880" height="520" fill="#ffffff"/>
+  <text x="440" y="26" text-anchor="middle" font-size="16" font-weight="bold">Prowler + DevOps Agent + Bedrock Nova — High-Level Architecture</text>
+
+  <!-- Trigger -->
+  <rect x="30" y="70" width="170" height="60" fill="#e1f5fe" stroke="#0277bd"/>
+  <text x="115" y="95" text-anchor="middle" font-weight="bold">EventBridge schedule</text>
+  <text x="115" y="112" text-anchor="middle">(cron + on-demand from UI)</text>
+
+  <!-- Scanner -->
+  <rect x="230" y="60" width="200" height="80" fill="#fff3e0" stroke="#ef6c00"/>
+  <text x="330" y="85" text-anchor="middle" font-weight="bold">ECS Fargate · Prowler</text>
+  <text x="330" y="102" text-anchor="middle">SecurityAudit + ViewOnlyAccess</text>
+  <text x="330" y="119" text-anchor="middle">OCSF + ASFF (Security Hub)</text>
+
+  <!-- S3 raw -->
+  <rect x="470" y="60" width="170" height="80" fill="#ede7f6" stroke="#4527a0"/>
+  <text x="555" y="85" text-anchor="middle" font-weight="bold">S3 raw-reports</text>
+  <text x="555" y="102" text-anchor="middle">{scan_id}/*.ocsf.json</text>
+  <text x="555" y="119" text-anchor="middle">ObjectCreated event</text>
+
+  <!-- Ingest -->
+  <rect x="680" y="60" width="170" height="80" fill="#e8f5e9" stroke="#1b5e20"/>
+  <text x="765" y="85" text-anchor="middle" font-weight="bold">ingest-findings</text>
+  <text x="765" y="102" text-anchor="middle">OCSF → DynamoDB</text>
+  <text x="765" y="119" text-anchor="middle">fan-out for CRITICAL/HIGH</text>
+
+  <!-- Dynamo -->
+  <rect x="680" y="180" width="170" height="60" fill="#fce4ec" stroke="#ad1457"/>
+  <text x="765" y="205" text-anchor="middle" font-weight="bold">DynamoDB findings</text>
+  <text x="765" y="222" text-anchor="middle">severity + status GSIs</text>
+
+  <!-- Remediation -->
+  <rect x="470" y="180" width="170" height="60" fill="#e8f5e9" stroke="#1b5e20"/>
+  <text x="555" y="205" text-anchor="middle" font-weight="bold">remediation-context</text>
+  <text x="555" y="222" text-anchor="middle">Bedrock Nova Pro</text>
+
+  <!-- Remediations bucket -->
+  <rect x="280" y="180" width="170" height="60" fill="#ede7f6" stroke="#4527a0"/>
+  <text x="365" y="205" text-anchor="middle" font-weight="bold">S3 remediations</text>
+  <text x="365" y="222" text-anchor="middle">{finding_uid}.md</text>
+
+  <!-- SNS -->
+  <rect x="470" y="270" width="170" height="60" fill="#fff3e0" stroke="#ef6c00"/>
+  <text x="555" y="295" text-anchor="middle" font-weight="bold">SNS topic</text>
+  <text x="555" y="312" text-anchor="middle">critical/high trigger</text>
+
+  <!-- DevOps Agent trigger -->
+  <rect x="680" y="270" width="170" height="60" fill="#e8f5e9" stroke="#1b5e20"/>
+  <text x="765" y="295" text-anchor="middle" font-weight="bold">devops-agent-trigger</text>
+  <text x="765" y="312" text-anchor="middle">HMAC-SHA256</text>
+
+  <!-- DevOps Agent -->
+  <rect x="680" y="360" width="170" height="60" fill="#fbe9e7" stroke="#bf360c"/>
+  <text x="765" y="385" text-anchor="middle" font-weight="bold">Amazon DevOps Agent</text>
+  <text x="765" y="402" text-anchor="middle">webhook + Nova remediation</text>
+
+  <!-- Dashboard -->
+  <rect x="30" y="360" width="200" height="80" fill="#e3f2fd" stroke="#1565c0"/>
+  <text x="130" y="385" text-anchor="middle" font-weight="bold">React Dashboard</text>
+  <text x="130" y="402" text-anchor="middle">CloudFront + S3 + OAC</text>
+  <text x="130" y="419" text-anchor="middle">Cognito auth</text>
+
+  <!-- API -->
+  <rect x="280" y="360" width="170" height="80" fill="#e8f5e9" stroke="#1b5e20"/>
+  <text x="365" y="385" text-anchor="middle" font-weight="bold">dashboard-api</text>
+  <text x="365" y="402" text-anchor="middle">Lambda Function URL</text>
+  <text x="365" y="419" text-anchor="middle">IAM auth (SigV4)</text>
+
+  <!-- Arrows -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#424242"/>
+    </marker>
+  </defs>
+  <line x1="200" y1="100" x2="230" y2="100" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="430" y1="100" x2="470" y2="100" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="640" y1="100" x2="680" y2="100" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="765" y1="140" x2="765" y2="180" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="680" y1="210" x2="640" y2="210" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="555" y1="240" x2="555" y2="270" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="470" y1="210" x2="450" y2="210" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="640" y1="300" x2="680" y2="300" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="765" y1="330" x2="765" y2="360" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="230" y1="400" x2="280" y2="400" stroke="#424242" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="400" x2="680" y2="210" stroke="#424242" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+
+  <text x="215" y="90" font-size="10" fill="#616161">trigger</text>
+  <text x="445" y="90" font-size="10" fill="#616161">upload</text>
+  <text x="655" y="90" font-size="10" fill="#616161">S3 event</text>
+  <text x="775" y="163" font-size="10" fill="#616161">upsert</text>
+  <text x="562" y="260" font-size="10" fill="#616161">publish</text>
+  <text x="770" y="350" font-size="10" fill="#616161">webhook</text>
+  <text x="245" y="390" font-size="10" fill="#616161">SigV4</text>
+  <text x="475" y="355" font-size="10" fill="#616161" text-anchor="middle">Query DynamoDB + S3</text>
+</svg>
