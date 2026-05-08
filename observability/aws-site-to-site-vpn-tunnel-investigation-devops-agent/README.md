@@ -51,13 +51,13 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
     --query 'KeyMaterial' --output text > ~/.ssh/vpn-demo-key.pem
   chmod 400 ~/.ssh/vpn-demo-key.pem
   ```
-  **PowerShell (Windows):**
+  PowerShell:
   ```powershell
   mkdir -Force $HOME\.ssh
   aws ec2 create-key-pair --key-name vpn-demo-key `
     --query 'KeyMaterial' --output text | Set-Content -Path $HOME\.ssh\vpn-demo-key.pem -Encoding ASCII
   ```
-- **bash** 4+ and **jq** (or PowerShell 5.1+ on Windows — use `deploy-all.ps1` instead)
+- **bash** 4+ and **jq** (or PowerShell 7+ on Windows — use `deploy-all.ps1` instead)
 - No existing DevOps Agent Space needed — the setup script creates one
 
 ## Quick Start
@@ -79,10 +79,20 @@ Run the setup script to create IAM roles, an Agent Space, and configure the webh
 bash scripts/setup-devops-agent.sh
 ```
 
+**PowerShell (Windows):**
+```powershell
+.\scripts\setup-devops-agent.ps1
+```
+
 The script uses your configured AWS region (`aws configure get region`). To use a different region, pass `--region`:
 
 ```bash
 bash scripts/setup-devops-agent.sh --region us-west-2
+```
+
+**PowerShell (Windows):**
+```powershell
+.\scripts\setup-devops-agent.ps1 -Region us-west-2
 ```
 
 The script automates steps 1–4 and pauses at step 5 for you to create the webhook:
@@ -195,7 +205,10 @@ aws apigateway get-api-key --api-key $ApiKeyId --include-value `
 8. Enter the API key details (in the order shown in the console):
    - **API Key Name**: `vpn-mcp-api-key` (a label — can be any name)
    - **API Key Header**: `x-api-key`
-   - **API Key Value**: the API key from step 3b
+   - **API Key Value**: run this command to get it:
+     ```bash
+     aws apigateway get-api-key --api-key <ApiKeyId-from-step-3b> --include-value --query 'value' --output text --no-cli-pager
+     ```
 9. Click **Add** to register
 10. On the tool selection screen, select all three tools and click **Save**:
     - `get_service_dependencies`
@@ -207,10 +220,19 @@ aws apigateway get-api-key --api-key $ApiKeyId --include-value `
 
 ```bash
 bash deploy-all.sh \
-  --key-file ~/.ssh/my-key.pem \
-  --key-pair my-key-pair \
+  --key-file ~/.ssh/vpn-demo-key.pem \
+  --key-pair vpn-demo-key \
   --webhook-url 'https://your-webhook-url' \
   --webhook-secret 'your-webhook-secret'
+```
+
+**PowerShell (Windows):**
+```powershell
+.\deploy-all.ps1 `
+  -KeyFile ~\.ssh\vpn-demo-key.pem `
+  -KeyPair vpn-demo-key `
+  -WebhookUrl 'https://your-webhook-url' `
+  -WebhookSecret 'your-webhook-secret'
 ```
 
 | Flag | Required | Description |
@@ -274,13 +296,13 @@ The `inject-failure.sh` script injects realistic failures **on the customer gate
 
 ```bash
 # Inject a failure
-bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/vpn-demo-key.pem
 
 # Rollback
-bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/vpn-demo-key.pem --rollback
 
 # Check IPsec/BGP status
-bash scripts/inject-failure.sh status --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh status --key-file ~/.ssh/vpn-demo-key.pem
 
 # List all scenarios
 bash scripts/inject-failure.sh list
@@ -360,12 +382,12 @@ After completing the [Quick Start](#quick-start) deployment:
 ### 1. Pick a scenario and inject
 
 ```bash
-bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/vpn-demo-key.pem
 ```
 
 **PowerShell (Windows):**
 ```powershell
-.\scripts\inject-failure.ps1 psk-mismatch -KeyFile $HOME\.ssh\vpn-demo-key.pem
+.\scripts\inject-failure.ps1 psk-mismatch -KeyFile ~\.ssh\vpn-demo-key.pem
 ```
 
 > **Note**: The script automatically checks tunnel health and CloudWatch alarm state before injecting. If anything is unhealthy (previous scenario not fully recovered), it warns you and asks to confirm.
@@ -379,23 +401,23 @@ Open the Operator App. Within 1–3 minutes, the agent receives the alarm webhoo
 ### 3. Rollback
 
 ```bash
-bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/my-key.pem --rollback
+bash scripts/inject-failure.sh psk-mismatch --key-file ~/.ssh/vpn-demo-key.pem --rollback
 ```
 
 **PowerShell (Windows):**
 ```powershell
-.\scripts\inject-failure.ps1 psk-mismatch -KeyFile $HOME\.ssh\vpn-demo-key.pem -Rollback
+.\scripts\inject-failure.ps1 psk-mismatch -KeyFile ~\.ssh\vpn-demo-key.pem -Rollback
 ```
 
 ### 4. Verify alarms returned to OK
 
 ```bash
-bash scripts/inject-failure.sh status --key-file ~/.ssh/my-key.pem
+bash scripts/inject-failure.sh status --key-file ~/.ssh/vpn-demo-key.pem
 ```
 
 **PowerShell (Windows):**
 ```powershell
-.\scripts\inject-failure.ps1 status -KeyFile $HOME\.ssh\vpn-demo-key.pem
+.\scripts\inject-failure.ps1 status -KeyFile ~\.ssh\vpn-demo-key.pem
 ```
 
 Wait until all alarms show `OK` before injecting the next scenario. The throughput alarm may take up to 5 minutes to recover due to its 300-second evaluation period.
@@ -491,7 +513,12 @@ Deletes CloudWatch alarms, metric filter, and both CDK stacks (VPN + MCP server)
 
 ```bash
 bash scripts/cleanup.sh $(aws configure get region)
-# Windows: .\scripts\cleanup.ps1 -Region <region>
+```
+
+**PowerShell (Windows):**
+```powershell
+$Region = aws configure get region
+.\scripts\cleanup.ps1 -Region $Region
 ```
 
 ### Step 2: Delete remaining resources
@@ -585,7 +612,12 @@ aws ec2 delete-key-pair --key-name vpn-demo-key --region $Region
 
 ```bash
 bash scripts/verify-cleanup.sh $(aws configure get region)
-# Windows: .\scripts\verify-cleanup.ps1 -Region <region>
+```
+
+**PowerShell (Windows):**
+```powershell
+$Region = aws configure get region
+.\scripts\verify-cleanup.ps1 -Region $Region
 ```
 
 ## Contributing
