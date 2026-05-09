@@ -10,8 +10,14 @@
 
 import { CognitoIdentityClient } from '@aws-sdk/client-cognito-identity';
 import { fromCognitoIdentityPool } from '@aws-sdk/credential-provider-cognito-identity';
-import { SignatureV4 } from '@aws-sdk/signature-v4';
-import { HttpRequest } from '@aws-sdk/protocol-http';
+// Use @smithy/signature-v4 (not the older @aws-sdk/signature-v4@3.370) — the
+// older package canonicalises paths with encodeURIComponent which leaves
+// !'()* literal, while AWS Lambda URL decodes-and-re-canonicalises with
+// full RFC 3986 (*.→ %2A, etc.), producing a 403 on any finding whose uid
+// contains one of those 5 chars. @smithy/signature-v4 uses escapeUri which
+// matches AWS exactly.
+import { SignatureV4 } from '@smithy/signature-v4';
+import { HttpRequest } from '@smithy/protocol-http';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { getIdToken } from './auth';
 
@@ -45,18 +51,15 @@ async function credentialsProvider() {
   return provider;
 }
 
-// RFC 3986 path escaping matching what AWS SigV4 expects on the server.
-// The SDK's SignatureV4.getCanonicalPath uses plain encodeURIComponent which
-// leaves `!`, `'`, `(`, `)`, `*` unescaped — but AWS re-canonicalises the
-// received path and encodes those same characters, producing a different
-// canonical string and a signature mismatch (403). Pre-escape the path here
-// with the strict RFC 3986 rules and tell the signer NOT to re-escape
-// (uriEscapePath=false), so both sides compute the identical canonical path.
+// RFC 3986 path escaping matching what AWS Lambda URL expects on the wire.
+// Full-unreserved mode: everything except A-Z a-z 0-9 - _ . ~ gets %-encoded,
+// and we then restore `/` as a path separator. This is the same transform
+// @smithy/signature-v4 uses internally for the canonical path, so the signer
+// and the wire value agree down to the last character.
 function escapeUriPath(path: string): string {
   const enc = (s: string) =>
     encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  const leading = path.startsWith('/') ? '/' : '';
-  return leading + path.split('/').filter((s) => s.length > 0).map(enc).join('/');
+  return enc(path).replace(/%2F/g, '/');
 }
 
 async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<any> {
@@ -70,19 +73,19 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     region,
     service: 'lambda',
     sha256: Sha256,
-    uriEscapePath: false,
+    uriEscapePath: true,
     applyChecksum: true,
   });
 
-  // Decode the browser-encoded pathname, then re-encode with RFC 3986 rules
-  // so the signer sees the exact string that will go on the wire.
+  // Decode once so the signer sees the true path (u.pathname still has %2F
+  // for in-uid slashes). @smithy/signature-v4 will RFC-3986-escape it into
+  // the canonical form.
   let decodedPath: string;
   try {
     decodedPath = decodeURIComponent(u.pathname);
   } catch {
     decodedPath = u.pathname;
   }
-  const escapedPath = escapeUriPath(decodedPath);
 
   const query: Record<string, string> = {};
   u.searchParams.forEach((v, k) => { query[k] = v; });
@@ -94,16 +97,18 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     method,
     protocol: u.protocol,
     hostname: u.hostname,
-    path: escapedPath,
+    path: decodedPath,
     query,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const signed = await signer.sign(req);
 
-  // signed.path equals escapedPath (signer did not re-encode). Put that
-  // exact string on the wire.
-  const finalUrl = `${u.protocol}//${u.hostname}${signed.path}${u.search}`;
+  // signed.path still equals decodedPath (signer doesn't mutate it). Escape
+  // it RFC-3986-style for the wire so the Lambda URL backend computes the
+  // same canonical string as the signer did.
+  const wirePath = escapeUriPath(signed.path);
+  const finalUrl = `${u.protocol}//${u.hostname}${wirePath}${u.search}`;
   const response = await fetch(finalUrl, {
     method: signed.method,
     headers: signed.headers as Record<string, string>,

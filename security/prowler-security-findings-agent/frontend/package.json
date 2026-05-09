@@ -9,15 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
     "@aws-sdk/client-cognito-identity": "^3.0.0",
     "@aws-sdk/credential-provider-cognito-identity": "^3.0.0",
     "@aws-sdk/protocol-http": "^3.370.0",
     "@aws-sdk/signature-v4": "^3.370.0",
-    "@aws-crypto/sha256-js": "^5.2.0",
     "@cloudscape-design/board-components": "^3.0.153",
     "@cloudscape-design/chart-components": "^1.0.64",
     "@cloudscape-design/components": "^3.0.0",
     "@cloudscape-design/global-styles": "^1.0.0",
+    "@smithy/protocol-http": "^5.3.14",
+    "@smithy/signature-v4": "^5.3.14",
     "amazon-cognito-identity-js": "^6.3.15",
     "highcharts": "^12.5.0",
     "highcharts-react-official": "^3.2.1",
