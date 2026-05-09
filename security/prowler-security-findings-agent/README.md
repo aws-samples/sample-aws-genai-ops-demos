@@ -9,7 +9,9 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
 2. **Ingest** — an S3 event fires a Lambda that upserts every finding into DynamoDB and triages by severity.
 3. **Contextualize (on demand)** — from the dashboard, one click on a finding calls **Amazon Nova Pro** via the Bedrock Converse API and produces a status-aware markdown playbook (Impact / Root cause / Remediation steps with CLI + CDK snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
 4. **Dispatch (on demand)** — one click publishes the finding to SNS. A HMAC-SHA256-signing Lambda forwards it to your [Amazon DevOps Agent](https://aws.amazon.com/devops-agent/) webhook with the Nova playbook embedded, so the agent starts its investigation with a remediation proposal in hand. Flip the `autoInvestigate` CDK context to `true` to fan out automatically on every CRITICAL/HIGH finding instead.
-5. **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + Cognito) lets you browse findings, read the AI playbook, stream the agent's investigation journal in real time, and trigger scans on-demand.
+5. **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + Cognito) lets you browse findings, read the AI playbook, stream the agent's investigation journal in real time, trigger scans on-demand, bulk-dispatch or bulk-generate insights for groups of findings, and suppress false positives with a reason stored in DynamoDB.
+
+In addition, the dashboard ships a **⌘K command palette**, URL-synced filters, keyboard shortcuts, a dedicated **Investigations page** listing every DevOps Agent task dispatched from the demo, and copy-paste-ready **seeded DevOps Agent Skills** (AWS Security Remediator + Compliance Framework Translator) that line up 1:1 with the agent's Create skill form (Name, Description, Agent Type, Instructions). A **CloudWatch dashboard** is auto-provisioned as part of the deploy to surface Lambda / Bedrock / DynamoDB / Fargate health in one pane.
 
 ## At a Glance
 
@@ -29,7 +31,7 @@ Five stages, all inside the customer AWS account:
 - **Ingest** — an S3 ObjectCreated event triggers the `ingest-findings` Lambda, which parses OCSF and upserts every finding into DynamoDB, indexed by severity and status for fast dashboard queries.
 - **Contextualize** — on demand from the dashboard, the `remediation-context` Lambda calls Amazon Bedrock Nova Pro via the Converse API and produces a status-aware markdown playbook (Impact, Root cause, Remediation steps with bash and CDK v2 snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
 - **Dispatch** — clicking _Investigate_ publishes the finding to SNS, which triggers an HMAC-SHA256-signing Lambda that POSTs the incident (with the Nova playbook embedded) to the Amazon DevOps Agent webhook. The dashboard then polls the agent's backlog tasks and journal records back through SigV4 so you can watch the investigation in real time.
-- **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + OAC) authenticates via Cognito User Pool + Identity Pool and calls an IAM-authenticated Lambda Function URL over SigV4. Six pages: Dashboard, Findings, Finding Detail, Compliance, Cost, Investigations.
+- **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + OAC) authenticates via Cognito User Pool + Identity Pool and calls an IAM-authenticated Lambda Function URL over SigV4. Six pages: Dashboard, Findings, Finding Detail, Compliance, Cost, Investigations. Scan history is enumerated from S3 `raw-reports/{scan_id}/` prefixes (the authoritative audit trail — the DynamoDB table is overwritten each scan).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture, including the VPC design, IAM roles, the cost-events subsystem, and the full bi-directional DevOps Agent integration.
 
@@ -69,8 +71,8 @@ bash deploy-all.sh          # macOS / Linux
 The script walks through:
 
 1. Prerequisites check (region, CDK, AWS CLI version, zip)
-2. **Interactive DevOps Agent setup** — creates the Agent Space + IAM roles, prompts you to generate a webhook URL and secret in the DevOps Agent console, then captures them
-3. Deploys 6 CDK stacks (everything except frontend)
+2. **Interactive DevOps Agent setup** — creates the Agent Space + IAM roles, prompts you to generate a webhook URL and secret in the DevOps Agent console, then captures them and live-patches both Lambdas (trigger + dashboard-api) with the webhook URL, HMAC secret, and Space ID
+3. Deploys 7 CDK stacks (everything except frontend): Data, Auth, DevOpsAgent, Scanner, Ingest, Api, Observability
 4. Builds the Prowler container image via CodeBuild and pushes to ECR
 5. Rebuilds the React dashboard with the CDK outputs baked in
 6. Deploys the frontend stack (CloudFront + S3 + OAC)
@@ -122,7 +124,8 @@ All stack IDs include the region suffix for multi-region deployments.
 | `ProwlerSecurityDevOpsAgent-{region}` | Agent webhook | SNS topic, HMAC-SHA256 Lambda, Secrets Manager secret |
 | `ProwlerSecurityScanner-{region}` | Prowler | ECR repo, CodeBuild image build, ECS cluster + Fargate Task Definition (SecurityAudit + ViewOnlyAccess), EventBridge schedule |
 | `ProwlerSecurityIngest-{region}` | Pipeline | `ingest-findings` Lambda (S3-triggered), `remediation-context` Lambda (Bedrock Converse / Nova Pro) |
-| `ProwlerSecurityApi-{region}` | Dashboard API | `dashboard-api` Lambda with IAM-auth Function URL (SigV4 from browser) |
+| `ProwlerSecurityApi-{region}` | Dashboard API | `dashboard-api` Lambda with IAM-auth Function URL (SigV4 from browser). Routes findings, scans, cost events, investigations, suppressions, insights |
+| `ProwlerSecurityObservability-{region}` | Metrics | CloudWatch Dashboard stitching Lambda invocations, Bedrock tokens, DynamoDB RCU/WCU, and Fargate scan runs into one pane |
 | `ProwlerSecurityFrontend-{region}` | Dashboard | CloudFront + S3 website + OAC |
 
 ## Project Structure
@@ -141,8 +144,10 @@ prowler-security-findings-agent/
 │   │   ├── scanner-stack.ts
 │   │   ├── ingest-stack.ts
 │   │   ├── api-stack.ts
+│   │   ├── observability-stack.ts       ← CloudWatch Dashboard
 │   │   └── frontend-stack.ts
 │   └── lambda/
+│       ├── _shared/                     ← common helpers (cost logging, OCSF parsing)
 │       ├── ingest-findings/index.py
 │       ├── remediation-context/index.py
 │       ├── devops-agent-trigger/index.py
@@ -158,12 +163,18 @@ prowler-security-findings-agent/
 ├── frontend/
 │   ├── index.html, package.json, vite.config.ts, tsconfig.json
 │   └── src/
-│       ├── main.tsx, App.tsx, auth.ts, api.ts, AuthModal.tsx, constants.ts
+│       ├── main.tsx, App.tsx, auth.ts, api.ts, AuthModal.tsx, constants.ts, theme.ts, frameworks.ts
+│       ├── CommandPalette.tsx           ← global ⌘K navigation + actions
+│       ├── KeyboardShortcuts.tsx        ← j/k/?/g* navigation
+│       ├── status-history.ts            ← per-finding timeline persisted in IndexedDB
+│       ├── agent-skills.ts              ← seeded DevOps Agent skills (copy-paste-ready)
 │       └── pages/
 │           ├── Dashboard.tsx
-│           ├── Findings.tsx
+│           ├── Findings.tsx              ← URL-synced filters + bulk actions + group-by-check
 │           ├── FindingDetail.tsx
-│           └── Compliance.tsx
+│           ├── Compliance.tsx
+│           ├── Cost.tsx
+│           └── Investigations.tsx        ← DevOps Agent backlog + seeded skills library
 └── docs/
     ├── ARCHITECTURE.md
     ├── architecture-overview.drawio          # AWS-shape high-level pipeline
@@ -211,7 +222,7 @@ bash scripts/cleanup.sh        # macOS / Linux
 ./scripts/cleanup.ps1          # Windows
 ```
 
-Destroys all 7 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles.
+Destroys all 8 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles.
 
 ## Troubleshooting
 
@@ -222,6 +233,7 @@ Destroys all 7 stacks in reverse dependency order and (after confirmation) delet
 | Fargate task fails with `AccessDenied` on S3 | Bucket region mismatch | Confirm `RawReportsBucket` is in the same region as the scanner task; rerun `deploy-all.sh`. |
 | DevOps Agent never receives incidents | Webhook URL/secret still placeholders | Run `bash scripts/setup-devops-agent.sh` — it live-updates the deployed Lambda and Secrets Manager. |
 | Dashboard returns 403 calling the API | Authenticated role missing `lambda:InvokeFunctionUrl` | Redeploy `ProwlerSecurityApi-{region}` and `ProwlerSecurityAuth-{region}`. |
+| Investigations tab shows "Space ID not set" after a `cdk deploy` | CDK context lost when deploying without `-c devOpsAgentSpaceId=...` (CDK rewrote the Lambda env var to `""`) | Re-run `bash scripts/setup-devops-agent.sh` to live-patch the dashboard-api + trigger Lambdas, or always pass the `-c devOpsAgent*` flags to `cdk deploy`. |
 | `SSM parameter /cdk-bootstrap/... not found` | CDK not bootstrapped | `npx cdk bootstrap aws://<account>/<region>` once. |
 
 ## Design decisions
