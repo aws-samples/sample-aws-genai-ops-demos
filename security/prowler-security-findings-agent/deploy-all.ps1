@@ -39,17 +39,35 @@ $CdkContext = @(
     "-c", "scanSchedule=$ScanSchedule"
 )
 
-Write-Host "[1/6] Installing CDK dependencies..."
+# ── Timing helpers ────────────────────────────────────────────────
+# Mirrors deploy-all.sh: each step prints its label, runs, then
+# announces elapsed time. Users see ~3-8 minute blocks instead of
+# a single long silence.
+$DeployStart = Get-Date
+$script:StepStart = $DeployStart
+function Start-Step([string]$label) {
+    Write-Host $label
+    $script:StepStart = Get-Date
+}
+function End-Step {
+    $elapsed = (Get-Date) - $script:StepStart
+    $label = ("{0:mm\:ss}" -f $elapsed)
+    Write-Host "  done in $label."
+    Write-Host ""
+}
+
+Start-Step "[1/7] Installing CDK dependencies..."
 Push-Location "$ScriptDir\cdk"
 npm install --silent
 Pop-Location
+End-Step
 
 if (-not (Test-Path "$ScriptDir\frontend\dist\index.html")) {
     New-Item -ItemType Directory -Force -Path "$ScriptDir\frontend\dist" | Out-Null
     "<!doctype html><html><body>Prowler Security Dashboard — building...</body></html>" | Out-File -Encoding utf8 "$ScriptDir\frontend\dist\index.html"
 }
 
-Write-Host "[2/6] Deploying CDK stacks (all except Frontend)..."
+Start-Step "[2/7] Deploying CDK stacks (all except Frontend)..."
 Push-Location "$ScriptDir\cdk"
 npx cdk deploy `
     "ProwlerSecurityData-$AwsRegion" `
@@ -62,37 +80,42 @@ npx cdk deploy `
     --require-approval never `
     --no-cli-pager
 Pop-Location
+End-Step
 
-Write-Host "[3/6] Building Prowler scanner image..."
+Start-Step "[3/7] Building Prowler scanner image..."
 $RawBucket = aws cloudformation describe-stacks --stack-name "ProwlerSecurityData-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='RawReportsBucketName'].OutputValue" --output text
 $BuildProject = aws cloudformation describe-stacks --stack-name "ProwlerSecurityScanner-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='BuildProjectName'].OutputValue" --output text
 & "$ScriptDir\scripts\build-scanner-image.ps1" -RawBucket $RawBucket -BuildProject $BuildProject
+End-Step
 
-Write-Host "[4/6] Fetching CDK outputs for frontend build..."
+Start-Step "[4/7] Fetching CDK outputs for frontend build..."
 $UserPoolId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text
 $UserPoolClientId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text
 $IdentityPoolId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text
 $ApiFunctionUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityApi-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" --output text
+End-Step
 
-Write-Host "[5/6] Building frontend..."
+Start-Step "[5/7] Building frontend..."
 & "$ScriptDir\scripts\build-frontend.ps1" `
     -Region $AwsRegion `
     -UserPoolId $UserPoolId `
     -UserPoolClientId $UserPoolClientId `
     -IdentityPoolId $IdentityPoolId `
     -ApiFunctionUrl $ApiFunctionUrl
+End-Step
 
-Write-Host "[6/6] Deploying Frontend stack..."
+Start-Step "[6/7] Deploying Frontend stack..."
 Push-Location "$ScriptDir\cdk"
 npx cdk deploy "ProwlerSecurityFrontend-$AwsRegion" @CdkContext --require-approval never --no-cli-pager
 Pop-Location
+End-Step
 
 $WebsiteUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityFrontend-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text
 
 # Step 7: create a default demo user so the dashboard is usable out of the box
 $DemoUsername = if ($env:DEMO_USERNAME) { $env:DEMO_USERNAME } else { "demo@prowler-security.local" }
 $DemoPassword = if ($env:DEMO_PASSWORD) { $env:DEMO_PASSWORD } else { "ProwlerDemo2026!" }
-Write-Host "[7/7] Creating default Cognito user $DemoUsername..."
+Start-Step "[7/7] Creating default Cognito user $DemoUsername..."
 $userExists = $false
 try {
     aws cognito-idp admin-get-user --user-pool-id $UserPoolId --username $DemoUsername --no-cli-pager *> $null
@@ -117,7 +140,10 @@ aws cognito-idp admin-set-user-password `
     --password $DemoPassword `
     --permanent `
     --no-cli-pager *> $null
-Write-Host "  done."
+End-Step
+
+$TotalElapsed = (Get-Date) - $DeployStart
+Write-Host ("Total deploy time: {0:mm\:ss}" -f $TotalElapsed)
 Write-Host ""
 
 Write-Host "=============================================="

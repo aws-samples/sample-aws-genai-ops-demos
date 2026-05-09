@@ -77,16 +77,30 @@ CDK_CONTEXT=(
     -c "scanSchedule=$SCAN_SCHEDULE"
 )
 
+# ── Timing helpers ────────────────────────────────────────────────
+# `timed_step` prints "[N/TOTAL] Label..." at the start and
+# "  done in Xm Ys." at the end, so users watching a ~20 min deploy
+# get visible progress per phase instead of silence.
+DEPLOY_START=$(date +%s)
+_STEP_T=0
+timed_step_start() {
+    printf "%s\n" "$1"
+    _STEP_T=$(date +%s)
+}
+timed_step_done() {
+    local s=$(( $(date +%s) - _STEP_T ))
+    printf "  done in %dm %02ds.\n\n" $((s/60)) $((s%60))
+}
+
 # Step 1: install CDK deps
-echo "[1/6] Installing CDK dependencies..."
+timed_step_start "[1/7] Installing CDK dependencies..."
 cd "$SCRIPT_DIR/cdk"
 npm install --silent
 cd "$SCRIPT_DIR"
-echo "  done."
-echo ""
+timed_step_done
 
 # Step 2: deploy all non-frontend stacks
-echo "[2/6] Deploying CDK stacks (all except Frontend)..."
+timed_step_start "[2/7] Deploying CDK stacks (all except Frontend)..."
 cd "$SCRIPT_DIR/cdk"
 # Build a dummy frontend/dist so FrontendStack's BucketDeployment doesn't fail if we
 # accidentally include it; we'll deploy the real one in step 6.
@@ -106,10 +120,10 @@ npx cdk deploy \
     --require-approval never \
     --no-cli-pager
 cd "$SCRIPT_DIR"
-echo ""
+timed_step_done
 
 # Step 3: build scanner image
-echo "[3/6] Building Prowler scanner image via CodeBuild..."
+timed_step_start "[3/7] Building Prowler scanner image via CodeBuild..."
 RAW_BUCKET=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityData-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='RawReportsBucketName'].OutputValue" \
@@ -119,10 +133,10 @@ BUILD_PROJECT=$(aws cloudformation describe-stacks \
     --query "Stacks[0].Outputs[?OutputKey=='BuildProjectName'].OutputValue" \
     --output text)
 bash "$SCRIPT_DIR/scripts/build-scanner-image.sh" "$RAW_BUCKET" "$BUILD_PROJECT"
-echo ""
+timed_step_done
 
 # Step 4: pull CDK outputs for frontend config
-echo "[4/6] Fetching CDK outputs for frontend build..."
+timed_step_start "[4/7] Fetching CDK outputs for frontend build..."
 USER_POOL_ID=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityAuth-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
@@ -139,22 +153,23 @@ echo "  UserPoolId:       $USER_POOL_ID"
 echo "  UserPoolClientId: $USER_POOL_CLIENT_ID"
 echo "  IdentityPoolId:   $IDENTITY_POOL_ID"
 echo "  API URL:          $API_FUNCTION_URL"
-echo ""
+timed_step_done
 
 # Step 5: build frontend
-echo "[5/6] Building frontend..."
+timed_step_start "[5/7] Building frontend..."
 bash "$SCRIPT_DIR/scripts/build-frontend.sh" \
     "$AWS_REGION" "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$IDENTITY_POOL_ID" "$API_FUNCTION_URL"
-echo ""
+timed_step_done
 
 # Step 6: deploy frontend stack
-echo "[6/6] Deploying Frontend stack..."
+timed_step_start "[6/7] Deploying Frontend stack..."
 cd "$SCRIPT_DIR/cdk"
 npx cdk deploy "ProwlerSecurityFrontend-$AWS_REGION" \
     "${CDK_CONTEXT[@]}" \
     --require-approval never \
     --no-cli-pager
 cd "$SCRIPT_DIR"
+timed_step_done
 
 WEBSITE_URL=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityFrontend-$AWS_REGION" \
@@ -163,7 +178,7 @@ WEBSITE_URL=$(aws cloudformation describe-stacks \
 # Step 7: create a default demo user so the dashboard is usable out of the box
 DEMO_USERNAME="${DEMO_USERNAME:-demo@prowler-security.local}"
 DEMO_PASSWORD="${DEMO_PASSWORD:-ProwlerDemo2026!}"
-echo "[7/7] Creating default Cognito user $DEMO_USERNAME..."
+timed_step_start "[7/7] Creating default Cognito user $DEMO_USERNAME..."
 if aws cognito-idp admin-get-user --user-pool-id "$USER_POOL_ID" --username "$DEMO_USERNAME" --no-cli-pager >/dev/null 2>&1; then
     echo "  User already exists — refreshing password."
 else
@@ -181,8 +196,10 @@ aws cognito-idp admin-set-user-password \
     --password "$DEMO_PASSWORD" \
     --permanent \
     --no-cli-pager >/dev/null
-echo "  done."
-echo ""
+timed_step_done
+
+DEPLOY_TOTAL=$(( $(date +%s) - DEPLOY_START ))
+printf "Total deploy time: %dm %02ds\n\n" $((DEPLOY_TOTAL/60)) $((DEPLOY_TOTAL%60))
 
 echo "=============================================="
 echo " Deployment complete"
