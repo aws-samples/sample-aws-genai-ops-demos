@@ -2,31 +2,43 @@
  * Curated DevOps Agent Skills that make this demo more opinionated.
  *
  * Amazon DevOps Agent does not (yet) expose a public API for creating Skills
- * programmatically, so we can't seed them at deploy time. Instead we ship
- * each skill as a ready-to-paste markdown/JSON blob and offer a Copy button
- * in the dashboard Lab area — same pattern the peer EKS demo uses.
- *
- * Each skill has:
- *   - `title`:   shown as the card header
- *   - `summary`: one-line pitch the TAM can read aloud
- *   - `when`:    the "When" field in the Agent Skills creation form
- *   - `rules`:   the "Rules" multi-line field (markdown-ish)
+ * programmatically, so we can't seed them at deploy time. Each skill is a
+ * ready-to-paste payload that matches the fields of the Agent's "Create skill"
+ * form: Name, Description, Agent Type, and Instructions. The dashboard ships
+ * Copy buttons for every field so the TAM can walk through the form once.
  *
  * Two seeded skills for this demo:
- *   1. "AWS Security Remediator" — turns agent output into step-by-step
- *      AWS CLI + CDK remediation instructions, aligned with the Nova
- *      remediation playbook format.
- *   2. "Compliance Framework Translator" — when a finding maps to
- *      multiple frameworks, the agent explains what the failing control
- *      means for each framework instead of dumping raw IDs.
+ *   1. "AWS Security Remediator" — turns agent output into step-by-step AWS
+ *      CLI + CDK remediation instructions aligned with the Nova playbook.
+ *   2. "Compliance Framework Translator" — when a finding maps to multiple
+ *      frameworks, the agent explains the auditor impact per framework
+ *      instead of dumping raw control IDs.
  */
 
+/** Mirrors the "Agent Type" dropdown in the Create skill form. */
+export type DevOpsAgentType =
+  | 'Generic'
+  | 'On-demand'
+  | 'Incident triage'
+  | 'Incident RCA'
+  | 'Incident mitigation'
+  | 'Evaluation';
+
 export interface AgentSkill {
+  /** Stable id used by React; not submitted to the form. */
   id: string;
+  /** Card header in the dashboard. */
   title: string;
+  /** One-line pitch shown under the header. */
   summary: string;
-  when: string;
-  rules: string;
+  /** Form field: Name — lowercase letters, numbers, hyphens (max 64 chars). */
+  name: string;
+  /** Form field: Description / "when to use" — min 100 characters recommended. */
+  description: string;
+  /** Form field: Agent Type — which agent sub-type can use this skill. */
+  agentType: DevOpsAgentType;
+  /** Form field: Instructions (markdown body). */
+  instructions: string;
 }
 
 export const AGENT_SKILLS: AgentSkill[] = [
@@ -35,9 +47,11 @@ export const AGENT_SKILLS: AgentSkill[] = [
     title: 'AWS Security Remediator',
     summary:
       'Forces the Agent to return concrete AWS CLI + CDK v2 remediation steps for every finding it investigates.',
-    when:
-      'The investigation relates to an AWS security finding (IAM, S3, Secrets Manager, Security Group, KMS, CloudTrail, GuardDuty, Security Hub).',
-    rules: `## Output format
+    name: 'aws-security-remediator',
+    agentType: 'Incident mitigation',
+    description:
+      'Apply this skill when the Agent is investigating an AWS security finding from Prowler (IAM, S3, Secrets Manager, Security Group, KMS, CloudTrail, GuardDuty, Security Hub). It forces the output into a three-section Impact / Root cause / Remediation block with executable AWS CLI and AWS CDK v2 snippets, so the engineer can copy remediations directly into a terminal or IaC repo without rewriting anything.',
+    instructions: `## Output format
 Every investigation MUST end with a three-section block:
 
 1. **Impact** — the concrete exposure (what an attacker can do today).
@@ -63,9 +77,11 @@ Direct. No "consider" / "might want to". Prefix every step with a verb
     title: 'Compliance Framework Translator',
     summary:
       'When a finding maps to multiple frameworks, the Agent explains what fails in business-language for each of them instead of dumping IDs.',
-    when:
-      'The investigation payload references a Prowler finding with compliance.framework entries (CIS, PCI, HIPAA, NIST, SOC 2, GDPR, ENS, CSA-CCM, NIST-CSF, MITRE-ATT&CK).',
-    rules: `## Output
+    name: 'compliance-framework-translator',
+    agentType: 'Incident RCA',
+    description:
+      'Apply this skill when the investigation payload includes a Prowler finding with compliance.framework entries (for example CIS, PCI DSS, HIPAA, NIST 800-53, SOC 2, GDPR, ENS, CSA CCM, NIST CSF, MITRE ATT&CK). The agent should translate every framework that is actually present in the payload into a short business-language paragraph that names the failing control and the auditor impact, instead of just listing control IDs.',
+    instructions: `## Output
 
 For every framework in the finding's compliance map, write ONE paragraph
 (3–5 sentences) with:

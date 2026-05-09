@@ -25,6 +25,44 @@ function statusIndicator(status?: string) {
   return <StatusIndicator type="info">{status || 'unknown'}</StatusIndicator>;
 }
 
+function SkillField({
+  label,
+  value,
+  multiline,
+  maxHeight,
+}: {
+  label: string;
+  value: string;
+  multiline?: boolean;
+  maxHeight?: number;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>{label}</span>
+        <Button
+          variant="inline-link"
+          iconName="copy"
+          onClick={() => navigator.clipboard.writeText(value)}
+          ariaLabel={`Copy ${label}`}
+        >
+          Copy
+        </Button>
+      </div>
+      <pre
+        className="soc-code-block"
+        style={{
+          whiteSpace: multiline ? 'pre-wrap' : 'nowrap',
+          margin: 0,
+          ...(maxHeight ? { maxHeight, overflowY: 'auto' } : {}),
+        }}
+      >
+        {value}
+      </pre>
+    </div>
+  );
+}
+
 export default function Investigations() {
   const navigate = useNavigate();
   const [items, setItems] = useState<InvestigationSummary[]>([]);
@@ -197,8 +235,10 @@ export default function Investigations() {
             <Box variant="small" color="text-status-inactive">
               Skills can't be created programmatically yet (no public API) —
               open the DevOps Agent Operator, go to <strong>Skills → Create skill</strong>,
-              and paste the fields below. The Agent will apply them to every
-              investigation dispatched from this demo going forward.
+              and paste each field below into its matching form input
+              (<code>Name</code>, <code>Description</code>, <code>Agent Type</code>,
+              <code>Instructions</code>). Leave <code>Status</code> on
+              <strong> Active</strong>.
             </Box>
             {AGENT_SKILLS.map((skill) => (
               <ExpandableSection
@@ -208,32 +248,10 @@ export default function Investigations() {
               >
                 <SpaceBetween size="s">
                   <Box variant="p">{skill.summary}</Box>
-                  <div>
-                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>When</span>
-                      <Button
-                        variant="inline-link"
-                        iconName="copy"
-                        onClick={() => navigator.clipboard.writeText(skill.when)}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                    <pre className="soc-code-block" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{skill.when}</pre>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>Rules</span>
-                      <Button
-                        variant="inline-link"
-                        iconName="copy"
-                        onClick={() => navigator.clipboard.writeText(skill.rules)}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                    <pre className="soc-code-block" style={{ whiteSpace: 'pre-wrap', margin: 0, maxHeight: 260, overflowY: 'auto' }}>{skill.rules}</pre>
-                  </div>
+                  <SkillField label="Name" value={skill.name} />
+                  <SkillField label="Description" value={skill.description} multiline />
+                  <SkillField label="Agent Type" value={skill.agentType} />
+                  <SkillField label="Instructions" value={skill.instructions} multiline maxHeight={260} />
                 </SpaceBetween>
               </ExpandableSection>
             ))}
