@@ -116,6 +116,7 @@ npx cdk deploy \
     "ProwlerSecurityScanner-$AWS_REGION" \
     "ProwlerSecurityIngest-$AWS_REGION" \
     "ProwlerSecurityApi-$AWS_REGION" \
+    "ProwlerSecurityObservability-$AWS_REGION" \
     "${CDK_CONTEXT[@]}" \
     --require-approval never \
     --no-cli-pager

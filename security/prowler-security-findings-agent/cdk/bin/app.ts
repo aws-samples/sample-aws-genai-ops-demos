@@ -8,6 +8,7 @@ import { IngestStack } from '../lib/ingest-stack';
 import { DevOpsAgentStack } from '../lib/devops-agent-stack';
 import { ApiStack } from '../lib/api-stack';
 import { FrontendStack } from '../lib/frontend-stack';
+import { ObservabilityStack } from '../lib/observability-stack';
 import { getRegion } from '../../../../shared/utils/aws-utils';
 
 const app = new cdk.App();
@@ -116,7 +117,31 @@ apiStack.addDependency(scannerStack);
 apiStack.addDependency(devOpsAgentStack);
 apiStack.addDependency(ingestStack);
 
-// 7. Frontend — CloudFront + S3 + OAC hosting the React/Cloudscape dashboard
+// 7. Observability — CloudWatch Dashboard that stitches together the demo's
+//    Lambda/Bedrock/DynamoDB/Fargate metrics in one pane. Deployed last among
+//    the non-Frontend stacks so all function/table/cluster names exist.
+const observabilityStack = new ObservabilityStack(app, `ProwlerSecurityObservability-${region}`, {
+  env,
+  lambdaNames: {
+    ingest: 'prowler-security-ingest',
+    remediationContext: 'prowler-security-remediation-context',
+    devOpsTrigger: 'prowler-security-devops-trigger',
+    dashboardApi: 'prowler-security-dashboard-api',
+  },
+  tableNames: {
+    findings: dataStack.findingsTable.tableName,
+    costEvents: dataStack.costEventsTable.tableName,
+  },
+  scannerClusterName: 'prowler-security-scanner',
+  bedrockModelId,
+  description: 'Prowler Security Findings: CloudWatch dashboard for Lambda / Bedrock / DynamoDB / Fargate health',
+});
+observabilityStack.addDependency(ingestStack);
+observabilityStack.addDependency(devOpsAgentStack);
+observabilityStack.addDependency(apiStack);
+observabilityStack.addDependency(scannerStack);
+
+// 8. Frontend — CloudFront + S3 + OAC hosting the React/Cloudscape dashboard
 new FrontendStack(app, `ProwlerSecurityFrontend-${region}`, {
   env,
   userPoolId: authStack.userPool.userPoolId,
