@@ -247,6 +247,30 @@ function AgentJournal({ records }: { records: AgentJournalRecord[] }) {
   );
 }
 
+/**
+ * Format the delta between `now` and `then` (epoch ms) as a compact, live
+ * "12s ago" / "3m 14s ago" / "1h 2m ago". `now` is passed in so the caller
+ * can drive re-renders on a tick.
+ */
+function formatAgo(then: number, now: number): string {
+  if (!then) return '';
+  const ms = Math.max(0, now - then);
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return rs > 0 ? `${m}m ${rs}s ago` : `${m}m ago`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m ago` : `${h}h ago`;
+}
+
+/** Head-plus-tail truncation: "prowler-…-44dfca" */
+function middleTruncate(s: string, head = 14, tail = 10): string {
+  if (s.length <= head + tail + 1) return s;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
 function CopyButton({ text, label }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -283,6 +307,10 @@ export default function FindingDetail() {
   // Track the last dispatch timestamp so we can ignore stale 'idle' polls
   // during the ~30-60s window before the task shows up in the backlog.
   const lastDispatchAtRef = useRef<number>(0);
+  // State mirror of the ref so the "Xs ago" pill re-renders every tick
+  // while an investigation is in flight.
+  const [dispatchedAt, setDispatchedAt] = useState<number>(0);
+  const [now, setNow] = useState<number>(() => Date.now());
 
   const refreshInvestigation = useCallback(() => {
     if (!findingUid) return;
@@ -367,7 +395,10 @@ export default function FindingDetail() {
     try {
       const res = await investigateFinding(findingUid);
       setDispatchMessage(`Dispatched — incident ${res.incidentId}. Expect 30–90 s for the backlog task to appear, and 1–3 min for the full investigation.`);
-      lastDispatchAtRef.current = Date.now();
+      const ts = Date.now();
+      lastDispatchAtRef.current = ts;
+      setDispatchedAt(ts);
+      setNow(ts);
       setInvestigation((prev) => ({
         incidentId: res.incidentId,
         status: 'pending',
@@ -390,6 +421,16 @@ export default function FindingDetail() {
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [navigate]);
+
+  // 1Hz "wall clock" used by the "Xs ago" pill next to the dispatched state.
+  // Only ticks while there's an in-flight investigation so the tab is cheap
+  // to leave open.
+  const inFlight = investigation?.status === 'pending' || investigation?.status === 'in_progress';
+  useEffect(() => {
+    if (!inFlight || !dispatchedAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [inFlight, dispatchedAt]);
 
   if (loading) return <Box padding="xl" textAlign="center"><Spinner size="large" /></Box>;
   if (error) return <Alert type="error" action={<Button onClick={() => navigate('/findings')}>Back</Button>}>{error}</Alert>;
@@ -684,21 +725,54 @@ export default function FindingDetail() {
                           <>
                             <div style={{ padding: '14px 18px', background: 'rgba(79,143,255,0.05)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                                <div>
-                                  {investigationBadge(investigation.status)}
-                                  <div style={{ marginTop: 8, color: COLOR.fgMuted, fontSize: 11 }}>
-                                    Incident ID:{' '}
-                                    <code style={{ color: COLOR.accent, fontSize: 11 }}>{investigation.incidentId}</code>{' '}
-                                    <CopyButton text={investigation.incidentId} />
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                    {investigationBadge(investigation.status)}
+                                    {inFlight && dispatchedAt > 0 && (
+                                      <span
+                                        style={{
+                                          fontSize: 11,
+                                          fontVariantNumeric: 'tabular-nums',
+                                          color: COLOR.fgMuted,
+                                          padding: '2px 8px',
+                                          border: `1px solid ${COLOR.border}`,
+                                          borderRadius: 999,
+                                          background: 'rgba(79,143,255,0.06)',
+                                        }}
+                                        aria-live="polite"
+                                      >
+                                        dispatched {formatAgo(dispatchedAt, now)}
+                                      </span>
+                                    )}
                                   </div>
-                                  {investigation.agentSpaceId && (
-                                    <div style={{ color: COLOR.fgDim, fontSize: 11, marginTop: 4 }}>
-                                      Agent Space: <code>{investigation.agentSpaceId}</code>
+                                  <div style={{ color: COLOR.fgDim, fontSize: 11, marginTop: 6 }}>
+                                    Last checked {new Date(now).toLocaleTimeString()} · polls every 3–10s while active
+                                  </div>
+                                  <ExpandableSection
+                                    variant="footer"
+                                    headerText="Technical references"
+                                  >
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLOR.fgMuted, flexWrap: 'wrap' }}>
+                                        <span>Incident ID:</span>
+                                        <code
+                                          translate="no"
+                                          title={investigation.incidentId}
+                                          style={{ color: COLOR.accent, fontSize: 11 }}
+                                        >
+                                          {middleTruncate(investigation.incidentId, 16, 10)}
+                                        </code>
+                                        <CopyButton text={investigation.incidentId} label="incident ID" />
+                                      </div>
+                                      {investigation.agentSpaceId && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLOR.fgDim }}>
+                                          <span>Agent Space:</span>
+                                          <code translate="no" style={{ fontSize: 11 }}>{investigation.agentSpaceId}</code>
+                                          <CopyButton text={investigation.agentSpaceId} label="Agent Space ID" />
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                  <div style={{ color: COLOR.fgDim, fontSize: 11, marginTop: 4 }}>
-                                    Last checked {new Date().toLocaleTimeString()} · polls every 3–10s while active
-                                  </div>
+                                  </ExpandableSection>
                                 </div>
                                 <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
                                   {(() => {
