@@ -99,6 +99,7 @@ const apiStack = new ApiStack(app, `ProwlerSecurityApi-${region}`, {
   findingsTableName: dataStack.findingsTable.tableName,
   costEventsTableName: dataStack.costEventsTable.tableName,
   remediationsBucketName: dataStack.remediationsBucket.bucketName,
+  rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
   scannerClusterArn: scannerStack.clusterArn,
   scannerTaskDefinitionArn: scannerStack.taskDefinitionArn,
   scannerSubnetIds: scannerStack.subnetIds,

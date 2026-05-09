@@ -20,16 +20,29 @@ const identityPoolId = import.meta.env.VITE_IDENTITY_POOL_ID;
 const userPoolId = import.meta.env.VITE_USER_POOL_ID;
 const apiUrl = import.meta.env.VITE_API_FUNCTION_URL;
 
+// Cache the Cognito client + credentials provider so concurrent requests share
+// one in-memory credential fetch. Creating a fresh provider per call meant two
+// parallel bulk-action requests raced on GetCredentialsForIdentity, and one
+// would fail — visible as "Investigations dispatched: 1 succeeded · 1 failed".
+let _cognitoClient: CognitoIdentityClient | null = null;
+let _providerCache: { idToken: string; provider: ReturnType<typeof fromCognitoIdentityPool> } | null = null;
+
 async function credentialsProvider() {
   const idToken = await getIdToken();
   if (!idToken) throw new Error('Not authenticated');
-  return fromCognitoIdentityPool({
-    client: new CognitoIdentityClient({ region }),
+  if (_providerCache && _providerCache.idToken === idToken) {
+    return _providerCache.provider;
+  }
+  if (!_cognitoClient) _cognitoClient = new CognitoIdentityClient({ region });
+  const provider = fromCognitoIdentityPool({
+    client: _cognitoClient,
     identityPoolId,
     logins: {
       [`cognito-idp.${region}.amazonaws.com/${userPoolId}`]: idToken,
     },
   });
+  _providerCache = { idToken, provider };
+  return provider;
 }
 
 async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<any> {

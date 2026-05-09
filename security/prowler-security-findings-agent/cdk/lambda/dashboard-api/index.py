@@ -247,19 +247,57 @@ def _cost_summary() -> dict[str, Any]:
     })
 
 
+RAW_REPORTS_BUCKET = os.environ.get('RAW_REPORTS_BUCKET', '')
+
+
 def _list_scans() -> dict[str, Any]:
-    # No dedicated scans table — derive from findings. Small accounts only.
-    resp = TABLE.scan(ProjectionExpression='scan_id,last_seen_at', Limit=2000)
-    items = resp.get('Items', [])
-    scans: dict[str, str] = {}
-    for i in items:
-        sid = i.get('scan_id')
-        ts = i.get('last_seen_at')
-        if sid and ts:
-            if sid not in scans or ts > scans[sid]:
-                scans[sid] = ts
-    out = [{'scan_id': k, 'last_seen_at': v} for k, v in scans.items()]
-    out.sort(key=lambda x: x['last_seen_at'], reverse=True)
+    """List every scan ever produced by listing prefixes in the raw-reports
+    bucket.
+
+    The previous implementation derived scans from the findings table, but
+    the table is overwritten every scan (one item per finding_uid) so only
+    the *latest* scan_id survived. The S3 bucket keeps one
+    `raw-reports/{scan_id}/` prefix per scan forever, so paginating those
+    prefixes is both cheaper and historically accurate.
+    """
+    if not RAW_REPORTS_BUCKET:
+        return _json(200, {'scans': [], 'error': 'RAW_REPORTS_BUCKET not configured'})
+
+    paginator = _s3.get_paginator('list_objects_v2')
+    seen: dict[str, str] = {}
+    try:
+        for page in paginator.paginate(
+            Bucket=RAW_REPORTS_BUCKET,
+            Prefix='raw-reports/',
+            Delimiter='/',
+        ):
+            for cp in page.get('CommonPrefixes') or []:
+                # CommonPrefix looks like "raw-reports/20260509T060142Z/"
+                name = (cp.get('Prefix') or '').rstrip('/').split('/')[-1]
+                if not name:
+                    continue
+                # Grab the first object in the prefix for an authoritative
+                # LastModified. MaxKeys=1 keeps this cheap — we only need one.
+                try:
+                    inner = _s3.list_objects_v2(
+                        Bucket=RAW_REPORTS_BUCKET,
+                        Prefix=f'raw-reports/{name}/',
+                        MaxKeys=1,
+                    )
+                    contents = inner.get('Contents') or []
+                    if contents:
+                        last_seen = contents[0]['LastModified'].isoformat()
+                    else:
+                        last_seen = name
+                except Exception:
+                    last_seen = name
+                seen[name] = last_seen
+    except Exception as exc:
+        logger.warning('list_scans: ListObjectsV2 failed: %s', exc)
+        return _json(200, {'scans': [], 'error': str(exc)})
+
+    out = [{'scan_id': k, 'last_seen_at': v} for k, v in seen.items()]
+    out.sort(key=lambda x: x['scan_id'], reverse=True)
     return _json(200, {'scans': out[:50]})
 
 

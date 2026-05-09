@@ -356,7 +356,8 @@ export default function Findings() {
           if (action === 'investigate') await investigateFinding(f.finding_uid);
           else await generateInsights(f.finding_uid);
           ok++;
-        } catch {
+        } catch (err) {
+          console.error(`Bulk ${action} failed for ${f.finding_uid}:`, err);
           fail++;
         }
       }

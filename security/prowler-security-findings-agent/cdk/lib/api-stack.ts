@@ -7,6 +7,9 @@ import * as path from 'path';
 export interface ApiStackProps extends cdk.StackProps {
   findingsTableName: string;
   remediationsBucketName: string;
+  /** Raw OCSF reports bucket — dashboard-api lists `raw-reports/{scan_id}/` prefixes
+   * to build the scan history (the authoritative source of "what scans have run"). */
+  rawReportsBucketName: string;
   scannerClusterArn: string;
   scannerTaskDefinitionArn: string;
   scannerSubnetIds: string[];
@@ -69,6 +72,19 @@ export class ApiStack extends cdk.Stack {
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject'],
       resources: [`arn:aws:s3:::${props.remediationsBucketName}/*`],
+    }));
+    // ListBucket + GetObject on raw-reports so the /scans endpoint can
+    // enumerate the authoritative scan history from S3 prefixes (the
+    // DynamoDB findings table is overwritten each scan and loses scan_ids).
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [`arn:aws:s3:::${props.rawReportsBucketName}`],
+    }));
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: [`arn:aws:s3:::${props.rawReportsBucketName}/raw-reports/*`],
     }));
     // ecs:RunTask scopes cleanly to the task definition. But ecs:ListTasks
     // and ecs:DescribeTasks are authorized on cluster + container-instance
@@ -150,6 +166,7 @@ export class ApiStack extends cdk.Stack {
       environment: {
         FINDINGS_TABLE: props.findingsTableName,
         REMEDIATIONS_BUCKET: props.remediationsBucketName,
+        RAW_REPORTS_BUCKET: props.rawReportsBucketName,
         SCANNER_CLUSTER_ARN: props.scannerClusterArn,
         SCANNER_TASK_DEFINITION_ARN: props.scannerTaskDefinitionArn,
         SCANNER_SUBNET_IDS: props.scannerSubnetIds.join(','),
