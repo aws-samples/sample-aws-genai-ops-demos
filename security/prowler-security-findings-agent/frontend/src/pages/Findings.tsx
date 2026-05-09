@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonDropdown,
   CollectionPreferences,
   ContentLayout,
   ExpandableSection,
@@ -12,9 +13,10 @@ import {
   Table,
   SpaceBetween,
   StatusIndicator,
+  Toggle,
 } from '@cloudscape-design/components';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Finding, listFindings } from '../api';
+import { Finding, generateInsights, investigateFinding, listFindings } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { FRAMEWORKS, frameworkLabelsForFinding, getFrameworkByKey, matchesFramework } from '../frameworks';
 
@@ -73,13 +75,29 @@ const COLUMN_DEFINITIONS = [
   {
     id: 'resource',
     header: 'Resource',
-    cell: (it: Finding) => (
-      <Box variant="code">
-        <span translate="no" title={it.resource_uid}>
-          {it.resource_uid.length > 60 ? it.resource_uid.slice(0, 57) + '…' : it.resource_uid}
-        </span>
-      </Box>
-    ),
+    cell: (it: Finding) => {
+      // In group-by mode rows carry "<n> resource(s)"; render without code styling + italic.
+      if (typeof (it as any).__group !== 'undefined') {
+        const fail = (it as any).__failCount || 0;
+        return (
+          <Box variant="small">
+            <span style={{ fontStyle: 'italic' }}>{it.resource_uid}</span>
+            {fail > 0 && (
+              <span style={{ marginLeft: 8, color: 'var(--soc-critical)', fontWeight: 600 }}>
+                {fail} FAIL
+              </span>
+            )}
+          </Box>
+        );
+      }
+      return (
+        <Box variant="code">
+          <span translate="no" title={it.resource_uid}>
+            {it.resource_uid.length > 60 ? it.resource_uid.slice(0, 57) + '…' : it.resource_uid}
+          </span>
+        </Box>
+      );
+    },
     sortingField: 'resource',
     sortingComparator: (a: Finding, b: Finding) => (a.resource_uid || '').localeCompare(b.resource_uid || ''),
   },
@@ -140,9 +158,30 @@ const COLUMN_DEFINITIONS = [
 
 const DEFAULT_VISIBLE_COLUMNS = ['severity', 'status', 'title', 'service', 'resource', 'region', 'compliance', 'insights', 'lastSeen'];
 
+// Map PropertyFilter token propertyKey → URL query-string key.
+// Only "canonical" filters (those we can deep-link to) survive the round-trip.
+const URL_FILTER_KEYS: Record<string, string> = {
+  severity: 'severity',
+  status: 'status',
+  scan_id: 'scan',
+  service_name: 'service',
+  check_id: 'check',
+};
+
+function tokensToParams(tokens: FilterToken[], framework: string | null, groupByCheck: boolean): URLSearchParams {
+  const p = new URLSearchParams();
+  for (const t of tokens) {
+    const urlKey = URL_FILTER_KEYS[t.propertyKey];
+    if (urlKey && t.operator === '=' && t.value) p.set(urlKey, t.value);
+  }
+  if (framework) p.set('framework', framework);
+  if (groupByCheck) p.set('groupBy', 'check');
+  return p;
+}
+
 export default function Findings() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,22 +195,37 @@ export default function Findings() {
   // it matches a regex across compliance_frameworks / check_id / check_title,
   // which PropertyFilter's simple string compare can't express.
   const [frameworkFilter, setFrameworkFilter] = useState<string | null>(null);
+  const [groupByCheck, setGroupByCheck] = useState<boolean>(false);
+  const [selected, setSelected] = useState<Finding[]>([]);
+  const [bulkBusy, setBulkBusy] = useState<null | 'investigate' | 'insights'>(null);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
 
-  // Apply filters from URL on first load
+  // URL → state (once, on first mount / deep-link navigations)
   useEffect(() => {
     const tokens: any[] = [];
     const severity = searchParams.get('severity');
     const status = searchParams.get('status');
     const scanId = searchParams.get('scan');
     const service = searchParams.get('service');
+    const check = searchParams.get('check');
     const framework = searchParams.get('framework');
+    const groupBy = searchParams.get('groupBy');
     if (severity) tokens.push({ propertyKey: 'severity', operator: '=', value: severity });
     if (status) tokens.push({ propertyKey: 'status', operator: '=', value: status });
     if (scanId) tokens.push({ propertyKey: 'scan_id', operator: '=', value: scanId });
     if (service) tokens.push({ propertyKey: 'service_name', operator: '=', value: service });
+    if (check) tokens.push({ propertyKey: 'check_id', operator: '=', value: check });
     if (tokens.length) setQuery({ tokens, operation: 'and' });
     if (framework) setFrameworkFilter(framework);
-  }, [searchParams]);
+    if (groupBy === 'check') setGroupByCheck(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // state → URL (keeps the URL shareable / back-button friendly).
+  useEffect(() => {
+    const next = tokensToParams(query.tokens, frameworkFilter, groupByCheck);
+    setSearchParams(next, { replace: true });
+  }, [query, frameworkFilter, groupByCheck, setSearchParams]);
 
   async function load() {
     setLoading(true);
@@ -209,6 +263,93 @@ export default function Findings() {
     return sortingDescending ? arr.reverse() : arr;
   }, [filtered, sortingColumn, sortingDescending]);
 
+  // Group rows collapse multiple resources with the same check_id into one
+  // row. Worst-severity wins; status is the "strictest" (FAIL > MANUAL > PASS).
+  type GroupRow = Finding & { __group: true; __count: number; __failCount: number };
+  const isGroupRow = (r: Finding | GroupRow): r is GroupRow => (r as GroupRow).__group === true;
+  const groupedItems = useMemo<(Finding | GroupRow)[]>(() => {
+    if (!groupByCheck) return sortedItems;
+    const byCheck = new Map<string, Finding[]>();
+    for (const f of sortedItems) {
+      const arr = byCheck.get(f.check_id) || [];
+      arr.push(f);
+      byCheck.set(f.check_id, arr);
+    }
+    const rows: GroupRow[] = [];
+    for (const [check_id, group] of byCheck) {
+      // Pick a representative row + compute aggregates.
+      const sorted = [...group].sort(
+        (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
+      );
+      const head = sorted[0];
+      const failCount = group.filter((g) => g.status === 'FAIL').length;
+      const groupStatus = failCount > 0 ? 'FAIL' : (group.some((g) => g.status === 'MANUAL') ? 'MANUAL' : 'PASS');
+      rows.push({
+        ...head,
+        // finding_uid must be unique across group rows — prefix the check_id so it cannot
+        // collide with a real finding_uid (those are "check_id:resource_uid").
+        finding_uid: `__group__:${check_id}`,
+        status: groupStatus,
+        resource_uid: `${group.length} resource${group.length === 1 ? '' : 's'}`,
+        __group: true,
+        __count: group.length,
+        __failCount: failCount,
+      });
+    }
+    return rows.sort(
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
+    );
+  }, [sortedItems, groupByCheck]);
+
+  // Bulk handlers ---------------------------------------------------------
+
+  /**
+   * Fire a per-finding action with bounded concurrency so we don't torch
+   * Bedrock/DevOps-Agent quotas for a 20-row selection.
+   */
+  async function runBulk(
+    findings: Finding[],
+    action: 'investigate' | 'insights',
+    label: string,
+  ) {
+    if (!findings.length || bulkBusy) return;
+    setBulkBusy(action);
+    setBulkMessage(null);
+    const CONCURRENCY = 3;
+    let ok = 0;
+    let fail = 0;
+    const queue = [...findings];
+    async function worker() {
+      while (queue.length) {
+        const f = queue.shift();
+        if (!f) return;
+        try {
+          if (action === 'investigate') await investigateFinding(f.finding_uid);
+          else await generateInsights(f.finding_uid);
+          ok++;
+        } catch {
+          fail++;
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    setBulkMessage(
+      `${label}: ${ok} succeeded${fail ? ` · ${fail} failed` : ''}. Refreshing findings…`,
+    );
+    setBulkBusy(null);
+    setSelected([]);
+    await load();
+  }
+
+  async function bulkInvestigate() {
+    const items = selected.filter((s) => !isGroupRow(s));
+    await runBulk(items, 'investigate', 'Investigations dispatched');
+  }
+  async function bulkInsights() {
+    const items = selected.filter((s) => !isGroupRow(s) && !s.remediation_s3_key);
+    await runBulk(items, 'insights', 'Bedrock Insights generated');
+  }
+
   const activeFilterPills = query.tokens.map((t, i) => (
     <Button
       key={`${t.propertyKey}-${i}`}
@@ -229,7 +370,14 @@ export default function Findings() {
         <Header
           variant="h1"
           description="All Prowler findings for this account. Click a row to see the Bedrock insight and dispatch a DevOps Agent investigation."
-          actions={<Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>}
+          actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Toggle checked={groupByCheck} onChange={(e) => setGroupByCheck(e.detail.checked)}>
+                Group by check
+              </Toggle>
+              <Button iconName="refresh" onClick={load} loading={loading} ariaLabel="Refresh findings">Refresh</Button>
+            </SpaceBetween>
+          }
         >
           Findings
         </Header>
@@ -240,6 +388,9 @@ export default function Findings() {
           <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={load}>Retry</Button>}>
             {error}
           </Alert>
+        )}
+        {bulkMessage && (
+          <Alert type="success" dismissible onDismiss={() => setBulkMessage(null)}>{bulkMessage}</Alert>
         )}
 
         <ExpandableSection variant="footer" headerText="What do PASS, FAIL and MANUAL mean?">
@@ -260,7 +411,7 @@ export default function Findings() {
         <Table
           loading={loading}
           loadingText="Loading findings from DynamoDB…"
-          items={sortedItems}
+          items={groupedItems}
           trackBy="finding_uid"
           sortingColumn={sortingColumn}
           sortingDescending={sortingDescending}
@@ -289,9 +440,66 @@ export default function Findings() {
               onConfirm={(e) => setVisibleColumns((e.detail.visibleContent as string[]) ?? DEFAULT_VISIBLE_COLUMNS)}
             />
           }
-          onRowClick={(e) => navigate(`/findings/${encodeURIComponent(e.detail.item.finding_uid)}`)}
+          selectionType={groupByCheck ? undefined : 'multi'}
+          selectedItems={groupByCheck ? [] : selected}
+          onSelectionChange={(e) => setSelected(e.detail.selectedItems)}
+          onRowClick={(e) => {
+            const row = e.detail.item;
+            if (isGroupRow(row)) {
+              // Drill down: switch off group-by and filter by this check
+              setGroupByCheck(false);
+              setQuery({
+                operation: 'and',
+                tokens: [{ propertyKey: 'check_id', operator: '=', value: row.check_id } as FilterToken],
+              });
+              setFrameworkFilter(null);
+              return;
+            }
+            navigate(`/findings/${encodeURIComponent(row.finding_uid)}`);
+          }}
           enableKeyboardNavigation
-          header={<Header counter={`(${filtered.length}/${items.length})`} description="Click any row to open the detail view. Click any column header to sort.">All findings</Header>}
+          header={
+            <Header
+              counter={groupByCheck
+                ? `(${groupedItems.length} check${groupedItems.length === 1 ? '' : 's'} · ${filtered.length}/${items.length} finding${filtered.length === 1 ? '' : 's'})`
+                : `(${filtered.length}/${items.length})`}
+              description={groupByCheck
+                ? 'Click a row to drill into the individual findings for that check.'
+                : 'Click any row to open the detail view. Click any column header to sort.'}
+              actions={!groupByCheck && (
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Box color="text-status-inactive" variant="small">
+                    {selected.length ? `${selected.length} selected` : 'Select rows for bulk actions'}
+                  </Box>
+                  <ButtonDropdown
+                    disabled={selected.length === 0 || bulkBusy !== null}
+                    loading={bulkBusy !== null}
+                    items={[
+                      {
+                        id: 'investigate',
+                        text: `Investigate ${selected.length} with DevOps Agent`,
+                        disabled: selected.length === 0,
+                      },
+                      {
+                        id: 'insights',
+                        text: `Generate Bedrock Insights for ${selected.filter((s) => !s.remediation_s3_key).length}`,
+                        disabled: selected.filter((s) => !s.remediation_s3_key).length === 0,
+                      },
+                    ]}
+                    onItemClick={(e) => {
+                      if (e.detail.id === 'investigate') bulkInvestigate();
+                      else if (e.detail.id === 'insights') bulkInsights();
+                    }}
+                    variant="primary"
+                  >
+                    Bulk actions
+                  </ButtonDropdown>
+                </SpaceBetween>
+              )}
+            >
+              {groupByCheck ? 'Findings grouped by check' : 'All findings'}
+            </Header>
+          }
           filter={
             <PropertyFilter
               query={{
