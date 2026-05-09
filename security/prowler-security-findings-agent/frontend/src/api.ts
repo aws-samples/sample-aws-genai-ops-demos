@@ -45,6 +45,20 @@ async function credentialsProvider() {
   return provider;
 }
 
+// RFC 3986 path escaping matching what AWS SigV4 expects on the server.
+// The SDK's SignatureV4.getCanonicalPath uses plain encodeURIComponent which
+// leaves `!`, `'`, `(`, `)`, `*` unescaped — but AWS re-canonicalises the
+// received path and encodes those same characters, producing a different
+// canonical string and a signature mismatch (403). Pre-escape the path here
+// with the strict RFC 3986 rules and tell the signer NOT to re-escape
+// (uriEscapePath=false), so both sides compute the identical canonical path.
+function escapeUriPath(path: string): string {
+  const enc = (s: string) =>
+    encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const leading = path.startsWith('/') ? '/' : '';
+  return leading + path.split('/').filter((s) => s.length > 0).map(enc).join('/');
+}
+
 async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<any> {
   if (!apiUrl) throw new Error('VITE_API_FUNCTION_URL not configured');
   const u = new URL(path.startsWith('http') ? path : `${apiUrl.replace(/\/$/, '')}${path}`);
@@ -56,26 +70,19 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     region,
     service: 'lambda',
     sha256: Sha256,
-    // Lambda Function URLs (and all AWS services) decode %XX path segments
-    // before canonicalisation. If we leave the path percent-encoded when we
-    // sign, our canonical request differs from what AWS computes and SigV4
-    // returns 403 "signature does not match". The SDK's SignatureV4 will
-    // re-encode the path once — and only once — when uriEscapePath=true
-    // (the default). Passing the decoded path ensures the single encoding
-    // round-trip matches AWS's side.
-    uriEscapePath: true,
+    uriEscapePath: false,
     applyChecksum: true,
   });
 
-  // Decode the pathname so SignatureV4 can re-encode it exactly once. Any
-  // character that new URL(...) already encoded (%2F, %3A, …) would otherwise
-  // become %252F etc. when the signer re-encodes, breaking the signature.
+  // Decode the browser-encoded pathname, then re-encode with RFC 3986 rules
+  // so the signer sees the exact string that will go on the wire.
   let decodedPath: string;
   try {
     decodedPath = decodeURIComponent(u.pathname);
   } catch {
     decodedPath = u.pathname;
   }
+  const escapedPath = escapeUriPath(decodedPath);
 
   const query: Record<string, string> = {};
   u.searchParams.forEach((v, k) => { query[k] = v; });
@@ -87,17 +94,15 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     method,
     protocol: u.protocol,
     hostname: u.hostname,
-    path: decodedPath,
+    path: escapedPath,
     query,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const signed = await signer.sign(req);
 
-  // Rebuild the final URL from the SIGNED path — the signer has encoded it
-  // once, and that's exactly what AWS expects on the wire. Using u.toString()
-  // (which returns the browser-encoded path) would double-encode for
-  // characters the signer also escaped.
+  // signed.path equals escapedPath (signer did not re-encode). Put that
+  // exact string on the wire.
   const finalUrl = `${u.protocol}//${u.hostname}${signed.path}${u.search}`;
   const response = await fetch(finalUrl, {
     method: signed.method,
