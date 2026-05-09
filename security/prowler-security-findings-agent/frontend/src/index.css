@@ -475,6 +475,23 @@ input, textarea, [class*='awsui_input'] {
 .soc-severity-chip--LOW      { background: var(--soc-low);      color: #053017; border: 1px solid var(--soc-low); }
 .soc-severity-chip--INFO     { background: var(--soc-info);     color: #ffffff; border: 1px solid var(--soc-info); }
 
+/* History badges — "what changed last scan" overlay on severity. */
+.soc-history-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.soc-history-chip--new       { background: rgba(79,143,255,0.15); color: var(--soc-accent); border: 1px solid var(--soc-accent); }
+.soc-history-chip--fixed     { background: rgba(46,204,113,0.15); color: var(--soc-ok);     border: 1px solid var(--soc-ok); }
+.soc-history-chip--regressed { background: rgba(255,56,96,0.15);  color: var(--soc-critical); border: 1px solid var(--soc-critical); }
+
 .soc-tile {
   display: flex;
   justify-content: space-between;

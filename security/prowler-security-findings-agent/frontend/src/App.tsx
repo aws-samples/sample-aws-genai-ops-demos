@@ -13,6 +13,7 @@ import Compliance from './pages/Compliance';
 import Investigations from './pages/Investigations';
 import Cost from './pages/Cost';
 import AuthModal from './AuthModal';
+import KeyboardShortcuts from './KeyboardShortcuts';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 
 type Theme = 'system' | 'light' | 'dark';
@@ -81,6 +82,7 @@ export default function App() {
   return (
     <>
       <a href="#soc-main" className="soc-skip-link">Skip to main content</a>
+      <KeyboardShortcuts />
       <TopNavigation
         identity={{
           href: '/',

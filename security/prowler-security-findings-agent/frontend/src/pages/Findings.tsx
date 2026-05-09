@@ -19,6 +19,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Finding, generateInsights, investigateFinding, listFindings } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { FRAMEWORKS, frameworkLabelsForFinding, getFrameworkByKey, matchesFramework } from '../frameworks';
+import { badgeFromHistory } from '../status-history';
 
 function statusChip(s: string) {
   if (s === 'FAIL') return <StatusIndicator type="error">FAIL</StatusIndicator>;
@@ -37,9 +38,27 @@ const COLUMN_DEFINITIONS = [
   {
     id: 'severity',
     header: 'Severity',
-    cell: (it: Finding) => (
-      <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
-    ),
+    cell: (it: Finding) => {
+      // Group rows don't have history meaningful to render here; pass through.
+      const badge = typeof (it as any).__group !== 'undefined' ? { kind: 'stable' as const } : badgeFromHistory(it);
+      return (
+        <>
+          <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
+          {badge.kind !== 'stable' && (
+            <span
+              className={`soc-history-chip soc-history-chip--${badge.kind}`}
+              title={
+                badge.kind === 'fixed' ? `Status flipped to PASS in scan ${badge.since}`
+                : badge.kind === 'regressed' ? `Was PASS, now ${badge.wasStatus}`
+                : 'First observed in the latest scan'
+              }
+            >
+              {badge.label}
+            </span>
+          )}
+        </>
+      );
+    },
     sortingField: 'severity',
     sortingComparator: (a: Finding, b: Finding) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
     width: 120,

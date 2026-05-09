@@ -133,6 +133,10 @@ export interface Finding {
   finding_types?: string[];
   /** Prowler risk description in business language. */
   risk_details?: string;
+  /** Timestamp of the first scan that ever produced this finding_uid. */
+  first_seen_at?: string;
+  /** Per-scan status trail (last 20 entries) — used to compute fixed/regressed badges. */
+  status_history?: Array<{ scan_id: string; status: string; last_seen_at: string }>;
   /** Truncated OCSF JSON from Prowler — only returned by the detail endpoint. */
   raw?: string;
 }

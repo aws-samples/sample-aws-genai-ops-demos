@@ -116,7 +116,14 @@ export class IngestStack extends cdk.Stack {
     }));
     ingestRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['dynamodb:BatchWriteItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+      actions: [
+        'dynamodb:BatchWriteItem',
+        'dynamodb:PutItem',
+        'dynamodb:UpdateItem',
+        // BatchGetItem is needed to preload the previous row per finding so we
+        // can append to its status_history attribute instead of overwriting.
+        'dynamodb:BatchGetItem',
+      ],
       resources: [findingsTableArn],
     }));
     ingestRole.addToPolicy(new iam.PolicyStatement({

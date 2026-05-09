@@ -25,6 +25,7 @@ import {
 } from '../api';
 
 import { COLOR } from '../theme';
+import { badgeFromHistory } from '../status-history';
 
 function investigationBadge(status: InvestigationState['status']) {
   const map: Record<string, { color: string; text: string }> = {
@@ -454,13 +455,30 @@ export default function FindingDetail() {
         <div className="soc-hero" style={{ borderLeft: `4px solid ${sevColor}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
                 <span className={`soc-severity-chip soc-severity-chip--${item.severity}`} style={{ fontSize: 12, padding: '4px 12px' }}>
                   {item.severity}
                 </span>
                 <span style={{ color: item.status === 'FAIL' ? COLOR.critical : COLOR.ok, fontWeight: 600, fontSize: 13 }}>
                   {item.status}
                 </span>
+                {(() => {
+                  const b = badgeFromHistory(item);
+                  if (b.kind === 'stable') return null;
+                  return (
+                    <span
+                      className={`soc-history-chip soc-history-chip--${b.kind}`}
+                      style={{ marginLeft: 0 }}
+                      title={
+                        b.kind === 'fixed' ? `Status flipped to PASS in scan ${b.since}`
+                        : b.kind === 'regressed' ? `Was PASS, now ${b.wasStatus}`
+                        : 'First observed in the latest scan'
+                      }
+                    >
+                      {b.label}
+                    </span>
+                  );
+                })()}
                 <span style={{ color: COLOR.fgMuted, fontSize: 13 }}>· {item.service_name}</span>
                 {item.remediation_s3_key && (
                   <span style={{ color: COLOR.accent, fontSize: 12, fontWeight: 600 }}>· Bedrock insight ready</span>
@@ -640,6 +658,53 @@ export default function FindingDetail() {
                                 </ul>
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {item.status_history && item.status_history.length > 0 && (
+                          <div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                              History
+                              {item.first_seen_at && (
+                                <span style={{ marginLeft: 8, color: COLOR.fgDim, textTransform: 'none', fontWeight: 400 }}>
+                                  first seen {new Date(item.first_seen_at).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                            <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {item.status_history.slice().reverse().map((h, idx) => (
+                                <li
+                                  key={`${h.scan_id}-${idx}`}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    fontSize: 12,
+                                    color: COLOR.fgMuted,
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      width: 8,
+                                      height: 8,
+                                      borderRadius: '50%',
+                                      background:
+                                        h.status === 'FAIL' ? 'var(--soc-critical)'
+                                        : h.status === 'PASS' ? 'var(--soc-ok)'
+                                        : 'var(--soc-medium)',
+                                    }}
+                                    aria-hidden="true"
+                                  />
+                                  <span style={{ fontWeight: 600, color: COLOR.fg }}>{h.status}</span>
+                                  <span style={{ color: COLOR.fgDim }}>·</span>
+                                  <code translate="no" style={{ fontSize: 11 }}>{h.scan_id}</code>
+                                  <span style={{ color: COLOR.fgDim, marginLeft: 'auto' }}>
+                                    {new Date(h.last_seen_at).toLocaleString()}
+                                  </span>
+                                </li>
+                              ))}
+                            </ol>
                           </div>
                         )}
 

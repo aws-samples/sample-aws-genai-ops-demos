@@ -323,6 +323,64 @@ def _to_item(finding: dict[str, Any], scan_id: str, now: str) -> dict[str, Any]:
     return item
 
 
+MAX_HISTORY_ENTRIES = 20
+
+
+def _batch_get_previous(finding_uids: list[str]) -> dict[str, dict]:
+    """Fetch existing items for a list of finding_uids, keyed by uid.
+
+    Used to preserve status_history across scans: the previous row's
+    history + its current status get appended to the new entry.
+    Returns an empty dict on the first scan (nothing to fetch) or if
+    any single page fails (best-effort; history is not load-bearing).
+    """
+    out: dict[str, dict] = {}
+    if not finding_uids:
+        return out
+    ddb = _ddb.meta.client
+    # BatchGetItem caps at 100 keys per request.
+    CHUNK = 100
+    for i in range(0, len(finding_uids), CHUNK):
+        chunk = finding_uids[i:i + CHUNK]
+        try:
+            resp = ddb.batch_get_item(RequestItems={
+                TABLE_NAME: {
+                    'Keys': [{'finding_uid': uid} for uid in chunk],
+                    'ProjectionExpression': 'finding_uid, #st, last_seen_at, scan_id, status_history',
+                    'ExpressionAttributeNames': {'#st': 'status'},
+                },
+            })
+            for existing in resp.get('Responses', {}).get(TABLE_NAME, []):
+                out[existing['finding_uid']] = existing
+        except Exception as exc:  # noqa: BLE001 — best effort
+            logger.warning('batch_get_item failed for chunk of %d: %s', len(chunk), exc)
+    return out
+
+
+def _next_history(previous: dict | None, new_status: str, new_scan_id: str, now: str) -> list[dict]:
+    """Append a new (scan_id, status, ts) entry to the existing history.
+
+    If status is unchanged from the last entry we keep the list stable to
+    avoid unnecessary row churn. History is truncated to the most recent
+    MAX_HISTORY_ENTRIES so item size stays bounded.
+    """
+    prev_history = (previous or {}).get('status_history') or []
+    if not isinstance(prev_history, list):
+        prev_history = []
+    prev_status = (previous or {}).get('status')
+    if prev_history and prev_history[-1].get('status') == new_status:
+        # Same status — refresh last_seen_at on the tail entry rather than grow.
+        prev_history[-1]['last_seen_at'] = now
+        prev_history[-1]['scan_id'] = new_scan_id
+        return prev_history[-MAX_HISTORY_ENTRIES:]
+    entry = {'scan_id': new_scan_id, 'status': new_status, 'last_seen_at': now}
+    # First scan ever: seed history with a single entry.
+    if not prev_history and not prev_status:
+        return [entry]
+    # Status changed: append.
+    return (prev_history + [entry])[-MAX_HISTORY_ENTRIES:]
+
+
 def handler(event, context):
     logger.info('Received S3 event with %d records', len(event.get('Records', [])))
     ingested = 0
@@ -338,9 +396,20 @@ def handler(event, context):
         scan_id = key.split('/')[1] if key.startswith('raw-reports/') else 'unknown'
         now = datetime.utcnow().isoformat() + 'Z'
 
+        # Build all items first so we know which UIDs to pre-fetch for history.
+        new_items = [_to_item(f, scan_id, now) for f in findings]
+        uids = [it['finding_uid'] for it in new_items]
+        previous_rows = _batch_get_previous(uids)
+
         with _table.batch_writer(overwrite_by_pkeys=['finding_uid']) as writer:
-            for finding in findings:
-                item = _to_item(finding, scan_id, now)
+            for item in new_items:
+                prev = previous_rows.get(item['finding_uid'])
+                item['status_history'] = _next_history(prev, item['status'], scan_id, now)
+                # Carry forward `first_seen_at` so the UI can show "new this scan".
+                if prev and prev.get('last_seen_at'):
+                    item['first_seen_at'] = prev.get('first_seen_at') or prev['last_seen_at']
+                else:
+                    item['first_seen_at'] = now
                 writer.put_item(Item=item)
                 ingested += 1
 
