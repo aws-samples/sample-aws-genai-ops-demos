@@ -637,6 +637,15 @@ input, textarea, [class*='awsui_input'] {
   color: var(--soc-accent);
 }
 
+/* Off-screen table rows skip layout/paint until close to the viewport.
+   Equivalent to `virtualization lite` for tables in the 100-500 rows range
+   without pulling in a dedicated library. Browsers that don't support this
+   property simply ignore it. */
+[class*='awsui_row'] {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 44px;
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 10px;

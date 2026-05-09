@@ -79,6 +79,7 @@ export default function Investigations() {
           items={items}
           trackBy="finding_uid"
           onRowClick={(e) => navigate(`/findings/${encodeURIComponent(e.detail.item.finding_uid)}`)}
+          enableKeyboardNavigation
           header={<Header counter={`(${items.length})`} description="Click a row to open the finding and see the full agent journal.">All investigations</Header>}
           columnDefinitions={[
             {

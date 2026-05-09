@@ -7,9 +7,9 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
 
 1. **Scan** — a scheduled (and on-demand) [Prowler](https://github.com/prowler-cloud/prowler) ECS Fargate task runs against your AWS account, emitting OCSF JSON and ASFF findings to S3 and Security Hub.
 2. **Ingest** — an S3 event fires a Lambda that upserts every finding into DynamoDB and triages by severity.
-3. **Contextualize** — for every CRITICAL/HIGH failing finding, a second Lambda calls **Amazon Nova Pro** via the Bedrock Converse API and produces a markdown remediation playbook (Impact / Root cause / Remediation steps with CLI + CDK snippets).
-4. **Dispatch** — the same finding is published to an SNS topic. A HMAC-SHA256-signing Lambda forwards it to your [Amazon DevOps Agent](https://aws.amazon.com/devops-agent/) webhook with the Nova playbook embedded, so the agent starts its investigation with a remediation proposal in hand.
-5. **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + Cognito) lets you browse findings, read the AI playbook, and trigger scans on-demand.
+3. **Contextualize (on demand)** — from the dashboard, one click on a finding calls **Amazon Nova Pro** via the Bedrock Converse API and produces a status-aware markdown playbook (Impact / Root cause / Remediation steps with CLI + CDK snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
+4. **Dispatch (on demand)** — one click publishes the finding to SNS. A HMAC-SHA256-signing Lambda forwards it to your [Amazon DevOps Agent](https://aws.amazon.com/devops-agent/) webhook with the Nova playbook embedded, so the agent starts its investigation with a remediation proposal in hand. Flip the `autoInvestigate` CDK context to `true` to fan out automatically on every CRITICAL/HIGH finding instead.
+5. **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + Cognito) lets you browse findings, read the AI playbook, stream the agent's investigation journal in real time, and trigger scans on-demand.
 
 ## At a Glance
 
@@ -17,7 +17,7 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
 - **Difficulty**: Intermediate
 - **Target Audience**: Security Engineers, Cloud SecOps, DevOps Engineers, SREs
 - **Key Technologies**: Prowler, Amazon DevOps Agent, Amazon Bedrock (Nova Pro), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
-- **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Nova usage per CRITICAL/HIGH finding (see [Cost](#cost))
+- **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Nova usage per finding you click "Generate Bedrock Insights" on (see [Cost](#cost))
 
 ## Architecture
 
@@ -108,8 +108,8 @@ aws cognito-idp admin-set-user-password \
 1. Open the dashboard URL and sign in.
 2. On **Dashboard**, click **Run scan now**. The Fargate task starts; first-time pulls of the Prowler image take ~90s.
 3. Findings arrive in 3-10 minutes depending on account size.
-4. Open **Findings** → click any CRITICAL/HIGH item → **AI remediation (Nova)** tab to see the Nova-generated playbook.
-5. Open the DevOps Agent console for the Agent Space — there will be a new incident per CRITICAL/HIGH finding, with the Nova playbook embedded in the description.
+4. Open **Findings** → click any CRITICAL/HIGH item → press **Generate Bedrock Insights** to produce the Nova-generated playbook on demand (shown in the Overview tab).
+5. From the same finding, press **Investigate with DevOps Agent** to dispatch a single incident to the Agent. The Investigation tab streams backlog task status and journal records live; the Agent Operator console shows the full reasoning trace.
 
 ## CDK Stacks
 
@@ -197,7 +197,7 @@ All costs approximate, `us-east-1` pricing.
 ### Per scan (~$0.50 + Nova usage)
 
 - Fargate task: 1 vCPU, 2 GB RAM, ~5 min runtime → ~$0.02
-- **Nova Pro remediation** (Converse API, 1 call per CRITICAL/HIGH): ~$0.002–0.01 per finding depending on OCSF size
+- **Nova Pro remediation** (Converse API, 1 call per finding you click "Generate Bedrock Insights" on): ~$0.002–0.01 per finding depending on OCSF size
 - CodeBuild: only runs on image rebuilds
 
 ### DevOps Agent usage

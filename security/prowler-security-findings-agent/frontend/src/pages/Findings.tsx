@@ -290,6 +290,7 @@ export default function Findings() {
             />
           }
           onRowClick={(e) => navigate(`/findings/${encodeURIComponent(e.detail.item.finding_uid)}`)}
+          enableKeyboardNavigation
           header={<Header counter={`(${filtered.length}/${items.length})`} description="Click any row to open the detail view. Click any column header to sort.">All findings</Header>}
           filter={
             <PropertyFilter
