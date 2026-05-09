@@ -22,6 +22,8 @@ import {
   getFinding,
   getInvestigation,
   investigateFinding,
+  suppressFinding,
+  unsuppressFinding,
 } from '../api';
 
 import { COLOR } from '../theme';
@@ -389,6 +391,27 @@ export default function FindingDetail() {
     }
   }
 
+  async function toggleSuppress() {
+    if (!item || !findingUid) return;
+    if (item.suppressed_at) {
+      try {
+        await unsuppressFinding(findingUid);
+        setItem({ ...item, suppressed_at: undefined, suppress_reason: undefined, suppressed_by: undefined });
+      } catch (e: any) {
+        setError(e?.message || 'Failed to unsuppress');
+      }
+      return;
+    }
+    const reason = window.prompt('Reason for suppressing this finding? (e.g. accepted risk · tracked in JIRA-123)');
+    if (!reason || !reason.trim()) return;
+    try {
+      const res = await suppressFinding(findingUid, reason.trim());
+      setItem({ ...item, suppressed_at: res.suppressed_at, suppress_reason: res.reason });
+    } catch (e: any) {
+      setError(e?.message || 'Failed to suppress');
+    }
+  }
+
   async function dispatchInvestigate() {
     if (!findingUid) return;
     setDispatching(true);
@@ -491,8 +514,14 @@ export default function FindingDetail() {
                 {item.check_id}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Button onClick={() => navigate('/findings')}>← Back</Button>
+              <Button
+                onClick={toggleSuppress}
+                iconName={item.suppressed_at ? 'undo' : 'status-stopped'}
+              >
+                {item.suppressed_at ? 'Unsuppress' : 'Suppress…'}
+              </Button>
               <Button
                 variant="primary"
                 onClick={dispatchInvestigate}
@@ -508,6 +537,18 @@ export default function FindingDetail() {
       }
     >
       <SpaceBetween size="l">
+        {item.suppressed_at && (
+          <Alert type="warning" header="Finding suppressed">
+            <div>
+              <strong>Reason:</strong> {item.suppress_reason || '—'}
+            </div>
+            <div style={{ fontSize: 12, color: COLOR.fgMuted, marginTop: 4 }}>
+              Suppressed {new Date(item.suppressed_at).toLocaleString()}
+              {item.suppressed_by ? (<>by <code translate="no">{item.suppressed_by}</code></>) : null}
+              . Excluded from compliance pass rate. Click Unsuppress to bring it back.
+            </div>
+          </Alert>
+        )}
         {dispatchMessage && <Alert type="success" dismissible onDismiss={() => setDispatchMessage(null)}>{dispatchMessage}</Alert>}
 
         {/* 2-col: overview + tabs (stacks on mobile) */}

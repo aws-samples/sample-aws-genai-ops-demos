@@ -20,6 +20,7 @@ Routes (matched against event['requestContext']['http']['path'] + method):
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
 import boto3
@@ -297,6 +298,59 @@ def _generate_insights(finding_uid: str) -> dict[str, Any]:
         'remediation_s3_key': key,
         'remediation_markdown': markdown,
     })
+
+
+def _caller_identity(event: dict) -> str:
+    """Return a human-ish caller string for audit attribution.
+
+    Function URL IAM auth surfaces the caller in requestContext.authorizer.
+    Falls back to the Cognito email / user id in the identity claims.
+    """
+    rc = (event.get('requestContext') or {})
+    auth = rc.get('authorizer') or {}
+    iam = auth.get('iam') or {}
+    user_arn = iam.get('userArn') or iam.get('userId')
+    if user_arn:
+        return str(user_arn)
+    return 'unknown'
+
+
+def _suppress_finding(finding_uid: str, body: dict, event: dict) -> dict[str, Any]:
+    """Mark a finding as suppressed with a reason.
+
+    Body shape: {"reason": "accepted risk, tracked in JIRA-123"}.
+    Adds three attributes to the item: suppressed_at, suppress_reason,
+    suppressed_by. Suppressed findings remain visible in the UI but are
+    styled as such and excluded from compliance pass rate.
+    """
+    reason = (body.get('reason') or '').strip()
+    if not reason:
+        return _json(400, {'error': 'reason is required'})
+    resp = TABLE.get_item(Key={'finding_uid': finding_uid})
+    if not resp.get('Item'):
+        return _json(404, {'error': 'finding not found'})
+    now = datetime.utcnow().isoformat() + 'Z'
+    TABLE.update_item(
+        Key={'finding_uid': finding_uid},
+        UpdateExpression='SET suppressed_at = :t, suppress_reason = :r, suppressed_by = :u',
+        ExpressionAttributeValues={
+            ':t': now,
+            ':r': reason[:500],
+            ':u': _caller_identity(event)[:500],
+        },
+    )
+    return _json(200, {'finding_uid': finding_uid, 'suppressed_at': now, 'reason': reason})
+
+
+def _unsuppress_finding(finding_uid: str) -> dict[str, Any]:
+    resp = TABLE.get_item(Key={'finding_uid': finding_uid})
+    if not resp.get('Item'):
+        return _json(404, {'error': 'finding not found'})
+    TABLE.update_item(
+        Key={'finding_uid': finding_uid},
+        UpdateExpression='REMOVE suppressed_at, suppress_reason, suppressed_by',
+    )
+    return _json(200, {'finding_uid': finding_uid, 'suppressed': False})
 
 
 def _investigate_finding(finding_uid: str) -> dict[str, Any]:
@@ -673,7 +727,7 @@ def handler(event, context):
     # everything between /findings/ and an optional /investigate|/investigation
     # suffix as the uid.
     if parts and parts[0] == 'findings' and len(parts) >= 2:
-        suffix = parts[-1] if parts[-1] in ('investigate', 'investigation', 'insights') else None
+        suffix = parts[-1] if parts[-1] in ('investigate', 'investigation', 'insights', 'suppress') else None
         if suffix:
             uid = '/'.join(parts[1:-1])
             if method == 'POST' and suffix == 'investigate':
@@ -682,6 +736,15 @@ def handler(event, context):
                 return _get_investigation(uid)
             if method == 'POST' and suffix == 'insights':
                 return _generate_insights(uid)
+            if method == 'POST' and suffix == 'suppress':
+                body = {}
+                try:
+                    body = json.loads(event.get('body') or '{}')
+                except json.JSONDecodeError:
+                    pass
+                return _suppress_finding(uid, body, event)
+            if method == 'DELETE' and suffix == 'suppress':
+                return _unsuppress_finding(uid)
         else:
             uid = '/'.join(parts[1:])
             if method == 'GET':

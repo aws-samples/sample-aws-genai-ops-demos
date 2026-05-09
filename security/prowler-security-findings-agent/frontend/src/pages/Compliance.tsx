@@ -90,21 +90,25 @@ export default function Compliance() {
 
   useEffect(() => { load(); }, []);
 
+  // Suppressed findings (accepted risk) don't count against compliance.
+  const effective = useMemo(() => items.filter((f) => !f.suppressed_at), [items]);
+
   const frameworkStats = useMemo(() => {
     return FRAMEWORKS.map((fw) => {
-      const matches = items.filter((f) => matchesFramework(f, fw.match));
+      const matches = effective.filter((f) => matchesFramework(f, fw.match));
       const total = matches.length;
       const failing = matches.filter((m) => m.status === 'FAIL').length;
       const passing = total - failing;
       const pct = total === 0 ? 0 : Math.round((passing / total) * 100);
       return { ...fw, total, failing, passing, pct };
     });
-  }, [items]);
+  }, [effective]);
 
-  const overallTotal = items.length;
-  const overallPassing = items.filter((i) => i.status === 'PASS').length;
+  const overallTotal = effective.length;
+  const overallPassing = effective.filter((i) => i.status === 'PASS').length;
   const overallPct = overallTotal === 0 ? 0 : Math.round((overallPassing / overallTotal) * 100);
   const activeFrameworks = frameworkStats.filter((f) => f.total > 0).length;
+  const suppressedCount = items.length - effective.length;
 
   return (
     <ContentLayout
@@ -135,6 +139,9 @@ export default function Compliance() {
               <div className="soc-kpi soc-kpi--accent">
                 <div className="soc-kpi-label">Frameworks</div>
                 <div className="soc-kpi-value">{activeFrameworks}</div>
+                {suppressedCount > 0 && (
+                  <div className="soc-kpi-hint">{suppressedCount} suppressed</div>
+                )}
               </div>
             </div>
           </div>

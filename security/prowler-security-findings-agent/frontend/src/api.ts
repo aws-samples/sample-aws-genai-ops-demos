@@ -32,7 +32,7 @@ async function credentialsProvider() {
   });
 }
 
-async function signedFetch(method: 'GET' | 'POST', path: string, body?: unknown): Promise<any> {
+async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<any> {
   if (!apiUrl) throw new Error('VITE_API_FUNCTION_URL not configured');
   const u = new URL(path.startsWith('http') ? path : `${apiUrl.replace(/\/$/, '')}${path}`);
 
@@ -137,6 +137,10 @@ export interface Finding {
   first_seen_at?: string;
   /** Per-scan status trail (last 20 entries) — used to compute fixed/regressed badges. */
   status_history?: Array<{ scan_id: string; status: string; last_seen_at: string }>;
+  /** Present when the finding has been suppressed through the dashboard. */
+  suppressed_at?: string;
+  suppress_reason?: string;
+  suppressed_by?: string;
   /** Truncated OCSF JSON from Prowler — only returned by the detail endpoint. */
   raw?: string;
 }
@@ -212,6 +216,19 @@ export const generateInsights = (findingUid: string) =>
 
 export const getInvestigation = (findingUid: string) =>
   signedFetch('GET', `/findings/${encodeURIComponent(findingUid)}/investigation`) as Promise<InvestigationState>;
+
+export const suppressFinding = (findingUid: string, reason: string) =>
+  signedFetch('POST', `/findings/${encodeURIComponent(findingUid)}/suppress`, { reason }) as Promise<{
+    finding_uid: string;
+    suppressed_at: string;
+    reason: string;
+  }>;
+
+export const unsuppressFinding = (findingUid: string) =>
+  signedFetch('DELETE', `/findings/${encodeURIComponent(findingUid)}/suppress`) as Promise<{
+    finding_uid: string;
+    suppressed: false;
+  }>;
 
 export interface InvestigationSummary {
   finding_uid: string;

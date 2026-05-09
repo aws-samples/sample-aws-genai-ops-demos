@@ -54,7 +54,8 @@ export class ApiStack extends cdk.Stack {
     });
     role.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['dynamodb:Query', 'dynamodb:Scan', 'dynamodb:GetItem'],
+      // UpdateItem needed for the suppress/unsuppress endpoints.
+      actions: ['dynamodb:Query', 'dynamodb:Scan', 'dynamodb:GetItem', 'dynamodb:UpdateItem'],
       resources: [findingsTableArn, `${findingsTableArn}/index/*`],
     }));
     // Cost events table is read-only from the dashboard; writes come from
@@ -165,7 +166,7 @@ export class ApiStack extends cdk.Stack {
       authType: lambda.FunctionUrlAuthType.AWS_IAM,
       cors: {
         allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST],
+        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST, lambda.HttpMethod.DELETE],
         allowedHeaders: ['authorization', 'content-type', 'x-amz-content-sha256', 'x-amz-date', 'x-amz-security-token'],
       },
     });

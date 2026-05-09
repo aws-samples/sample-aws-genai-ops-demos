@@ -238,14 +238,20 @@ export default function Dashboard() {
     }
   }
 
+  // Compliance pass rate ignores suppressed findings (accepted risk etc.).
+  const unsuppressed = useMemo(() => findings.filter((f) => !f.suppressed_at), [findings]);
   const total = findings.length;
   const bySeverity = useMemo(() => countBy(findings, 'severity'), [findings]);
-  const byService = useMemo(() => countBy(findings.filter((f) => f.status === 'FAIL'), 'service_name'), [findings]);
-  const byStatus = useMemo(() => countBy(findings, 'status'), [findings]);
+  const byService = useMemo(
+    () => countBy(unsuppressed.filter((f) => f.status === 'FAIL'), 'service_name'),
+    [unsuppressed],
+  );
+  const byStatus = useMemo(() => countBy(unsuppressed, 'status'), [unsuppressed]);
 
   const failing = byStatus.FAIL || 0;
   const passing = byStatus.PASS || 0;
-  const compliancePct = total === 0 ? 0 : Math.round((passing / total) * 100);
+  const denominator = unsuppressed.length;
+  const compliancePct = denominator === 0 ? 0 : Math.round((passing / denominator) * 100);
 
   const criticalFail = useMemo(() => findings.filter((f) => f.severity === 'CRITICAL' && f.status === 'FAIL').length, [findings]);
   const criticalTotal = useMemo(() => findings.filter((f) => f.severity === 'CRITICAL').length, [findings]);
@@ -320,7 +326,10 @@ export default function Dashboard() {
             <div className="soc-kpi soc-kpi--ok">
               <div className="soc-kpi-label">Compliance</div>
               <div className="soc-kpi-value">{loading ? '…' : `${compliancePct}%`}</div>
-              <div className="soc-kpi-hint">{passing}/{total} passing</div>
+              <div className="soc-kpi-hint">
+                {passing}/{denominator} passing
+                {total > denominator && ` · ${total - denominator} suppressed`}
+              </div>
             </div>
             <div className="soc-kpi soc-kpi--accent">
               <div className="soc-kpi-label">Bedrock insights</div>

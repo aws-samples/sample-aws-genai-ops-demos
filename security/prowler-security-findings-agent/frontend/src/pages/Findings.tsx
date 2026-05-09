@@ -41,10 +41,11 @@ const COLUMN_DEFINITIONS = [
     cell: (it: Finding) => {
       // Group rows don't have history meaningful to render here; pass through.
       const badge = typeof (it as any).__group !== 'undefined' ? { kind: 'stable' as const } : badgeFromHistory(it);
+      const suppressed = Boolean(it.suppressed_at);
       return (
-        <>
+        <span style={{ opacity: suppressed ? 0.55 : 1 }}>
           <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
-          {badge.kind !== 'stable' && (
+          {badge.kind !== 'stable' && !suppressed && (
             <span
               className={`soc-history-chip soc-history-chip--${badge.kind}`}
               title={
@@ -56,7 +57,16 @@ const COLUMN_DEFINITIONS = [
               {badge.label}
             </span>
           )}
-        </>
+          {suppressed && (
+            <span
+              className="soc-history-chip"
+              style={{ background: 'rgba(255,140,26,0.15)', color: 'var(--soc-high)', border: '1px solid var(--soc-high)' }}
+              title={it.suppress_reason || 'Suppressed'}
+            >
+              Suppressed
+            </span>
+          )}
+        </span>
       );
     },
     sortingField: 'severity',
