@@ -77,15 +77,19 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     applyChecksum: true,
   });
 
-  // Decode once so the signer sees the true path (u.pathname still has %2F
-  // for in-uid slashes). @smithy/signature-v4 will RFC-3986-escape it into
-  // the canonical form.
+  // SigV4 (non-S3) expects DOUBLE URI encoding in the canonical path: the
+  // signer receives the path as it will appear on the wire (already once-
+  // encoded) and encodes it a second time for the string-to-sign. AWS on
+  // the receiving side does the same: takes the wire path, encodes it once,
+  // and that's its canonical. So the wire path must be exactly the once-
+  // encoded string we hand to the signer.
   let decodedPath: string;
   try {
     decodedPath = decodeURIComponent(u.pathname);
   } catch {
     decodedPath = u.pathname;
   }
+  const wirePath = escapeUriPath(decodedPath);
 
   const query: Record<string, string> = {};
   u.searchParams.forEach((v, k) => { query[k] = v; });
@@ -97,17 +101,13 @@ async function signedFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body
     method,
     protocol: u.protocol,
     hostname: u.hostname,
-    path: decodedPath,
+    path: wirePath,
     query,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const signed = await signer.sign(req);
 
-  // signed.path still equals decodedPath (signer doesn't mutate it). Escape
-  // it RFC-3986-style for the wire so the Lambda URL backend computes the
-  // same canonical string as the signer did.
-  const wirePath = escapeUriPath(signed.path);
   const finalUrl = `${u.protocol}//${u.hostname}${wirePath}${u.search}`;
   const response = await fetch(finalUrl, {
     method: signed.method,
