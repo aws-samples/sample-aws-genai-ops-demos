@@ -42,8 +42,14 @@ function investigationBadge(status: InvestigationState['status']) {
                    : '';
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      {pulseClass && <span className={pulseClass} style={{ background: m.color, boxShadow: `0 0 12px ${m.color}` }} />}
-      <span style={{ color: m.color, fontWeight: 600 }}>{m.text}</span>
+      {pulseClass && (
+        <span
+          aria-hidden="true"
+          className={pulseClass}
+          style={{ background: m.color, boxShadow: `0 0 12px ${m.color}` }}
+        />
+      )}
+      <span role="status" aria-live="polite" style={{ color: m.color, fontWeight: 600 }}>{m.text}</span>
     </span>
   );
 }
@@ -230,7 +236,10 @@ function AgentJournal({ records }: { records: AgentJournalRecord[] }) {
     return -1;
   })();
   return (
-    <div style={{ maxHeight: 560, overflowY: 'auto', overflowX: 'hidden', padding: 4, minWidth: 0 }}>
+    <div
+      style={{ maxHeight: 560, overflowY: 'auto', overflowX: 'hidden', padding: 4, minWidth: 0, scrollbarGutter: 'stable' }}
+      aria-label="DevOps Agent investigation journal"
+    >
       {entries.map((e, i) => (
         <JournalEntry key={i} entry={e} defaultExpanded={i === lastTextIdx} />
       ))}
@@ -238,12 +247,13 @@ function AgentJournal({ records }: { records: AgentJournalRecord[] }) {
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
       iconName={copied ? 'status-positive' : 'copy'}
       variant="inline-link"
+      ariaLabel={copied ? 'Copied to clipboard' : (label ? `Copy ${label} to clipboard` : 'Copy value to clipboard')}
       onClick={() => {
         navigator.clipboard.writeText(text);
         setCopied(true);
@@ -441,8 +451,8 @@ export default function FindingDetail() {
       <SpaceBetween size="l">
         {dispatchMessage && <Alert type="success" dismissible onDismiss={() => setDispatchMessage(null)}>{dispatchMessage}</Alert>}
 
-        {/* 2-col: overview + tabs */}
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 16 }}>
+        {/* 2-col: overview + tabs (stacks on mobile) */}
+        <div className="soc-grid-sidebar">
           {/* Left sidebar: facts */}
           <Container header={<Header variant="h2">Incident facts</Header>}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -461,8 +471,8 @@ export default function FindingDetail() {
               <div>
                 <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Resource</div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                  <code style={{ fontSize: 11, color: COLOR.fg, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.resource_uid}</code>
-                  <CopyButton text={item.resource_uid} />
+                  <code translate="no" style={{ fontSize: 11, color: COLOR.fg, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.resource_uid}</code>
+                  <CopyButton text={item.resource_uid} label="resource ARN" />
                 </div>
               </div>
               <div>
@@ -492,8 +502,8 @@ export default function FindingDetail() {
               <div>
                 <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Finding UID</div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                  <code style={{ fontSize: 10.5, color: COLOR.fgDim, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.finding_uid}</code>
-                  <CopyButton text={item.finding_uid} />
+                  <code translate="no" style={{ fontSize: 10.5, color: COLOR.fgDim, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.finding_uid}</code>
+                  <CopyButton text={item.finding_uid} label="finding UID" />
                 </div>
               </div>
             </div>

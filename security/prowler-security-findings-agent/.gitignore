@@ -7,3 +7,6 @@ cdk/cdk.context.json
 
 # Local IDE / tool caches.
 .claude/
+.playwright-mcp
+# UI audit screenshots / snapshots — captured ad-hoc; not part of the demo
+ui-audit/

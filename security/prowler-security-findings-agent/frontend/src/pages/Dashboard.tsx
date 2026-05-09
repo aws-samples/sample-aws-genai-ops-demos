@@ -37,12 +37,20 @@ function Gauge({ pct, label, size = 220 }: { pct: number; label: string; size?: 
   const dashOffset = circumference * (1 - pct / 100);
   return (
     <div style={{ textAlign: 'center' }}>
-      <svg width={size} height={size * 0.7} viewBox={`0 0 ${size} ${size * 0.7}`}>
+      <svg
+        width={size}
+        height={size * 0.7}
+        viewBox={`0 0 ${size} ${size * 0.7}`}
+        role="img"
+        aria-label={`${label}: ${pct} percent`}
+      >
+        <title>{`${label}: ${pct}%`}</title>
         <path d={`M ${stroke / 2} ${cy} A ${r} ${r} 0 0 1 ${size - stroke / 2} ${cy}`}
               fill="none" stroke="var(--soc-border)" strokeWidth={stroke} strokeLinecap="round" />
         <path d={`M ${stroke / 2} ${cy} A ${r} ${r} 0 0 1 ${size - stroke / 2} ${cy}`}
               fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
               strokeDasharray={circumference} strokeDashoffset={dashOffset}
+              className="soc-chart-anim"
               style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
         <text x="50%" y={cy - 4} textAnchor="middle" fontFamily="Inter" fontSize={size * 0.22} fontWeight={700} fill="currentColor">
           {pct}%
@@ -78,9 +86,17 @@ function Donut({ data, size = 220 }: { data: Array<{ label: string; value: numbe
     angle = a2;
     return { path, color: d.color, label: d.label, value: d.value };
   });
+  const summary = data.filter((d) => d.value > 0).map((d) => `${d.label}: ${d.value}`).join(', ');
   return (
-    <div style={{ display: 'flex', gap: 24, alignItems: 'center', justifyContent: 'center' }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <div style={{ display: 'flex', gap: 24, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        role="img"
+        aria-label={`Severity distribution. ${summary || 'No data'}`}
+      >
+        <title>Severity distribution</title>
         {arcs.map((a, i) => <path key={i} d={a.path} fill={a.color} stroke="var(--soc-bg-elev)" strokeWidth={2} />)}
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -100,21 +116,58 @@ function Donut({ data, size = 220 }: { data: Array<{ label: string; value: numbe
 function BarChart({ entries }: { entries: Array<[string, number]> }) {
   const max = Math.max(...entries.map((e) => e[1]), 1);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <ul
+      style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: 0, padding: 0, listStyle: 'none' }}
+      aria-label="Failing findings by service"
+    >
       {entries.map(([name, count]) => {
         const pct = (count / max) * 100;
         const color = count >= 5 ? 'var(--soc-critical)' : count >= 3 ? 'var(--soc-high)' : 'var(--soc-accent)';
         return (
-          <div key={name} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 40px', gap: 10, alignItems: 'center' }}>
-            <div style={{ color: COLOR.fg, fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-            <div style={{ background: 'var(--soc-border)', borderRadius: 4, height: 20, overflow: 'hidden' }}>
-              <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width 0.5s ease', boxShadow: `0 0 12px ${color}40` }} />
+          <li
+            key={name}
+            style={{
+              display: 'grid',
+              // Service name column shrinks on mobile so the bar stays visible
+              gridTemplateColumns: 'minmax(0, clamp(80px, 28%, 160px)) 1fr 44px',
+              gap: 10,
+              alignItems: 'center',
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{ color: COLOR.fg, fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+              title={name}
+            >
+              {name}
+            </div>
+            <div
+              style={{ background: 'var(--soc-border)', borderRadius: 4, height: 20, overflow: 'hidden' }}
+              role="progressbar"
+              aria-valuenow={count}
+              aria-valuemin={0}
+              aria-valuemax={max}
+              aria-label={`${name}: ${count} failing`}
+            >
+              {/* Scale via transform (cheap, honours reduced-motion) instead of width */}
+              <div
+                className="soc-chart-anim"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  background: color,
+                  transformOrigin: 'left center',
+                  transform: `scaleX(${pct / 100})`,
+                  transition: 'transform 0.5s ease',
+                  boxShadow: `0 0 12px ${color}40`,
+                }}
+              />
             </div>
             <div style={{ color: COLOR.fg, fontWeight: 700, fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{count}</div>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -240,15 +293,15 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <Button iconName="refresh" onClick={load} loading={loading} ariaLabel="Refresh dashboard data">Refresh</Button>
               <Button variant="primary" onClick={startScan} loading={starting || activeScanCount > 0} disabled={activeScanCount > 0}>
                 {activeScanCount > 0 ? `Scan running (${activeScanCount})` : 'Run scan now'}
               </Button>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginTop: 24 }}>
+          <div className="soc-grid-5" style={{ marginTop: 24 }}>
             <div className="soc-kpi">
               <div className="soc-kpi-label">Total findings</div>
               <div className="soc-kpi-value">{loading ? '…' : total}</div>
@@ -287,7 +340,7 @@ export default function Dashboard() {
         {message && <Alert type="info" dismissible onDismiss={() => setMessage(null)}>{message}</Alert>}
 
         {/* Gauge + Donut */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div className="soc-grid-2">
           <Container header={<Header variant="h2" description="Pass rate across all Prowler checks">Compliance score</Header>}>
             <Gauge pct={compliancePct} label="Compliance" size={240} />
           </Container>
@@ -369,7 +422,7 @@ export default function Dashboard() {
         </Container>
 
         {/* Bar + heatmap */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div className="soc-grid-2">
           <Container header={<Header variant="h2" description="Where the failing findings concentrate">Failing by service (top 10)</Header>}>
             {barEntries.length === 0 ? (
               <Box color="text-status-inactive" textAlign="center">No failing findings.</Box>
@@ -405,7 +458,7 @@ export default function Dashboard() {
             <Header
               variant="h2"
               description="Live ECS Fargate tasks · auto-refresh 10s"
-              actions={<Button iconName="refresh" onClick={refreshRunning}>Refresh</Button>}
+              actions={<Button iconName="refresh" onClick={refreshRunning} ariaLabel="Refresh active scans">Refresh</Button>}
             >
               Active scans {activeScanCount > 0 && <span style={{ color: 'var(--soc-critical)', fontWeight: 700 }}>· {activeScanCount} live</span>}
             </Header>

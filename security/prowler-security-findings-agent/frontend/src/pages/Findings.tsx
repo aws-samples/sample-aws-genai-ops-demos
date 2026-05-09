@@ -73,7 +73,13 @@ const COLUMN_DEFINITIONS = [
   {
     id: 'resource',
     header: 'Resource',
-    cell: (it: Finding) => <Box variant="code">{it.resource_uid.length > 60 ? it.resource_uid.slice(0, 57) + '…' : it.resource_uid}</Box>,
+    cell: (it: Finding) => (
+      <Box variant="code">
+        <span translate="no" title={it.resource_uid}>
+          {it.resource_uid.length > 60 ? it.resource_uid.slice(0, 57) + '…' : it.resource_uid}
+        </span>
+      </Box>
+    ),
     sortingField: 'resource',
     sortingComparator: (a: Finding, b: Finding) => (a.resource_uid || '').localeCompare(b.resource_uid || ''),
   },
@@ -88,7 +94,7 @@ const COLUMN_DEFINITIONS = [
   {
     id: 'account',
     header: 'Account',
-    cell: (it: Finding) => <Box variant="code">{it.account_id || '—'}</Box>,
+    cell: (it: Finding) => <Box variant="code"><span translate="no">{it.account_id || '—'}</span></Box>,
     sortingField: 'account',
     sortingComparator: (a: Finding, b: Finding) => (a.account_id || '').localeCompare(b.account_id || ''),
     width: 140,
@@ -109,7 +115,7 @@ const COLUMN_DEFINITIONS = [
   {
     id: 'scan',
     header: 'Scan',
-    cell: (it: Finding) => <Box variant="small">{it.scan_id || '—'}</Box>,
+    cell: (it: Finding) => <Box variant="small"><span translate="no">{it.scan_id || '—'}</span></Box>,
     sortingField: 'scan',
     sortingComparator: (a: Finding, b: Finding) => (a.scan_id || '').localeCompare(b.scan_id || ''),
     width: 170,

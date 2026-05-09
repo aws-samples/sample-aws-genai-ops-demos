@@ -117,6 +117,83 @@ html, body, #root {
   color: var(--soc-fg);
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.2s ease, color 0.2s ease;
+  /* Prevent double-tap zoom delay on touch devices */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(79, 143, 255, 0.15);
+}
+
+/* Headings never drop a single word to a new line (widow prevention) */
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+/* Numeric columns / comparison figures use tabular figures by default */
+code, .soc-tabnum, [data-numeric] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Skip-link for keyboard users */
+.soc-skip-link {
+  position: absolute;
+  top: -48px;
+  left: 8px;
+  background: var(--soc-accent);
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+  z-index: 10000;
+  transition: top 0.12s ease;
+}
+.soc-skip-link:focus-visible {
+  top: 8px;
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* Heading anchor scroll offset so sticky headers don't cover them */
+h1, h2, h3, h4 {
+  scroll-margin-top: 80px;
+}
+
+/* Sticky table headers leave room for the scrollbar */
+[class*='awsui_table-container'],
+.soc-table-wrap {
+  scrollbar-gutter: stable;
+}
+
+/* Mobile-first responsive grid utility classes */
+.soc-grid-2 {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+}
+.soc-grid-5 {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+.soc-grid-sidebar {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 700px) {
+  .soc-grid-5 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (min-width: 980px) {
+  .soc-grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .soc-grid-5 {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .soc-grid-sidebar {
+    grid-template-columns: 320px 1fr;
+  }
 }
 
 /* ── Cloudscape dark overrides ───────────────────────────────────── */
@@ -432,6 +509,13 @@ input, textarea, [class*='awsui_input'] {
   .soc-tile:hover {
     transform: none;
   }
+  /* Gauge/donut/bar chart transitions — also disable for reduced-motion users */
+  .soc-chart-anim {
+    transition: none !important;
+  }
+  html, body, #root {
+    scroll-behavior: auto;
+  }
 }
 
 .soc-service-cell {
@@ -455,6 +539,30 @@ input, textarea, [class*='awsui_input'] {
   font-size: 20px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Compliance hero: stacks on mobile, sidebar on desktop */
+.soc-compliance-hero {
+  display: grid;
+  gap: 24px;
+  margin-top: 22px;
+  align-items: center;
+  grid-template-columns: 1fr;
+}
+.soc-compliance-kpis {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+@media (min-width: 760px) {
+  .soc-compliance-kpis {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+@media (min-width: 980px) {
+  .soc-compliance-hero {
+    grid-template-columns: 260px 1fr;
+  }
 }
 
 .soc-ring {

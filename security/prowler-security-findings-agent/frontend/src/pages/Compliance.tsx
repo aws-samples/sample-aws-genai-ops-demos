@@ -26,7 +26,14 @@ function Ring({ pct, size = 160 }: { pct: number; size?: number }) {
   const circumference = Math.PI * r;
   const dashOffset = circumference * (1 - pct / 100);
   return (
-    <svg width={size} height={size * 0.68} viewBox={`0 0 ${size} ${size * 0.68}`} aria-label={`${pct} percent`}>
+    <svg
+      width={size}
+      height={size * 0.68}
+      viewBox={`0 0 ${size} ${size * 0.68}`}
+      role="img"
+      aria-label={`${pct} percent compliant`}
+    >
+      <title>{`${pct}% compliant`}</title>
       {/* background arc */}
       <path
         d={`M ${stroke / 2} ${cy} A ${r} ${r} 0 0 1 ${size - stroke / 2} ${cy}`}
@@ -44,6 +51,7 @@ function Ring({ pct, size = 160 }: { pct: number; size?: number }) {
         strokeLinecap="round"
         strokeDasharray={circumference}
         strokeDashoffset={dashOffset}
+        className="soc-chart-anim"
         style={{ transition: 'stroke-dashoffset 0.6s ease' }}
       />
       <text
@@ -104,14 +112,14 @@ export default function Compliance() {
         <div className="soc-hero">
           <h1>Compliance</h1>
           <div className="soc-hero-sub">Your AWS account mapped against industry security frameworks, computed live from the Prowler findings.</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 32, marginTop: 22, alignItems: 'center' }}>
+          <div className="soc-compliance-hero">
             <div style={{ textAlign: 'center' }}>
               <Ring pct={overallPct} size={220} />
               <div style={{ color: COLOR.fgMuted, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 6 }}>
                 Overall posture
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            <div className="soc-compliance-kpis">
               <div className="soc-kpi">
                 <div className="soc-kpi-label">Checks</div>
                 <div className="soc-kpi-value">{overallTotal}</div>
@@ -147,8 +155,12 @@ export default function Compliance() {
               <button
                 key={fw.key}
                 className="soc-tile"
+                type="button"
+                aria-disabled={fw.total === 0}
+                aria-label={fw.total > 0
+                  ? `${fw.label}: ${fw.pct}% passing (${fw.passing} of ${fw.total})`
+                  : `${fw.label}: no checks mapped`}
                 onClick={() => fw.total > 0 && navigate(`/findings?framework=${encodeURIComponent(fw.key)}`)}
-                disabled={fw.total === 0}
                 style={{
                   flexDirection: 'column',
                   gap: 6,

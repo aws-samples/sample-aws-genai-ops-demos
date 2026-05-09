@@ -122,7 +122,13 @@ export default function Investigations() {
             {
               id: 'resource',
               header: 'Resource',
-              cell: (it) => <Box variant="code">{(it.resource_uid || '').length > 60 ? (it.resource_uid || '').slice(0, 57) + '…' : (it.resource_uid || '—')}</Box>,
+              cell: (it) => (
+                <Box variant="code">
+                  <span translate="no" title={it.resource_uid}>
+                    {(it.resource_uid || '').length > 60 ? (it.resource_uid || '').slice(0, 57) + '…' : (it.resource_uid || '—')}
+                  </span>
+                </Box>
+              ),
               sortingField: 'resource',
               sortingComparator: (a, b) => (a.resource_uid || '').localeCompare(b.resource_uid || ''),
             },
@@ -147,7 +153,9 @@ export default function Investigations() {
                     iconAlign="right"
                     iconName="external"
                     target="_blank"
+                    rel="noopener noreferrer"
                     variant="inline-link"
+                    ariaLabel={`Open investigation for ${it.check_title || it.check_id || 'finding'} in a new tab`}
                     onClick={(e) => { e.stopPropagation(); }}
                   >
                     Open

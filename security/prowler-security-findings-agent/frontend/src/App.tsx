@@ -80,6 +80,7 @@ export default function App() {
 
   return (
     <>
+      <a href="#soc-main" className="soc-skip-link">Skip to main content</a>
       <TopNavigation
         identity={{
           href: '/',
@@ -152,14 +153,16 @@ export default function App() {
         }
         toolsHide
         content={
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/findings" element={<Findings />} />
-            <Route path="/findings/:findingUid" element={<FindingDetail />} />
-            <Route path="/compliance" element={<Compliance />} />
-            <Route path="/investigations" element={<Investigations />} />
-            <Route path="/cost" element={<Cost />} />
-          </Routes>
+          <div id="soc-main" tabIndex={-1}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/findings" element={<Findings />} />
+              <Route path="/findings/:findingUid" element={<FindingDetail />} />
+              <Route path="/compliance" element={<Compliance />} />
+              <Route path="/investigations" element={<Investigations />} />
+              <Route path="/cost" element={<Cost />} />
+            </Routes>
+          </div>
         }
       />
     </>
