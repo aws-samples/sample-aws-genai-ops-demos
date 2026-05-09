@@ -4,7 +4,9 @@ import {
   Alert,
   Box,
   Button,
+  Container,
   ContentLayout,
+  ExpandableSection,
   Header,
   SpaceBetween,
   StatusIndicator,
@@ -12,6 +14,7 @@ import {
 } from '@cloudscape-design/components';
 import { InvestigationSummary, listInvestigations } from '../api';
 import { SEVERITY_ORDER } from '../theme';
+import { AGENT_SKILLS } from '../agent-skills';
 
 function statusIndicator(status?: string) {
   const s = (status || '').toUpperCase();
@@ -179,6 +182,63 @@ export default function Investigations() {
           }
           stickyHeader
         />
+
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="Copy-paste these ready-made Skills into the DevOps Agent console to make investigations from this demo sharper."
+            >
+              Seeded DevOps Agent Skills
+            </Header>
+          }
+        >
+          <SpaceBetween size="m">
+            <Box variant="small" color="text-status-inactive">
+              Skills can't be created programmatically yet (no public API) —
+              open the DevOps Agent Operator, go to <strong>Skills → Create skill</strong>,
+              and paste the fields below. The Agent will apply them to every
+              investigation dispatched from this demo going forward.
+            </Box>
+            {AGENT_SKILLS.map((skill) => (
+              <ExpandableSection
+                key={skill.id}
+                headerText={skill.title}
+                variant="container"
+              >
+                <SpaceBetween size="s">
+                  <Box variant="p">{skill.summary}</Box>
+                  <div>
+                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>When</span>
+                      <Button
+                        variant="inline-link"
+                        iconName="copy"
+                        onClick={() => navigator.clipboard.writeText(skill.when)}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                    <pre className="soc-code-block" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{skill.when}</pre>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Rules</span>
+                      <Button
+                        variant="inline-link"
+                        iconName="copy"
+                        onClick={() => navigator.clipboard.writeText(skill.rules)}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                    <pre className="soc-code-block" style={{ whiteSpace: 'pre-wrap', margin: 0, maxHeight: 260, overflowY: 'auto' }}>{skill.rules}</pre>
+                  </div>
+                </SpaceBetween>
+              </ExpandableSection>
+            ))}
+          </SpaceBetween>
+        </Container>
       </SpaceBetween>
     </ContentLayout>
   );
