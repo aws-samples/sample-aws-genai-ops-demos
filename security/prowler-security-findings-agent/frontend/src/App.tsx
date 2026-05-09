@@ -14,6 +14,7 @@ import Investigations from './pages/Investigations';
 import Cost from './pages/Cost';
 import AuthModal from './AuthModal';
 import KeyboardShortcuts from './KeyboardShortcuts';
+import CommandPalette from './CommandPalette';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 
 type Theme = 'system' | 'light' | 'dark';
@@ -83,6 +84,7 @@ export default function App() {
     <>
       <a href="#soc-main" className="soc-skip-link">Skip to main content</a>
       <KeyboardShortcuts />
+      <CommandPalette />
       <TopNavigation
         identity={{
           href: '/',

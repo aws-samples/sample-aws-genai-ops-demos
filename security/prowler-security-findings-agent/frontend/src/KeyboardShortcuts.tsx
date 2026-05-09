@@ -104,6 +104,8 @@ export default function KeyboardShortcuts() {
       >
         <h2 style={{ marginTop: 0, marginBottom: 14, fontSize: 18 }}>Keyboard shortcuts</h2>
         <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 18, rowGap: 8, margin: 0, fontSize: 13 }}>
+          <Shortcut keys={['⌘', 'K']} desc="Command palette (search everything)" />
+          <Shortcut keys={['/']} desc="Command palette (alt)" />
           <Shortcut keys={['g', 'd']} desc="Go to Dashboard" />
           <Shortcut keys={['g', 'f']} desc="Go to Findings" />
           <Shortcut keys={['g', 'c']} desc="Go to Compliance" />
