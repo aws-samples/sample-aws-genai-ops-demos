@@ -181,6 +181,9 @@ EOF
         fi
         # Patch the trigger Lambda with webhook URL + Agent Space ID so newly
         # dispatched findings carry the right target.
+        # `--environment "Variables=<json>"` uses shorthand parsing that rejects
+        # JSON values — pass the full JSON object via `--cli-input-json` instead
+        # so nested strings with special characters are preserved as-is.
         if [ -n "$DEVOPS_AGENT_WEBHOOK_URL" ] || [ -n "$DEVOPS_AGENT_SPACE_ID" ]; then
             TRIGGER_ENV=$(aws lambda get-function-configuration \
                 --function-name "$TRIGGER_LAMBDA" \
@@ -192,10 +195,17 @@ EOF
             if [ -n "$DEVOPS_AGENT_SPACE_ID" ]; then
                 TRIGGER_ENV=$(echo "$TRIGGER_ENV" | jq --arg id "$DEVOPS_AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $id')
             fi
-            aws lambda update-function-configuration \
-                --function-name "$TRIGGER_LAMBDA" \
-                --environment "Variables=$TRIGGER_ENV" \
-                --no-cli-pager >/dev/null 2>&1 && echo "  Updated trigger Lambda."
+            TRIGGER_PAYLOAD=$(jq -n \
+                --arg fn "$TRIGGER_LAMBDA" \
+                --argjson vars "$TRIGGER_ENV" \
+                '{FunctionName: $fn, Environment: {Variables: $vars}}')
+            if aws lambda update-function-configuration \
+                --cli-input-json "$TRIGGER_PAYLOAD" \
+                --no-cli-pager >/dev/null 2>&1; then
+                echo "  Updated trigger Lambda."
+            else
+                echo "  WARN: failed to update trigger Lambda env."
+            fi
         fi
     else
         echo "  Demo not yet deployed — run deploy-all.sh."
@@ -209,10 +219,17 @@ EOF
             --query 'Environment.Variables' \
             --output json --no-cli-pager 2>/dev/null)
         DASH_ENV=$(echo "$DASH_ENV" | jq --arg id "$DEVOPS_AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $id')
-        aws lambda update-function-configuration \
-            --function-name "$DASHBOARD_LAMBDA" \
-            --environment "Variables=$DASH_ENV" \
-            --no-cli-pager >/dev/null 2>&1 && echo "  Updated dashboard-api Lambda (Agent Space)."
+        DASH_PAYLOAD=$(jq -n \
+            --arg fn "$DASHBOARD_LAMBDA" \
+            --argjson vars "$DASH_ENV" \
+            '{FunctionName: $fn, Environment: {Variables: $vars}}')
+        if aws lambda update-function-configuration \
+            --cli-input-json "$DASH_PAYLOAD" \
+            --no-cli-pager >/dev/null 2>&1; then
+            echo "  Updated dashboard-api Lambda (Agent Space)."
+        else
+            echo "  WARN: failed to update dashboard-api Lambda env."
+        fi
     fi
     echo ""
 }
