@@ -630,7 +630,7 @@ input, textarea, [class*='awsui_input'] {
   border-radius: 4px;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12.5px;
-  color: #d7e2ff;
+  color: var(--soc-code-fg);
   word-break: break-all;
   overflow-wrap: anywhere;
 }
