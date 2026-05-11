@@ -14,7 +14,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | AWS GenAI Cost Optimization Kiro Power | Cost Optimization | MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration | [cost-optimization/aws-genai-cost-optimization-mcp-server/](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md) |
 | AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
-| Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
+| Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent with custom MCP server integration for business impact assessment — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 
 ## Roadmap (Coming Soon)
 
@@ -74,6 +74,8 @@ Each demo folder typically contains:
 - **Amazon Bedrock** - Foundation model access and management
 - **Amazon Nova Models** - Latest generation AI models
 - **Amazon Bedrock AgentCore** - Multi-step AI workflow orchestration
+- **Amazon Bedrock AgentCore Gateway** - Unified MCP tool hosting for AI agents
+- **Amazon DevOps Agent** - Autonomous incident investigation and resolution
 - **AWS Transform** - AI-powered code transformation and documentation generation
 
 ### Integration Frameworks

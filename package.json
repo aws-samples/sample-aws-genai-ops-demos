@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@aws-cdk/aws-bedrock-agentcore-alpha": "^2.250.0-alpha.0"
+  }
+}

@@ -14,6 +14,7 @@ set -e
 #   7. Wait for pods and NLB
 #   8. Update CloudFront with NLB API origin via CDK
 #   9. Build and deploy frontend
+#  10. Deploy MCP server to AgentCore Runtime
 # =============================================================================
 
 ENVIRONMENT="${1:-dev}"
@@ -104,11 +105,21 @@ ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 # =============================================================================
 # STEP 1: Install CDK dependencies and create S3 bucket for CodeBuild sources
 # =============================================================================
-echo "[1/9] Installing CDK dependencies and preparing S3 bucket..."
+echo "[1/10] Installing CDK dependencies and preparing S3 bucket..."
 BUCKET_NAME="$PROJECT_NAME-cfn-templates-$AWS_ACCOUNT_ID"
 aws s3 mb "s3://$BUCKET_NAME" --region "$AWS_REGION" 2>/dev/null || true
 
 cd cdk && npm install && cd ..
+
+# Install Python dependencies for MCP Lambda (vendored, pure Python)
+pip3 install pg8000 --target cdk/lambda/mcp-transaction-insights/ --quiet --no-compile 2>/dev/null || true
+
+# Bootstrap CDK if not already done (idempotent)
+echo "  Bootstrapping CDK environment (if needed)..."
+cd cdk
+npx cdk bootstrap "aws://$AWS_ACCOUNT_ID/$AWS_REGION" --no-cli-pager 2>&1 | tail -3
+cd ..
+
 echo "  done."
 echo ""
 
@@ -117,7 +128,7 @@ echo ""
 # =============================================================================
 # NOTE: RDS credentials secret is created by CDK's DatabaseStack (not by this
 # script) to avoid CloudFormation AlreadyExists conflicts.
-echo "[2/9] Deploying CDK stacks (this takes ~15 minutes)..."
+echo "[2/10] Deploying CDK stacks (this takes ~15 minutes)..."
 
 CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNodeArchitecture=$EKS_ARCHITECTURE -c eksNodeInstanceType=$EKS_INSTANCE_TYPE -c eksNodeDesiredCapacity=2 -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET -c devOpsAgentRegion=$DEVOPS_AGENT_REGION -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
 
@@ -133,7 +144,7 @@ echo ""
 # =============================================================================
 # STEP 3: Configure kubectl for EKS
 # =============================================================================
-echo "[3/9] Configuring kubectl..."
+echo "[3/10] Configuring kubectl..."
 aws eks update-kubeconfig \
     --name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
     --region "$AWS_REGION"
@@ -240,7 +251,7 @@ echo ""
 # =============================================================================
 # STEP 4: Build and push container images via CodeBuild
 # =============================================================================
-echo "[4/9] Building and pushing container images via CodeBuild..."
+echo "[4/10] Building and pushing container images via CodeBuild..."
 
 IMAGE_TAG="$ENVIRONMENT"
 SERVICES=("merchant-gateway" "payment-processor" "webhook-service")
@@ -429,7 +440,7 @@ echo ""
 # =============================================================================
 # STEP 5: Apply Kubernetes manifests (with dynamic substitution)
 # =============================================================================
-echo "[5/9] Applying Kubernetes manifests..."
+echo "[5/10] Applying Kubernetes manifests..."
 
 # Create namespace
 kubectl create namespace payment-demo --dry-run=client -o yaml | kubectl apply -f -
@@ -554,7 +565,7 @@ echo ""
 # =============================================================================
 # Running migrations before waiting for pods ensures payment-processor finds
 # the transactions table on startup, preventing CrashLoopBackOff.
-echo "[6/9] Creating Cognito user and running database migrations..."
+echo "[6/10] Creating Cognito user and running database migrations..."
 
 # --- 7a: Create Cognito demo user FIRST so we can capture its sub UUID ---
 USER_POOL_ID=$(aws cloudformation describe-stacks \
@@ -643,6 +654,25 @@ fi
 # Clean up any previous seed job
 kubectl delete job db-seed-job -n payment-demo --ignore-not-found 2>/dev/null
 
+# Retrieve MCP read-only DB password from Secrets Manager (created by McpServerStack)
+# NOTE: This password is passed to the seed job as an env var to create the PostgreSQL
+# user. The seed job is short-lived and deleted after completion. The MCP server itself
+# retrieves credentials from Secrets Manager at runtime (never via env vars).
+MCP_DB_PASSWORD=""
+MCP_SECRET_JSON=$(aws secretsmanager get-secret-value \
+    --secret-id "$PROJECT_NAME-$ENVIRONMENT-mcp-readonly-credentials" \
+    --query SecretString --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+if [ -n "$MCP_SECRET_JSON" ]; then
+    if command -v jq &>/dev/null; then
+        MCP_DB_PASSWORD=$(echo "$MCP_SECRET_JSON" | jq -r '.password')
+    else
+        MCP_DB_PASSWORD=$(echo "$MCP_SECRET_JSON" | grep -o '"password":"[^"]*"' | cut -d'"' -f4)
+    fi
+    echo "  MCP read-only DB password retrieved."
+else
+    echo "  WARNING: Could not retrieve MCP secret. The mcp_readonly DB user will not be created."
+fi
+
 echo "  Creating DB seed job..."
 kubectl apply -f - <<SEEDJOB
 apiVersion: batch/v1
@@ -679,6 +709,8 @@ spec:
                 secretKeyRef:
                   name: db-credentials
                   key: DB_NAME
+            - name: MCP_DB_PASSWORD
+              value: "$MCP_DB_PASSWORD"
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -769,7 +801,22 @@ spec:
                   EXECUTE FUNCTION update_updated_at_column();
 
               -- ============================================================
-              -- 003: Create webhook_deliveries table
+              -- 003: Create transaction_events table (state transition log)
+              -- ============================================================
+              CREATE TABLE IF NOT EXISTS transaction_events (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                  status VARCHAR(20) NOT NULL,
+                  occurred_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                  CONSTRAINT valid_event_status CHECK (status IN ('CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'REFUNDED', 'CANCELED', 'CANCELLED', 'FAILED'))
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_txn_events_txn_id ON transaction_events(transaction_id, occurred_at);
+              CREATE INDEX IF NOT EXISTS idx_txn_events_status_time ON transaction_events(status, occurred_at);
+              CREATE INDEX IF NOT EXISTS idx_txn_events_occurred_at ON transaction_events(occurred_at);
+
+              -- ============================================================
+              -- 004: Create webhook_deliveries table
               -- ============================================================
               CREATE TABLE IF NOT EXISTS webhook_deliveries (
                   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -812,7 +859,29 @@ spec:
               CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_payload ON webhook_deliveries USING GIN (payload);
               EOSQL
 
-              # Phase 2: Seed demo data
+              # Phase 2a: Create read-only user for MCP server
+              if [ -n "$MCP_DB_PASSWORD" ]; then
+                psql -c "
+                DO \$\$
+                BEGIN
+                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'mcp_readonly') THEN
+                    CREATE ROLE mcp_readonly WITH LOGIN PASSWORD '$MCP_DB_PASSWORD';
+                  ELSE
+                    ALTER ROLE mcp_readonly WITH PASSWORD '$MCP_DB_PASSWORD';
+                  END IF;
+                END
+                \$\$;
+                GRANT CONNECT ON DATABASE paymentdb TO mcp_readonly;
+                GRANT USAGE ON SCHEMA public TO mcp_readonly;
+                GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_readonly;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_readonly;
+                "
+                echo "  Read-only MCP user created/updated."
+              else
+                echo "  WARNING: MCP_DB_PASSWORD not set — skipping read-only user creation."
+              fi
+
+              # Phase 2b: Seed demo data
               # Use MERCHANT_ID (always a valid UUID) for the id column,
               # and COGNITO_SUB (UUID or fallback string) for the cognito_sub column.
               psql -c "
@@ -850,17 +919,29 @@ SEEDJOB
 
 echo "  Waiting for DB seed job to complete (up to 120s)..."
 if ! kubectl wait --for=condition=complete job/db-seed-job -n payment-demo --timeout=120s 2>/dev/null; then
-    echo "  ERROR: DB seed job failed. Pod logs:"
+    # Check if this is a re-deploy with an existing database
+    # If the RDS instance already has tables, the seed job is a no-op — don't block the deploy
+    echo "  WARNING: DB seed job did not complete within 120s."
+    echo "  Pod logs:"
     kubectl logs job/db-seed-job -n payment-demo 2>/dev/null || true
-    exit 1
+    POD_PHASE=$(kubectl get pods -l job-name=db-seed-job -n payment-demo -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Unknown")
+    if [ "$POD_PHASE" = "Pending" ]; then
+        echo "  Seed job pod is Pending (likely no nodes available yet)."
+        echo "  If this is a re-deploy, the database already has data — continuing."
+        echo "  Otherwise, re-run: bash deploy-all.sh (after nodes are ready)"
+        kubectl delete job db-seed-job -n payment-demo --ignore-not-found 2>/dev/null || true
+    else
+        echo "  Seed job failed. Check pod logs above."
+        exit 1
+    fi
 fi
-echo "  Database migrations and seed data applied successfully."
+echo "  Database migrations and seed data applied (or already present)."
 echo ""
 
 # =============================================================================
 # STEP 7: Wait for pods and NLB
 # =============================================================================
-echo "[7/9] Waiting for pods to be ready..."
+echo "[7/10] Waiting for pods to be ready..."
 for DEPLOY in merchant-gateway payment-processor webhook-service; do
     echo "  Waiting for $DEPLOY..."
     kubectl rollout status deployment/$DEPLOY -n payment-demo --timeout=300s || true
@@ -886,7 +967,7 @@ echo ""
 # =============================================================================
 # STEP 8: Update CloudFront with NLB API origin via CDK
 # =============================================================================
-echo "[8/9] Updating CloudFront with API origin..."
+echo "[8/10] Updating CloudFront with API origin..."
 if [ -n "$NLB_HOSTNAME" ]; then
     # Admin API is wired to CloudFront via cross-stack reference (no extra context needed)
     cd cdk
@@ -913,7 +994,7 @@ echo ""
 # =============================================================================
 # STEP 9: Build and deploy frontend
 # =============================================================================
-echo "[9/9] Building and deploying frontend..."
+echo "[9/10] Building and deploying frontend..."
 
 CLIENT_ID=$(aws cloudformation describe-stacks \
     --stack-name "DevOpsAgentEksAuth-$AWS_REGION" \
@@ -957,7 +1038,7 @@ fi
 cd ../..
 
 # Find S3 bucket
-S3_BUCKET="$PROJECT_NAME-$ENVIRONMENT-merchant-portal-$AWS_ACCOUNT_ID"
+S3_BUCKET="$PROJECT_NAME-$ENVIRONMENT-portal-$AWS_ACCOUNT_ID"
 
 echo "  Uploading to S3..."
 aws s3 sync services/merchant-portal/dist/ "s3://$S3_BUCKET/" --delete --region "$AWS_REGION"
@@ -967,6 +1048,14 @@ aws cloudfront create-invalidation \
     --distribution-id "$DISTRIBUTION_ID" \
     --paths "/*" >/dev/null
 echo "  Frontend deployed."
+echo ""
+
+# =============================================================================
+# STEP 10: Deploy MCP server to AgentCore Runtime
+# =============================================================================
+echo "[10/10] Deploying Payment Transaction Insights MCP server..."
+source "$SCRIPT_DIR/scripts/deploy-mcp-server.sh"
+deploy_mcp_server "$PROJECT_NAME" "$ENVIRONMENT" || true
 echo ""
 
 # =============================================================================
