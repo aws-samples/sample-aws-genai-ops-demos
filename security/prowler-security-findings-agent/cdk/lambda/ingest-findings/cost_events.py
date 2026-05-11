@@ -40,8 +40,10 @@ _TTL_SECONDS = 90 * 24 * 60 * 60
 # Hardcoded pricing table. Values are USD per 1K tokens (Bedrock) or USD per
 # invocation (fixed-price events).
 BEDROCK_PRICES_PER_1K = {
-    # Nova Pro (EU inference profile). See:
+    # Amazon Nova Bedrock pricing. See:
     # https://aws.amazon.com/bedrock/pricing/
+    'global.amazon.nova-2-lite-v1:0': {'input': Decimal('0.00006'), 'output': Decimal('0.00024')},
+    'amazon.nova-2-lite-v1:0':        {'input': Decimal('0.00006'), 'output': Decimal('0.00024')},
     'eu.amazon.nova-pro-v1:0':   {'input': Decimal('0.0008'), 'output': Decimal('0.0032')},
     'amazon.nova-pro-v1:0':      {'input': Decimal('0.0008'), 'output': Decimal('0.0032')},
     'eu.amazon.nova-lite-v1:0':  {'input': Decimal('0.00006'), 'output': Decimal('0.00024')},

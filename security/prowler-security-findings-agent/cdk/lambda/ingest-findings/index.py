@@ -6,8 +6,8 @@ document (one JSON object per line OR a JSON array — Prowler has shipped both
 shapes across versions), upserts one item per finding to DynamoDB, and:
 
     - For CRITICAL/HIGH findings: publishes to the DevOps Agent SNS topic and
-      invokes the remediation-context Lambda asynchronously so Nova generates
-      a markdown remediation playbook.
+      invokes the remediation-context Lambda asynchronously so Bedrock
+      generates a markdown remediation playbook.
     - For MEDIUM/LOW/INFO findings: no downstream fan-out.
 
 The `finding_uid` field (PK) is Prowler's stable hash of (check_id +
@@ -255,8 +255,8 @@ def _to_item(finding: dict[str, Any], scan_id: str, now: str) -> dict[str, Any]:
 
     # Prowler's own canonical remediation guidance — the same text the Prowler
     # Hub web page shows. Surfacing it structured rather than burying it inside
-    # `raw` means the UI can render it as a first-class section and Nova can
-    # build on top of it instead of reinventing it.
+    # `raw` means the UI can render it as a first-class section and the model
+    # can build on top of it instead of reinventing it.
     remediation = finding.get('remediation') or {}
     remediation_guidance = remediation.get('desc') or ''
     references = remediation.get('references') or []

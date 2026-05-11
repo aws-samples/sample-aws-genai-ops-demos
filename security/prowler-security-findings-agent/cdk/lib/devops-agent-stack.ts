@@ -16,7 +16,7 @@ export interface DevOpsAgentStackProps extends cdk.StackProps {
   devOpsAgentRegion: string;
   /** Agent Space ID (informational — forwarded in payload metadata) */
   devOpsAgentSpaceId: string;
-  /** Bucket holding the Nova-generated remediation markdown files */
+  /** Bucket holding the Bedrock-generated remediation markdown files */
   remediationsBucketName: string;
   costEventsTableName: string;
 }
@@ -68,7 +68,7 @@ export class DevOpsAgentStack extends cdk.Stack {
       resources: [webhookSecretResource.secretArn],
     }));
 
-    // The Lambda reads the Nova remediation markdown (if any) to embed it in
+    // The Lambda reads the Bedrock remediation markdown (if any) to embed it in
     // the webhook payload, so the DevOps Agent sees the remediation upfront.
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,

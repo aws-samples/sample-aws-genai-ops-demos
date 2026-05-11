@@ -2,10 +2,10 @@
 Generate a remediation playbook for a Prowler finding using Amazon Bedrock.
 
 Invoked asynchronously by the ingest-findings Lambda for every CRITICAL/HIGH
-finding. Calls the Converse API (default model: amazon.nova-pro-v1:0) with a
-system prompt that constrains Nova to return a three-section markdown
-playbook: Impact / Root cause / Remediation steps (with CLI and CDK/Terraform
-snippets).
+finding. Calls the Converse API (default model: Amazon Nova Lite 2 via the
+`global.amazon.nova-2-lite-v1:0` inference profile) with a system prompt that
+constrains the model to return a three-section markdown playbook: Impact /
+Root cause / Remediation steps (with CLI and CDK/Terraform snippets).
 
 The markdown is stored in S3 at s3://{REMEDIATIONS_BUCKET}/{finding_uid}.md
 and the DynamoDB item is updated with `remediation_s3_key` and
@@ -52,7 +52,7 @@ use placeholders like <account-id> or <resource-arn>."""
 
 
 def _build_user_prompt(item: dict) -> str:
-    # Give Nova the Prowler-native remediation, categories, notes, and
+    # Give the model the Prowler-native remediation, categories, notes, and
     # control IDs up front. This keeps the model from reinventing guidance
     # the scanner has already produced and lets it expand on concrete
     # references rather than on-the-fly approximations.

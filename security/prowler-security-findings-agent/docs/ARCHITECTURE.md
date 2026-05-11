@@ -1,10 +1,10 @@
-# Architecture — Prowler + DevOps Agent + Bedrock Nova
+# Architecture — Prowler + DevOps Agent + Bedrock Nova Lite
 
 ## Goals
 
 1. Run Prowler against the deployed AWS account on a schedule and on-demand from the UI.
 2. Persist findings in a queryable, dashboard-ready store.
-3. For the findings that matter (CRITICAL / HIGH / failing), produce an AI-generated remediation playbook with Amazon Bedrock Nova Pro, and feed it into Amazon DevOps Agent so the investigation starts with concrete next steps.
+3. For the findings that matter (CRITICAL / HIGH / failing), produce an AI-generated remediation playbook with Amazon Bedrock Nova Lite 2, and feed it into Amazon DevOps Agent so the investigation starts with concrete next steps.
 4. Expose the whole thing as a modern single-page dashboard.
 
 ## High-level view
@@ -47,7 +47,7 @@ DynamoDB `prowler-security-findings` (one item per finding):
 | `compliance_frameworks` | L<S> | CIS / PCI / NIST / etc. inferred from OCSF unmapped.compliance |
 | `last_seen_at` | S | ISO8601 of latest scan that reported this UID |
 | `raw` | S | Truncated OCSF JSON (<350 KB) for forensics in the detail page |
-| `remediation_s3_key`, `remediation_generated_at`, `remediation_model` | S | Present only for CRITICAL/HIGH after Nova generates a playbook |
+| `remediation_s3_key`, `remediation_generated_at`, `remediation_model` | S | Present only for CRITICAL/HIGH after Bedrock generates a playbook |
 
 Secondary indexes: `severity-index` (PK severity, SK last_seen_at) and `status-index` (PK status, SK severity) support the dashboard's most common queries without scanning.
 
@@ -62,14 +62,14 @@ Secondary indexes: `severity-index` (PK severity, SK last_seen_at) and `status-i
 
 System prompt fixes the playbook to three sections: **Impact**, **Root cause**, **Remediation steps** with bash and TypeScript (CDK v2) snippets. Temperature 0.2, max tokens 1500.
 
-The user message includes the key OCSF fields (severity, check id, description, resource, service, region, compliance frameworks) plus the first 8 KB of raw OCSF. Truncation is intentional — Nova needs context but the check title + description usually tell it everything.
+The user message includes the key OCSF fields (severity, check id, description, resource, service, region, compliance frameworks) plus the first 8 KB of raw OCSF. Truncation is intentional — the model needs context but the check title + description usually tell it everything.
 
 ## DevOps Agent payload
 
 The HMAC-signed POST body schema matches what the EKS demo uses (eventType/incidentId/priority/title/description), but:
 
 - `incidentId` is `prowler-{finding_uid}` so the agent deduplicates if the same finding reappears.
-- `description` embeds the Nova markdown when available (up to 20 KB).
+- `description` embeds the Bedrock markdown when available (up to 20 KB).
 - `data.remediationS3Key` is passed so the agent can fetch the full markdown directly if needed.
 
 ## Extending this demo
@@ -77,5 +77,5 @@ The HMAC-signed POST body schema matches what the EKS demo uses (eventType/incid
 Ideas intentionally **out of scope** for the first version:
 
 - **Multi-account scans** — Prowler supports `--role-arn` to assume a role per account. Extend the task definition env to accept an array of target accounts and loop.
-- **Autonomous remediation** — today Nova only *describes* the fix. Wiring an additional AgentCore Runtime with action groups that actually apply the fix (behind an approval gate) is the natural phase 2.
+- **Autonomous remediation** — today Bedrock only *describes* the fix. Wiring an additional AgentCore Runtime with action groups that actually apply the fix (behind an approval gate) is the natural phase 2.
 - **Continuous drift detection** — rather than daily cron, use Config Rules as the trigger, scan only the changed resource, and update the single DynamoDB item.

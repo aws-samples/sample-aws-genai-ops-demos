@@ -2,7 +2,7 @@
 set -e
 
 # =============================================================================
-# Prowler Security Findings + DevOps Agent + Bedrock Nova — Deploy
+# Prowler Security Findings + DevOps Agent + Bedrock Nova Lite — Deploy
 # =============================================================================
 # Steps:
 #   1. Prerequisites (AWS CLI, Node, CDK, zip)
@@ -58,9 +58,10 @@ fi
 # there. Override by exporting DEVOPS_AGENT_REGION before running this script.
 DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-$AWS_REGION}"
 DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
-# BEDROCK_MODEL_ID is resolved by cdk/bin/app.ts from the deploy region when
-# not set — the inference-profile prefix (eu./us./apac.) is region-gated, so
-# leaving it empty here lets CDK pick the right profile for any region.
+# BEDROCK_MODEL_ID defaults to the Nova Lite 2 global inference profile
+# (global.amazon.nova-2-lite-v1:0) in cdk/bin/app.ts when not set. The global
+# profile routes to the closest supported region automatically, so this works
+# out of the box anywhere.
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-}"
 SCAN_SCHEDULE="${SCAN_SCHEDULE:-cron(0 6 * * ? *)}"
 
@@ -219,7 +220,7 @@ echo "  1. Log in to $WEBSITE_URL"
 echo "  2. Click 'Run scan now' on the Dashboard"
 echo "  3. Wait ~3-10 min for findings to appear"
 echo "  4. Open any finding and click 'Generate Bedrock Insights' for the"
-echo "     Nova Pro remediation playbook, or 'Investigate with DevOps Agent'"
+echo "     Nova Lite 2 remediation playbook, or 'Investigate with DevOps Agent'"
 echo "     to dispatch an autonomous investigation (both are on-demand)."
 echo ""
 if [ -z "${DEVOPS_AGENT_WEBHOOK_URL:-}" ] || [ "${DEVOPS_AGENT_WEBHOOK_URL:-}" = "" ]; then

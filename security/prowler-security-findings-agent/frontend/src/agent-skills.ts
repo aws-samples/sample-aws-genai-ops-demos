@@ -9,7 +9,7 @@
  *
  * Two seeded skills for this demo:
  *   1. "AWS Security Remediator" — turns agent output into step-by-step AWS
- *      CLI + CDK remediation instructions aligned with the Nova playbook.
+ *      CLI + CDK remediation instructions aligned with the Bedrock playbook.
  *   2. "Compliance Framework Translator" — when a finding maps to multiple
  *      frameworks, the agent explains the auditor impact per framework
  *      instead of dumping raw control IDs.

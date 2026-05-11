@@ -25,19 +25,12 @@ const webhookUrl = app.node.tryGetContext('devOpsAgentWebhookUrl') || '';
 const webhookSecret = app.node.tryGetContext('devOpsAgentWebhookSecret') || '';
 const devOpsAgentRegion = app.node.tryGetContext('devOpsAgentRegion') || 'us-east-1';
 const devOpsAgentSpaceId = app.node.tryGetContext('devOpsAgentSpaceId') || '';
-// Default to the Nova Pro cross-region inference profile for the stack's
-// region. Direct on-demand model IDs fail with "isn't supported" in most
-// regions, and the profile prefix itself is region-gated — `eu.*` only
-// resolves in EU regions, `us.*` only in US regions, `apac.*` only in APAC.
-// Pick the right prefix from the deploy region so the demo works out of the
-// box anywhere Nova Pro is available. Override with -c bedrockModelId=...
-// for non-standard models or custom profiles.
-const bedrockInferencePrefix =
-    region.startsWith('eu-') ? 'eu' :
-    region.startsWith('ap-') ? 'apac' :
-    region.startsWith('us-gov-') ? 'us-gov' :
-    'us';
-const bedrockModelId = app.node.tryGetContext('bedrockModelId') || `${bedrockInferencePrefix}.amazon.nova-pro-v1:0`;
+// Default to the Nova Lite 2 global inference profile. Direct on-demand
+// model IDs fail with "isn't supported" in most regions; the `global.*`
+// profile routes to the closest supported region automatically, so the demo
+// works out of the box regardless of where it is deployed. Override with
+// -c bedrockModelId=... for non-standard models or custom profiles.
+const bedrockModelId = app.node.tryGetContext('bedrockModelId') || 'global.amazon.nova-2-lite-v1:0';
 const scanSchedule = app.node.tryGetContext('scanSchedule') || 'cron(0 6 * * ? *)';
 // autoInvestigate=true → ingest Lambda auto-publishes every CRITICAL/HIGH to the
 // DevOps Agent webhook. Default false: TAM-driven, click a finding to investigate.
@@ -46,7 +39,7 @@ const autoInvestigate = (app.node.tryGetContext('autoInvestigate') || 'false') =
 // 1. Data — DynamoDB findings table + S3 raw-reports and remediations buckets
 const dataStack = new DataStack(app, `ProwlerSecurityData-${region}`, {
   env,
-  description: 'Prowler Security Findings: DynamoDB findings table + S3 buckets for raw reports and Nova remediations',
+  description: 'Prowler Security Findings: DynamoDB findings table + S3 buckets for raw reports and Bedrock remediations',
 });
 
 // 2. Auth — Cognito User Pool + Identity Pool (dashboard login)
@@ -74,11 +67,11 @@ const scannerStack = new ScannerStack(app, `ProwlerSecurityScanner-${region}`, {
   env,
   rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
   scanSchedule,
-  description: 'Prowler Security Findings + DevOps Agent + Bedrock Nova remediation (uksb-do9bhieqqh)(tag:prowler-security-findings-agent,security)',
+  description: 'Prowler Security Findings + DevOps Agent + Bedrock Nova Lite remediation (uksb-do9bhieqqh)(tag:prowler-security-findings-agent,security)',
 });
 scannerStack.addDependency(dataStack);
 
-// 5. Ingest — S3 event → ingest-findings Lambda → DynamoDB + remediation-context Lambda (Bedrock Nova) + SNS fan-out
+// 5. Ingest — S3 event → ingest-findings Lambda → DynamoDB + remediation-context Lambda (Bedrock Nova Lite) + SNS fan-out
 const ingestStack = new IngestStack(app, `ProwlerSecurityIngest-${region}`, {
   env,
   findingsTableName: dataStack.findingsTable.tableName,
@@ -88,7 +81,7 @@ const ingestStack = new IngestStack(app, `ProwlerSecurityIngest-${region}`, {
   devOpsAgentTriggerTopicArn: devOpsAgentStack.triggerTopicArn,
   bedrockModelId,
   autoInvestigate,
-  description: 'Prowler Security Findings: ingest Lambda + Bedrock Nova remediation context + SNS fan-out',
+  description: 'Prowler Security Findings: ingest Lambda + Bedrock Nova Lite remediation context + SNS fan-out',
 });
 ingestStack.addDependency(dataStack);
 ingestStack.addDependency(devOpsAgentStack);

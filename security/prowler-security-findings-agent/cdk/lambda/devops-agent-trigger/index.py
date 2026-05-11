@@ -5,7 +5,7 @@ Subscribed to the ingest pipeline's SNS topic. For each CRITICAL/HIGH Prowler
 finding it builds a DevOps Agent incident payload, signs it with HMAC-SHA256,
 and POSTs it to the customer-provided webhook URL.
 
-The payload includes the Nova-generated remediation markdown (if the ingest
+The payload includes the Bedrock-generated remediation markdown (if the ingest
 pipeline has already produced one and uploaded it to the remediations bucket),
 so the agent starts the investigation with a ready-made remediation proposal.
 

@@ -29,7 +29,7 @@ export interface ObservabilityStackProps extends cdk.StackProps {
  * around CloudWatch:
  *
  *   1. Lambda health — Duration / Errors / Throttles for the 4 Lambdas.
- *   2. Bedrock — Nova Pro invocation latency + client-side errors.
+ *   2. Bedrock — Nova Lite 2 invocation latency + client-side errors.
  *   3. DynamoDB — consumed read/write capacity for findings + cost-events.
  *   4. Fargate — running/pending scanner tasks from ECS.
  *

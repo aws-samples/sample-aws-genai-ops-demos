@@ -33,7 +33,8 @@ export interface IngestStackProps extends cdk.StackProps {
  *
  *   2. `remediation-context`
  *      Trigger: Invoked async by ingest-findings.
- *      Action:  Calls Bedrock Converse (Amazon Nova Pro by default). Writes
+ *      Action:  Calls Bedrock Converse (Amazon Nova Lite 2 by default via the
+ *               `global.amazon.nova-2-lite-v1:0` inference profile). Writes
  *               the generated markdown to s3://remediations/{finding_uid}.md
  *               and updates the DynamoDB item with remediation_s3_key.
  */

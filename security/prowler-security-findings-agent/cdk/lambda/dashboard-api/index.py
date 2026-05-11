@@ -304,7 +304,7 @@ def _list_scans() -> dict[str, Any]:
 def _generate_insights(finding_uid: str) -> dict[str, Any]:
     """Synchronously invoke the Bedrock-backed remediation-context Lambda.
 
-    Blocks until Nova returns the markdown (or the underlying Lambda times out
+    Blocks until Bedrock returns the markdown (or the underlying Lambda times out
     — 5 min). Returns the generated markdown inline.
     """
     if not REMEDIATION_LAMBDA:

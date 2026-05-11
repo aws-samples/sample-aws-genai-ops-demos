@@ -237,7 +237,7 @@ export default function Cost() {
                 Every Bedrock invocation, DevOps Agent dispatch, and Prowler scan — live, per-event, with token-level pricing.
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: COLOR.fgDim, maxWidth: 720 }}>
-                Prices are hardcoded for the demo (Nova Pro: $0.0008 in / $0.0032 out per 1K tokens · DevOps Agent: flat $0.50 per incident · Prowler scan: flat $0.02 per run). Real billing lives in AWS Cost Explorer.
+                Prices are hardcoded for the demo (Nova Lite 2: $0.00006 in / $0.00024 out per 1K tokens · DevOps Agent: flat $0.50 per incident · Prowler scan: flat $0.02 per run). Real billing lives in AWS Cost Explorer.
               </div>
             </div>
             <Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>
