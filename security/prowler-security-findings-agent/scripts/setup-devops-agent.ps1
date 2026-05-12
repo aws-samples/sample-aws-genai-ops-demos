@@ -64,17 +64,69 @@ function Invoke-SetupDevOpsAgent {
     }
 
     Write-Host ""
-    Write-Host "  Webhook URL + secret:"
-    Write-Host "  1. Open https://$DevOpsAgentRegion.console.aws.amazon.com/aidevops/home?region=$DevOpsAgentRegion#/agent-spaces/$AgentSpaceId"
-    Write-Host "  2. Capabilities > Webhook > Add > Next > Generate URL and secret key"
-    Write-Host ""
-    $WebhookUrl = Read-Host "  Paste the webhook URL (or press Enter to skip)"
-    if ($WebhookUrl) {
-        $WebhookSecret = Read-Host "  Paste the webhook secret key"
-        if ($WebhookSecret) {
-            $env:DEVOPS_AGENT_WEBHOOK_URL = $WebhookUrl
-            $env:DEVOPS_AGENT_WEBHOOK_SECRET = $WebhookSecret
+    # Skip the prompt if the Secrets Manager bundle already holds a real
+    # webhook. That makes re-running deploy-all.ps1 idempotent.
+    $SecretName = "prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
+    $existingUrl = ""
+    aws secretsmanager describe-secret --secret-id $SecretName --no-cli-pager *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $existingBundle = aws secretsmanager get-secret-value --secret-id $SecretName --query SecretString --output text --no-cli-pager 2>$null
+        try { $existingUrl = ($existingBundle | ConvertFrom-Json).webhookUrl } catch { $existingUrl = "" }
+    }
+
+    if ($existingUrl -and $existingUrl -ne "NOT_CONFIGURED") {
+        Write-Host "  Webhook already configured (secret bundle exists). Skipping prompt."
+    } else {
+        Write-Host "  Webhook URL + secret:"
+        Write-Host "  1. Open https://$DevOpsAgentRegion.console.aws.amazon.com/aidevops/home?region=$DevOpsAgentRegion#/agent-spaces/$AgentSpaceId"
+        Write-Host "  2. Capabilities > Webhook > Add > Next > Generate URL and secret key"
+        Write-Host ""
+        $WebhookUrl = Read-Host "  Paste the webhook URL (or press Enter to skip)"
+        if ($WebhookUrl) {
+            $WebhookSecret = Read-Host "  Paste the webhook secret key"
+            if ($WebhookSecret) {
+                $env:DEVOPS_AGENT_WEBHOOK_URL = $WebhookUrl
+                $env:DEVOPS_AGENT_WEBHOOK_SECRET = $WebhookSecret
+            }
         }
+    }
+
+    # Writing the bundle to Secrets Manager is what makes the setup survive
+    # partial redeploys — CloudFormation only honors the initial secretString
+    # on resource CREATE, never on updates, so the webhook never gets wiped.
+    $SecretName = "prowler-security/devops-agent-webhook-secret"
+    $secretExists = $false
+    aws secretsmanager describe-secret --secret-id $SecretName --no-cli-pager *> $null
+    if ($LASTEXITCODE -eq 0) { $secretExists = $true }
+
+    if ($secretExists) {
+        $rawCurrent = aws secretsmanager get-secret-value --secret-id $SecretName --query SecretString --output text --no-cli-pager 2>$null
+        try { $bundle = $rawCurrent | ConvertFrom-Json } catch { $bundle = [pscustomobject]@{} }
+        if (-not $bundle) { $bundle = [pscustomobject]@{} }
+
+        function Set-BundleField($obj, $name, $value) {
+            if ([string]::IsNullOrEmpty($value)) { return $obj }
+            if ($obj.PSObject.Properties.Name -contains $name) {
+                $obj.$name = $value
+            } else {
+                $obj | Add-Member -MemberType NoteProperty -Name $name -Value $value
+            }
+            return $obj
+        }
+
+        $bundle = Set-BundleField $bundle 'webhookUrl'    $env:DEVOPS_AGENT_WEBHOOK_URL
+        $bundle = Set-BundleField $bundle 'webhookSecret' $env:DEVOPS_AGENT_WEBHOOK_SECRET
+        $bundle = Set-BundleField $bundle 'agentSpaceId'  $AgentSpaceId
+
+        $bundleJson = $bundle | ConvertTo-Json -Compress
+        aws secretsmanager put-secret-value --secret-id $SecretName --secret-string $bundleJson --no-cli-pager *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Secret updated (webhook URL, HMAC secret, agent space id)."
+        } else {
+            Write-Host "  WARN: failed to update Secrets Manager secret."
+        }
+    } else {
+        Write-Host "  Demo not yet deployed — run deploy-all.ps1 first."
     }
 }
 

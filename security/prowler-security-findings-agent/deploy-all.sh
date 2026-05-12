@@ -177,6 +177,27 @@ WEBSITE_URL=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityFrontend-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text)
 
+# Write the DevOps Agent webhook bundle (URL, HMAC secret, agent space id)
+# into the Secrets Manager secret created by CDK. This is run AFTER the CDK
+# deploy so the secret resource exists. CDK only sets a placeholder on create;
+# the real values live here and survive every subsequent partial `cdk deploy`.
+if [ -n "${DEVOPS_AGENT_WEBHOOK_URL:-}" ] && [ -n "${DEVOPS_AGENT_WEBHOOK_SECRET:-}" ]; then
+    SECRET_NAME="prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
+    BUNDLE=$(jq -n \
+        --arg url "$DEVOPS_AGENT_WEBHOOK_URL" \
+        --arg secret "$DEVOPS_AGENT_WEBHOOK_SECRET" \
+        --arg space "${DEVOPS_AGENT_SPACE_ID:-}" \
+        '{webhookUrl: $url, webhookSecret: $secret, agentSpaceId: $space}')
+    if aws secretsmanager put-secret-value \
+        --secret-id "$SECRET_NAME" \
+        --secret-string "$BUNDLE" \
+        --no-cli-pager >/dev/null 2>&1; then
+        echo "  DevOps Agent bundle written to Secrets Manager."
+    else
+        echo "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.sh manually to retry."
+    fi
+fi
+
 # Step 7: create a default demo user so the dashboard is usable out of the box
 DEMO_USERNAME="${DEMO_USERNAME:-demo@prowler-security.local}"
 DEMO_PASSWORD="${DEMO_PASSWORD:-ProwlerDemo2026!}"

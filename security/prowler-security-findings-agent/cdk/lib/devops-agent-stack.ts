@@ -34,19 +34,44 @@ export interface DevOpsAgentStackProps extends cdk.StackProps {
 export class DevOpsAgentStack extends cdk.Stack {
   public readonly triggerTopicArn: string;
   public readonly triggerLambdaArn: string;
+  public readonly webhookSecretArn: string;
 
   constructor(scope: Construct, id: string, props: DevOpsAgentStackProps) {
     super(scope, id, props);
 
-    const { webhookUrl, webhookSecret, devOpsAgentRegion, devOpsAgentSpaceId, remediationsBucketName, costEventsTableName } = props;
+    // `webhookUrl`, `webhookSecret`, and `devOpsAgentSpaceId` are intentionally
+    // not destructured: they live in Secrets Manager, not in CFN state.
+    const { devOpsAgentRegion, remediationsBucketName, costEventsTableName } = props;
     const costEventsTableArn = `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/${costEventsTableName}`;
 
+    // DevOps Agent webhook bundle — URL + HMAC secret + Agent Space ID live
+    // as a single JSON secret so both Lambdas (devops-trigger + dashboard-api)
+    // read the same authoritative source and partial CDK redeploys don't
+    // silently wipe them (which is exactly what happened when a post-deploy
+    // `cdk deploy ProwlerSecurityApi --exclusively` rewrote WEBHOOK_URL back
+    // to the default context value of empty string).
+    //
+    // `generateSecretString` is only honored by CloudFormation on CREATE;
+    // subsequent stack updates do NOT touch the stored value. That lets
+    // setup-devops-agent.sh call PutSecretValue with the real webhook once
+    // and then no amount of future redeploys overwrites it.
+    // The secret template is a stable placeholder — CDK never passes the real
+    // webhook values through CloudFormation. Instead, setup-devops-agent.sh
+    // writes the bundle (URL + HMAC + agent space id) directly with
+    // PutSecretValue. Because the CFN template string doesn't change across
+    // redeploys, CloudFormation sees "no diff" on the secret and never
+    // overwrites what setup-devops-agent wrote. That's the real fix for the
+    // "WEBHOOK_URL wiped on partial cdk deploy" bug. Values passed via CDK
+    // context are still used by deploy-all.sh (it also calls PutSecretValue
+    // after the initial deploy) but never leak into the CFN template.
     const webhookSecretResource = new secretsmanager.Secret(this, 'DevOpsAgentSecret', {
       secretName: 'prowler-security/devops-agent-webhook-secret',  // pragma: allowlist secret - Secrets Manager resource name, not a secret value
-      description: 'DevOps Agent webhook HMAC secret key for Prowler security findings',
-      secretStringValue: cdk.SecretValue.unsafePlainText(
-        webhookSecret || 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE',
-      ),
+      description: 'DevOps Agent webhook bundle (URL, HMAC secret, Agent Space ID)',
+      secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
+        webhookUrl: 'NOT_CONFIGURED',
+        webhookSecret: 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE',
+        agentSpaceId: '',
+      })),
     });
 
     const triggerTopic = new sns.Topic(this, 'DevOpsAgentTriggerTopic', {
@@ -89,13 +114,14 @@ export class DevOpsAgentStack extends cdk.Stack {
       role: lambdaRole,
       timeout: cdk.Duration.seconds(30),
       environment: {
-        WEBHOOK_URL: webhookUrl || 'NOT_CONFIGURED',
-        SECRET_ARN: webhookSecretResource.secretArn,
+        // Webhook URL, HMAC secret, and Agent Space ID all come from the
+        // JSON bundle in Secrets Manager — setup-devops-agent writes them
+        // once and nothing but another manual setup run overwrites them.
+        DEVOPS_AGENT_SECRET_ARN: webhookSecretResource.secretArn,
         REMEDIATIONS_BUCKET: remediationsBucketName,
         AWS_ACCOUNT_ID: cdk.Aws.ACCOUNT_ID,
         AWS_REGION_NAME: cdk.Aws.REGION,
         DEVOPS_AGENT_REGION: devOpsAgentRegion,
-        DEVOPS_AGENT_SPACE_ID: devOpsAgentSpaceId,
         COST_EVENTS_TABLE: costEventsTableName,
       },
     });
@@ -104,6 +130,7 @@ export class DevOpsAgentStack extends cdk.Stack {
 
     this.triggerTopicArn = triggerTopic.topicArn;
     this.triggerLambdaArn = triggerLambda.functionArn;
+    this.webhookSecretArn = webhookSecretResource.secretArn;
 
     new cdk.CfnOutput(this, 'SNSTopicArn', {
       value: triggerTopic.topicArn,

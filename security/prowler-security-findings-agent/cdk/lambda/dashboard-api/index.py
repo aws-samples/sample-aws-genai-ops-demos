@@ -39,6 +39,7 @@ _ecs = boto3.client('ecs')
 _sns = boto3.client('sns')
 _lambda = boto3.client('lambda')
 _logs = boto3.client('logs')
+_secrets = boto3.client('secretsmanager')
 
 TABLE = _ddb.Table(os.environ['FINDINGS_TABLE'])
 REMEDIATIONS_BUCKET = os.environ['REMEDIATIONS_BUCKET']
@@ -49,7 +50,33 @@ SG_ID = os.environ['SCANNER_SECURITY_GROUP_ID']
 SCANNER_LOG_GROUP = os.environ.get('SCANNER_LOG_GROUP', '/aws/ecs/prowler-security-scanner')
 DEVOPS_AGENT_TOPIC_ARN = os.environ.get('DEVOPS_AGENT_TOPIC_ARN', '')
 DEVOPS_AGENT_REGION = os.environ.get('DEVOPS_AGENT_REGION', '')
-DEVOPS_AGENT_SPACE_ID = os.environ.get('DEVOPS_AGENT_SPACE_ID', '')
+# DEVOPS_AGENT_SPACE_ID lives in the Secrets Manager bundle so partial CDK
+# redeploys don't wipe it; the env var is only a deploy-time fallback for
+# fresh installs. `_get_agent_space_id()` prefers the bundle.
+_DEVOPS_AGENT_SPACE_ID_FALLBACK = os.environ.get('DEVOPS_AGENT_SPACE_ID', '')
+DEVOPS_AGENT_SECRET_ARN = os.environ.get('DEVOPS_AGENT_SECRET_ARN', '')
+_bundle_cache: dict | None = None
+_bundle_cache_ts: float = 0
+
+
+def _get_agent_space_id() -> str:
+    """Return the Agent Space id, preferring the Secrets Manager bundle."""
+    global _bundle_cache, _bundle_cache_ts
+    if not DEVOPS_AGENT_SECRET_ARN:
+        return _DEVOPS_AGENT_SPACE_ID_FALLBACK
+    import time
+    now = time.time()
+    if _bundle_cache is None or (now - _bundle_cache_ts) >= 60:
+        try:
+            raw = _secrets.get_secret_value(SecretId=DEVOPS_AGENT_SECRET_ARN)['SecretString']
+            _bundle_cache = json.loads(raw)
+            _bundle_cache_ts = now
+        except Exception as exc:  # noqa: BLE001
+            logger.warning('Could not load devops bundle from %s: %s', DEVOPS_AGENT_SECRET_ARN, exc)
+            _bundle_cache = {}
+            _bundle_cache_ts = now
+    space_id = (_bundle_cache or {}).get('agentSpaceId') or ''
+    return space_id or _DEVOPS_AGENT_SPACE_ID_FALLBACK
 REMEDIATION_LAMBDA = os.environ.get('REMEDIATION_LAMBDA', '')
 COST_EVENTS_TABLE_NAME = os.environ.get('COST_EVENTS_TABLE', '')
 COST_TABLE = _ddb.Table(COST_EVENTS_TABLE_NAME) if COST_EVENTS_TABLE_NAME else None
@@ -130,8 +157,8 @@ def _devops_request(path: str, body: dict | None = None) -> dict:
 def _devops_available() -> tuple[bool, str | None]:
     if not DEVOPS_AGENT_REGION:
         return False, 'DEVOPS_AGENT_REGION not set'
-    if not DEVOPS_AGENT_SPACE_ID:
-        return False, 'DEVOPS_AGENT_SPACE_ID not set'
+    if not _get_agent_space_id():
+        return False, 'DEVOPS_AGENT_SPACE_ID not set — run scripts/setup-devops-agent.sh'
     return True, None
 
 
@@ -441,9 +468,10 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'error': err,
         })
 
+    agent_space_id = _get_agent_space_id()
     try:
         tasks_resp = _devops_request(
-            f'/backlog/agent-space/{DEVOPS_AGENT_SPACE_ID}/tasks/list',
+            f'/backlog/agent-space/{agent_space_id}/tasks/list',
             {},
         )
         all_tasks = tasks_resp.get('tasks', [])
@@ -455,7 +483,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'error': str(exc),
             'tasks': [],
             'journal': [],
-            'agentSpaceId': DEVOPS_AGENT_SPACE_ID,
+            'agentSpaceId': agent_space_id,
         })
 
     # Strict match: the backlog task belongs to this finding only if *both*
@@ -501,7 +529,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
                 continue
             try:
                 e = _devops_request(
-                    f'/journal/agent-space/{DEVOPS_AGENT_SPACE_ID}/executions',
+                    f'/journal/agent-space/{agent_space_id}/executions',
                     {'taskId': task_id},
                 )
                 execs = e.get('executions', [])
@@ -513,7 +541,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
                 continue
         try:
             j = _devops_request(
-                f'/journal/agent-space/{DEVOPS_AGENT_SPACE_ID}/journalRecords',
+                f'/journal/agent-space/{agent_space_id}/journalRecords',
                 {'executionId': exec_id},
             )
             journal.extend(j.get('records', []))
@@ -536,7 +564,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
     return _json(200, {
         'incidentId': incident_id,
         'status': status,
-        'agentSpaceId': DEVOPS_AGENT_SPACE_ID,
+        'agentSpaceId': agent_space_id,
         'executionId': (matching[0].get('executionId') if matching else None),
         'tasks': [
             {
@@ -710,9 +738,10 @@ def _list_investigations() -> dict[str, Any]:
     if not ok:
         return _json(200, {'investigations': [], 'error': err, 'status': 'not_configured'})
 
+    agent_space_id = _get_agent_space_id()
     try:
         tasks_resp = _devops_request(
-            f'/backlog/agent-space/{DEVOPS_AGENT_SPACE_ID}/tasks/list',
+            f'/backlog/agent-space/{agent_space_id}/tasks/list',
             {},
         )
         all_tasks = tasks_resp.get('tasks', [])
@@ -829,7 +858,7 @@ def _list_investigations() -> dict[str, Any]:
                        len(unmatched_samples), len(all_tasks), ' | '.join(unmatched_samples))
     return _json(200, {
         'investigations': out,
-        'agentSpaceId': DEVOPS_AGENT_SPACE_ID,
+        'agentSpaceId': agent_space_id,
     })
 
 

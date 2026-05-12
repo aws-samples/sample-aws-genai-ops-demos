@@ -20,6 +20,10 @@ export interface ApiStackProps extends cdk.StackProps {
   devOpsAgentTopicArn: string;
   devOpsAgentRegion: string;
   devOpsAgentSpaceId: string;
+  /** ARN of the Secrets Manager secret storing {webhookUrl, webhookSecret,
+   * agentSpaceId}. The dashboard reads `agentSpaceId` from this bundle so
+   * it survives partial CDK redeploys (unlike a Lambda env var). */
+  devOpsAgentSecretArn: string;
   /** Remediation context Lambda — dashboard-api invokes it synchronously on
    * POST /findings/{uid}/insights (lazy, on-demand generation). */
   remediationLambdaArn: string;
@@ -125,6 +129,16 @@ export class ApiStack extends cdk.Stack {
       resources: [props.devOpsAgentTopicArn],
     }));
 
+    // Read the DevOps Agent webhook bundle to recover the Agent Space ID at
+    // runtime. setup-devops-agent writes this secret once; subsequent partial
+    // CDK redeploys do not touch it, so the dashboard never loses the link
+    // to the agent space just because someone ran `cdk deploy api`.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.devOpsAgentSecretArn],
+    }));
+
     // Read-only queries against Amazon DevOps Agent for the Investigation tab.
     // The IAM service namespace is `aidevops` (not `devops-agent` — that's only
     // the AWS CLI command surface).
@@ -186,7 +200,11 @@ export class ApiStack extends cdk.Stack {
         SCANNER_LOG_GROUP: props.scannerLogGroupName,
         DEVOPS_AGENT_TOPIC_ARN: props.devOpsAgentTopicArn,
         DEVOPS_AGENT_REGION: props.devOpsAgentRegion,
+        // Kept as a deploy-time hint for fresh installs where the secret is
+        // still a placeholder. Runtime always prefers the Secrets Manager
+        // bundle so partial redeploys don't wipe a configured agent space.
         DEVOPS_AGENT_SPACE_ID: props.devOpsAgentSpaceId,
+        DEVOPS_AGENT_SECRET_ARN: props.devOpsAgentSecretArn,
         REMEDIATION_LAMBDA: props.remediationLambdaName,
         COST_EVENTS_TABLE: props.costEventsTableName,
       },

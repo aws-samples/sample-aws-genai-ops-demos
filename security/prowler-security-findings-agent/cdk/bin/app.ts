@@ -102,6 +102,7 @@ const apiStack = new ApiStack(app, `ProwlerSecurityApi-${region}`, {
   devOpsAgentTopicArn: devOpsAgentStack.triggerTopicArn,
   devOpsAgentRegion,
   devOpsAgentSpaceId,
+  devOpsAgentSecretArn: devOpsAgentStack.webhookSecretArn,
   remediationLambdaArn: ingestStack.remediationLambdaArn,
   remediationLambdaName: ingestStack.remediationLambdaName,
   description: 'Prowler Security Findings: dashboard-api Lambda URL (SigV4) for the React dashboard',

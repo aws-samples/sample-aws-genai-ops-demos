@@ -113,6 +113,24 @@ End-Step
 
 $WebsiteUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityFrontend-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text
 
+# Write the DevOps Agent webhook bundle into Secrets Manager AFTER CDK has
+# created the secret resource. CDK only ships a placeholder on create; the
+# real values live here and survive every subsequent partial cdk deploy.
+if ($env:DEVOPS_AGENT_WEBHOOK_URL -and $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
+    $SecretName = "prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
+    $Bundle = @{
+        webhookUrl    = $env:DEVOPS_AGENT_WEBHOOK_URL
+        webhookSecret = $env:DEVOPS_AGENT_WEBHOOK_SECRET
+        agentSpaceId  = $env:DEVOPS_AGENT_SPACE_ID
+    } | ConvertTo-Json -Compress
+    aws secretsmanager put-secret-value --secret-id $SecretName --secret-string $Bundle --no-cli-pager *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  DevOps Agent bundle written to Secrets Manager."
+    } else {
+        Write-Host "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.ps1 manually to retry."
+    }
+}
+
 # Step 7: create a default demo user so the dashboard is usable out of the box
 $DemoUsername = if ($env:DEMO_USERNAME) { $env:DEMO_USERNAME } else { "demo@prowler-security.local" }
 $DemoPassword = if ($env:DEMO_PASSWORD) { $env:DEMO_PASSWORD } else { "ProwlerDemo2026!" }

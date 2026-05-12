@@ -132,104 +132,75 @@ EOF
 
     echo "[5/6] Webhook configuration"
     echo ""
-    echo "  1. Open: https://$DEVOPS_AGENT_REGION.console.aws.amazon.com/aidevops/home?region=$DEVOPS_AGENT_REGION#/agent-spaces/$AGENT_SPACE_ID"
-    echo "  2. Capabilities > Webhook > Add > Next > Generate URL and secret key"
-    echo "  3. Copy both values."
-    echo ""
-    # Interactive prompt — only if stdin is a TTY. Otherwise (CI, automation,
-    # nohup, etc.) skip silently and leave a placeholder. The operator can
-    # wire the webhook later by re-running this script in a real terminal.
-    if [ -t 0 ]; then
-        read -rp "  Paste the webhook URL (or press Enter to skip): " WEBHOOK_URL
-        if [ -n "$WEBHOOK_URL" ]; then
-            read -rp "  Paste the webhook secret key: " WEBHOOK_SECRET
-            if [ -n "$WEBHOOK_SECRET" ]; then
-                export DEVOPS_AGENT_WEBHOOK_URL="$WEBHOOK_URL"
-                export DEVOPS_AGENT_WEBHOOK_SECRET="$WEBHOOK_SECRET"
-                echo "  Webhook configured."
+    # If the Secrets Manager secret already holds a real webhook (from a
+    # previous run), skip the prompt. This is what makes the script idempotent
+    # — running deploy-all.sh again won't ask you to re-paste the webhook.
+    SECRET_NAME="prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
+    EXISTING_URL=""
+    if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --no-cli-pager >/dev/null 2>&1; then
+        EXISTING_URL=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --query SecretString --output text --no-cli-pager 2>/dev/null \
+            | jq -r '.webhookUrl // ""' 2>/dev/null || echo "")
+    fi
+    if [ -n "$EXISTING_URL" ] && [ "$EXISTING_URL" != "NOT_CONFIGURED" ]; then
+        echo "  Webhook already configured (secret bundle exists). Skipping prompt."
+        echo "  To rotate, delete the secret:"
+        echo "    aws secretsmanager delete-secret --secret-id $SECRET_NAME --force-delete-without-recovery"
+    else
+        echo "  1. Open: https://$DEVOPS_AGENT_REGION.console.aws.amazon.com/aidevops/home?region=$DEVOPS_AGENT_REGION#/agent-spaces/$AGENT_SPACE_ID"
+        echo "  2. Capabilities > Webhook > Add > Next > Generate URL and secret key"
+        echo "  3. Copy both values."
+        echo ""
+        # Interactive prompt — only if stdin is a TTY. Otherwise (CI, automation,
+        # nohup, etc.) skip silently and leave a placeholder.
+        if [ -t 0 ]; then
+            read -rp "  Paste the webhook URL (or press Enter to skip): " WEBHOOK_URL
+            if [ -n "$WEBHOOK_URL" ]; then
+                read -rp "  Paste the webhook secret key: " WEBHOOK_SECRET
+                if [ -n "$WEBHOOK_SECRET" ]; then
+                    export DEVOPS_AGENT_WEBHOOK_URL="$WEBHOOK_URL"
+                    export DEVOPS_AGENT_WEBHOOK_SECRET="$WEBHOOK_SECRET"
+                    echo "  Webhook configured."
+                fi
+            else
+                echo "  Skipped. Re-run this script or set DEVOPS_AGENT_WEBHOOK_URL / DEVOPS_AGENT_WEBHOOK_SECRET manually."
             fi
         else
-            echo "  Skipped. Re-run this script or set DEVOPS_AGENT_WEBHOOK_URL / DEVOPS_AGENT_WEBHOOK_SECRET manually."
+            echo "  [non-interactive] stdin is not a TTY — skipping webhook prompt."
+            echo "  To wire the webhook later, run from a terminal:"
+            echo "    bash scripts/setup-devops-agent.sh"
         fi
-    else
-        echo "  [non-interactive] stdin is not a TTY — skipping webhook prompt."
-        echo "  To wire the webhook later, run from a terminal:"
-        echo "    bash scripts/setup-devops-agent.sh"
-        echo "  It will live-update the Lambda env + Secrets Manager (no CDK redeploy)."
     fi
     echo ""
 
-    echo "[6/6] Live-updating deployed resources if any..."
-    TRIGGER_LAMBDA="prowler-security-devops-trigger"
+    echo "[6/6] Writing webhook bundle to Secrets Manager..."
     SECRET_NAME="prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret - Secrets Manager resource name
 
-    # The dashboard API Lambda is exported by ProwlerSecurityApi-<region>. Look it
-    # up instead of hard-coding the physical id — CDK generates a random suffix.
-    DASHBOARD_LAMBDA=""
-    API_STACK="ProwlerSecurityApi-${AWS_REGION:-$DEVOPS_AGENT_REGION}"
-    DASHBOARD_LAMBDA=$(aws cloudformation describe-stack-resources \
-        --stack-name "$API_STACK" \
-        --query "StackResources[?ResourceType=='AWS::Lambda::Function'].PhysicalResourceId" \
-        --output text --no-cli-pager 2>/dev/null | tr '\t' '\n' | head -1)
-
-    if aws lambda get-function --function-name "$TRIGGER_LAMBDA" --no-cli-pager >/dev/null 2>&1; then
-        if [ -n "$DEVOPS_AGENT_WEBHOOK_SECRET" ]; then
-            aws secretsmanager update-secret \
-                --secret-id "$SECRET_NAME" \
-                --secret-string "$DEVOPS_AGENT_WEBHOOK_SECRET" \
-                --no-cli-pager >/dev/null 2>&1 && echo "  Updated Secrets Manager secret."
-        fi
-        # Patch the trigger Lambda with webhook URL + Agent Space ID so newly
-        # dispatched findings carry the right target.
-        # `--environment "Variables=<json>"` uses shorthand parsing that rejects
-        # JSON values — pass the full JSON object via `--cli-input-json` instead
-        # so nested strings with special characters are preserved as-is.
-        if [ -n "$DEVOPS_AGENT_WEBHOOK_URL" ] || [ -n "$DEVOPS_AGENT_SPACE_ID" ]; then
-            TRIGGER_ENV=$(aws lambda get-function-configuration \
-                --function-name "$TRIGGER_LAMBDA" \
-                --query 'Environment.Variables' \
-                --output json --no-cli-pager 2>/dev/null)
-            if [ -n "$DEVOPS_AGENT_WEBHOOK_URL" ]; then
-                TRIGGER_ENV=$(echo "$TRIGGER_ENV" | jq --arg url "$DEVOPS_AGENT_WEBHOOK_URL" '.WEBHOOK_URL = $url')
-            fi
-            if [ -n "$DEVOPS_AGENT_SPACE_ID" ]; then
-                TRIGGER_ENV=$(echo "$TRIGGER_ENV" | jq --arg id "$DEVOPS_AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $id')
-            fi
-            TRIGGER_PAYLOAD=$(jq -n \
-                --arg fn "$TRIGGER_LAMBDA" \
-                --argjson vars "$TRIGGER_ENV" \
-                '{FunctionName: $fn, Environment: {Variables: $vars}}')
-            if aws lambda update-function-configuration \
-                --cli-input-json "$TRIGGER_PAYLOAD" \
-                --no-cli-pager >/dev/null 2>&1; then
-                echo "  Updated trigger Lambda."
-            else
-                echo "  WARN: failed to update trigger Lambda env."
-            fi
+    # Everything both Lambdas need (webhook URL, HMAC secret, agent space id)
+    # lives in one JSON secret. Writing it here with PutSecretValue means no
+    # future partial `cdk deploy` can ever wipe it — CloudFormation only
+    # honors `secretStringValue` on resource CREATE, not on updates. This is
+    # the fix for the "WEBHOOK_URL = NOT_CONFIGURED after redeploy" bug.
+    if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --no-cli-pager >/dev/null 2>&1; then
+        CURRENT=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --query SecretString --output text --no-cli-pager 2>/dev/null || echo '{}')
+        NEW=$(jq -n \
+            --argjson current "$CURRENT" \
+            --arg url "${DEVOPS_AGENT_WEBHOOK_URL:-}" \
+            --arg secret "${DEVOPS_AGENT_WEBHOOK_SECRET:-}" \
+            --arg space "${DEVOPS_AGENT_SPACE_ID:-}" \
+            '$current
+             | (if $url   != "" then .webhookUrl    = $url    else . end)
+             | (if $secret != "" then .webhookSecret = $secret else . end)
+             | (if $space != "" then .agentSpaceId  = $space  else . end)')
+        if aws secretsmanager put-secret-value \
+            --secret-id "$SECRET_NAME" \
+            --secret-string "$NEW" \
+            --no-cli-pager >/dev/null 2>&1; then
+            echo "  Secret updated (webhook URL, HMAC secret, agent space id)."
+        else
+            echo "  WARN: failed to update Secrets Manager secret."
         fi
     else
-        echo "  Demo not yet deployed — run deploy-all.sh."
-    fi
-
-    # Patch the dashboard-api Lambda with the Agent Space ID so /investigations
-    # can list tasks from the real backlog.
-    if [ -n "$DASHBOARD_LAMBDA" ] && [ -n "$DEVOPS_AGENT_SPACE_ID" ]; then
-        DASH_ENV=$(aws lambda get-function-configuration \
-            --function-name "$DASHBOARD_LAMBDA" \
-            --query 'Environment.Variables' \
-            --output json --no-cli-pager 2>/dev/null)
-        DASH_ENV=$(echo "$DASH_ENV" | jq --arg id "$DEVOPS_AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $id')
-        DASH_PAYLOAD=$(jq -n \
-            --arg fn "$DASHBOARD_LAMBDA" \
-            --argjson vars "$DASH_ENV" \
-            '{FunctionName: $fn, Environment: {Variables: $vars}}')
-        if aws lambda update-function-configuration \
-            --cli-input-json "$DASH_PAYLOAD" \
-            --no-cli-pager >/dev/null 2>&1; then
-            echo "  Updated dashboard-api Lambda (Agent Space)."
-        else
-            echo "  WARN: failed to update dashboard-api Lambda env."
-        fi
+        echo "  Demo not yet deployed — run deploy-all.sh first."
     fi
     echo ""
 }

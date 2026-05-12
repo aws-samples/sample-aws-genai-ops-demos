@@ -35,10 +35,29 @@ logger.setLevel(logging.INFO)
 _secrets = boto3.client('secretsmanager')
 _s3 = boto3.client('s3')
 
+# Cache the webhook bundle for 60s so we don't hit Secrets Manager on every
+# finding. Any update to the bundle (by setup-devops-agent) becomes effective
+# within one minute without a Lambda redeploy.
+_bundle_cache: dict | None = None
+_bundle_cache_ts: float = 0
 
-def get_secret() -> str:
-    response = _secrets.get_secret_value(SecretId=os.environ['SECRET_ARN'])
-    return response['SecretString']
+
+def _load_devops_bundle() -> dict:
+    """Fetch the JSON bundle (webhookUrl, webhookSecret, agentSpaceId)
+    from Secrets Manager, with a 60 s in-Lambda cache."""
+    global _bundle_cache, _bundle_cache_ts
+    import time
+    now = time.time()
+    if _bundle_cache is not None and (now - _bundle_cache_ts) < 60:
+        return _bundle_cache
+    raw = _secrets.get_secret_value(SecretId=os.environ['DEVOPS_AGENT_SECRET_ARN'])['SecretString']
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {}
+    _bundle_cache = data
+    _bundle_cache_ts = now
+    return data
 
 
 def generate_signature(secret: str, timestamp: str, payload: dict) -> str:
@@ -47,17 +66,13 @@ def generate_signature(secret: str, timestamp: str, payload: dict) -> str:
     return base64.b64encode(mac.digest()).decode('utf-8')
 
 
-def send_to_devops_agent(payload: dict) -> tuple[int, str]:
-    webhook_url = os.environ['WEBHOOK_URL']
-    # Defense-in-depth: the webhook URL is captured at deploy time from the
-    # DevOps Agent console and stored in a Lambda env var. It should always be
-    # HTTPS — reject anything else to keep urllib from ever opening a file://
-    # or http:// URL even if someone misconfigures the stack.
+def send_to_devops_agent(payload: dict, webhook_url: str, webhook_secret: str) -> tuple[int, str]:
+    # Defense-in-depth: should always be HTTPS — reject anything else to keep
+    # urllib from ever opening a file:// or http:// URL.
     if not webhook_url.startswith('https://'):
-        raise RuntimeError(f'WEBHOOK_URL must be HTTPS, got: {webhook_url!r}')
-    secret = get_secret()
+        raise RuntimeError(f'webhookUrl must be HTTPS, got: {webhook_url!r}')
     timestamp = datetime.utcnow().isoformat() + 'Z'
-    signature = generate_signature(secret, timestamp, payload)
+    signature = generate_signature(webhook_secret, timestamp, payload)
 
     headers = {
         'Content-Type': 'application/json',
@@ -109,15 +124,21 @@ def load_remediation_markdown(key: str | None) -> str:
 def handler(event, context):
     logger.info('Received event: %s', json.dumps(event))
 
-    webhook_url = os.environ.get('WEBHOOK_URL', '')
-    if not webhook_url or webhook_url == 'NOT_CONFIGURED':
-        logger.warning('WEBHOOK_URL not configured; skipping DevOps Agent dispatch')
+    bundle = _load_devops_bundle()
+    webhook_url = bundle.get('webhookUrl') or ''
+    webhook_secret = bundle.get('webhookSecret') or ''
+    space_id = bundle.get('agentSpaceId') or ''
+    if not webhook_url or webhook_url == 'NOT_CONFIGURED' \
+            or webhook_secret == 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE':
+        logger.warning(
+            'DevOps Agent webhook bundle not configured yet; skipping dispatch. '
+            'Run scripts/setup-devops-agent.sh to finish setup.'
+        )
         return {'statusCode': 200, 'body': json.dumps({'skipped': 'webhook_not_configured'})}
 
     account_id = os.environ.get('AWS_ACCOUNT_ID', '')
     region = os.environ.get('AWS_REGION_NAME', '')
     devops_region = os.environ.get('DEVOPS_AGENT_REGION', '')
-    space_id = os.environ.get('DEVOPS_AGENT_SPACE_ID', '')
 
     results = []
     for record in event.get('Records', []):
@@ -197,7 +218,7 @@ def handler(event, context):
         }
 
         logger.info('Sending incident to DevOps Agent: %s', incident_payload['incidentId'])
-        status, body = send_to_devops_agent(incident_payload)
+        status, body = send_to_devops_agent(incident_payload, webhook_url, webhook_secret)
         logger.info('DevOps Agent response: %s - %s', status, body)
         results.append({'incidentId': incident_payload['incidentId'], 'webhookStatus': status})
 
