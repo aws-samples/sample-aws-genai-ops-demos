@@ -25,7 +25,7 @@ export default function AuthModal({ onAuthenticated }: { onAuthenticated: () => 
   // Wrapping the controls in a <form> lets the browser fire submit on Enter in
   // either field without us having to bind onKeyDown per input.
   return (
-    <Modal visible header="Sign in to Prowler Security Dashboard" closeAriaLabel="Close">
+    <Modal visible header="Sign in to AI-Assisted Security Triage" closeAriaLabel="Close">
       <form
         onSubmit={(e) => { e.preventDefault(); submit(); }}
         autoComplete="on"

@@ -377,7 +377,7 @@ export default function Findings() {
   }
   async function bulkInsights() {
     const items = selected.filter((s) => !isGroupRow(s) && !s.remediation_s3_key);
-    await runBulk(items, 'insights', 'Bedrock Insights generated');
+    await runBulk(items, 'insights', 'AI Generated Insights generated');
   }
 
   const activeFilterPills = query.tokens.map((t, i) => (
@@ -399,7 +399,7 @@ export default function Findings() {
       header={
         <Header
           variant="h1"
-          description="All Prowler findings for this account. Click a row to see the Bedrock insight and dispatch a DevOps Agent investigation."
+          description="All Prowler findings for this account. Click a row to see the AI-generated insight and dispatch a DevOps Agent investigation."
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               <Toggle checked={groupByCheck} onChange={(e) => setGroupByCheck(e.detail.checked)}>
@@ -512,7 +512,7 @@ export default function Findings() {
                       },
                       {
                         id: 'insights',
-                        text: `Generate Bedrock Insights for ${selected.filter((s) => !s.remediation_s3_key).length}`,
+                        text: `Generate AI Generated Insights for ${selected.filter((s) => !s.remediation_s3_key).length}`,
                         disabled: selected.filter((s) => !s.remediation_s3_key).length === 0,
                       },
                     ]}

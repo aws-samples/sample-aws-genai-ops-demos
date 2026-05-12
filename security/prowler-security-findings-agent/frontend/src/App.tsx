@@ -88,7 +88,7 @@ export default function App() {
       <TopNavigation
         identity={{
           href: '/',
-          title: 'AI Ops Security Center',
+          title: 'AI-Assisted Security Triage',
         }}
         utilities={[
           {

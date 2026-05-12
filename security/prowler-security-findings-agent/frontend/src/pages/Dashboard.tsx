@@ -332,9 +332,9 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="soc-kpi soc-kpi--accent">
-              <div className="soc-kpi-label">Bedrock insights</div>
+              <div className="soc-kpi-label">AI Generated Insights</div>
               <div className="soc-kpi-value">{loading ? '…' : withInsights}</div>
-              <div className="soc-kpi-hint">AI remediations</div>
+              <div className="soc-kpi-hint">Bedrock playbooks</div>
             </div>
           </div>
         </div>
@@ -396,7 +396,7 @@ export default function Dashboard() {
               description={
                 criticalFail === 0 && criticalTotal > 0
                   ? `All ${criticalTotal} CRITICAL checks are passing ✓ — listing HIGH/MEDIUM failing findings below.`
-                  : 'The fastest way to demo Bedrock Insights + DevOps Agent investigation'
+                  : 'The fastest way to demo AI Generated Insights and DevOps Agent investigation'
               }
             >
               Top priority findings

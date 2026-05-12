@@ -15,7 +15,7 @@ import { CostEvent, CostSummary, getCostSummary, listCostEvents } from '../api';
 import { COLOR } from '../theme';
 
 const TYPE_LABEL: Record<string, string> = {
-  bedrock_insights: 'Bedrock Insights',
+  bedrock_insights: 'AI Generated Insights',
   devops_agent_dispatch: 'DevOps Agent dispatch',
   scan: 'Prowler scan',
 };
@@ -63,7 +63,7 @@ function CumulativeChart({ events }: { events: CostEvent[] }) {
   if (sorted.length === 0) {
     return (
       <Box color="text-status-inactive" textAlign="center" padding="l">
-        No cost events yet. Cost data appears after scans, Bedrock Insights, or DevOps Agent dispatches.
+        No cost events yet. Cost data appears after scans, AI Generated Insights, or DevOps Agent dispatches.
       </Box>
     );
   }
@@ -234,7 +234,7 @@ export default function Cost() {
             <div>
               <h1>Cost & GenAI telemetry</h1>
               <div className="soc-hero-sub">
-                Every Bedrock invocation, DevOps Agent dispatch, and Prowler scan — live, per-event, with token-level pricing.
+                Every AI-generated insight, DevOps Agent dispatch, and Prowler scan — live, per-event, with token-level pricing.
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: COLOR.fgDim, maxWidth: 720 }}>
                 Prices are hardcoded for the demo (Nova Lite 2: $0.00006 in / $0.00024 out per 1K tokens · DevOps Agent: flat $0.50 per incident · Prowler scan: flat $0.02 per run). Real billing lives in AWS Cost Explorer.
@@ -250,7 +250,7 @@ export default function Cost() {
               <div className="soc-kpi-hint">{summary?.total_events ?? 0} events</div>
             </div>
             <div className="soc-kpi">
-              <div className="soc-kpi-label">Bedrock Insights</div>
+              <div className="soc-kpi-label">AI Generated Insights</div>
               <div className="soc-kpi-value">{loading && !summary ? '…' : fmtUsd(bedrock, 4)}</div>
               <div className="soc-kpi-hint">
                 {bedrockCount} invocation(s) · {fmtInt(summary?.total_input_tokens)} in / {fmtInt(summary?.total_output_tokens)} out
@@ -307,7 +307,7 @@ export default function Cost() {
               <Box textAlign="center" padding={{ vertical: 'l' }}>
                 <Box color="text-status-inactive">No cost events yet.</Box>
                 <Box variant="small" color="text-status-inactive">
-                  Trigger a scan, generate Bedrock Insights on a finding, or dispatch a DevOps Agent investigation.
+                  Trigger a scan, generate AI Generated Insights on a finding, or dispatch a DevOps Agent investigation.
                 </Box>
               </Box>
             }

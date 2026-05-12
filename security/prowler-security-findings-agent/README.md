@@ -1,4 +1,4 @@
-# AI-Powered Security Posture with Prowler + DevOps Agent
+# AI-Assisted Security Triage for AWS: Prowler, Bedrock and DevOps Agent
 *Continuous security scanning of your AWS account with [Prowler](https://github.com/prowler-cloud/prowler), AI-generated remediation playbooks via Amazon Bedrock (Nova Lite 2), and automated incident response through Amazon DevOps Agent — all surfaced in a React dashboard.*
 
 ## Overview
@@ -19,7 +19,7 @@ In addition, the dashboard ships a **⌘K command palette**, URL-synced filters,
 - **Difficulty**: Intermediate
 - **Target Audience**: Security Engineers, Cloud SecOps, DevOps Engineers, SREs
 - **Key Technologies**: Prowler, Amazon DevOps Agent, Amazon Bedrock (Nova Lite 2), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
-- **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Bedrock usage per finding you click "Generate Bedrock Insights" on (see [Cost](#cost))
+- **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Bedrock usage per finding you click "Generate AI Insights" on (see [Cost](#cost))
 
 ## Architecture
 
@@ -111,7 +111,7 @@ aws cognito-idp admin-set-user-password \
 1. Open the dashboard URL and sign in.
 2. On **Dashboard**, click **Run scan now**. The Fargate task starts; first-time pulls of the Prowler image take ~90s.
 3. Findings arrive in 3-10 minutes depending on account size.
-4. Open **Findings** → click any CRITICAL/HIGH item → press **Generate Bedrock Insights** to produce the Bedrock-generated playbook on demand (shown in the Overview tab).
+4. Open **Findings** → click any CRITICAL/HIGH item → press **Generate AI Insights** to produce the Bedrock-generated playbook on demand (shown in the Overview tab).
 5. From the same finding, press **Investigate with DevOps Agent** to dispatch a single incident to the Agent. The Investigation tab streams backlog task status and journal records live; the Agent Operator console shows the full reasoning trace.
 
 ## CDK Stacks
@@ -209,7 +209,7 @@ All costs approximate, `us-east-1` pricing.
 ### Per scan (~$0.50 + Bedrock usage)
 
 - Fargate task: 1 vCPU, 2 GB RAM, ~5 min runtime → ~$0.02
-- **Nova Lite 2 remediation** (Converse API, 1 call per finding you click "Generate Bedrock Insights" on): ~$0.0002–0.001 per finding depending on OCSF size
+- **Nova Lite 2 remediation** (Converse API, 1 call per finding you click "Generate AI Insights" on): ~$0.0002–0.001 per finding depending on OCSF size
 - CodeBuild: only runs on image rebuilds
 
 ### DevOps Agent usage
