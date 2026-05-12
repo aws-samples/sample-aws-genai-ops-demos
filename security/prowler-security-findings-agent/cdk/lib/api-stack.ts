@@ -14,6 +14,8 @@ export interface ApiStackProps extends cdk.StackProps {
   scannerTaskDefinitionArn: string;
   scannerSubnetIds: string[];
   scannerSecurityGroupId: string;
+  /** CloudWatch log group the scanner writes to — used by /scans/running/{taskArn}/logs. */
+  scannerLogGroupName: string;
   authenticatedRoleArn: string;
   devOpsAgentTopicArn: string;
   devOpsAgentRegion: string;
@@ -105,6 +107,16 @@ export class ApiStack extends cdk.Stack {
         },
       },
     }));
+    // Read scanner CloudWatch logs so /scans/running/{taskArn}/logs can return
+    // live progress parsed from Prowler's tqdm output.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:FilterLogEvents', 'logs:GetLogEvents', 'logs:DescribeLogStreams'],
+      resources: [
+        `arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:${props.scannerLogGroupName}`,
+        `arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:${props.scannerLogGroupName}:*`,
+      ],
+    }));
 
     // Manual investigate → publish to the DevOps Agent SNS topic
     role.addToPolicy(new iam.PolicyStatement({
@@ -171,6 +183,7 @@ export class ApiStack extends cdk.Stack {
         SCANNER_TASK_DEFINITION_ARN: props.scannerTaskDefinitionArn,
         SCANNER_SUBNET_IDS: props.scannerSubnetIds.join(','),
         SCANNER_SECURITY_GROUP_ID: props.scannerSecurityGroupId,
+        SCANNER_LOG_GROUP: props.scannerLogGroupName,
         DEVOPS_AGENT_TOPIC_ARN: props.devOpsAgentTopicArn,
         DEVOPS_AGENT_REGION: props.devOpsAgentRegion,
         DEVOPS_AGENT_SPACE_ID: props.devOpsAgentSpaceId,

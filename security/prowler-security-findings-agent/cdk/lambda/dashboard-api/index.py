@@ -14,14 +14,18 @@ Routes (matched against event['requestContext']['http']['path'] + method):
     GET  /findings/{finding_uid}/investigation     — DevOps Agent status + journal for finding
     GET  /investigations                           — every DevOps Agent backlog task dispatched by this demo
     GET  /scans                                    — most recent scan_ids (derived from findings)
+    GET  /scans/running                            — ECS tasks currently running/recently stopped
+    GET  /scans/running/{taskArn}/logs             — tqdm progress + phase parsed from CloudWatch
     POST /scans                                    — start a Prowler Fargate task on-demand
 """
 
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any
+from urllib.parse import unquote
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -34,6 +38,7 @@ _s3 = boto3.client('s3')
 _ecs = boto3.client('ecs')
 _sns = boto3.client('sns')
 _lambda = boto3.client('lambda')
+_logs = boto3.client('logs')
 
 TABLE = _ddb.Table(os.environ['FINDINGS_TABLE'])
 REMEDIATIONS_BUCKET = os.environ['REMEDIATIONS_BUCKET']
@@ -41,6 +46,7 @@ CLUSTER_ARN = os.environ['SCANNER_CLUSTER_ARN']
 TASK_DEF_ARN = os.environ['SCANNER_TASK_DEFINITION_ARN']
 SUBNETS = [s for s in os.environ['SCANNER_SUBNET_IDS'].split(',') if s]
 SG_ID = os.environ['SCANNER_SECURITY_GROUP_ID']
+SCANNER_LOG_GROUP = os.environ.get('SCANNER_LOG_GROUP', '/aws/ecs/prowler-security-scanner')
 DEVOPS_AGENT_TOPIC_ARN = os.environ.get('DEVOPS_AGENT_TOPIC_ARN', '')
 DEVOPS_AGENT_REGION = os.environ.get('DEVOPS_AGENT_REGION', '')
 DEVOPS_AGENT_SPACE_ID = os.environ.get('DEVOPS_AGENT_SPACE_ID', '')
@@ -583,6 +589,84 @@ def _list_running_scans() -> dict[str, Any]:
     return _json(200, {'tasks': tasks[:10]})
 
 
+# Matches tqdm's progress line: "description |▉▉▉▉| 123/590 [ 21%] ..."
+# Prowler writes an ANSI-coloured variant; strip ANSI first.
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+_TQDM_RE = re.compile(r'(?P<label>.{1,80}?)\s*\|[^|]*\|\s*(?P<current>\d+)\s*/\s*(?P<total>\d+)\s*\[\s*(?P<pct>\d+)\s*%\s*\]')
+
+
+def _parse_scanner_line(raw: str) -> dict[str, Any] | None:
+    clean = _ANSI_RE.sub('', raw).strip()
+    if not clean:
+        return None
+    m = _TQDM_RE.search(clean)
+    if m:
+        try:
+            return {
+                'phase': 'scanning',
+                'label': m.group('label').strip() or 'Scanning…',
+                'current': int(m.group('current')),
+                'total': int(m.group('total')),
+                'percent': int(m.group('pct')),
+                'line': clean,
+            }
+        except (ValueError, TypeError):
+            pass
+    # High-signal phase transitions from the wrapper script.
+    lower = clean.lower()
+    if 'starting prowler' in lower:
+        return {'phase': 'starting', 'label': 'Starting Prowler scanner', 'percent': 0, 'line': clean}
+    if 'prowler exited' in lower:
+        return {'phase': 'uploading', 'label': 'Prowler finished · uploading report', 'percent': 95, 'line': clean}
+    if 'uploading' in lower and 's3://' in lower:
+        return {'phase': 'uploading', 'label': 'Uploading OCSF report to S3', 'percent': 97, 'line': clean}
+    if '[scanner] done' in lower:
+        return {'phase': 'done', 'label': 'Scan complete', 'percent': 100, 'line': clean}
+    return None
+
+
+def _get_scan_logs(task_arn: str) -> dict[str, Any]:
+    """Parse the tail of the scanner CloudWatch Logs for a task.
+
+    ECS awslogs driver writes to streams named "prowler/<container>/<taskId>".
+    We read the last ~200 events and extract the newest tqdm progress line
+    plus the latest phase transition (starting / scanning / uploading / done)
+    so the UI can render a percentage and a descriptive label.
+    """
+    # Frontend passes the ARN URL-encoded (%3A, %2F) as a single path segment;
+    # the Function URL keeps it encoded. Decode before extracting the task id.
+    task_arn = unquote(task_arn or '')
+    task_id = task_arn.split('/')[-1]
+    if not task_id:
+        return _json(400, {'error': 'taskArn required'})
+    prefix = f'prowler/Prowler/{task_id}'
+    try:
+        resp = _logs.filter_log_events(
+            logGroupName=SCANNER_LOG_GROUP,
+            logStreamNamePrefix=prefix,
+            limit=200,
+        )
+    except _logs.exceptions.ResourceNotFoundException:
+        return _json(200, {'taskArn': task_arn, 'progress': None, 'events': []})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('filter_log_events failed for %s: %s', task_id, exc)
+        return _json(200, {'taskArn': task_arn, 'progress': None, 'events': [], 'error': str(exc)})
+
+    events = resp.get('events') or []
+    messages = [e.get('message') or '' for e in events]
+
+    # Newest progress line wins; scan right-to-left for the first one that parses.
+    progress: dict[str, Any] | None = None
+    for msg in reversed(messages):
+        parsed = _parse_scanner_line(msg)
+        if parsed:
+            progress = parsed
+            break
+
+    tail = [m.strip() for m in messages[-10:] if m and m.strip()]
+    return _json(200, {'taskArn': task_arn, 'progress': progress, 'tail': tail})
+
+
 def _run_scan() -> dict[str, Any]:
     if not SUBNETS or not SG_ID:
         return _json(500, {'error': 'scanner networking not configured'})
@@ -797,6 +881,10 @@ def handler(event, context):
         return _list_scans()
     if method == 'GET' and parts == ['scans', 'running']:
         return _list_running_scans()
+    # /scans/running/<taskArn>/logs — live progress from CloudWatch for a task.
+    # The taskArn has embedded slashes; UI URL-encodes it into a single segment.
+    if method == 'GET' and len(parts) == 4 and parts[0] == 'scans' and parts[1] == 'running' and parts[3] == 'logs':
+        return _get_scan_logs(parts[2])
     if method == 'POST' and parts == ['scans']:
         return _run_scan()
 

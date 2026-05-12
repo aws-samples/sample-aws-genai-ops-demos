@@ -196,6 +196,23 @@ export interface RunningTask {
 export const listRunningScans = () =>
   signedFetch('GET', '/scans/running') as Promise<{ tasks: RunningTask[] }>;
 
+export interface ScanProgress {
+  phase: 'starting' | 'scanning' | 'uploading' | 'done' | string;
+  label: string;
+  current?: number;
+  total?: number;
+  percent: number;
+  line: string;
+}
+
+/** Fetch live progress parsed from the scanner's CloudWatch Logs. */
+export const getRunningScanLogs = (taskArn: string) =>
+  signedFetch('GET', `/scans/running/${encodeURIComponent(taskArn)}/logs`) as Promise<{
+    taskArn: string;
+    progress: ScanProgress | null;
+    tail: string[];
+  }>;
+
 export const runScan = () =>
   signedFetch('POST', '/scans') as Promise<{ task_arns: string[] }>;
 

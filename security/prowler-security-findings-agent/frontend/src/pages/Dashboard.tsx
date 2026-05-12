@@ -7,10 +7,21 @@ import {
   Container,
   ContentLayout,
   Header,
+  LiveRegion,
+  ProgressBar,
   SpaceBetween,
   StatusIndicator,
 } from '@cloudscape-design/components';
-import { listFindings, listRunningScans, listScans, runScan, Finding, RunningTask } from '../api';
+import {
+  getRunningScanLogs,
+  listFindings,
+  listRunningScans,
+  listScans,
+  runScan,
+  Finding,
+  RunningTask,
+  ScanProgress,
+} from '../api';
 import { COLOR, severityRank } from '../theme';
 
 function shortTaskId(arn: string): string {
@@ -176,6 +187,7 @@ export default function Dashboard() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [scans, setScans] = useState<Array<{ scan_id: string; last_seen_at: string }>>([]);
   const [running, setRunning] = useState<RunningTask[]>([]);
+  const [progressByTask, setProgressByTask] = useState<Record<string, ScanProgress | null>>({});
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -222,6 +234,29 @@ export default function Dashboard() {
     }, 10000);
     return () => clearInterval(id);
   }, [hasActiveScan]);
+
+  // Progress polling: while any task is live, fetch CloudWatch-parsed
+  // progress every 5s for each RUNNING task. Kept separate from the main
+  // refresh loop so the progress bar updates faster than the task-status one.
+  useEffect(() => {
+    const live = running.filter((t) => t.lastStatus === 'RUNNING' || t.lastStatus === 'PENDING');
+    if (live.length === 0) return;
+    let cancelled = false;
+    const pull = async () => {
+      const results = await Promise.allSettled(live.map((t) => getRunningScanLogs(t.taskArn)));
+      if (cancelled) return;
+      setProgressByTask((prev) => {
+        const next = { ...prev };
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') next[live[i].taskArn] = r.value.progress;
+        });
+        return next;
+      });
+    };
+    pull();
+    const id = setInterval(pull, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [running]);
 
   async function startScan() {
     setStarting(true);
@@ -481,21 +516,52 @@ export default function Dashboard() {
               </Box>
             </Box>
           ) : (
-            <SpaceBetween size="xs">
+            <SpaceBetween size="s">
+              {scans.length === 0 && activeScanCount > 0 && (
+                <Alert type="info" header="First scan is running">
+                  Your first Prowler scan was started automatically at deploy time so the dashboard isn't empty
+                  when you open it. Scan duration depends on account size: typically 3–10 min, larger accounts
+                  can take 20+ min. Findings appear below as soon as ingest completes.
+                </Alert>
+              )}
               {running.map((t) => {
                 const ok = t.lastStatus === 'STOPPED' && (!t.stoppedReason || t.stoppedReason.toLowerCase().includes('essential container'));
                 const color = t.lastStatus === 'RUNNING' ? 'var(--soc-accent)' : t.lastStatus === 'STOPPED' ? (ok ? 'var(--soc-ok)' : 'var(--soc-critical)') : 'var(--soc-medium)';
+                const progress = progressByTask[t.taskArn] || null;
+                const isLive = t.lastStatus === 'RUNNING' || t.lastStatus === 'PENDING' || t.lastStatus === 'PROVISIONING';
                 return (
-                  <div key={t.taskArn} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', border: '1px solid var(--soc-border)', borderRadius: 6, background: 'var(--soc-bg)' }}>
-                    <span style={{ display: 'inline-block', width: 10, height: 10, background: color, borderRadius: '50%', boxShadow: `0 0 10px ${color}` }} />
-                    <code style={{ color: COLOR.fg, fontSize: 12 }}>{shortTaskId(t.taskArn)}</code>
-                    <span style={{ color, fontWeight: 600, fontSize: 12 }}>{t.lastStatus}</span>
-                    {t.lastStatus === 'RUNNING' && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>Prowler scanning your account…</span>}
-                    {t.lastStatus === 'PROVISIONING' && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>pulling image</span>}
-                    {t.lastStatus === 'PENDING' && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>starting container</span>}
-                    {t.lastStatus === 'STOPPED' && ok && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>finished</span>}
-                    {t.lastStatus === 'STOPPED' && !ok && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>{t.stoppedReason}</span>}
-                    {t.createdAt && <span style={{ color: COLOR.fgDim, fontSize: 11, marginLeft: 'auto' }}>started {new Date(t.createdAt).toLocaleTimeString()}</span>}
+                  <div key={t.taskArn} style={{ padding: '10px 14px', border: '1px solid var(--soc-border)', borderRadius: 6, background: 'var(--soc-bg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ display: 'inline-block', width: 10, height: 10, background: color, borderRadius: '50%', boxShadow: `0 0 10px ${color}` }} />
+                      <code style={{ color: COLOR.fg, fontSize: 12 }}>{shortTaskId(t.taskArn)}</code>
+                      <span style={{ color, fontWeight: 600, fontSize: 12 }}>{t.lastStatus}</span>
+                      {t.lastStatus === 'PROVISIONING' && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>pulling image</span>}
+                      {t.lastStatus === 'PENDING' && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>starting container</span>}
+                      {t.lastStatus === 'STOPPED' && ok && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>finished</span>}
+                      {t.lastStatus === 'STOPPED' && !ok && <span style={{ color: COLOR.fgDim, fontSize: 11 }}>{t.stoppedReason}</span>}
+                      {t.createdAt && <span style={{ color: COLOR.fgDim, fontSize: 11, marginLeft: 'auto' }}>started {new Date(t.createdAt).toLocaleTimeString()}</span>}
+                    </div>
+                    {isLive && (
+                      <Box margin={{ top: 'xs' }}>
+                        <LiveRegion>
+                          <ProgressBar
+                            status="in-progress"
+                            value={progress?.percent ?? 0}
+                            label={progress?.label ?? 'Warming up Fargate task…'}
+                            description={
+                              progress?.current && progress?.total
+                                ? `Check ${progress.current} of ${progress.total}`
+                                : t.lastStatus === 'PROVISIONING'
+                                ? 'Pulling Prowler image from ECR'
+                                : t.lastStatus === 'PENDING'
+                                ? 'Allocating compute capacity'
+                                : 'Prowler is enumerating AWS services'
+                            }
+                            additionalInfo={progress?.line ? <code style={{ fontSize: 11, color: COLOR.fgDim }}>{progress.line.slice(0, 140)}</code> : undefined}
+                          />
+                        </LiveRegion>
+                      </Box>
+                    )}
                   </div>
                 );
               })}

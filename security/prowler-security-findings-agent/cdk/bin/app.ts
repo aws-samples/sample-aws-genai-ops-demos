@@ -97,6 +97,7 @@ const apiStack = new ApiStack(app, `ProwlerSecurityApi-${region}`, {
   scannerTaskDefinitionArn: scannerStack.taskDefinitionArn,
   scannerSubnetIds: scannerStack.subnetIds,
   scannerSecurityGroupId: scannerStack.securityGroupId,
+  scannerLogGroupName: scannerStack.logGroupName,
   authenticatedRoleArn: authStack.authenticatedRoleArn,
   devOpsAgentTopicArn: devOpsAgentStack.triggerTopicArn,
   devOpsAgentRegion,
