@@ -18,6 +18,45 @@ if (-not (Test-Path "$DistDir\index.html")) {
 }
 
 Push-Location "$ScriptDir\..\cdk"
+
+# If GuardDuty Runtime Monitoring is on for ECS Fargate, it auto-creates an
+# interface endpoint (com.amazonaws.<region>.guardduty-data) plus a security
+# group inside the Scanner VPC, both tagged GuardDutyManaged=true. CDK does
+# not own them, so destroying the Scanner stack fails with "subnet has
+# dependencies". Sweep them first, then wait for the ENIs to detach.
+$ScannerStack = "ProwlerSecurityScanner-$Region"
+$ScannerVpc = aws cloudformation describe-stack-resources `
+    --stack-name $ScannerStack `
+    --region $Region `
+    --query "StackResources[?ResourceType=='AWS::EC2::VPC'].PhysicalResourceId | [0]" `
+    --output text 2>$null
+if ($ScannerVpc -and $ScannerVpc -ne "None") {
+  $GdEndpoints = (aws ec2 describe-vpc-endpoints `
+      --region $Region `
+      --filters "Name=vpc-id,Values=$ScannerVpc" "Name=tag:GuardDutyManaged,Values=true" `
+      --query "VpcEndpoints[].VpcEndpointId" --output text 2>$null) -split "\s+" | Where-Object { $_ }
+  if ($GdEndpoints) {
+    Write-Host "[cleanup] removing GuardDuty-managed endpoints in $ScannerVpc : $($GdEndpoints -join ', ')"
+    aws ec2 delete-vpc-endpoints --region $Region --vpc-endpoint-ids $GdEndpoints | Out-Null
+    for ($i = 0; $i -lt 24; $i++) {
+      $Count = aws ec2 describe-network-interfaces `
+          --region $Region `
+          --filters "Name=vpc-id,Values=$ScannerVpc" "Name=interface-type,Values=vpc_endpoint" `
+          --query "length(NetworkInterfaces)" --output text 2>$null
+      if ($Count -eq "0") { break }
+      Start-Sleep -Seconds 5
+    }
+  }
+  $GdSgs = (aws ec2 describe-security-groups `
+      --region $Region `
+      --filters "Name=vpc-id,Values=$ScannerVpc" "Name=group-name,Values=GuardDutyManagedSecurityGroup-*" `
+      --query "SecurityGroups[].GroupId" --output text 2>$null) -split "\s+" | Where-Object { $_ }
+  foreach ($Sg in $GdSgs) {
+    Write-Host "[cleanup] deleting orphan GuardDuty SG $Sg"
+    aws ec2 delete-security-group --region $Region --group-id $Sg 2>$null | Out-Null
+  }
+}
+
 $Stacks = @(
   "ProwlerSecurityFrontend-$Region",
   "ProwlerSecurityApi-$Region",
