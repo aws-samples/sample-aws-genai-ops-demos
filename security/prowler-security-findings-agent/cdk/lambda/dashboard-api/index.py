@@ -881,10 +881,15 @@ def handler(event, context):
         return _list_scans()
     if method == 'GET' and parts == ['scans', 'running']:
         return _list_running_scans()
-    # /scans/running/<taskArn>/logs — live progress from CloudWatch for a task.
-    # The taskArn has embedded slashes; UI URL-encodes it into a single segment.
-    if method == 'GET' and len(parts) == 4 and parts[0] == 'scans' and parts[1] == 'running' and parts[3] == 'logs':
-        return _get_scan_logs(parts[2])
+    # /scans/running/<taskArn>/logs — live progress for a task. The task ARN
+    # has embedded slashes (arn:aws:ecs:.../task/cluster/id). Even though the
+    # browser URL-encodes it as a single segment, the SigV4 signer re-decodes
+    # it before signing (so the wire path matches AWS canonicalisation),
+    # meaning the ARN arrives here split across multiple path parts. Accept
+    # any number of segments between `running` and `logs` and join them back.
+    if (method == 'GET' and len(parts) >= 4
+            and parts[0] == 'scans' and parts[1] == 'running' and parts[-1] == 'logs'):
+        return _get_scan_logs('/'.join(parts[2:-1]))
     if method == 'POST' and parts == ['scans']:
         return _run_scan()
 
