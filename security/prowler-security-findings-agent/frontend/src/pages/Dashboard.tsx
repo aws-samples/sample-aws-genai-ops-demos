@@ -8,7 +8,6 @@ import {
   ContentLayout,
   Header,
   LiveRegion,
-  ProgressBar,
   SpaceBetween,
   StatusIndicator,
 } from '@cloudscape-design/components';
@@ -502,7 +501,6 @@ export default function Dashboard() {
             <Header
               variant="h2"
               description="Live ECS Fargate tasks · auto-refresh 10s"
-              actions={<Button iconName="refresh" onClick={refreshRunning} ariaLabel="Refresh active scans">Refresh</Button>}
             >
               Active scans {activeScanCount > 0 && <span style={{ color: 'var(--soc-critical)', fontWeight: 700 }}>· {activeScanCount} live</span>}
             </Header>
@@ -544,21 +542,27 @@ export default function Dashboard() {
                     {isLive && (
                       <Box margin={{ top: 'xs' }}>
                         <LiveRegion>
-                          <ProgressBar
-                            status="in-progress"
-                            value={progress?.percent ?? 0}
-                            label={progress?.label ?? 'Warming up Fargate task…'}
-                            description={
-                              progress?.current && progress?.total
-                                ? `Check ${progress.current} of ${progress.total}`
-                                : t.lastStatus === 'PROVISIONING'
-                                ? 'Pulling Prowler image from ECR'
-                                : t.lastStatus === 'PENDING'
-                                ? 'Allocating compute capacity'
-                                : 'Prowler is enumerating AWS services'
-                            }
-                            additionalInfo={progress?.line ? <code style={{ fontSize: 11, color: COLOR.fgDim }}>{progress.line.slice(0, 140)}</code> : undefined}
-                          />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                            <span className="soc-pulse soc-pulse--accent" aria-hidden="true" />
+                            <span style={{ color: COLOR.fg, fontWeight: 600 }}>
+                              {progress?.label
+                                ?? (t.lastStatus === 'PROVISIONING' ? 'Pulling Prowler image from ECR'
+                                : t.lastStatus === 'PENDING' ? 'Allocating compute capacity'
+                                : 'Warming up Fargate task…')}
+                            </span>
+                            <span style={{ color: COLOR.fgDim }}>
+                              {progress?.current && progress?.total
+                                ? `· check ${progress.current} of ${progress.total}`
+                                : t.lastStatus === 'RUNNING'
+                                ? '· Prowler is enumerating AWS services (no progress breakdown is emitted — logs show activity)'
+                                : ''}
+                            </span>
+                          </div>
+                          {progress?.line && (
+                            <Box margin={{ top: 'xxs' }}>
+                              <code style={{ fontSize: 11, color: COLOR.fgDim }}>{progress.line.slice(0, 140)}</code>
+                            </Box>
+                          )}
                         </LiveRegion>
                       </Box>
                     )}
