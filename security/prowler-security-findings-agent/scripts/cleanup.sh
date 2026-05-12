@@ -28,6 +28,47 @@ if [ ! -f "$SCRIPT_DIR/../frontend/dist/index.html" ]; then
 fi
 
 cd "$SCRIPT_DIR/../cdk"
+
+# If GuardDuty Runtime Monitoring is on for ECS Fargate, it auto-creates an
+# interface endpoint (com.amazonaws.<region>.guardduty-data) plus a security
+# group inside the Scanner VPC, both tagged GuardDutyManaged=true. CDK does
+# not own them, so destroying the Scanner stack fails with "subnet has
+# dependencies". Sweep them first, then wait for the ENIs to detach.
+SCANNER_STACK="ProwlerSecurityScanner-$REGION"
+SCANNER_VPC=$(aws cloudformation describe-stack-resources \
+    --stack-name "$SCANNER_STACK" \
+    --region "$REGION" \
+    --query "StackResources[?ResourceType=='AWS::EC2::VPC'].PhysicalResourceId | [0]" \
+    --output text 2>/dev/null || echo "")
+if [ -n "$SCANNER_VPC" ] && [ "$SCANNER_VPC" != "None" ]; then
+  GD_ENDPOINTS=$(aws ec2 describe-vpc-endpoints \
+      --region "$REGION" \
+      --filters "Name=vpc-id,Values=$SCANNER_VPC" "Name=tag:GuardDutyManaged,Values=true" \
+      --query 'VpcEndpoints[].VpcEndpointId' --output text 2>/dev/null || echo "")
+  if [ -n "$GD_ENDPOINTS" ]; then
+    echo "[cleanup] removing GuardDuty-managed endpoints in $SCANNER_VPC: $GD_ENDPOINTS"
+    # shellcheck disable=SC2086
+    aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $GD_ENDPOINTS >/dev/null || true
+    # ENIs linger briefly after endpoint deletion; wait up to ~2min.
+    for _ in $(seq 1 24); do
+      COUNT=$(aws ec2 describe-network-interfaces \
+          --region "$REGION" \
+          --filters "Name=vpc-id,Values=$SCANNER_VPC" "Name=interface-type,Values=vpc_endpoint" \
+          --query 'length(NetworkInterfaces)' --output text 2>/dev/null || echo "0")
+      [ "$COUNT" = "0" ] && break
+      sleep 5
+    done
+  fi
+  GD_SGS=$(aws ec2 describe-security-groups \
+      --region "$REGION" \
+      --filters "Name=vpc-id,Values=$SCANNER_VPC" "Name=group-name,Values=GuardDutyManagedSecurityGroup-*" \
+      --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || echo "")
+  for SG in $GD_SGS; do
+    echo "[cleanup] deleting orphan GuardDuty SG $SG"
+    aws ec2 delete-security-group --region "$REGION" --group-id "$SG" >/dev/null || true
+  done
+fi
+
 STACKS=(
   "ProwlerSecurityFrontend-$REGION"
   "ProwlerSecurityApi-$REGION"
