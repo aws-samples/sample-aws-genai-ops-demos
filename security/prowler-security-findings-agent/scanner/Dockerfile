@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir prowler
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Strip Windows CRLF line endings that break the shebang on Linux.
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 # Create a non-root user for the scanner. Prowler only needs read access to the
 # target AWS account via the task role and write access under /tmp — no elevated
