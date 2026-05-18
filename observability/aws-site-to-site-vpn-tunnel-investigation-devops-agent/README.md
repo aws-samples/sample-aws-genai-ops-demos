@@ -57,7 +57,7 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
   aws ec2 create-key-pair --key-name vpn-demo-key `
     --query 'KeyMaterial' --output text | Set-Content -Path $HOME\.ssh\vpn-demo-key.pem -Encoding ASCII
   ```
-- **bash** 4+ and **jq** (or PowerShell 7+ on Windows — use `deploy-all.ps1` instead)
+- **bash** 4+ and **jq** (or PowerShell 5.1+ on Windows — use `deploy-all.ps1` instead)
 - No existing DevOps Agent Space needed — the setup script creates one
 
 ## Quick Start
@@ -127,7 +127,7 @@ export PYTHONPATH="$(cd ../.. && pwd)"
 
 # Deploy the MCP server stack
 cd infrastructure/cdk
-python3 -m venv .venv
+python3 -m venv .venv   # Skip if .venv already exists (e.g., from deploy-all.sh)
 source .venv/bin/activate
 pip install -r requirements.txt
 npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$REGION --no-cli-pager
@@ -144,7 +144,7 @@ $env:PYTHONPATH = (Resolve-Path ..\..\).Path
 
 # Deploy the MCP server stack
 Push-Location infrastructure\cdk
-python -m venv .venv
+python -m venv .venv   # Skip if .venv already exists (e.g., from deploy-all.ps1)
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output text)/$Region" --app ".venv\Scripts\python.exe app.py" --no-cli-pager
@@ -205,10 +205,7 @@ aws apigateway get-api-key --api-key $ApiKeyId --include-value `
 8. Enter the API key details (in the order shown in the console):
    - **API Key Name**: `vpn-mcp-api-key` (a label — can be any name)
    - **API Key Header**: `x-api-key`
-   - **API Key Value**: run this command to get it:
-     ```bash
-     aws apigateway get-api-key --api-key <ApiKeyId-from-step-3b> --include-value --query 'value' --output text --no-cli-pager
-     ```
+   - **API Key Value**: use the API key value from step 3b
 9. Click **Add** to register
 10. On the tool selection screen, select all three tools and click **Save**:
     - `get_service_dependencies`

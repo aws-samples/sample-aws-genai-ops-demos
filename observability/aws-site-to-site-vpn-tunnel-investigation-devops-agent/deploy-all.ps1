@@ -234,7 +234,7 @@ ping -c 1 -W 3 169.254.10.1 >/dev/null && echo "Tunnel1: OK" || echo "Tunnel1: F
 ping -c 1 -W 3 169.254.10.5 >/dev/null && echo "Tunnel2: OK" || echo "Tunnel2: FAIL"
 "@
 
-$libreswanScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//' | sudo bash -s"
+$libreswanScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//; 1s/^\xEF\xBB\xBF//' | sudo bash -s"
 
 # =============================================================================
 if ($Routing -eq "bgp") {
@@ -297,7 +297,7 @@ sleep 15
 echo "=== BGP ==="
 /usr/local/bin/gobgp neighbor
 "@
-    $bgpScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//' | sudo bash -s"
+    $bgpScript | ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sed 's/\r$//; 1s/^\xEF\xBB\xBF//' | sudo bash -s"
 } else {
     Write-Host "==> Step 8: Adding static route..." -ForegroundColor Cyan
     ssh $sshOpts.Split(" ") "${sshUser}@${cgwEip}" "sudo ip route add 10.0.0.0/16 via 169.254.10.1 dev vti1"

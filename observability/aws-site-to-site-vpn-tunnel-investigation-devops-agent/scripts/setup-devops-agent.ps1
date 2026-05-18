@@ -217,6 +217,8 @@ try {
     Write-Host "  Account        : $accountId" -ForegroundColor Cyan
     Write-Host "  Operator App   : $operatorUrl" -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "  NEXT: Deploy the MCP server (README Step 3) before running deploy-all.ps1" -ForegroundColor Yellow
+    Write-Host ""
     Write-Host "  Use these with deploy-all.ps1:"
     Write-Host "  -WebhookUrl '$webhookUrl'"
     Write-Host "  -WebhookSecret '$webhookSecret'"
