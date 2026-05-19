@@ -1,0 +1,134 @@
+#!/bin/bash
+set -e
+SCENARIO="$1"
+STATE_FILE="/opt/vpn-demo/active"
+BACKUP="/tmp/vpn-demo-backup"
+IPSEC_CONF="/etc/ipsec.d/vpn-demo.conf"
+IPSEC_SECRETS="/etc/ipsec.d/vpn-demo.secrets"
+GOBGP="/usr/local/bin/gobgp"
+
+[ -z "$SCENARIO" ] && echo "Usage: $0 <scenario>" && exit 1
+
+# Check state file
+if [ ! -f "$STATE_FILE" ]; then
+  echo "No scenario is currently active. Nothing to roll back."
+  exit 0
+fi
+
+ACTIVE=$(cat "$STATE_FILE")
+if [ "$ACTIVE" != "$SCENARIO" ]; then
+  echo "WARNING: $ACTIVE is currently active, not $SCENARIO"
+  echo "Run: sudo /opt/vpn-demo/rollback $ACTIVE"
+  exit 1
+fi
+
+# Verify injection is actually present on the system
+check_system_state() {
+  case "$1" in
+    psk-mismatch)
+      grep -q "WRONGKEY_injected" "$IPSEC_SECRETS" 2>/dev/null ;;
+    dpd-timeout)
+      iptables -C INPUT -p udp --dport 500 -j DROP 2>/dev/null ;;
+    proposal-mismatch)
+      grep -q "ike=aes128-sha1-modp1536" "$IPSEC_CONF" 2>/dev/null ;;
+    traffic-selector)
+      grep -q "leftsubnet=192.168.99.0/24" "$IPSEC_CONF" 2>/dev/null ;;
+    tunnel-down)
+      [ "$(ipsec whack --status 2>&1 | grep -c 'ESTABLISHED_IKE_SA')" -lt 2 ] ;;
+    throughput-degradation)
+      tc qdisc show dev vti1 2>/dev/null | grep -q "prio" ;;
+    bgp-down)
+      ! systemctl is-active --quiet gobgpd ;;
+    bgp-asn-mismatch)
+      grep -q "as = 65999" /etc/gobgp.toml 2>/dev/null ;;
+    bgp-hold-timer)
+      iptables -C INPUT -p tcp --dport 179 -j DROP 2>/dev/null ;;
+    bgp-route-withdraw)
+      ! $GOBGP global rib -a ipv4 2>/dev/null | grep -q "172.16.0.0/16" ;;
+  esac
+}
+
+if ! check_system_state "$SCENARIO"; then
+  echo "State file says $SCENARIO is active, but the system does not show it."
+  echo "The injection may have been manually fixed or the system rebooted."
+  echo "Clearing state file."
+  rm -f "$STATE_FILE"
+  exit 0
+fi
+
+echo "Active: $ACTIVE"
+echo "Rolling back $SCENARIO..."
+
+case "$SCENARIO" in
+  psk-mismatch)
+    cp -f "$BACKUP/vpn-demo.secrets" "$IPSEC_SECRETS"
+    ipsec secrets
+    ipsec auto --down tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    ipsec auto --up tunnel1
+    sleep 10
+    ipsec auto --up tunnel2
+    ;;
+  dpd-timeout)
+    iptables -D INPUT -p udp --dport 500 -j DROP 2>/dev/null || true
+    iptables -D INPUT -p udp --dport 4500 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p udp --dport 500 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p udp --dport 4500 -j DROP 2>/dev/null || true
+    ipsec auto --down tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    ipsec auto --up tunnel1
+    sleep 10
+    ipsec auto --up tunnel2
+    ;;
+  proposal-mismatch|traffic-selector)
+    cp -f "$BACKUP/vpn-demo.conf" "$IPSEC_CONF"
+    systemctl restart ipsec
+    ;;
+  tunnel-down)
+    ipsec auto --add tunnel1
+    ipsec auto --up tunnel1
+    sleep 10
+    ipsec auto --add tunnel2
+    ipsec auto --up tunnel2
+    ;;
+  throughput-degradation)
+    tc qdisc del dev vti1 root 2>/dev/null || true
+    tc qdisc del dev vti2 root 2>/dev/null || true
+    ;;
+  bgp-down)
+    systemctl start gobgpd
+    sleep 5
+    $GOBGP global rib add 172.16.0.0/16 origin igp -a ipv4
+    ;;
+  bgp-asn-mismatch)
+    systemctl stop gobgpd
+    cp -f "$BACKUP/gobgp.toml" /etc/gobgp.toml
+    systemctl start gobgpd
+    sleep 5
+    $GOBGP global rib add 172.16.0.0/16 origin igp -a ipv4
+    ;;
+  bgp-hold-timer)
+    iptables -D INPUT -p tcp --dport 179 -j DROP 2>/dev/null || true
+    iptables -D INPUT -p tcp --sport 179 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p tcp --dport 179 -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p tcp --sport 179 -j DROP 2>/dev/null || true
+    ;;
+  bgp-route-withdraw)
+    $GOBGP global rib add 172.16.0.0/16 origin igp -a ipv4
+    ;;
+  *)
+    echo "Unknown scenario: $SCENARIO"
+    exit 1
+    ;;
+esac
+
+rm -f "$STATE_FILE"
+
+# Verify system is clean after rollback
+if check_system_state "$SCENARIO"; then
+  echo "WARNING: Rollback completed but system still shows signs of $SCENARIO."
+  echo "Run: sudo /opt/vpn-demo/status"
+  exit 1
+fi
+
+echo "Rolled back: $SCENARIO — system verified clean"
