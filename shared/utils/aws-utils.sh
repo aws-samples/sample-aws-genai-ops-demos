@@ -19,10 +19,13 @@
 get_aws_region() {
     local region=""
     
-    # Check environment variables first
-    if [ -n "$AWS_DEFAULT_REGION" ]; then
+    # Check environment variables first.
+    # Use the ${VAR:-} default so callers that run under `set -u` (nounset)
+    # do not abort when the env var is not exported — common for users whose
+    # region comes from `aws configure set region` rather than a shell var.
+    if [ -n "${AWS_DEFAULT_REGION:-}" ]; then
         region="$AWS_DEFAULT_REGION"
-    elif [ -n "$AWS_REGION" ]; then
+    elif [ -n "${AWS_REGION:-}" ]; then
         region="$AWS_REGION"
     fi
     
