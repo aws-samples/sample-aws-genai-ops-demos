@@ -1,0 +1,26 @@
+# OpsCatalyst — Threat Model Security Review Stage
+# Add this stage to the Demo Library GitLab CI pipeline
+# Triggers on MRs targeting main branch
+
+threat-model:
+  stage: security-review
+  image: python:3.11-slim
+  before_script:
+    - pip install uv --quiet
+    - curl -fsSL https://kiro.dev/install.sh | bash  # TODO: confirm kiro-cli install method for CI
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - |
+      kiro-cli chat --agent threat-modeler --no-interactive \
+        --trust-tools="@threat-modeling-mcp-server/*" \
+        "Threat model this project using the threat modeling MCP Server"
+    - python gate_check.py .threatmodel/
+  artifacts:
+    paths:
+      - .threatmodel/
+    when: always
+  rules:
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+  allow_failure:
+    exit_codes:
+      - 0  # PASS and WARN both exit 0
