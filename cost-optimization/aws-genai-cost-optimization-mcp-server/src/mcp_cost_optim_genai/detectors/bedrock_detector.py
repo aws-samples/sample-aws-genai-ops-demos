@@ -748,12 +748,6 @@ class BedrockDetector(BaseDetector):
             if estimated_tokens < 150:
                 continue
             
-            monthly_requests = 1000
-            cost_without_caching = (monthly_requests * estimated_tokens * 0.00006) / 1000
-            cost_with_caching = (estimated_tokens * 0.00009 / 1000) + \
-                               ((monthly_requests - 1) * estimated_tokens * 0.000006 / 1000)
-            monthly_savings = cost_without_caching - cost_with_caching
-            
             finding = {
                 'type': 'nova_explicit_caching_opportunity',
                 'file': file_path,
@@ -762,8 +756,9 @@ class BedrockDetector(BaseDetector):
                 'estimated_static_tokens': estimated_tokens,
                 'service': 'bedrock',
                 'description': f'Nova model with large prompt (~{estimated_tokens} tokens) without explicit caching',
-                'cost_consideration': f'This prompt has ~{estimated_tokens} tokens that are repeated for each request. Without explicit caching, you\'re paying full price ($0.00006 per 1K tokens). With explicit caching, you\'d pay 90% less ($0.000006 per 1K tokens) after the first request.',
-                'potential_savings': f'${monthly_savings:.2f}/month (90% reduction)',
+                'cost_consideration': f'This prompt has ~{estimated_tokens} tokens that are repeated for each request. Without explicit caching, you pay full price per request. With explicit caching, cached tokens cost 90% less after the first request.',
+                'potential_savings': '90% reduction on cached input tokens (consistent across all Nova tiers)',
+                'pricing_note': 'Use AWS Pricing MCP Server to fetch current per-token rates for your specific Nova model tier',
                 'documentation': 'https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html',
                 'enrichment_required': {
                     'priority': 'HIGH',
@@ -776,7 +771,8 @@ class BedrockDetector(BaseDetector):
                         'documentation': 'https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html'
                     },
                     'validation': f'Estimated {estimated_tokens} tokens - {"✅ Meets minimum" if estimated_tokens >= 1000 else "❌ Below 1,000 token minimum - caching will NOT work"}',
-                    'recommendation': 'If below minimum, do NOT suggest prompt caching for this prompt'
+                    'recommendation': 'If below minimum, do NOT suggest prompt caching for this prompt',
+                    'pricing_action': 'Use AWS Pricing MCP Server to get current pricing for the specific Nova tier'
                 }
             }
             
