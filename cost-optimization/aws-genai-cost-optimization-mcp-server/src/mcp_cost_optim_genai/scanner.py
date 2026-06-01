@@ -13,6 +13,7 @@ from .scan_config import (
     find_scannable_files,
     estimate_scan_size,
     DEFAULT_SKIP_DIRS,
+    TEST_SKIP_DIRS,
 )
 from .utils import add_file_links_to_findings
 from .presentation_guidelines import PRESENTATION_GUIDELINES
@@ -34,7 +35,8 @@ class ProjectScanner:
         project_path: str,
         skip_dirs: Optional[Set[str]] = None,
         max_files: Optional[int] = None,
-        estimate_only: bool = False
+        estimate_only: bool = False,
+        include_tests: bool = False
     ) -> str:
         """Scan entire project directory with smart filtering.
         
@@ -43,6 +45,7 @@ class ProjectScanner:
             skip_dirs: Additional directories to skip (merged with defaults)
             max_files: Maximum number of files to scan (safety limit)
             estimate_only: If True, only return scan size estimate without scanning
+            include_tests: If True, include test directories and test files
             
         Returns:
             JSON string with scan results and findings
@@ -81,7 +84,7 @@ class ProjectScanner:
             scan_warning = None
 
         # Find all scannable files efficiently
-        scannable_files = find_scannable_files(path, effective_skip_dirs, max_files)
+        scannable_files = find_scannable_files(path, effective_skip_dirs, max_files, include_tests=include_tests)
         
         findings = []
         files_scanned = 0
