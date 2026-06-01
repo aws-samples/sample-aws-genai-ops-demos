@@ -42,8 +42,8 @@ class BedrockDetector(BaseDetector):
     }
 
     def can_analyze(self, file_path: Path) -> bool:
-        """Check if file is Python or TypeScript/JavaScript."""
-        return file_path.suffix in [".py", ".ts", ".js", ".tsx", ".jsx"]
+        """Check if file type is supported for Bedrock pattern detection."""
+        return file_path.suffix in [".py", ".ts", ".js", ".tsx", ".jsx", ".yaml", ".yml", ".json", ".tf", ".tfvars"]
     
     def _parse_model_id(self, model_id: str) -> Dict[str, Any]:
         """Parse a Bedrock model ID into structured components.
