@@ -31,7 +31,7 @@ Click on the relevant below badge to automatically add this IDE MCP server to yo
 
 | Kiro | Cursor | VS Code |
 |:----:|:------:|:-------:|
-| [![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/mcp/add?name=genai-cost-optimizer&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22mcp-cost-optim-genai%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22scan_project%22%2C%22analyze_file%22%5D%7D) | [![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en/install-mcp?name=genai-cost-optimizer&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJtY3AtY29zdC1vcHRpbS1nZW5haSJdLCJlbnYiOnsiRkFTVE1DUF9MT0dfTEVWRUwiOiJFUlJPUiJ9LCJkaXNhYmxlZCI6ZmFsc2UsImF1dG9BcHByb3ZlIjpbInNjYW5fcHJvamVjdCIsImFuYWx5emVfZmlsZSJdfQ%3D%3D) | [![Install on VS Code](https://img.shields.io/badge/Install_on-VS_Code-FF9900?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=GenAI%20Cost%20Optimizer&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22mcp-cost-optim-genai%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22scan_project%22%2C%22analyze_file%22%5D%7D) |
+| [![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/mcp/add?name=genai-cost-optimizer&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22.%22%2C%22awslabs-genai-cost-optim-mcp-server%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22scan_project%22%2C%22analyze_file%22%5D%7D) | [![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en/install-mcp?name=genai-cost-optimizer&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCIuIiwiYXdzbGFicy1nZW5haS1jb3N0LW9wdGltLW1jcC1zZXJ2ZXIiXSwiZW52Ijp7IkZBU1RNQ1BfTE9HX0xFVkVMIjoiRVJST1IifSwiZGlzYWJsZWQiOmZhbHNlLCJhdXRvQXBwcm92ZSI6WyJzY2FuX3Byb2plY3QiLCJhbmFseXplX2ZpbGUiXX0=) | [![Install on VS Code](https://img.shields.io/badge/Install_on-VS_Code-FF9900?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=GenAI%20Cost%20Optimizer&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22.%22%2C%22awslabs-genai-cost-optim-mcp-server%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22scan_project%22%2C%22analyze_file%22%5D%7D) |
 
 Or manually configure the MCP server in your MCP client configuration:
 
@@ -40,7 +40,7 @@ Or manually configure the MCP server in your MCP client configuration:
   "mcpServers": {
     "genai-cost-optimizer": {
       "command": "uvx",
-      "args": ["mcp-cost-optim-genai"],
+      "args": ["--from", ".", "awslabs-genai-cost-optim-mcp-server"],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"
       },
@@ -305,7 +305,7 @@ This scanner works alongside **AWS MCP Servers** for complete cost analysis:
 {
   "mcpServers": {
     "genai-cost-optimizer": {
-      "command": "mcp-cost-optim-genai",
+      "command": "awslabs-genai-cost-optim-mcp-server",
       "disabled": false
     },
     "aws-mcp": {
@@ -420,7 +420,7 @@ The scanner correctly detects LangChain Bedrock usage (`ChatBedrockConverse`, `C
 ## Project Structure
 
 ```
-mcp-cost-optim-genai/
+awslabs-genai-cost-optim-mcp-server/
 ├── src/mcp_cost_optim_genai/     # Main package
 │   ├── server.py                 # FastMCP server entry point
 │   ├── scanner.py                # Project scanning logic
