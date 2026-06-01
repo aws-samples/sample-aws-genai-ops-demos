@@ -130,9 +130,10 @@ class AgentCoreDetector(BaseDetector):
         streaming_findings = self._detect_streaming(content, file_path)
         findings.extend(streaming_findings)
 
-        # Detect async processing
-        async_findings = self._detect_async_processing(content, file_path)
-        findings.extend(async_findings)
+        # Detect async processing (only if AgentCore app is detected in this file)
+        if app_line:
+            async_findings = self._detect_async_processing(content, file_path)
+            findings.extend(async_findings)
 
         # Detect lifecycle configuration (both present and absent)
         lifecycle_findings = self._detect_lifecycle_config(content, file_path)
@@ -305,7 +306,6 @@ class AgentCoreDetector(BaseDetector):
         async_patterns = [
             r"asyncio\.create_task",
             r"app\.add_async_task",
-            r"threading\.Thread",
             r"HealthyBusy",
         ]
 
