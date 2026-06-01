@@ -188,6 +188,9 @@ class BedrockDetector(BaseDetector):
         """Analyze content for Bedrock usage."""
         findings = []
 
+        # Cache for _find_prompts results within this analyze() call
+        self._prompts_cache = None
+
         # Check for Bedrock client initialization
         if self._has_bedrock_client(content):
             findings.append({
@@ -238,6 +241,9 @@ class BedrockDetector(BaseDetector):
         for finding in findings:
             if 'line' in finding and finding.get('file'):
                 finding['file_link'] = create_file_link(finding['file'], finding['line'])
+
+        # Clear per-file cache
+        self._prompts_cache = None
 
         return findings
 
@@ -631,7 +637,19 @@ class BedrockDetector(BaseDetector):
         
         Uses Bedrock AI to intelligently identify prompts in Python, TypeScript, JavaScript.
         Falls back to regex if AI analysis fails or AWS credentials not available.
+        
+        Results are memoized within a single analyze() call to avoid repeated Bedrock invocations.
         """
+        # Return cached result if available (avoids 3+ Bedrock calls per file)
+        if self._prompts_cache is not None:
+            return self._prompts_cache
+
+        result = self._find_prompts_uncached(content, file_path)
+        self._prompts_cache = result
+        return result
+
+    def _find_prompts_uncached(self, content: str, file_path: str) -> List[Dict[str, Any]]:
+        """Internal implementation of prompt finding (not memoized)."""
         # Try AI-powered detection first
         try:
             from ..utils.bedrock_helper import analyze_code_for_prompts
