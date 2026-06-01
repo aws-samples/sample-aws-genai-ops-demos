@@ -1243,8 +1243,13 @@ response = agent(query)''',
         if complexity_findings:
             findings.extend(complexity_findings)
         
-        # Opportunity 3: Premium/ultra-premium tier usage
-        if premium_models and not models_by_family:
+        # Opportunity 3: Premium/ultra-premium tier with single model but mixed complexity prompts
+        # Only trigger if no multi-model opportunity was already found (Opportunity 1)
+        has_multi_model_opportunity = any(
+            len(set(m['model_id'] for m in models)) > 1
+            for models in models_by_family.values()
+        )
+        if premium_models and not has_multi_model_opportunity:
             # Using premium models but no multiple models detected
             # Suggest routing if there's complexity variation
             for model_info in premium_models:
