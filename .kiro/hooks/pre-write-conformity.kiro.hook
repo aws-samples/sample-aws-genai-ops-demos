@@ -1,0 +1,13 @@
+{
+  "name": "Pre-Write Conformity Check",
+  "version": "1.0.0",
+  "description": "Verify file changes follow project standards before writing",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["write"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Before making this change, check it against the standards in .kiro/steering/structure.md (naming, file location, shared utilities), .kiro/steering/tech.md (CDK requirement, no hardcoded regions), and .kiro/steering/solution-adoption-tracking.md (tracking in app file). If the change would violate a standard, flag it and suggest the compliant approach."
+  }
+}
