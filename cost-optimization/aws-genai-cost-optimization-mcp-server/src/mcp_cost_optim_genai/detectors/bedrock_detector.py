@@ -218,7 +218,7 @@ class BedrockDetector(BaseDetector):
         findings.extend(nova_caching_findings)
 
         # Detect caching with cross-region inference anti-pattern
-        cross_region_findings = self._detect_caching_cross_region_antipattern(content, file_path)
+        cross_region_findings = self._detect_caching_cross_region_antipattern(content, file_path, model_findings)
         findings.extend(cross_region_findings)
         
         # Detect dynamic variables in system prompts
@@ -780,7 +780,7 @@ class BedrockDetector(BaseDetector):
         
         return findings
 
-    def _detect_caching_cross_region_antipattern(self, content: str, file_path: str) -> List[Dict[str, Any]]:
+    def _detect_caching_cross_region_antipattern(self, content: str, file_path: str, existing_model_findings: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Detect prompt caching used with cross-region inference profiles.
         
         Uses the generic model detection to find cross-region model IDs,
@@ -788,6 +788,11 @@ class BedrockDetector(BaseDetector):
         
         Static prompts + cross-region + caching = OK (same cache across regions)
         Dynamic prompts + cross-region + caching = RISK (different cache per request)
+        
+        Args:
+            content: File content
+            file_path: Path to file
+            existing_model_findings: Pre-computed model findings from analyze() to avoid re-detection
         """
         findings = []
         
@@ -802,8 +807,11 @@ class BedrockDetector(BaseDetector):
         # Analyze if prompts are static or dynamic
         prompt_analysis = self._analyze_prompt_staticness(content)
         
-        # Use generic model detection to find ALL models with region prefixes
-        model_findings = self._detect_models(content, file_path)
+        # Use pre-computed model findings if available, otherwise detect (for standalone calls)
+        if existing_model_findings is not None:
+            model_findings = existing_model_findings
+        else:
+            model_findings = self._detect_models(content, file_path)
         
         for model_finding in model_findings:
             parsed = model_finding.get("parsed", {})
