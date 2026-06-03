@@ -130,9 +130,10 @@ class AgentCoreDetector(BaseDetector):
         streaming_findings = self._detect_streaming(content, file_path)
         findings.extend(streaming_findings)
 
-        # Detect async processing
-        async_findings = self._detect_async_processing(content, file_path)
-        findings.extend(async_findings)
+        # Detect async processing (only if AgentCore app is detected in this file)
+        if app_line:
+            async_findings = self._detect_async_processing(content, file_path)
+            findings.extend(async_findings)
 
         # Detect lifecycle configuration (both present and absent)
         lifecycle_findings = self._detect_lifecycle_config(content, file_path)
@@ -195,8 +196,19 @@ class AgentCoreDetector(BaseDetector):
         return findings
 
     def _detect_session_usage(self, content: str, file_path: str) -> List[Dict[str, Any]]:
-        """Detect session management usage."""
+        """Detect session management usage.
+        
+        Only reports if AgentCore-specific imports/patterns are present in the file
+        to avoid false positives from generic RequestContext usage in web frameworks.
+        """
         findings = []
+
+        # Only detect session patterns if AgentCore is present in the file
+        has_agentcore = self._has_agentcore_app(content) or bool(
+            re.search(r'from\s+bedrock_agentcore|import\s+bedrock_agentcore', content)
+        )
+        if not has_agentcore:
+            return findings
 
         for pattern in self.SESSION_PATTERNS:
             matches = re.finditer(pattern, content)
@@ -305,7 +317,6 @@ class AgentCoreDetector(BaseDetector):
         async_patterns = [
             r"asyncio\.create_task",
             r"app\.add_async_task",
-            r"threading\.Thread",
             r"HealthyBusy",
         ]
 

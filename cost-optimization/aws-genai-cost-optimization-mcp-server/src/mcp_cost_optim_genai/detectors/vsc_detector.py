@@ -145,24 +145,21 @@ class VscDetector(BaseDetector):
         for json_info in analyzer.json_serializations:
             for llm_info in analyzer.llm_calls:
                 if abs(json_info['line'] - llm_info['line']) <= 10:
-                    estimated_tokens = self._estimate_json_tokens(json_info)
-                    vsc_savings = int(estimated_tokens * 0.65)
-                    
                     findings.append({
                         'type': 'json_serialization_near_llm_call',
                         'file': file_path,
                         'line': json_info['line'],
                         'service': 'bedrock',
                         'description': f"json.dumps() used near LLM API call (line {llm_info['line']})",
-                        'cost_consideration': f"JSON serialization adds token overhead. Estimated ~{estimated_tokens} tokens could be reduced to ~{estimated_tokens - vsc_savings} with VSC.",
+                        'cost_consideration': "JSON serialization adds significant token overhead from structural characters (braces, quotes, colons, commas). VSC format can reduce this by up to 75% for flat/tabular data.",
                         'optimization': {
                             'technique': 'VSC (Values Separated by Comma)',
-                            'potential_savings': f'~{vsc_savings} tokens (up to 75% reduction for flat data)',
+                            'potential_savings': 'Up to 75% token reduction for flat, tabular data',
                             'implementation': 'Replace json.dumps() with VSC serialization',
                             'use_when': 'Flat, tabular data with known schema',
                             'example': self._generate_vsc_example()
                         },
-                        'estimated_token_savings': vsc_savings
+                        'note': 'Actual savings depend on payload size and structure. Measure with your real data.'
                     })
                     break
         
@@ -187,8 +184,17 @@ class VscDetector(BaseDetector):
 
     
     def _estimate_json_tokens(self, json_info: Dict[str, Any]) -> int:
-        """Estimate token count for JSON serialization (rough heuristic)."""
-        return 100
+        """Estimate token count for JSON serialization based on context.
+
+        Uses a heuristic: looks at the variable being serialized and estimates
+        based on typical JSON overhead patterns. Since we can't know the runtime
+        payload size, we report a range rather than a fixed number.
+
+        Returns a conservative estimate. The actual savings depend on payload size.
+        """
+        # We cannot determine runtime payload size from static analysis.
+        # Return 0 to signal "unknown" — callers should use qualitative language.
+        return 0
     
     def _analyze_prompts_for_json(self, analyzer: 'PythonVscAnalyzer', file_path: str) -> List[Dict[str, Any]]:
         """Analyze prompts (system_prompt, user prompts) for embedded JSON patterns."""
