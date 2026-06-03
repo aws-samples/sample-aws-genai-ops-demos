@@ -1501,22 +1501,30 @@ response = agent(query)''',
                 findings.append(finding)
         
         # Detect API calls WITHOUT service_tier (optimization opportunity)
-        # Reuse the same INVOKE_PATTERNS defined at class level for consistency
-        for api_name, pattern in self.INVOKE_PATTERNS.items():
+        # Only report ONCE per file and only if direct boto3 API calls are present
+        # (LangChain wrappers don't support service_tier directly)
+        direct_api_patterns = {
+            "invoke_model": self.INVOKE_PATTERNS["invoke_model"],
+            "invoke_model_with_response_stream": self.INVOKE_PATTERNS["invoke_model_with_response_stream"],
+            "converse": self.INVOKE_PATTERNS["converse"],
+            "converse_stream": self.INVOKE_PATTERNS["converse_stream"],
+        }
+        
+        missing_tier_reported = False
+        for api_name, pattern in direct_api_patterns.items():
+            if missing_tier_reported:
+                break
             matches = re.finditer(pattern, content)
             for match in matches:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 # Check if this API call already has service_tier configured
-                # Find the closing parenthesis for this specific call to limit search scope
                 call_start = match.start()
                 call_end = self._find_matching_paren(content, match.end() - 1)
                 
                 if call_end == -1:
-                    # Couldn't find matching paren, use limited context
                     call_context = content[call_start:min(call_start + 300, len(content))]
                 else:
-                    # Use only the content within this API call
                     call_context = content[call_start:call_end + 1]
                 
                 has_service_tier = any(
@@ -1525,7 +1533,7 @@ response = agent(query)''',
                 )
                 
                 if not has_service_tier:
-                    # API call without service_tier - optimization opportunity
+                    # Report once per file as informational
                     findings.append({
                         "type": "bedrock_service_tier_missing",
                         "file": file_path,
@@ -1533,19 +1541,14 @@ response = agent(query)''',
                         "api_call": api_name,
                         "service_tier": "default (implicit)",
                         "service": "bedrock",
+                        "severity": "informational",
                         "optimization_opportunity": True,
-                        "description": f"{api_name} call without service_tier parameter",
-                        "issue": "Using default (Standard) tier without considering cost optimization",
-                        "recommendation": "Consider adding service_tier parameter based on workload requirements. Flex tier offers cost savings for non-latency-sensitive workloads (batch processing, content summarization, model evaluations).",
-                        "cost_consideration": "Flex tier provides pricing discount compared to Standard tier for workloads that can tolerate slightly longer response times",
-                        "next_steps": [
-                            "Assess if workload is latency-sensitive (real-time chat, customer-facing) or can tolerate delays (batch, background)",
-                            "For non-latency-sensitive: Add service_tier='flex' for cost savings",
-                            "For latency-sensitive: Keep default or use service_tier='priority'",
-                            "Use AWS MCP Server to compare Standard vs Flex pricing for your model"
-                        ],
+                        "description": f"Bedrock API calls in this file use default (Standard) tier",
+                        "recommendation": "Consider service_tier='flex' for non-latency-sensitive workloads (batch processing, content summarization) to get pricing discount.",
                         "documentation": "https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html"
                     })
+                    missing_tier_reported = True
+                    break
         
         return findings
     
