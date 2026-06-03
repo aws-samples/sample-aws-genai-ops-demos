@@ -38,7 +38,7 @@ class BedrockDetector(BaseDetector):
         "ChatBedrockConverse": r"ChatBedrockConverse\s*\(",
         "ChatBedrock": r"ChatBedrock\s*\(",
         "BedrockLLM": r"BedrockLLM\s*\(",
-        "Bedrock": r"Bedrock\s*\(",  # Legacy LangChain class
+        "Bedrock": r"(?<!\w)Bedrock\s*\(",  # Legacy LangChain class — word boundary to avoid matching unrelated classes
     }
 
     def can_analyze(self, file_path: Path) -> bool:
@@ -558,7 +558,17 @@ class BedrockDetector(BaseDetector):
         """Detect Bedrock API call patterns."""
         findings = []
 
+        # Check if file has LangChain Bedrock imports (needed for legacy "Bedrock" pattern)
+        has_langchain_bedrock_import = bool(re.search(
+            r'from\s+langchain.*import.*Bedrock|from\s+langchain_aws.*import.*Bedrock',
+            content
+        ))
+
         for call_type, pattern in self.INVOKE_PATTERNS.items():
+            # Skip legacy "Bedrock" pattern if no LangChain import is present
+            if call_type == "Bedrock" and not has_langchain_bedrock_import:
+                continue
+
             matches = re.finditer(pattern, content)
             for match in matches:
                 line_num = content[:match.start()].count('\n') + 1
