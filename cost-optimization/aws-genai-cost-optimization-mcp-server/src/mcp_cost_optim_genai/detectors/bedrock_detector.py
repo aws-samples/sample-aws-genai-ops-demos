@@ -808,8 +808,19 @@ class BedrockDetector(BaseDetector):
         
         # Check if caching is enabled in this file
         # Support both snake_case (Python) and camelCase (TypeScript/JavaScript)
-        has_cache_point = bool(re.search(r'cachePoint', content))
-        has_cache_control = bool(re.search(r'cache(?:_control|Control)', content))  # Matches cache_control or cacheControl
+        # Use finditer to check context and filter false positives (comments, docstrings)
+        cache_point_matches = list(re.finditer(r'cachePoint', content))
+        cache_control_matches = list(re.finditer(r'cache(?:_control|Control)', content))
+        
+        # Filter out matches in comments/docstrings
+        has_cache_point = any(
+            not self._is_likely_false_positive(content, m.start(), m.end())
+            for m in cache_point_matches
+        )
+        has_cache_control = any(
+            not self._is_likely_false_positive(content, m.start(), m.end())
+            for m in cache_control_matches
+        )
         
         if not (has_cache_point or has_cache_control):
             return findings  # No caching, no anti-pattern
