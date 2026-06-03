@@ -1,11 +1,22 @@
 """Detector for Amazon Bedrock usage patterns."""
 
+import logging
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
 from .base import BaseDetector
+
+logger = logging.getLogger(__name__)
+
+# Ensure logs go to stderr, not stdout (stdout is used for MCP JSON-RPC)
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.WARNING)
 
 
 class BedrockDetector(BaseDetector):
@@ -679,7 +690,7 @@ class BedrockDetector(BaseDetector):
                 return prompts
         except Exception as e:
             # Fall back to regex if AI fails
-            print(f"AI prompt detection failed, using regex fallback: {e}")
+            logger.debug("AI prompt detection failed, using regex fallback: %s", e)
         
         # Regex fallback (simple patterns)
         prompts = []

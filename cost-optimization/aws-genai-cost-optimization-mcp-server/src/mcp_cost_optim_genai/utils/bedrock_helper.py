@@ -1,8 +1,18 @@
 """Helper for calling Bedrock to analyze code with AI."""
 
 import json
-import boto3
+import logging
+import sys
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+# Ensure logs go to stderr, not stdout (stdout is used for MCP JSON-RPC)
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.WARNING)
 
 
 def analyze_code_for_prompts(file_content: str, file_path: str) -> List[Dict[str, Any]]:
@@ -15,6 +25,12 @@ def analyze_code_for_prompts(file_content: str, file_path: str) -> List[Dict[str
     Returns:
         List of prompts found with their locations
     """
+    try:
+        import boto3
+    except ImportError:
+        logger.debug("boto3 not installed, skipping AI-powered prompt detection")
+        return []
+
     bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
     
     # Use Nova Micro (cheapest, fast enough for this task)
@@ -70,9 +86,9 @@ Code:
         return prompts if isinstance(prompts, list) else []
         
     except json.JSONDecodeError as e:
-        print(f"JSON parse error for {file_path}: {e}")
-        print(f"Response was: {response_text[:200]}...")
+        logger.warning("JSON parse error for %s: %s", file_path, e)
+        logger.debug("Response was: %s...", response_text[:200])
         return []
     except Exception as e:
-        print(f"Error analyzing {file_path}: {e}")
+        logger.warning("Error analyzing %s: %s", file_path, e)
         return []
