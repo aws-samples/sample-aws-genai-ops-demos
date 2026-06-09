@@ -12,7 +12,7 @@
 # All resources are tagged with goat-demo=true for cleanup.
 # Script is idempotent - safe to re-run after partial failures.
 #
-# Usage: ./setup-scenario-a.sh
+# Usage: ./setup-scenario-account-health.sh
 
 set -o pipefail
 

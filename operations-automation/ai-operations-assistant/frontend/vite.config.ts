@@ -19,5 +19,6 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, '../infrastructure/cdk/lib/shared'),
     },
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
   },
 });

@@ -1,0 +1,33 @@
+{
+    "_comment": "Local copy of agents/shared/prices.json bundled into the orchestration agent container at build time. Source of truth lives in agents/shared/prices.json (see agents/shared/prices.py for documentation). Both copies must be updated together when AWS pricing changes (Requirements 14.2 and 17.2). The capture-cost figure shown in the Orchestration Agent's Capture_Confirmation_Prompt and the README cost-estimate table both read these values, so keeping a single source of truth prevents drift.",
+    "currency": "USD",
+    "trafficMirror": {
+        "eniHourPriceDefault": 0.015,
+        "eniHourPriceByRegion": {
+            "us-east-1": 0.015,
+            "us-east-2": 0.015,
+            "us-west-1": 0.015,
+            "us-west-2": 0.015,
+            "eu-west-1": 0.015,
+            "eu-west-2": 0.015,
+            "eu-west-3": 0.015,
+            "eu-central-1": 0.015,
+            "eu-north-1": 0.015,
+            "ap-northeast-1": 0.015,
+            "ap-northeast-2": 0.015,
+            "ap-southeast-1": 0.015,
+            "ap-southeast-2": 0.015,
+            "ap-south-1": 0.015,
+            "ca-central-1": 0.015,
+            "sa-east-1": 0.015
+        },
+        "dataPricePerGb": 0.015
+    },
+    "s3": {
+        "standardStoragePricePerGbMonth": 0.023
+    },
+    "heuristic": {
+        "mbpsPerEni": 1.0,
+        "bytesPerSecondPerMbps": 125000
+    }
+}

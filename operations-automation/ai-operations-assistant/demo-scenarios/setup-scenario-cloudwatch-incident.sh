@@ -7,7 +7,7 @@
 #
 # Script is idempotent - safe to re-run (creates a new case each time).
 #
-# Usage: ./setup-scenario-b.sh
+# Usage: ./setup-scenario-cloudwatch-incident.sh
 
 set -o pipefail
 

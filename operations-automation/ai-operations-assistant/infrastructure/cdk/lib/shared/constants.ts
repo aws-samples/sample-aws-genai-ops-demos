@@ -15,11 +15,11 @@ export type Domain = typeof DOMAINS[number];
 // Amazon Bedrock Model IDs
 // ---------------------------------------------------------------------------
 
-/** Nova Pro – used by the Orchestration Agent for complex reasoning */
-export const MODEL_ID_NOVA_PRO = 'global.amazon.nova-pro-v1:0';
+/** Nova Pro -- used by the Orchestration Agent for complex reasoning */
+export const MODEL_ID_NOVA_PRO = 'amazon.nova-pro-v1:0';
 
-/** Nova Lite – used by sub-agents for simpler retrieve-and-format tasks */
-export const MODEL_ID_NOVA_LITE = 'global.amazon.nova-lite-v1:0';
+/** Nova Lite -- used by sub-agents for simpler retrieve-and-format tasks */
+export const MODEL_ID_NOVA_LITE = 'amazon.nova-lite-v1:0';
 
 // ---------------------------------------------------------------------------
 // Timeouts & TTLs

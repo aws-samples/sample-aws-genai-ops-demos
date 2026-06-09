@@ -5,7 +5,7 @@ Pre-built provisioning scripts that create controlled sets of AWS resources for 
 ## Prerequisites
 
 - **AWS CLI v2** configured with valid credentials (`aws sts get-caller-identity`)
-- **AWS account** with permissions to create EC2, RDS, EBS, VPC, DynamoDB, and Elastic IP resources
+- **AWS account** with permissions to create EC2, RDS, EBS, VPC, DynamoDB, Elastic IP, Transit Gateway, and Network Firewall resources
 - **AWS Business or Enterprise Support plan** (optional) — required for Support case creation; scripts skip gracefully without one
 - **G.O.A.T. deployed** — run the main deployment first so agents are available to query the demo resources
 
@@ -42,14 +42,14 @@ When you ask G.O.A.T. for a health check, the orchestration agent should invoke 
 **macOS / Linux:**
 ```bash
 cd operations-automation/ai-operations-assistant/demo-scenarios
-chmod +x setup-scenario-a.sh
-./setup-scenario-a.sh
+chmod +x setup-scenario-account-health.sh
+./setup-scenario-account-health.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
 cd operations-automation\ai-operations-assistant\demo-scenarios
-.\setup-scenario-a.ps1
+.\setup-scenario-account-health.ps1
 ```
 
 The script is idempotent — safe to re-run after partial failures. Existing resources are detected and skipped.
@@ -108,14 +108,14 @@ Scenario B correlates with the **real CloudWatch planned lifecycle event from Ap
 **macOS / Linux:**
 ```bash
 cd operations-automation/ai-operations-assistant/demo-scenarios
-chmod +x setup-scenario-b.sh
-./setup-scenario-b.sh
+chmod +x setup-scenario-cloudwatch-incident.sh
+./setup-scenario-cloudwatch-incident.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
 cd operations-automation\ai-operations-assistant\demo-scenarios
-.\setup-scenario-b.ps1
+.\setup-scenario-cloudwatch-incident.ps1
 ```
 
 ### Suggested Demo Queries
@@ -132,9 +132,90 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 
 Scenario B creates no billable AWS resources — only a resolved Support case. Zero cost.
 
+## Scenario C: TLS Fragmentation Reproduction Scenario
+
+Reproduces the AWS Network Firewall + Amazon Linux 2023 OpenSSL ML-KEM TLS Client Hello fragmentation issue. The scenario provisions an EC2 instance (AL2023, t3.micro) behind an AWS Network Firewall with the legacy `drop established` configuration, routed via a Transit Gateway. The instance's stock curl with ML-KEM (X25519MLKEM768) generates 1522-byte TLS Client Hello messages that fragment across multiple TCP segments — enabling a cross-domain correlation demo across the Network and Support agents.
+
+### What Gets Created
+
+| Resource | Type | Purpose |
+|----------|------|---------|
+| `goat-demo-tls-private` | Subnet (10.99.13.0/24) | Private subnet for the test EC2 instance (in shared GOAT VPC) |
+| `goat-demo-tls-spoke-tgw` | Subnet (10.99.20.0/24) | TGW attachment subnet in the spoke VPC |
+| Inspection VPC | VPC (10.98.0.0/16) | Dedicated VPC hosting the Network Firewall |
+| Transit Gateway | Transit Gateway | Routes traffic from spoke VPC through inspection VPC |
+| AWS Network Firewall | Network Firewall | STRICT mode rules that drop fragmented Client Hello |
+| NAT Gateway | NAT Gateway | Internet egress from the inspection VPC |
+| EC2 instance | t3.micro (AL2023) | Runs curl loop to ECR with ML-KEM key exchange |
+| Support case | Resolved case | Describes the TLS fragmentation connectivity issue |
+
+All resources are tagged with `goat-demo=true` and `goat-scenario=tls-fragmentation`.
+
+### Setup Instructions
+
+**Windows (PowerShell):**
+```powershell
+cd operations-automation\ai-operations-assistant\demo-scenarios
+.\setup-scenario-tls-fragmentation.ps1
+```
+
+**macOS / Linux:**
+```bash
+cd operations-automation/ai-operations-assistant/demo-scenarios
+chmod +x setup-scenario-tls-fragmentation.sh
+./setup-scenario-tls-fragmentation.sh
+```
+
+The script takes ~5-7 minutes (Network Firewall provisioning is the main wait). Once complete, it prints a summary with the EC2 instance ID, ENI, and suggested queries.
+
+### Reproducing the TLS Fragmentation
+
+The setup script launches an EC2 instance that runs a curl loop in its UserData, automatically generating the fragmented traffic. To verify manually via SSM:
+
+```powershell
+aws ssm send-command --instance-ids <instance-id> --document-name "AWS-RunShellScript" --parameters 'commands=["curl --curves X25519MLKEM768:X25519 -v https://ecr.us-east-1.amazonaws.com/ 2>&1 | head -20"]' --output json --no-cli-pager
+```
+
+You'll see `} [1522 bytes data]` in the TLS Client Hello output — this 1522-byte handshake is what fragments across TCP segments.
+
+### Why the Network Firewall Drops the Connection
+
+Amazon Linux 2023's OpenSSL enables post-quantum key exchange (ML-KEM / X25519MLKEM768) by default. This produces a ~1522-byte TLS Client Hello that exceeds the 1460-byte TCP MSS.
+
+The Network Firewall is configured with **`aws:drop_established`** stateful default action and `STRICT_ORDER` rule evaluation — the legacy configuration widely deployed for TLS domain filtering. The pass rule (`pass tls ... content:".amazonaws.com"; endswith;`) relies on SNI extraction from the Client Hello.
+
+When the Client Hello fragments across two TCP segments, the firewall cannot extract the SNI from the first segment alone (the SNI field spans the boundary). The pass rule never matches, and the default `drop_established` action drops the connection.
+
+**Resolution**: Switch the firewall policy's stateful default action from `aws:drop_established` to **`aws:application_layer_drop_established`**, which reassembles multi-packet TLS Client Hello messages before rule evaluation.
+
+### Suggested Demo Queries
+
+After setup completes, open the G.O.A.T. app and try:
+
+| Query | What It Demonstrates |
+|-------|---------------------|
+| **"Capture traffic from eni-xxx and analyze the TLS handshake"** | Full Network Agent capture → transform → TLS analysis |
+| "Why is the EC2 instance failing to connect to ECR?" | Cross-domain correlation (Network + Support) |
+| "Show TLS Client Hello sizes" | Network Agent pcap query revealing 1527-byte fragmented record |
+| "Diagnose the TCP exchange to ECR" | TCP stream health report |
+| "Investigate support case case-xxx and capture traffic if relevant" | Support case-driven capture workflow |
+
+Use the ENI and support case IDs from the setup script's summary output.
+
+### Cost Note
+
+| Resource | Approximate Cost |
+|----------|-----------------|
+| EC2 t3.micro | ~$0.01/hr (~$7/month) |
+| AWS Network Firewall | ~$0.395/hr (~$285/month) |
+| NAT Gateway | ~$0.045/hr (~$32/month) |
+| Transit Gateway | ~$0.05/hr (~$36/month) |
+
+**Run the cleanup script promptly after your demo to avoid ongoing charges — the Network Firewall alone costs ~$285/month.**
+
 ## Cleanup
 
-A single cleanup script removes all demo resources from both scenarios. It finds resources by the `goat-demo=true` tag and deletes them in dependency order.
+A single cleanup script removes all demo resources from all scenarios. It finds resources by the `goat-demo=true` tag and deletes them in dependency order.
 
 **macOS / Linux:**
 ```bash
@@ -154,15 +235,17 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 Resources are deleted in this order to handle dependencies:
 
 1. EC2 instances (terminate)
-2. RDS instances (delete, skip final snapshot)
-3. DB subnet groups
-4. EBS volumes
-5. Elastic IPs (release)
-6. DynamoDB tables
-7. Subnets
-8. VPCs
-
-Support cases are not cleaned up — they are already resolved and cannot be deleted via API.
+2. AWS Network Firewall and rule groups
+3. Transit Gateway attachments and route tables
+4. Transit Gateway
+5. RDS instances (delete, skip final snapshot)
+6. DB subnet groups
+7. EBS volumes
+8. Elastic IPs (release)
+9. NAT Gateways
+10. Subnets
+11. VPCs (inspection VPC only — shared GOAT VPC is owned by CDK)
+12. Support cases (already resolved — cannot be deleted via API)
 
 ### Handling Partial Cleanup
 
@@ -184,7 +267,7 @@ Every demo resource receives four tags for identification and cleanup:
 | Tag Key | Value | Purpose |
 |---------|-------|---------|
 | `goat-demo` | `true` | Identifies all demo resources for cleanup |
-| `goat-scenario` | `a` or `b` | Identifies which scenario created the resource |
+| `goat-scenario` | `a`, `b`, or `tls-fragmentation` | Identifies which scenario created the resource |
 | `Name` | `goat-demo-<descriptive>` | Human-readable name in AWS Console |
 | `auto-delete` | `no` | Prevents automated cleanup policies from removing resources prematurely |
 
@@ -192,10 +275,12 @@ Every demo resource receives four tags for identification and cleanup:
 
 | Script | Platform | Purpose |
 |--------|----------|---------|
-| `setup-scenario-a.sh` | Bash | Provision Scenario A resources |
-| `setup-scenario-a.ps1` | PowerShell | Provision Scenario A resources |
-| `setup-scenario-b.sh` | Bash | Provision Scenario B resources |
-| `setup-scenario-b.ps1` | PowerShell | Provision Scenario B resources |
+| `setup-scenario-account-health.sh` | Bash | Provision Account Health Check resources |
+| `setup-scenario-account-health.ps1` | PowerShell | Provision Account Health Check resources |
+| `setup-scenario-cloudwatch-incident.sh` | Bash | Provision CloudWatch Incident Correlation resources |
+| `setup-scenario-cloudwatch-incident.ps1` | PowerShell | Provision CloudWatch Incident Correlation resources |
+| `setup-scenario-tls-fragmentation.sh` | Bash | Provision TLS Fragmentation Scenario resources |
+| `setup-scenario-tls-fragmentation.ps1` | PowerShell | Provision TLS Fragmentation Scenario resources |
 | `cleanup-scenarios.sh` | Bash | Remove all demo resources |
 | `cleanup-scenarios.ps1` | PowerShell | Remove all demo resources |
 

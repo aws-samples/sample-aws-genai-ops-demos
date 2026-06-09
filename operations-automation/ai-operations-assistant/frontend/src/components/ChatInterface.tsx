@@ -53,9 +53,16 @@ export default function ChatInterface({
   const backoffRef = useRef(INITIAL_BACKOFF_MS);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sessionIdRef = useRef<string | undefined>(undefined);
+  const messagesRef = useRef<ChatMessage[]>([]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Keep messagesRef in sync for use in sendMessage closure
+  useEffect(() => {
+    messagesRef.current = messages;
   }, [messages]);
 
   useEffect(() => {
@@ -84,10 +91,21 @@ export default function ChatInterface({
       setIsStreaming(true);
       setConnectionStatus('connected');
 
+      // Build conversation history for context (last 10 messages max)
+      const historyMessages = messagesRef.current
+        .filter((m) => m.content && !m.incomplete)
+        .slice(-10)
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+        .join('\n');
+      const fullPrompt = historyMessages
+        ? `${historyMessages}\nUser: ${prompt.trim()}`
+        : prompt.trim();
+
       try {
         const result = await invokeAgent({
-          prompt: prompt.trim(),
+          prompt: fullPrompt,
           idToken,
+          sessionId: sessionIdRef.current,
           accountContext: accountContext || undefined,
           onChunk: (chunk) => {
             setMessages((prev) => {
@@ -113,6 +131,11 @@ export default function ChatInterface({
           }
           return updated;
         });
+
+        // Persist session ID for conversation continuity
+        if (result.sessionId) {
+          sessionIdRef.current = result.sessionId;
+        }
 
         setConnectionStatus('connected');
         backoffRef.current = INITIAL_BACKOFF_MS;

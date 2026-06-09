@@ -12,6 +12,7 @@ export class AuthStack extends cdk.Stack {
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly identityPool: cognito.CfnIdentityPool;
   public readonly authenticatedRole: iam.Role;
+  public readonly networkCaptureGroup: cognito.CfnUserPoolGroup;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -106,6 +107,22 @@ export class AuthStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
+    // Capture Authorization Group (Req 8.7, 9.16)
+    //
+    // Members of this group are authorized to invoke capture lifecycle
+    // actions (start_capture, stop_capture, transform_capture) through the
+    // chatbot. Non-members can still use read-only pcap query actions and
+    // ENI inventory. The Orchestration Agent checks group membership
+    // server-side, and the frontend disables capture templates client-side
+    // for non-members.
+    // -----------------------------------------------------------------------
+    this.networkCaptureGroup = new cognito.CfnUserPoolGroup(this, 'NetworkCaptureGroup', {
+      userPoolId: this.userPool.userPoolId,
+      groupName: 'GOATNetworkCaptureUsers',
+      description: 'Members can start, stop, and transform network packet captures via the G.O.A.T. chatbot',
+    });
+
+    // -----------------------------------------------------------------------
     // Stack Outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'UserPoolId', {
@@ -130,6 +147,12 @@ export class AuthStack extends cdk.Stack {
       value: this.identityPool.ref,
       description: 'Cognito Identity Pool ID',
       exportName: 'GOATIdentityPoolId',
+    });
+
+    new cdk.CfnOutput(this, 'NetworkCaptureGroupName', {
+      value: 'GOATNetworkCaptureUsers',
+      description: 'Cognito group for network capture authorization',
+      exportName: 'GOATNetworkCaptureGroupName',
     });
   }
 }

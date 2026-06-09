@@ -10,6 +10,8 @@ set -e
 # Parse command line arguments
 # ---------------------------------------------------------------------------
 DEPLOYMENT_MODE="full"
+ORCH_MODEL_ID=""
+ORCH_MODEL_ID_PROVIDED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -17,20 +19,32 @@ while [[ $# -gt 0 ]]; do
             DEPLOYMENT_MODE="$2"
             shift 2
             ;;
+        --orch-model-id)
+            ORCH_MODEL_ID="$2"
+            ORCH_MODEL_ID_PROVIDED=true
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--mode full|cost|health|support|trusted-advisor|cur]"
+            echo "Usage: $0 [--mode full|cost|health|support|trusted-advisor|cur|network] [--orch-model-id MODEL_ID]"
             exit 1
             ;;
     esac
 done
 
+# Validate --orch-model-id parameter
+if [ "$ORCH_MODEL_ID_PROVIDED" = true ] && [ -z "$ORCH_MODEL_ID" ]; then
+    echo -e "\033[0;31mError: --orch-model-id requires a non-empty Bedrock model identifier\033[0m"
+    echo -e "\033[0;90mExample: --orch-model-id 'global.amazon.nova-pro-v1:0'\033[0m"
+    exit 1
+fi
+
 # Validate deployment mode
 case "$DEPLOYMENT_MODE" in
-    full|cost|health|support|trusted-advisor|cur) ;;
+    full|cost|health|support|trusted-advisor|cur|network) ;;
     *)
-        echo "Invalid deployment mode: $DEPLOYMENT_MODE"
-        echo "Valid modes: full, cost, health, support, trusted-advisor, cur"
+        echo -e "\033[0;31mInvalid deployment mode: $DEPLOYMENT_MODE\033[0m"
+        echo "Valid modes: full, cost, health, support, trusted-advisor, cur, network"
         exit 1
         ;;
 esac
@@ -86,6 +100,7 @@ case "$DEPLOYMENT_MODE" in
     support)          DEPLOY_MODULES=("Support") ;;
     trusted-advisor)  DEPLOY_MODULES=("TA") ;;
     cur)              DEPLOY_MODULES=("CUR") ;;
+    network)          DEPLOY_MODULES=() ;;
 esac
 
 echo -e "\n\033[0;36mModules to deploy: ${DEPLOY_MODULES[*]}\033[0m"
@@ -151,7 +166,33 @@ for module in "${DEPLOY_MODULES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Orchestration Stacks (full mode only)
+# 4. Network Agent Stacks (full mode or network mode)
+# ---------------------------------------------------------------------------
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+    echo -e "\n\033[0;35m--- Network Agent Stacks ---\033[0m"
+
+    # Check if GOATSharedDataBucketName export exists; deploy NetworkDataStack if absent
+    shared_bucket_export=$(aws cloudformation list-exports --query "Exports[?Name=='GOATSharedDataBucketName'].Value" --output text --no-cli-pager 2>/dev/null || echo "")
+
+    if [ -z "$shared_bucket_export" ] || [ "$shared_bucket_export" = "None" ]; then
+        deploy_stack "GOATNetworkData-$region" \
+            "Creating dedicated Network Data S3 bucket (shared bucket not available)" \
+            "true"
+    else
+        echo -e "\n\033[0;90m      Shared data bucket found ($shared_bucket_export), skipping NetworkDataStack\033[0m"
+    fi
+
+    deploy_stack "GOATNetworkInfra-$region" \
+        "Creating ECR repository, CodeBuild project, EC2 collector, Traffic Mirror plumbing, DynamoDB tables, Glue catalog, and Step Functions for Network agent" \
+        "true"
+
+    deploy_stack "GOATNetworkRuntime-$region" \
+        "Uploading Network agent code, building container image, creating AgentCore runtime" \
+        "true"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Orchestration Stacks (full mode only)
 # ---------------------------------------------------------------------------
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     echo -e "\n\033[0;35m--- Orchestration Stacks ---\033[0m"
@@ -159,6 +200,12 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
     deploy_stack "GOATOrchInfra-$region" \
         "Creating ECR repository, CodeBuild project, S3 bucket, and IAM role for orchestration agent" \
         "true"
+
+    # Set ORCH_MODEL_ID environment variable for OrchRuntimeStack when --orch-model-id is supplied
+    if [ -n "$ORCH_MODEL_ID" ]; then
+        export ORCH_MODEL_ID="$ORCH_MODEL_ID"
+        echo -e "\033[0;90m      Setting ORCH_MODEL_ID=$ORCH_MODEL_ID for orchestration runtime\033[0m"
+    fi
 
     # Deploy orchestration runtime with special error handling for AgentCore availability
     echo -e "\n\033[0;33mDeploying GOATOrchRuntime-$region...\033[0m"
@@ -187,7 +234,7 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Retrieve stack outputs for frontend build
+# 6. Retrieve stack outputs for frontend build
 # ---------------------------------------------------------------------------
 echo -e "\n\033[0;35m--- Retrieving Stack Outputs ---\033[0m"
 
@@ -208,6 +255,10 @@ agent_runtime_arn=""
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" \
         --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+elif [ "$DEPLOYMENT_MODE" = "network" ]; then
+    # In network mode, use the Network Agent runtime ARN
+    agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
 else
     # In single-module mode, use the deployed module's runtime ARN
     module_stack_name="GOAT${DEPLOY_MODULES[0]}Runtime-$region"
@@ -226,8 +277,20 @@ echo -e "\033[0;32m      Identity Pool ID:     $identity_pool_id\033[0m"
 echo -e "\033[0;32m      Agent Runtime ARN:    $agent_runtime_arn\033[0m"
 echo -e "\033[0;32m      Region:               $region\033[0m"
 
+# Retrieve Network Agent runtime ARN when applicable
+network_agent_arn=""
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+    network_agent_arn=$(aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    if [ -z "$network_agent_arn" ]; then
+        echo -e "\033[0;31mFailed to retrieve Network Agent Runtime ARN from GOATNetworkRuntime-$region stack outputs\033[0m"
+        exit 1
+    fi
+    echo -e "\033[0;32m      Network Agent ARN:    $network_agent_arn\033[0m"
+fi
+
 # ---------------------------------------------------------------------------
-# 6. Build frontend with retrieved outputs
+# 7. Build frontend with retrieved outputs
 # ---------------------------------------------------------------------------
 echo -e "\n\033[0;35m--- Building Frontend ---\033[0m"
 echo -e "\033[0;90m      (Injecting Cognito config and Agent Runtime ARN, building React app)\033[0m"
@@ -245,7 +308,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Deploy Frontend Stack (always last)
+# 8. Deploy Frontend Stack (always last)
 # ---------------------------------------------------------------------------
 echo -e "\n\033[0;35m--- Frontend Stack ---\033[0m"
 
@@ -254,10 +317,15 @@ deploy_stack "GOATFrontend-$region" \
     "true"
 
 # ---------------------------------------------------------------------------
-# 8. Deployment Summary
+# 9. Deployment Summary
 # ---------------------------------------------------------------------------
 website_url=$(aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" \
     --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
+
+if [ -z "$website_url" ]; then
+    echo -e "\033[0;31mFailed to retrieve Website URL from GOATFrontend-$region stack outputs\033[0m"
+    exit 1
+fi
 
 echo ""
 echo -e "\033[0;32m========================================\033[0m"
@@ -271,8 +339,15 @@ echo -e "\033[0;36m  Agent Runtime ARN:    $agent_runtime_arn\033[0m"
 echo -e "\033[0;36m  User Pool ID:         $user_pool_id\033[0m"
 echo ""
 echo -e "\033[0;36m  Deployed Modules: ${DEPLOY_MODULES[*]}\033[0m"
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+    echo -e "\033[0;36m  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)\033[0m"
+    echo -e "\033[0;36m  Network Agent ARN:    $network_agent_arn\033[0m"
+fi
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     echo -e "\033[0;36m  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)\033[0m"
+fi
+if [ -n "$ORCH_MODEL_ID" ]; then
+    echo -e "\033[0;36m  Orchestration Model:  $ORCH_MODEL_ID\033[0m"
 fi
 echo ""
 echo -e "\033[0;33m  Next Steps:\033[0m"
@@ -287,5 +362,8 @@ echo -e "\033[0;90m    2. Sign in at the Website URL above with your created adm
 echo -e "\033[0;90m    3. Try a query like: 'What are my top cost optimization opportunities?'\033[0m"
 if [ "$DEPLOYMENT_MODE" != "full" ]; then
     echo -e "\033[0;90m    4. To add more modules later, re-run with --mode full\033[0m"
+fi
+if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
+    echo -e "\033[0;90m    Note: To use capture actions, add users to the GOATNetworkCaptureUsers Cognito group\033[0m"
 fi
 echo ""

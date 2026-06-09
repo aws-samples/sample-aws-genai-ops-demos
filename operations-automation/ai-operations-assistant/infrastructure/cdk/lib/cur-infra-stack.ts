@@ -41,8 +41,8 @@ export class CURInfraStack extends BaseInfraStack {
           resources: [
             `arn:aws:s3:::*cur*`,
             `arn:aws:s3:::*cur*/*`,
-            `arn:aws:s3:::aws-athena-query-results-*`,
-            `arn:aws:s3:::aws-athena-query-results-*/*`,
+            `arn:aws:s3:::*athena-query-results*`,
+            `arn:aws:s3:::*athena-query-results*/*`,
           ],
         }),
         // S3 write for Athena query results
@@ -52,9 +52,13 @@ export class CURInfraStack extends BaseInfraStack {
           actions: [
             's3:PutObject',
             's3:GetObject',
+            's3:AbortMultipartUpload',
+            's3:GetBucketLocation',
+            's3:ListBucket',
           ],
           resources: [
-            `arn:aws:s3:::aws-athena-query-results-*/*`,
+            `arn:aws:s3:::*athena-query-results*`,
+            `arn:aws:s3:::*athena-query-results*/*`,
           ],
         }),
         // Glue catalog access for Athena table metadata

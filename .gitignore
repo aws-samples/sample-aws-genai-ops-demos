@@ -25,6 +25,13 @@ target/
 **/cdk.out*/
 cdk.out/
 cdk.out*/
+**/cdk.context.json
+
+# Shared utilities compiled output
+shared/utils/*.js
+shared/utils/*.js.map
+shared/utils/*.d.ts
+shared/utils/*.d.ts.map
 
 # AI Documentation Generation outputs
 **/generated-docs-*/
@@ -84,6 +91,13 @@ env.bak/
 venv.bak/
 .pytest_cache/
 *.egg-info/
+*.dist-info/
+
+# Pip-installed Lambda dependencies (installed at CDK synth via bundling)
+**/lambda/**/numpy/
+**/lambda/**/numpy.libs/
+**/lambda/**/pyarrow/
+**/lambda/**/scapy/
 
 # Java
 *.class

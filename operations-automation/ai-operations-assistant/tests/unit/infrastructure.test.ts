@@ -146,27 +146,74 @@ describe('Infrastructure Unit Tests', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // RuntimeStacks include BuildWaiterFunction Lambda for CodeBuild polling
+  // RuntimeStacks include a build waiter for CodeBuild polling
   // ---------------------------------------------------------------------------
-  describe('BuildWaiterFunction Lambda', () => {
-    it('BaseRuntimeStack should include BuildWaiterFunction Lambda', () => {
+  describe('Build waiter', () => {
+    it('BaseRuntimeStack should include build waiter Lambda functions', () => {
       const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
       expect(baseRuntime).toBeDefined();
-      expect(baseRuntime!.content).toContain('BuildWaiterFunction');
+      // The build waiter is implemented via the CDK provider framework so the
+      // total wait can exceed the AWS Lambda 15-minute hard limit. Two Lambdas
+      // back the provider: an onEvent handler and an isComplete handler.
+      expect(baseRuntime!.content).toContain('BuildWaiterOnEvent');
+      expect(baseRuntime!.content).toContain('BuildWaiterIsComplete');
+      expect(baseRuntime!.content).toContain('BuildWaiterProvider');
+      expect(baseRuntime!.content).toContain('BuildWaiter');
     });
 
-    it('BuildWaiterFunction should poll CodeBuild status', () => {
+    it('build waiter should poll CodeBuild status', () => {
       const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
       expect(baseRuntime).toBeDefined();
       expect(baseRuntime!.content).toContain('BatchGetBuilds');
       expect(baseRuntime!.content).toContain('codebuild:BatchGetBuilds');
     });
 
-    it('BuildWaiterFunction should have appropriate timeout', () => {
+    it('build waiter should have appropriate timeout', () => {
       const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
       expect(baseRuntime).toBeDefined();
-      // Should have a timeout of at least 10 minutes
+      // Per-Lambda timeout (one poll cycle) and provider framework totalTimeout
+      // are both expressed in minutes.
       expect(baseRuntime!.content).toContain('Duration.minutes');
+    });
+
+    it('BaseRuntimeStack should expose buildWaitTimeoutMinutes prop with a 14-minute default', () => {
+      const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
+      expect(baseRuntime).toBeDefined();
+      expect(baseRuntime!.content).toContain('buildWaitTimeoutMinutes');
+      expect(baseRuntime!.content).toContain('DEFAULT_BUILD_WAIT_TIMEOUT_MINUTES = 14');
+    });
+
+    it('build waiter should drive a cr.Provider with a totalTimeout sourced from the prop', () => {
+      const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
+      expect(baseRuntime).toBeDefined();
+      expect(baseRuntime!.content).toContain('cr.Provider');
+      expect(baseRuntime!.content).toContain('isCompleteHandler');
+      expect(baseRuntime!.content).toContain('totalTimeout: cdk.Duration.minutes(buildWaitTimeoutMinutes)');
+    });
+
+    it('build waiter should reject buildWaitTimeoutMinutes outside [1, 60]', () => {
+      const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
+      expect(baseRuntime).toBeDefined();
+      // The provider framework caps totalTimeout at 60 minutes; values outside
+      // [1, 60] must throw at synth time.
+      expect(baseRuntime!.content).toContain('MAX_BUILD_WAIT_TIMEOUT_MINUTES = 60');
+      expect(baseRuntime!.content).toMatch(/buildWaitTimeoutMinutes < 1/);
+      expect(baseRuntime!.content).toMatch(/buildWaitTimeoutMinutes > MAX_BUILD_WAIT_TIMEOUT_MINUTES/);
+    });
+
+    it('build waiter timeout error should identify the build project name and build identifier (Req 6.14)', () => {
+      const baseRuntime = libFiles.find((f) => f.name === 'base-runtime-stack.ts');
+      expect(baseRuntime).toBeDefined();
+      // The isComplete handler throws an Error including both the project name
+      // and the build id when the elapsed time exceeds the configured budget.
+      expect(baseRuntime!.content).toContain('BuildProjectName');
+      expect(baseRuntime!.content).toMatch(/budget for project[\s\S]*BuildId|build id/);
+    });
+
+    it('NetworkRuntimeStack should pass buildWaitTimeoutMinutes=30 (Req 6.13)', () => {
+      const networkRuntime = libFiles.find((f) => f.name === 'network-runtime-stack.ts');
+      expect(networkRuntime).toBeDefined();
+      expect(networkRuntime!.content).toMatch(/buildWaitTimeoutMinutes\s*:\s*30/);
     });
   });
 
@@ -217,6 +264,63 @@ describe('Infrastructure Unit Tests', () => {
       expect(appFile!.content).toContain('`GOATData-${region}`');
       expect(appFile!.content).toContain('`GOATOrchRuntime-${region}`');
       expect(appFile!.content).toContain('`GOATFrontend-${region}`');
+    });
+
+    // -------------------------------------------------------------------------
+    // Network Agent stack wiring (Task 30 / Reqs 7.x, 9.7, 9.8, 10.x, 15.x)
+    // -------------------------------------------------------------------------
+    it('app.ts should wire all three Network stacks with region-suffixed IDs', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      expect(appFile!.content).toContain('`GOATNetworkData-${region}`');
+      expect(appFile!.content).toContain('`GOATNetworkInfra-${region}`');
+      expect(appFile!.content).toContain('`GOATNetworkRuntime-${region}`');
+    });
+
+    it('app.ts should instantiate NetworkDataStack only when GOATSharedDataBucketName is absent', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      // The conditional lookup uses a CDK context flag set by the deploy
+      // scripts after they perform the CFN export lookup out-of-band.
+      expect(appFile!.content).toContain("tryGetContext('goatSharedDataBucketName')");
+      // NetworkDataStack must only be created when the context value is
+      // empty/undefined.
+      expect(appFile!.content).toMatch(/sharedDataBucketName === undefined/);
+      expect(appFile!.content).toContain('new NetworkDataStack(app, `GOATNetworkData-${region}`');
+    });
+
+    it('app.ts should pass the resolved bucket name into NetworkInfraStack', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      expect(appFile!.content).toMatch(/networkDataBucketName:\s*resolvedNetworkDataBucketName/);
+    });
+
+    it('app.ts should make NetworkRuntimeStack depend on NetworkInfraStack', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      expect(appFile!.content).toMatch(/networkRuntime\.addDependency\(networkInfra\)/);
+    });
+
+    it('app.ts should pass the Network Agent runtime ARN to OrchRuntimeStack subAgentArns', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      // The new `network` key in subAgentArns must map to the Network Agent
+      // runtime ARN exported by NetworkRuntimeStack.
+      expect(appFile!.content).toMatch(/network:\s*networkRuntime\.agentRuntimeArn/);
+    });
+
+    it('app.ts should make OrchRuntimeStack depend on NetworkRuntimeStack', () => {
+      const appFile = binFiles.find((f) => f.name === 'app.ts');
+      expect(appFile).toBeDefined();
+      expect(appFile!.content).toMatch(/orchRuntime\.addDependency\(networkRuntime\)/);
+    });
+
+    it('OrchRuntimeStack should expose NETWORK_AGENT_ARN environment variable', () => {
+      const orchRuntime = libFiles.find((f) => f.name === 'orch-runtime-stack.ts');
+      expect(orchRuntime).toBeDefined();
+      expect(orchRuntime!.content).toMatch(/NETWORK_AGENT_ARN:\s*props\.subAgentArns\.network/);
+      // The interface must declare the new key.
+      expect(orchRuntime!.content).toMatch(/network:\s*string/);
     });
   });
 });

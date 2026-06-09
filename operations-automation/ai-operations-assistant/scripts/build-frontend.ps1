@@ -44,6 +44,12 @@ Write-Host "Created .env.production.local"
 # Build frontend
 npm run build
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Frontend build failed (npm run build exited with code $LASTEXITCODE)" -ForegroundColor Red
+    Set-Location ..
+    exit 1
+}
+
 # Verify build output exists
 if (-not (Test-Path "dist")) {
     Write-Host "ERROR: Frontend build output (dist/) not found" -ForegroundColor Red

@@ -32,12 +32,14 @@ const userPoolClientId = import.meta.env.VITE_USER_POOL_CLIENT_ID;
 export interface InvokeAgentRequest {
   prompt: string;
   idToken: string;
+  sessionId?: string;
   accountContext?: string;
   onChunk?: (chunk: string) => void;
 }
 
 export interface InvokeAgentResponse {
   response: string;
+  sessionId?: string;
 }
 
 interface AWSCredentials {
@@ -191,13 +193,26 @@ export async function invokeAgent(request: InvokeAgentRequest): Promise<InvokeAg
     },
   });
 
-  const payload: Record<string, string> = { prompt: request.prompt };
+  const payload: Record<string, unknown> = { prompt: request.prompt };
   if (request.accountContext) {
     payload.accountContext = request.accountContext;
   }
+  // Extract Cognito groups from the ID token and pass to the agent
+  // so the server-side capture authorization check works.
+  try {
+    const tokenParts = validToken.split('.');
+    if (tokenParts.length === 3) {
+      const tokenPayload = JSON.parse(atob(tokenParts[1]));
+      const groups = tokenPayload['cognito:groups'];
+      if (Array.isArray(groups) && groups.length > 0) {
+        payload.user_groups = groups;
+      }
+    }
+  } catch { /* ignore decode errors */ }
 
   const command = new InvokeAgentRuntimeCommand({
     agentRuntimeArn,
+    runtimeSessionId: request.sessionId,
     payload: JSON.stringify(payload),
   });
 
@@ -260,5 +275,8 @@ export async function invokeAgent(request: InvokeAgentRequest): Promise<InvokeAg
   const cleaned = responseText.replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, '').trim();
   request.onChunk?.(cleaned);
 
-  return { response: cleaned };
+  // Capture the session ID from the response for conversation continuity
+  const responseSessionId = response.runtimeSessionId;
+
+  return { response: cleaned, sessionId: responseSessionId };
 }

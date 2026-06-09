@@ -22,6 +22,34 @@ if ([string]::IsNullOrEmpty($currentRegion)) {
     exit 1
 }
 
+# Set CDK environment variables so app.ts can resolve account/region during synthesis
+$env:CDK_DEFAULT_ACCOUNT = $accountId
+$env:CDK_DEFAULT_REGION = $currentRegion
+
+# Ensure CDK's Node.js SDK can resolve credentials.
+# If no AWS_PROFILE is set, detect the active SSO profile so CDK doesn't fail
+# with "no credentials have been configured" when the [default] profile is incomplete.
+if ([string]::IsNullOrEmpty($env:AWS_PROFILE)) {
+    # Check if default profile can resolve credentials via the Node.js SDK path
+    # by looking for a complete SSO profile. If [default] lacks sso_session/sso_account_id,
+    # find the named profile that matches our account.
+    $profileList = aws configure list-profiles 2>$null
+    if ($profileList) {
+        foreach ($awsProfile in $profileList -split "`n") {
+            $awsProfile = $awsProfile.Trim()
+            if ([string]::IsNullOrEmpty($awsProfile) -or $awsProfile -eq "default") { continue }
+            $profileAccount = aws configure get sso_account_id --profile $awsProfile 2>$null
+            if ($profileAccount -eq $accountId) {
+                $profileSession = aws configure get sso_session --profile $awsProfile 2>$null
+                if (-not [string]::IsNullOrEmpty($profileSession)) {
+                    $env:AWS_PROFILE = $awsProfile
+                    break
+                }
+            }
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "=== CDK Deployment (Shared Script) ===" -ForegroundColor Cyan
 Write-Host "      Directory: $CdkDirectory" -ForegroundColor Gray
@@ -56,14 +84,20 @@ try {
     if (-not $SkipBootstrap) {
         Write-Host ""
         Write-Host "Ensuring CDK bootstrap is up to date..." -ForegroundColor Yellow
-        # CDK writes progress/emoji to stderr - suppress PowerShell error handling for native commands
+        # CDK writes progress/emoji to stderr - capture output for error reporting
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        npx -y cdk bootstrap "aws://$accountId/$currentRegion" --no-cli-pager 2>$null
+        $cdkOutput = npx -y cdk bootstrap "aws://$accountId/$currentRegion" --no-cli-pager 2>&1
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
         if ($cdkExitCode -ne 0) {
             Write-Host "      ERROR: CDK bootstrap failed" -ForegroundColor Red
+            $cdkOutput | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Error|error|fail|Unable|Cannot|denied|credentials" -and $line -notmatch "^\[Warning") {
+                    Write-Host "      $line" -ForegroundColor Red
+                }
+            }
             exit 1
         }
         Write-Host "      OK: CDK bootstrap is up to date" -ForegroundColor Green
@@ -76,14 +110,21 @@ try {
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         if ([string]::IsNullOrEmpty($StackName)) {
-            npx -y cdk destroy --force --no-cli-pager 2>$null
+            $cdkOutput = npx -y cdk destroy --force --no-cli-pager 2>&1
         } else {
-            npx -y cdk destroy $StackName --force --no-cli-pager 2>$null
+            $cdkOutput = npx -y cdk destroy $StackName --force --no-cli-pager 2>&1
         }
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
         if ($cdkExitCode -ne 0) {
             Write-Host "      ERROR: CDK destroy failed" -ForegroundColor Red
+            # Display error details (filter out noise like warnings and progress)
+            $cdkOutput | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Error|error|fail|Unable|Cannot|denied|not found" -and $line -notmatch "^\[Warning") {
+                    Write-Host "      $line" -ForegroundColor Red
+                }
+            }
             exit 1
         }
         Write-Host "      OK: Stack destroyed" -ForegroundColor Green
@@ -93,14 +134,21 @@ try {
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         if ([string]::IsNullOrEmpty($StackName)) {
-            npx -y cdk deploy --require-approval never --no-cli-pager 2>$null
+            $cdkOutput = npx -y cdk deploy --require-approval never --no-cli-pager 2>&1
         } else {
-            npx -y cdk deploy $StackName --require-approval never --no-cli-pager 2>$null
+            $cdkOutput = npx -y cdk deploy $StackName --require-approval never --no-cli-pager 2>&1
         }
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
         if ($cdkExitCode -ne 0) {
             Write-Host "      ERROR: CDK deployment failed" -ForegroundColor Red
+            # Display error details (filter out noise like warnings and progress)
+            $cdkOutput | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Error|error|fail|Unable|Cannot|denied|not found|credentials" -and $line -notmatch "^\[Warning") {
+                    Write-Host "      $line" -ForegroundColor Red
+                }
+            }
             exit 1
         }
         Write-Host "      OK: Stack deployed successfully" -ForegroundColor Green

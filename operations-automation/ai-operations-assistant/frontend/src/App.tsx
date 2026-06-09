@@ -88,7 +88,7 @@ function ChatPage({
   );
 }
 
-function TemplatesPage() {
+function TemplatesPage({ userGroups }: { userGroups?: string[] }) {
   const navigate = useNavigate();
 
   const handleTemplateSubmit = (filledPrompt: string) => {
@@ -99,7 +99,7 @@ function TemplatesPage() {
 
   return (
     <Box padding="l">
-      <PromptTemplatePanel onSubmit={handleTemplateSubmit} />
+      <PromptTemplatePanel onSubmit={handleTemplateSubmit} userGroups={userGroups} />
     </Box>
   );
 }
@@ -232,6 +232,23 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
 // ---------------------------------------------------------------------------
 // App root
 // ---------------------------------------------------------------------------
+
+/**
+ * Extract Cognito user groups from a JWT ID token.
+ * Returns an empty array if the token is missing or malformed.
+ */
+function extractUserGroups(idToken?: string): string[] {
+  if (!idToken) return [];
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return [];
+    const payload = JSON.parse(atob(parts[1]));
+    return Array.isArray(payload['cognito:groups']) ? payload['cognito:groups'] : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -317,7 +334,7 @@ export default function App() {
         content={
           <Routes>
             <Route path="/" element={<ChatPage user={user} accountContext={targetAccount} onSessionExpired={handleSignOut} />} />
-            <Route path="/templates" element={<TemplatesPage />} />
+            <Route path="/templates" element={<TemplatesPage userGroups={extractUserGroups(user?.idToken)} />} />
             <Route path="/knowledge" element={<KnowledgePage />} />
             <Route
               path="/settings"

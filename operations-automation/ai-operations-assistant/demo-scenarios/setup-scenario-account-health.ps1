@@ -11,7 +11,13 @@
 # All resources are tagged with goat-demo=true for cleanup.
 # Script is idempotent - safe to re-run after partial failures.
 #
-# Usage: .\setup-scenario-a.ps1
+# Usage:
+#   .\setup-scenario-account-health.ps1                        # Create a new VPC
+#   .\setup-scenario-account-health.ps1 -VpcId vpc-0abc123    # Reuse an existing VPC
+
+param(
+    [string]$VpcId = ""
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -65,36 +71,57 @@ Write-Host "  Region: $region" -ForegroundColor Green
 Write-Host ""
 
 # ---------------------------------------------------------------------------
-# 3. Create dedicated VPC (idempotent)
+# 3. Create or reuse shared VPC (idempotent)
+#
+# All demo scenarios share a single VPC named "goat-demo-vpc" (10.99.0.0/16).
+# Each scenario uses different subnets within this VPC to avoid conflicts:
+#   - Scenario A:              10.99.1.0/24, 10.99.2.0/24
+#   - TLS Fragmentation:      10.99.10.0/24, 10.99.11.0/24, 10.99.12.0/24
 # ---------------------------------------------------------------------------
 Write-Host "--- VPC and Networking ---" -ForegroundColor Magenta
 
-Write-Host "Checking for existing goat-demo VPC..." -ForegroundColor Yellow
-try {
-    $vpcId = aws ec2 describe-vpcs `
-        --filters "Name=tag:goat-demo,Values=true" "Name=tag:Name,Values=goat-demo-vpc" `
-        --query "Vpcs[0].VpcId" --output text --region $region 2>$null
-} catch { $vpcId = "" }
-
-if (-not [string]::IsNullOrEmpty($vpcId) -and $vpcId -ne "None") {
-    Write-Host "  VPC already exists: $vpcId" -ForegroundColor Green
-} else {
-    Write-Host "Creating dedicated VPC (10.99.0.0/16)..." -ForegroundColor Yellow
+if (-not [string]::IsNullOrEmpty($VpcId)) {
+    # User provided an existing VPC - validate it exists
+    Write-Host "Using provided VPC: $VpcId" -ForegroundColor Yellow
     try {
-        $vpcId = aws ec2 create-vpc `
-            --cidr-block 10.99.0.0/16 `
-            --tag-specifications 'ResourceType=vpc,Tags=[{Key=goat-demo,Value=true},{Key=goat-scenario,Value=a},{Key=Name,Value=goat-demo-vpc},{Key=auto-delete,Value=no}]' `
-            --query "Vpc.VpcId" --output text --region $region 2>&1
-        if ($LASTEXITCODE -ne 0) { throw $vpcId }
-        Write-Host "  Created VPC: $vpcId" -ForegroundColor Green
-
-        # Enable DNS hostnames (required for RDS)
+        $vpcCheck = aws ec2 describe-vpcs --vpc-ids $VpcId --query "Vpcs[0].VpcId" --output text --region $region 2>&1
+        if ($LASTEXITCODE -ne 0) { throw $vpcCheck }
+        $vpcId = $VpcId
+        Write-Host "  VPC validated: $vpcId" -ForegroundColor Green
+        # Ensure DNS hostnames enabled (required for RDS)
         aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames '{"Value":true}' --region $region 2>$null
-        Write-Host "  Enabled DNS hostnames on VPC" -ForegroundColor Gray
     } catch {
-        Write-Host "  WARNING: Failed to create VPC: $_" -ForegroundColor Red
-        $warnings += "VPC creation failed"
-        $vpcId = ""
+        Write-Host "  ERROR: Provided VPC $VpcId not found or inaccessible: $_" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "Checking for existing goat-demo-vpc..." -ForegroundColor Yellow
+    try {
+        $vpcId = aws ec2 describe-vpcs `
+            --filters "Name=tag:goat-demo,Values=true" "Name=tag:Name,Values=goat-demo-vpc" `
+            --query "Vpcs[0].VpcId" --output text --region $region 2>$null
+    } catch { $vpcId = "" }
+
+    if (-not [string]::IsNullOrEmpty($vpcId) -and $vpcId -ne "None") {
+        Write-Host "  Shared VPC already exists: $vpcId" -ForegroundColor Green
+    } else {
+        Write-Host "Creating shared VPC goat-demo-vpc (10.99.0.0/16)..." -ForegroundColor Yellow
+        try {
+            $vpcId = aws ec2 create-vpc `
+                --cidr-block 10.99.0.0/16 `
+                --tag-specifications 'ResourceType=vpc,Tags=[{Key=goat-demo,Value=true},{Key=Name,Value=goat-demo-vpc},{Key=auto-delete,Value=no}]' `
+                --query "Vpc.VpcId" --output text --region $region 2>&1
+            if ($LASTEXITCODE -ne 0) { throw $vpcId }
+            Write-Host "  Created VPC: $vpcId" -ForegroundColor Green
+
+            # Enable DNS hostnames (required for RDS)
+            aws ec2 modify-vpc-attribute --vpc-id $vpcId --enable-dns-hostnames '{"Value":true}' --region $region 2>$null
+            Write-Host "  Enabled DNS hostnames on VPC" -ForegroundColor Gray
+        } catch {
+            Write-Host "  WARNING: Failed to create VPC: $_" -ForegroundColor Red
+            $warnings += "VPC creation failed"
+            $vpcId = ""
+        }
     }
 }
 

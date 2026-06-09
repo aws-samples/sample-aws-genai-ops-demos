@@ -4,9 +4,20 @@
 # Uses shared/scripts/deploy-cdk.ps1 for each stack in dependency order.
 
 param(
-    [ValidateSet("full", "cost", "health", "support", "trusted-advisor", "cur")]
-    [string]$DeploymentMode = "full"
+    [ValidateSet("full", "cost", "health", "support", "trusted-advisor", "cur", "network")]
+    [string]$DeploymentMode = "full",
+
+    [string]$OrchModelId = ""
 )
+
+# ---------------------------------------------------------------------------
+# Validate --orch-model-id parameter
+# ---------------------------------------------------------------------------
+if ($PSBoundParameters.ContainsKey('OrchModelId') -and [string]::IsNullOrEmpty($OrchModelId)) {
+    Write-Host "Error: --OrchModelId requires a non-empty Bedrock model identifier" -ForegroundColor Red
+    Write-Host "Example: -OrchModelId 'global.amazon.nova-pro-v1:0'" -ForegroundColor Gray
+    exit 1
+}
 
 Write-Host "=== G.O.A.T. - GenAI Operations Analytics Tool Deployment ===" -ForegroundColor Cyan
 Write-Host "      Deployment Mode: $DeploymentMode" -ForegroundColor Gray
@@ -56,6 +67,7 @@ switch ($DeploymentMode) {
     "support"          { $deployModules = @("Support") }
     "trusted-advisor"  { $deployModules = @("TA") }
     "cur"              { $deployModules = @("CUR") }
+    "network"          { $deployModules = @() }
 }
 
 Write-Host "`nModules to deploy: $($deployModules -join ', ')" -ForegroundColor Cyan
@@ -121,7 +133,38 @@ foreach ($module in $deployModules) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Orchestration Stacks (full mode only)
+# 4. Network Agent Stacks (full mode or network mode)
+# ---------------------------------------------------------------------------
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+    Write-Host "`n--- Network Agent Stacks ---" -ForegroundColor Magenta
+
+    # Check if GOATSharedDataBucketName export exists; deploy NetworkDataStack if absent
+    $sharedBucketExport = $null
+    try {
+        $sharedBucketExport = aws cloudformation list-exports --query "Exports[?Name=='GOATSharedDataBucketName'].Value" --output text --no-cli-pager 2>$null
+    } catch {
+        $sharedBucketExport = $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sharedBucketExport)) {
+        Deploy-Stack -StackName "GOATNetworkData-$region" `
+            -Description "Creating dedicated Network Data S3 bucket (shared bucket not available)" `
+            -SkipBootstrap
+    } else {
+        Write-Host "`n      Shared data bucket found ($sharedBucketExport), skipping NetworkDataStack" -ForegroundColor Gray
+    }
+
+    Deploy-Stack -StackName "GOATNetworkInfra-$region" `
+        -Description "Creating ECR repository, CodeBuild project, EC2 collector, Traffic Mirror plumbing, DynamoDB tables, Glue catalog, and Step Functions for Network agent" `
+        -SkipBootstrap
+
+    Deploy-Stack -StackName "GOATNetworkRuntime-$region" `
+        -Description "Uploading Network agent code, building container image, creating AgentCore runtime" `
+        -SkipBootstrap
+}
+
+# ---------------------------------------------------------------------------
+# 5. Orchestration Stacks (full mode only)
 # ---------------------------------------------------------------------------
 if ($DeploymentMode -eq "full") {
     Write-Host "`n--- Orchestration Stacks ---" -ForegroundColor Magenta
@@ -129,6 +172,12 @@ if ($DeploymentMode -eq "full") {
     Deploy-Stack -StackName "GOATOrchInfra-$region" `
         -Description "Creating ECR repository, CodeBuild project, S3 bucket, and IAM role for orchestration agent" `
         -SkipBootstrap
+
+    # Set ORCH_MODEL_ID environment variable for OrchRuntimeStack when --OrchModelId is supplied
+    if (-not [string]::IsNullOrEmpty($OrchModelId)) {
+        $env:ORCH_MODEL_ID = $OrchModelId
+        Write-Host "      Setting ORCH_MODEL_ID=$OrchModelId for orchestration runtime" -ForegroundColor Gray
+    }
 
     & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $cdkDir -StackName "GOATOrchRuntime-$region" -SkipBootstrap 2>&1 | Tee-Object -Variable cdkOutput | Out-Null
 
@@ -150,7 +199,7 @@ if ($DeploymentMode -eq "full") {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Retrieve stack outputs for frontend build
+# 6. Retrieve stack outputs for frontend build
 # ---------------------------------------------------------------------------
 Write-Host "`n--- Retrieving Stack Outputs ---" -ForegroundColor Magenta
 
@@ -167,6 +216,9 @@ if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolCl
 $agentRuntimeArn = ""
 if ($DeploymentMode -eq "full") {
     $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+} elseif ($DeploymentMode -eq "network") {
+    # In network mode, use the Network Agent runtime ARN
+    $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
 } else {
     # In single-module mode, use the deployed module's runtime ARN
     $moduleStackName = "GOAT$($deployModules[0])Runtime-$region"
@@ -184,8 +236,19 @@ Write-Host "      Identity Pool ID:     $identityPoolId" -ForegroundColor Green
 Write-Host "      Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Green
 Write-Host "      Region:               $region" -ForegroundColor Green
 
+# Retrieve Network Agent runtime ARN when applicable
+$networkAgentArn = ""
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+    $networkAgentArn = aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    if ([string]::IsNullOrEmpty($networkAgentArn)) {
+        Write-Host "Failed to retrieve Network Agent Runtime ARN from GOATNetworkRuntime-$region stack outputs" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "      Network Agent ARN:    $networkAgentArn" -ForegroundColor Green
+}
+
 # ---------------------------------------------------------------------------
-# 6. Build frontend with retrieved outputs
+# 7. Build frontend with retrieved outputs
 # ---------------------------------------------------------------------------
 Write-Host "`n--- Building Frontend ---" -ForegroundColor Magenta
 Write-Host "      (Injecting Cognito config and Agent Runtime ARN, building React app)" -ForegroundColor Gray
@@ -198,7 +261,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Deploy Frontend Stack (always last)
+# 8. Deploy Frontend Stack (always last)
 # ---------------------------------------------------------------------------
 Write-Host "`n--- Frontend Stack ---" -ForegroundColor Magenta
 
@@ -207,9 +270,14 @@ Deploy-Stack -StackName "GOATFrontend-$region" `
     -SkipBootstrap
 
 # ---------------------------------------------------------------------------
-# 8. Deployment Summary
+# 9. Deployment Summary
 # ---------------------------------------------------------------------------
 $websiteUrl = aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
+
+if ([string]::IsNullOrEmpty($websiteUrl)) {
+    Write-Host "Failed to retrieve Website URL from GOATFrontend-$region stack outputs" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
@@ -223,21 +291,36 @@ Write-Host "  Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Cyan
 Write-Host "  User Pool ID:         $userPoolId" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Deployed Modules: $($deployModules -join ', ')" -ForegroundColor Cyan
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+    Write-Host "  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)" -ForegroundColor Cyan
+    Write-Host "  Network Agent ARN:    $networkAgentArn" -ForegroundColor Cyan
+}
 if ($DeploymentMode -eq "full") {
     Write-Host "  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)" -ForegroundColor Cyan
 }
+if (-not [string]::IsNullOrEmpty($OrchModelId)) {
+    Write-Host "  Orchestration Model:  $OrchModelId" -ForegroundColor Cyan
+}
 Write-Host ""
 Write-Host "  Next Steps:" -ForegroundColor Yellow
-Write-Host "    1. Create an admin user (copy-paste these two commands):" -ForegroundColor Gray
+Write-Host "    1. Create an admin user with full permissions (copy-paste all commands):" -ForegroundColor Gray
 Write-Host ""
 Write-Host "       aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS" -ForegroundColor White
 Write-Host ""
 Write-Host "       aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin --password ""YourSecurePassword123!"" --permanent" -ForegroundColor White
 Write-Host ""
+if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
+    Write-Host "       aws cognito-idp admin-add-user-to-group --user-pool-id $userPoolId --username admin --group-name GOATNetworkCaptureUsers" -ForegroundColor White
+    Write-Host ""
+}
 Write-Host "       (Replace the email and password with your own values)" -ForegroundColor DarkGray
+Write-Host ""
 Write-Host "    2. Sign in at the Website URL above with your created admin credentials" -ForegroundColor Gray
 Write-Host "    3. Try a query like: 'What are my top cost optimization opportunities?'" -ForegroundColor Gray
+if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
+    Write-Host "    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)" -ForegroundColor Gray
+}
 if ($DeploymentMode -ne "full") {
-    Write-Host "    4. To add more modules later, re-run with -DeploymentMode full" -ForegroundColor Gray
+    Write-Host "    5. To add more modules later, re-run with -DeploymentMode full" -ForegroundColor Gray
 }
 Write-Host ""

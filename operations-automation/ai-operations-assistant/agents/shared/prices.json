@@ -1,0 +1,33 @@
+{
+    "_comment": "Shared price table for the G.O.A.T. Network Agent capture cost estimates. Single source of truth shared with prices.py for the Orchestration Agent's runtime to import. See agents/shared/prices.py for documentation. Update both files together when AWS pricing changes (Requirements 14.2 and 17.2).",
+    "currency": "USD",
+    "trafficMirror": {
+        "eniHourPriceDefault": 0.015,
+        "eniHourPriceByRegion": {
+            "us-east-1": 0.015,
+            "us-east-2": 0.015,
+            "us-west-1": 0.015,
+            "us-west-2": 0.015,
+            "eu-west-1": 0.015,
+            "eu-west-2": 0.015,
+            "eu-west-3": 0.015,
+            "eu-central-1": 0.015,
+            "eu-north-1": 0.015,
+            "ap-northeast-1": 0.015,
+            "ap-northeast-2": 0.015,
+            "ap-southeast-1": 0.015,
+            "ap-southeast-2": 0.015,
+            "ap-south-1": 0.015,
+            "ca-central-1": 0.015,
+            "sa-east-1": 0.015
+        },
+        "dataPricePerGb": 0.015
+    },
+    "s3": {
+        "standardStoragePricePerGbMonth": 0.023
+    },
+    "heuristic": {
+        "mbpsPerEni": 1.0,
+        "bytesPerSecondPerMbps": 125000
+    }
+}

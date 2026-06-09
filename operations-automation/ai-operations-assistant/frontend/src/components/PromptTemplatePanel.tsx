@@ -5,8 +5,10 @@ import Cards from '@cloudscape-design/components/cards';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
+import Popover from '@cloudscape-design/components/popover';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs from '@cloudscape-design/components/tabs';
 
 // ---------------------------------------------------------------------------
@@ -23,11 +25,13 @@ export interface TemplateParameter {
 
 export interface PromptTemplate {
   id: string;
-  category: 'health' | 'trusted_advisor' | 'support' | 'cost';
+  category: 'health' | 'trusted_advisor' | 'support' | 'cost' | 'network';
   title: string;
   description: string;
   template: string; // Template text with {{parameter}} placeholders
   parameters: TemplateParameter[];
+  /** When true, the template requires GOATNetworkCaptureUsers group membership. */
+  requiresCaptureGroup?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,6 +42,7 @@ export const CATEGORY_LABELS: Record<PromptTemplate['category'], string> = {
   trusted_advisor: 'Trusted Advisor Analysis',
   support: 'Support Case Insights',
   cost: 'Cost Optimization Opportunities',
+  network: 'Network Troubleshooting',
 };
 
 // ---------------------------------------------------------------------------
@@ -148,6 +153,126 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
       { name: 'service_name', label: 'AWS Service (or "all")', type: 'text', required: true, defaultValue: 'all' },
     ],
   },
+
+  // ---- Network Troubleshooting ----
+  {
+    id: 'network-list-enis',
+    category: 'network',
+    title: 'List all ENIs in my account',
+    description: 'Enumerate all Elastic Network Interfaces with attachment status and instance IDs.',
+    template: 'List all ENIs in my account',
+    parameters: [],
+  },
+  {
+    id: 'network-start-capture',
+    category: 'network',
+    title: 'Start a 15-minute network capture on instance',
+    description: 'Start a VPC packet capture on a specific EC2 instance for 15 minutes.',
+    template:
+      'Start a 15-minute network capture on instance {{instance_id}}',
+    parameters: [
+      { name: 'instance_id', label: 'EC2 Instance ID', type: 'text', required: true },
+    ],
+    requiresCaptureGroup: true,
+  },
+  {
+    id: 'network-tls-hello-fragmentation',
+    category: 'network',
+    title: 'Show me TLS Client Hello fragmentation',
+    description: 'Check for TLS Client Hello fragmentation in a completed capture.',
+    template:
+      'Show me TLS Client Hello fragmentation for capture {{capture_id}}',
+    parameters: [
+      { name: 'capture_id', label: 'Capture ID', type: 'text', required: true },
+    ],
+  },
+  {
+    id: 'network-tcp-retransmissions',
+    category: 'network',
+    title: 'Find TCP retransmissions in capture',
+    description: 'Detect TCP retransmissions grouped by destination in a capture.',
+    template:
+      'Find TCP retransmissions in capture {{capture_id}}',
+    parameters: [
+      { name: 'capture_id', label: 'Capture ID', type: 'text', required: true },
+    ],
+  },
+  {
+    id: 'network-pod-connectivity',
+    category: 'network',
+    title: 'Why does my pod fail to reach an endpoint?',
+    description: 'Capture and analyze traffic to diagnose pod connectivity failures.',
+    template:
+      'Why does my pod fail to reach {{endpoint}}? Capture and analyze.',
+    parameters: [
+      { name: 'endpoint', label: 'Endpoint (hostname or IP)', type: 'text', required: true },
+    ],
+    requiresCaptureGroup: true,
+  },
+  {
+    id: 'network-multi-eni-capture',
+    category: 'network',
+    title: 'Capture multiple ENIs in one session',
+    description: 'Start a capture on up to 3 ENIs simultaneously for a specified duration.',
+    template:
+      'Start a capture on ENIs {{eni_id_list}} for {{duration_minutes}} minutes',
+    parameters: [
+      { name: 'eni_id_list', label: 'ENI IDs (comma-separated, up to 3)', type: 'text', required: true },
+      { name: 'duration_minutes', label: 'Duration (minutes, 1-60)', type: 'text', required: true, defaultValue: '15' },
+    ],
+    requiresCaptureGroup: true,
+  },
+  {
+    id: 'network-diagnose-flow-hostname',
+    category: 'network',
+    title: 'Diagnose a flow by hostname',
+    description: 'Diagnose a TCP exchange between two endpoints identified by hostname or IP.',
+    template:
+      'Diagnose the TCP exchange between {{source}} and {{destination}} on port {{port}} in capture {{capture_id}}',
+    parameters: [
+      { name: 'source', label: 'Source (hostname or IP)', type: 'text', required: true },
+      { name: 'destination', label: 'Destination (hostname or IP)', type: 'text', required: true },
+      { name: 'port', label: 'Port (optional)', type: 'text', required: false },
+      { name: 'capture_id', label: 'Capture ID', type: 'text', required: true },
+    ],
+  },
+  {
+    id: 'network-find-dropped-flows',
+    category: 'network',
+    title: 'Find dropped flows by destination',
+    description: 'Find dropped or reset connections to a specific destination.',
+    template:
+      'Find dropped or reset connections to {{destination}} on port {{port}} in capture {{capture_id}}',
+    parameters: [
+      { name: 'destination', label: 'Destination (hostname or IP)', type: 'text', required: true },
+      { name: 'port', label: 'Port (optional)', type: 'text', required: false },
+      { name: 'capture_id', label: 'Capture ID', type: 'text', required: true },
+    ],
+  },
+  {
+    id: 'network-investigate-support-case',
+    category: 'network',
+    title: 'Investigate from a support case',
+    description: 'Investigate a network problem described in a support case with optional capture.',
+    template:
+      'Investigate the network problem described in support case {{case_id}} and capture {{capture_id}} if relevant',
+    parameters: [
+      { name: 'case_id', label: 'Support Case ID', type: 'text', required: true },
+      { name: 'capture_id', label: 'Capture ID (optional)', type: 'text', required: false },
+    ],
+  },
+  {
+    id: 'network-diagnose-tcp-exchange',
+    category: 'network',
+    title: 'Diagnose a TCP exchange',
+    description: 'Run a full TCP stream health diagnosis including handshake, RTT, retransmissions, and anomalies.',
+    template:
+      'Diagnose TCP stream {{stream_id}} from capture {{capture_id}}',
+    parameters: [
+      { name: 'stream_id', label: 'TCP Stream ID', type: 'text', required: true },
+      { name: 'capture_id', label: 'Capture ID', type: 'text', required: true },
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -182,20 +307,25 @@ export function getTemplatesByCategory(
 export interface PromptTemplatePanelProps {
   /** Called when the user fills in parameters and clicks "Use Template". */
   onSubmit: (filledPrompt: string) => void;
+  /** Cognito groups the authenticated user belongs to. */
+  userGroups?: string[];
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export default function PromptTemplatePanel({ onSubmit }: PromptTemplatePanelProps) {
+export default function PromptTemplatePanel({ onSubmit, userGroups = [] }: PromptTemplatePanelProps) {
   const [selectedTemplate, setSelectedTemplate] = useState<PromptTemplate | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<string>('health');
 
+  /** Whether the user is a member of the GOATNetworkCaptureUsers group. */
+  const hasCaptureGroup = userGroups.includes('GOATNetworkCaptureUsers');
+
   // Derive categories for tabs
   const categories = useMemo(
     () =>
-      (['health', 'trusted_advisor', 'support', 'cost'] as const).map((cat) => ({
+      (['health', 'trusted_advisor', 'support', 'cost', 'network'] as const).map((cat) => ({
         id: cat,
         label: CATEGORY_LABELS[cat],
         templates: getTemplatesByCategory(cat),
@@ -228,12 +358,18 @@ export default function PromptTemplatePanel({ onSubmit }: PromptTemplatePanelPro
     setParamValues({});
   };
 
-  // Check if all required params are filled
-  const allRequiredFilled = selectedTemplate
+  // Check if all required params are filled; identify first empty param by name
+  const firstEmptyParam = selectedTemplate
     ? selectedTemplate.parameters
         .filter((p) => p.required)
-        .every((p) => (paramValues[p.name] ?? '').trim() !== '')
-    : false;
+        .find((p) => (paramValues[p.name] ?? '').trim() === '')
+    : undefined;
+
+  const allRequiredFilled = selectedTemplate ? !firstEmptyParam : false;
+
+  /** Whether the currently selected template is disabled due to missing capture group. */
+  const isTemplateDisabledByCaptureGroup =
+    selectedTemplate?.requiresCaptureGroup && !hasCaptureGroup;
 
   return (
     <SpaceBetween size="l">
@@ -268,14 +404,36 @@ export default function PromptTemplatePanel({ onSubmit }: PromptTemplatePanelPro
                   },
                   {
                     id: 'action',
-                    content: (item) => (
-                      <Button
-                        variant={selectedTemplate?.id === item.id ? 'primary' : 'normal'}
-                        onClick={() => handleSelectTemplate(item)}
-                      >
-                        {selectedTemplate?.id === item.id ? 'Selected' : 'Select'}
-                      </Button>
-                    ),
+                    content: (item) => {
+                      const disabled = item.requiresCaptureGroup && !hasCaptureGroup;
+                      const button = (
+                        <Button
+                          variant={selectedTemplate?.id === item.id ? 'primary' : 'normal'}
+                          onClick={() => handleSelectTemplate(item)}
+                          disabled={disabled}
+                        >
+                          {selectedTemplate?.id === item.id ? 'Selected' : 'Select'}
+                        </Button>
+                      );
+                      if (disabled) {
+                        return (
+                          <Popover
+                            dismissButton={false}
+                            position="top"
+                            size="medium"
+                            triggerType="custom"
+                            content={
+                              <StatusIndicator type="info">
+                                Capture lifecycle actions require membership in the GOATNetworkCaptureUsers group.
+                              </StatusIndicator>
+                            }
+                          >
+                            {button}
+                          </Popover>
+                        );
+                      }
+                      return button;
+                    },
                   },
                 ],
               }}
@@ -339,9 +497,19 @@ export default function PromptTemplatePanel({ onSubmit }: PromptTemplatePanelPro
             </FormField>
           ))}
 
-          <Button variant="primary" onClick={handleUseTemplate} disabled={!allRequiredFilled}>
+          <Button variant="primary" onClick={handleUseTemplate} disabled={!allRequiredFilled || !!isTemplateDisabledByCaptureGroup}>
             Use Template
           </Button>
+          {isTemplateDisabledByCaptureGroup && (
+            <StatusIndicator type="warning">
+              This template requires GOATNetworkCaptureUsers group membership.
+            </StatusIndicator>
+          )}
+          {!allRequiredFilled && firstEmptyParam && !isTemplateDisabledByCaptureGroup && (
+            <StatusIndicator type="info">
+              Please fill in the required parameter: {firstEmptyParam.label}
+            </StatusIndicator>
+          )}
         </SpaceBetween>
       )}
     </SpaceBetween>

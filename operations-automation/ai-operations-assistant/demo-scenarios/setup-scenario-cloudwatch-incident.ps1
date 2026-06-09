@@ -6,7 +6,7 @@
 #
 # Script is idempotent - safe to re-run (creates a new case each time).
 #
-# Usage: .\setup-scenario-b.ps1
+# Usage: .\setup-scenario-cloudwatch-incident.ps1
 
 $ErrorActionPreference = "Continue"
 

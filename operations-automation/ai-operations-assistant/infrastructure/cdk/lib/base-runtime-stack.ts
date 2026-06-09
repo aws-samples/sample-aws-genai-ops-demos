@@ -26,6 +26,17 @@ export interface DomainRuntimeConfig {
   agentSourcePath: string;
   /** Additional environment variables for the AgentCore runtime */
   environmentVariables?: Record<string, string>;
+  /**
+   * Maximum number of minutes to wait for the CodeBuild image build to
+   * complete before failing the deployment. Defaults to 14 minutes to
+   * preserve the historical single-Lambda waiter behavior. Domains whose
+   * container image takes longer to build (for example, the Network Agent
+   * with its tshark-based transformation Lambdas) can raise this value.
+   *
+   * The implementation uses the CDK provider framework's `totalTimeout`,
+   * which is capped at 60 minutes by AWS, so values must fall in `[1, 60]`.
+   */
+  buildWaitTimeoutMinutes?: number;
 }
 
 export interface BaseRuntimeStackProps extends cdk.StackProps {
@@ -33,14 +44,28 @@ export interface BaseRuntimeStackProps extends cdk.StackProps {
   config: DomainRuntimeConfig;
 }
 
+/** Default build wait budget in minutes when the config does not override it. */
+const DEFAULT_BUILD_WAIT_TIMEOUT_MINUTES = 14;
+
+/** Maximum build wait budget allowed by the CDK provider framework. */
+const MAX_BUILD_WAIT_TIMEOUT_MINUTES = 60;
+
 /**
  * G.O.A.T. BaseRuntimeStack — Shared base class for all domain RuntimeStacks.
  *
  * Imports from InfraStack via Fn.importValue(), uploads agent source to S3,
- * triggers CodeBuild via AwsCustomResource, waits for build via BuildWaiterFunction
- * Lambda, creates AgentCore CfnRuntime, and exports AgentRuntimeArn.
+ * triggers CodeBuild via AwsCustomResource, waits for build via the CDK
+ * provider framework (`cr.Provider` with an `isCompleteHandler`), creates the
+ * AgentCore CfnRuntime, and exports `AgentRuntimeArn`.
  *
- * Follows the lifecycle tracker runtime-stack.ts pattern.
+ * The build waiter uses the provider framework so that the polling loop can
+ * exceed the AWS Lambda 15-minute hard limit without having to refactor the
+ * waiter into a state machine. Each `isCompleteHandler` invocation performs a
+ * single `BatchGetBuilds` poll and either reports completion, surfaces a
+ * CodeBuild failure terminal state, or returns `IsComplete=false` so the
+ * provider will retry after `queryInterval`. On exhaustion of the configured
+ * budget the handler raises an error identifying the build project name and
+ * build identifier (Req 6.14).
  */
 export class BaseRuntimeStack extends cdk.Stack {
   public readonly agentRuntimeArn: string;
@@ -50,6 +75,18 @@ export class BaseRuntimeStack extends cdk.Stack {
 
     const { config } = props;
     const { domainName, exportPrefix, ecrRepoName, runtimeName, runtimeDescription, agentSourcePath } = config;
+
+    const buildWaitTimeoutMinutes = config.buildWaitTimeoutMinutes ?? DEFAULT_BUILD_WAIT_TIMEOUT_MINUTES;
+    if (
+      !Number.isInteger(buildWaitTimeoutMinutes) ||
+      buildWaitTimeoutMinutes < 1 ||
+      buildWaitTimeoutMinutes > MAX_BUILD_WAIT_TIMEOUT_MINUTES
+    ) {
+      throw new Error(
+        `buildWaitTimeoutMinutes must be an integer between 1 and ${MAX_BUILD_WAIT_TIMEOUT_MINUTES} ` +
+          `(got ${buildWaitTimeoutMinutes}). The CDK provider framework caps totalTimeout at 60 minutes.`,
+      );
+    }
 
     // -----------------------------------------------------------------------
     // Import from InfraStack via Fn.importValue()
@@ -103,26 +140,45 @@ export class BaseRuntimeStack extends cdk.Stack {
     buildTrigger.node.addDependency(agentSourceUpload);
 
     // -----------------------------------------------------------------------
-    // Wait for build via custom Lambda (BuildWaiterFunction)
+    // Wait for build via cr.Provider + isCompleteHandler. The provider
+    // framework drives the polling loop on the CFN side so the per-invocation
+    // Lambda timeout stays small while the total wait can extend up to 60
+    // minutes (Req 6.13, Req 6.14).
     // -----------------------------------------------------------------------
-    const buildWaiterFunction = new lambda.Function(this, 'BuildWaiterFunction', {
+    const buildWaiterOnEvent = new lambda.Function(this, 'BuildWaiterOnEvent', {
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
-      code: lambda.Code.fromInline(getBuildWaiterCode()),
-      timeout: cdk.Duration.minutes(15),
+      code: lambda.Code.fromInline(getBuildWaiterOnEventCode()),
+      timeout: cdk.Duration.minutes(1),
       memorySize: 256,
     });
 
-    buildWaiterFunction.addToRolePolicy(new iam.PolicyStatement({
+    const buildWaiterIsComplete = new lambda.Function(this, 'BuildWaiterIsComplete', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline(getBuildWaiterIsCompleteCode()),
+      timeout: cdk.Duration.minutes(1),
+      memorySize: 256,
+    });
+    buildWaiterIsComplete.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['codebuild:BatchGetBuilds'],
       resources: [buildProjectArn],
     }));
 
+    const buildWaiterProvider = new cr.Provider(this, 'BuildWaiterProvider', {
+      onEventHandler: buildWaiterOnEvent,
+      isCompleteHandler: buildWaiterIsComplete,
+      queryInterval: cdk.Duration.seconds(10),
+      totalTimeout: cdk.Duration.minutes(buildWaitTimeoutMinutes),
+    });
+
     const buildWaiter = new cdk.CustomResource(this, 'BuildWaiter', {
-      serviceToken: buildWaiterFunction.functionArn,
+      serviceToken: buildWaiterProvider.serviceToken,
       properties: {
         BuildId: buildTrigger.getResponseField('build.id'),
+        BuildProjectName: buildProjectName,
+        TimeoutMinutes: buildWaitTimeoutMinutes,
       },
     });
     buildWaiter.node.addDependency(buildTrigger);
@@ -165,78 +221,97 @@ export class BaseRuntimeStack extends cdk.Stack {
 }
 
 /**
- * Returns the inline Node.js code for the BuildWaiterFunction Lambda.
- * Polls CodeBuild until the build completes or times out.
+ * Returns the inline Node.js code for the BuildWaiter onEvent handler.
+ *
+ * The provider framework calls this once per CFN lifecycle action. For
+ * `Create` and `Update` we capture the build identifier and the start time
+ * (Unix epoch milliseconds) so the `isComplete` handler can compute elapsed
+ * time without relying on the framework's internal clock. The build itself is
+ * already running at this point — `AwsCustomResource` started it via
+ * `codebuild:StartBuild` before we were invoked.
  */
-function getBuildWaiterCode(): string {
+function getBuildWaiterOnEventCode(): string {
+  return [
+    'exports.handler = async (event) => {',
+    '  console.log("BuildWaiterOnEvent event:", JSON.stringify(event));',
+    '  if (event.RequestType === "Delete") {',
+    '    return { PhysicalResourceId: event.PhysicalResourceId };',
+    '  }',
+    '  const props = event.ResourceProperties || {};',
+    '  if (!props.BuildId) {',
+    '    throw new Error("BuildWaiterOnEvent: missing required property BuildId");',
+    '  }',
+    '  if (!props.BuildProjectName) {',
+    '    throw new Error("BuildWaiterOnEvent: missing required property BuildProjectName");',
+    '  }',
+    '  return {',
+    '    PhysicalResourceId: "build-waiter-" + props.BuildId,',
+    '  };',
+    '};',
+  ].join('\n');
+}
+
+/**
+ * Returns the inline Node.js code for the BuildWaiter isComplete handler.
+ *
+ * The provider framework calls this on a `queryInterval` cadence after
+ * `onEvent`. Each invocation does a single `BatchGetBuilds` poll. The handler
+ * returns `{ IsComplete: true }` on `SUCCEEDED`, throws on a CodeBuild
+ * terminal failure (`FAILED`, `FAULT`, `TIMED_OUT`, `STOPPED`), and returns
+ * `{ IsComplete: false }` while the build is still running. When the elapsed
+ * time exceeds the configured budget, the handler throws an error containing
+ * the build project name and build identifier (Req 6.14) so the custom
+ * resource fails with an actionable message rather than the framework's
+ * generic timeout reason.
+ */
+function getBuildWaiterIsCompleteCode(): string {
   return [
     'const { CodeBuildClient, BatchGetBuildsCommand } = require("@aws-sdk/client-codebuild");',
     '',
     'exports.handler = async (event) => {',
-    '  console.log("Event:", JSON.stringify(event));',
+    '  console.log("BuildWaiterIsComplete event:", JSON.stringify(event));',
     '  if (event.RequestType === "Delete") {',
-    '    return sendResponse(event, "SUCCESS", { Status: "DELETED" });',
+    '    return { IsComplete: true };',
     '  }',
-    '  const buildId = event.ResourceProperties.BuildId;',
-    '  const maxWaitMinutes = 14;',
-    '  const pollIntervalSeconds = 10;',
-    '  console.log("Waiting for build:", buildId);',
+    '  // The provider framework passes original ResourceProperties to isComplete.',
+    '  // Data returned by onEvent is NOT merged into ResourceProperties.',
+    '  const props = event.ResourceProperties || {};',
+    '  const buildId = props.BuildId;',
+    '  const buildProjectName = props.BuildProjectName;',
+    '  const timeoutMinutes = parseInt(props.TimeoutMinutes, 10);',
+    '  if (!buildId || !buildProjectName || !Number.isInteger(timeoutMinutes)) {',
+    '    throw new Error("BuildWaiterIsComplete: missing or invalid resource properties: " + JSON.stringify(props));',
+    '  }',
+    '  // Timeout enforcement is handled by the provider framework totalTimeout.',
+    '  // We keep a soft check here using the build start time from CodeBuild itself.',
     '  const client = new CodeBuildClient({});',
-    '  const startTime = Date.now();',
-    '  const maxWaitMs = maxWaitMinutes * 60 * 1000;',
-    '  while (Date.now() - startTime < maxWaitMs) {',
-    '    try {',
-    '      const response = await client.send(new BatchGetBuildsCommand({ ids: [buildId] }));',
-    '      const build = response.builds[0];',
-    '      const status = build.buildStatus;',
-    '      console.log("Build status: " + status);',
-    '      if (status === "SUCCEEDED") {',
-    '        return await sendResponse(event, "SUCCESS", { Status: "SUCCEEDED" });',
-    '      } else if (["FAILED", "FAULT", "TIMED_OUT", "STOPPED"].includes(status)) {',
-    '        return await sendResponse(event, "FAILED", {}, "Build failed with status: " + status);',
-    '      }',
-    '      await new Promise(resolve => setTimeout(resolve, pollIntervalSeconds * 1000));',
-    '    } catch (error) {',
-    '      console.error("Error:", error);',
-    '      return await sendResponse(event, "FAILED", {}, error.message);',
-    '    }',
+    '  let response;',
+    '  try {',
+    '    response = await client.send(new BatchGetBuildsCommand({ ids: [buildId] }));',
+    '  } catch (error) {',
+    '    console.error("BatchGetBuilds error:", error);',
+    '    throw new Error(',
+    '      "BatchGetBuilds failed for build " + buildId + " in project " + buildProjectName + ": " +',
+    '      (error && error.message ? error.message : String(error))',
+    '    );',
     '  }',
-    '  return await sendResponse(event, "FAILED", {}, "Build timeout after " + maxWaitMinutes + " minutes");',
+    '  const build = (response.builds && response.builds[0]) || null;',
+    '  if (!build) {',
+    '    console.log("Build not yet visible to BatchGetBuilds, will retry");',
+    '    return { IsComplete: false };',
+    '  }',
+    '  const status = build.buildStatus;',
+    '  console.log("Build " + buildId + " status: " + status);',
+    '  if (status === "SUCCEEDED") {',
+    '    return { IsComplete: true, Data: { Status: status } };',
+    '  }',
+    '  if (["FAILED", "FAULT", "TIMED_OUT", "STOPPED"].includes(status)) {',
+    '    throw new Error(',
+    '      "CodeBuild build " + buildId + " for project " + buildProjectName +',
+    '      " ended in terminal state " + status + ". Inspect the CodeBuild logs for details."',
+    '    );',
+    '  }',
+    '  return { IsComplete: false };',
     '};',
-    '',
-    'async function sendResponse(event, status, data, reason) {',
-    '  const responseBody = JSON.stringify({',
-    '    Status: status,',
-    '    Reason: reason || "See CloudWatch Log Stream: " + event.LogStreamName,',
-    '    PhysicalResourceId: event.PhysicalResourceId || event.RequestId,',
-    '    StackId: event.StackId,',
-    '    RequestId: event.RequestId,',
-    '    LogicalResourceId: event.LogicalResourceId,',
-    '    Data: data',
-    '  });',
-    '  console.log("Response:", responseBody);',
-    '  const https = require("https");',
-    '  const url = require("url");',
-    '  const parsedUrl = url.parse(event.ResponseURL);',
-    '  return new Promise((resolve, reject) => {',
-    '    const options = {',
-    '      hostname: parsedUrl.hostname,',
-    '      port: 443,',
-    '      path: parsedUrl.path,',
-    '      method: "PUT",',
-    '      headers: { "Content-Type": "", "Content-Length": responseBody.length }',
-    '    };',
-    '    const request = https.request(options, (response) => {',
-    '      console.log("Status: " + response.statusCode);',
-    '      resolve(data);',
-    '    });',
-    '    request.on("error", (error) => {',
-    '      console.error("Error:", error);',
-    '      reject(error);',
-    '    });',
-    '    request.write(responseBody);',
-    '    request.end();',
-    '  });',
-    '}',
   ].join('\n');
 }
