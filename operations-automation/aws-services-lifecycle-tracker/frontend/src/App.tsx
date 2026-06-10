@@ -10,6 +10,7 @@ import AuthModal from './AuthModal';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
+import ServiceDetail from './pages/ServiceDetail';
 import Deprecations from './pages/Deprecations';
 import Timeline from './pages/Timeline';
 import PlanOfAction from './pages/PlanOfAction';
@@ -183,6 +184,7 @@ function AppContent() {
                   <Routes>
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/services" element={<Services />} />
+                    <Route path="/services/:serviceName" element={<ServiceDetail />} />
                     <Route path="/deprecations" element={<Deprecations />} />
                     <Route path="/timeline" element={<Timeline />} />
                     <Route path="/plan-of-action" element={<PlanOfAction />} />

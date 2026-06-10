@@ -162,7 +162,22 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
         `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans/index/*`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-health-events`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-health-events/index/*`,
       ],
+    }));
+
+    // AWS Health API permissions for health event collection
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'HealthAPIAccess',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'health:DescribeEvents',
+        'health:DescribeEventDetails',
+        'health:DescribeAffectedEntities',
+        'health:DescribeEventTypes',
+      ],
+      resources: ['*'],  // Health API does not support resource-level permissions
     }));
 
     // Account Resource Discovery permissions - for scanning customer's actual AWS resources
