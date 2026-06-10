@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Table from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -7,9 +8,11 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Box from '@cloudscape-design/components/box';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Toggle from '@cloudscape-design/components/toggle';
+import Link from '@cloudscape-design/components/link';
 import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, ServiceConfig, DashboardMetrics } from '../api';
 
 export default function Services() {
+  const navigate = useNavigate();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,7 +191,15 @@ export default function Services() {
             header: 'Service',
             cell: (item) => (
               <SpaceBetween size="xxxs">
-                <Box variant="strong">{item.name}</Box>
+                <Link
+                  onFollow={(e) => {
+                    e.preventDefault();
+                    navigate(`/services/${item.service_name}`);
+                  }}
+                  href={`/services/${item.service_name}`}
+                >
+                  <Box variant="strong">{item.name}</Box>
+                </Link>
                 <Box variant="small" color="text-body-secondary">
                   {item.service_name}
                 </Box>

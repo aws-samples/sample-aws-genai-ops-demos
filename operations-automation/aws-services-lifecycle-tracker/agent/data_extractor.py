@@ -9,14 +9,112 @@ from bs4 import BeautifulSoup
 import json
 import re
 import time
+import logging
 from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 from aws_utils import get_region
 from database_reads import get_service_config
 from service_filters import apply_service_filters
+
+logger = logging.getLogger(__name__)
+
+# Required fields that every Service_Config must contain
+SERVICE_CONFIG_REQUIRED_FIELDS = [
+    'name',
+    'documentation_urls',
+    'extraction_focus',
+    'item_properties',
+    'required_fields',
+]
+
+# Optional fields that are valid but not required
+SERVICE_CONFIG_OPTIONAL_FIELDS = [
+    'health_event_mapping',
+    'schema_key',
+    'enabled',
+    'last_extraction',
+    'extraction_count',
+]
+
+
+def validate_service_config(config: dict) -> Tuple[bool, List[str]]:
+    """
+    Validate a Service_Config dictionary against the expected schema.
+
+    Checks that all required fields are present and have the correct types.
+    Optional fields (e.g. health_event_mapping) are allowed without causing errors.
+
+    Args:
+        config: A service configuration dictionary to validate.
+
+    Returns:
+        A tuple of (is_valid, errors) where is_valid is True if the config passes
+        all validation checks, and errors is a list of human-readable error messages
+        describing any issues found.
+    """
+    errors: List[str] = []
+
+    if not isinstance(config, dict):
+        errors.append("Service config must be a dictionary")
+        logger.warning("Invalid service config: not a dictionary")
+        return False, errors
+
+    # Check required fields are present
+    for field in SERVICE_CONFIG_REQUIRED_FIELDS:
+        if field not in config:
+            errors.append(f"Missing required field: '{field}'")
+
+    # Type validation for present fields
+    if 'name' in config and not isinstance(config['name'], str):
+        errors.append("Field 'name' must be a string")
+
+    if 'documentation_urls' in config:
+        if not isinstance(config['documentation_urls'], list):
+            errors.append("Field 'documentation_urls' must be a list")
+        elif len(config['documentation_urls']) == 0:
+            errors.append("Field 'documentation_urls' must not be empty")
+        else:
+            for i, url in enumerate(config['documentation_urls']):
+                if not isinstance(url, str):
+                    errors.append(f"Field 'documentation_urls[{i}]' must be a string")
+
+    if 'extraction_focus' in config and not isinstance(config['extraction_focus'], str):
+        errors.append("Field 'extraction_focus' must be a string")
+
+    if 'item_properties' in config and not isinstance(config['item_properties'], dict):
+        errors.append("Field 'item_properties' must be a dictionary")
+
+    if 'required_fields' in config:
+        if not isinstance(config['required_fields'], list):
+            errors.append("Field 'required_fields' must be a list")
+        elif len(config['required_fields']) == 0:
+            errors.append("Field 'required_fields' must not be empty")
+
+    # Optional field type validation (only if present)
+    if 'health_event_mapping' in config and not isinstance(config['health_event_mapping'], str):
+        errors.append("Field 'health_event_mapping' must be a string")
+
+    if 'schema_key' in config and not isinstance(config['schema_key'], str):
+        errors.append("Field 'schema_key' must be a string")
+
+    if 'enabled' in config and not isinstance(config['enabled'], bool):
+        errors.append("Field 'enabled' must be a boolean")
+
+    if 'extraction_count' in config and not isinstance(config['extraction_count'], int):
+        errors.append("Field 'extraction_count' must be an integer")
+
+    is_valid = len(errors) == 0
+
+    if not is_valid:
+        config_name = config.get('name', '<unknown>')
+        logger.warning(
+            f"Invalid service config '{config_name}': {errors}"
+        )
+
+    return is_valid, errors
 
 
 class DataExtractor:
