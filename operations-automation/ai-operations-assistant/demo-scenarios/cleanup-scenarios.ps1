@@ -134,6 +134,23 @@ if (-not [string]::IsNullOrEmpty($ec2Arns) -and $ec2Arns -ne "None") {
             $warnings += "EC2 terminate failed: $instanceId"
         }
     }
+
+    # Wait for all EC2 instances to fully terminate before proceeding
+    if ($terminatedEc2.Count -gt 0) {
+        Write-Host "  Waiting for EC2 instances to fully terminate..." -ForegroundColor Gray
+        foreach ($instId in $terminatedEc2) {
+            $maxWait = 180
+            $elapsed = 0
+            while ($elapsed -lt $maxWait) {
+                $instState = aws ec2 describe-instances --instance-ids $instId `
+                    --query "Reservations[].Instances[].State.Name" --output text --region $region 2>$null
+                if ($instState -eq "terminated" -or [string]::IsNullOrEmpty($instState)) { break }
+                Start-Sleep -Seconds 15
+                $elapsed += 15
+            }
+        }
+        Write-Host "  All EC2 instances terminated" -ForegroundColor Green
+    }
 } else {
     Write-Host "  No EC2 instances found" -ForegroundColor Gray
 }
@@ -412,6 +429,59 @@ Write-Host ""
 # ---------------------------------------------------------------------------
 # 9. Delete subnets
 # ---------------------------------------------------------------------------
+
+# IMPORTANT: Before deleting subnets, ensure any TGW attachments in those
+# subnets are fully deleted. TGW attachments hold ENIs that block subnet deletion.
+Write-Host "--- Pre-Subnet: Cleaning TGW Attachments ---" -ForegroundColor Magenta
+$tgwAttachments = aws ec2 describe-transit-gateway-attachments `
+    --filters "Name=tag:goat-demo,Values=true" "Name=state,Values=available,deleting,pendingAcceptance" `
+    --query "TransitGatewayAttachments[].TransitGatewayAttachmentId" --output text --region $region 2>$null
+if (-not [string]::IsNullOrEmpty($tgwAttachments) -and $tgwAttachments -ne "None") {
+    foreach ($attId in ($tgwAttachments -split '\s+')) {
+        if ([string]::IsNullOrEmpty($attId)) { continue }
+        $attState = aws ec2 describe-transit-gateway-attachments --transit-gateway-attachment-ids $attId `
+            --query "TransitGatewayAttachments[0].State" --output text --region $region 2>$null
+        if ($attState -eq "available") {
+            Write-Host "  Deleting TGW attachment: $attId..." -ForegroundColor Yellow
+            aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id $attId --region $region 2>$null | Out-Null
+        }
+    }
+    # Wait for all TGW attachments to fully delete
+    Write-Host "  Waiting for TGW attachments to fully delete..." -ForegroundColor Gray
+    foreach ($attId in ($tgwAttachments -split '\s+')) {
+        if ([string]::IsNullOrEmpty($attId)) { continue }
+        $maxWait = 180; $elapsed = 0
+        while ($elapsed -lt $maxWait) {
+            $attState = aws ec2 describe-transit-gateway-attachments --transit-gateway-attachment-ids $attId `
+                --query "TransitGatewayAttachments[0].State" --output text --region $region 2>$null
+            if ($attState -eq "deleted" -or [string]::IsNullOrEmpty($attState) -or $attState -eq "None") { break }
+            Start-Sleep -Seconds 15; $elapsed += 15
+        }
+    }
+    Write-Host "  TGW attachments cleared" -ForegroundColor Green
+} else {
+    Write-Host "  No active TGW attachments found" -ForegroundColor Gray
+}
+
+# Also delete any Network Firewalls BEFORE subnets (NFW holds ENIs in firewall subnets)
+$nfwList = aws network-firewall list-firewalls --query "Firewalls[?contains(FirewallName,'goat-demo')].FirewallName" --output text --region $region 2>$null
+if (-not [string]::IsNullOrEmpty($nfwList) -and $nfwList -ne "None") {
+    foreach ($nfwName in ($nfwList -split '\s+')) {
+        if ([string]::IsNullOrEmpty($nfwName)) { continue }
+        Write-Host "  Deleting Network Firewall: $nfwName..." -ForegroundColor Yellow
+        aws network-firewall delete-firewall --firewall-name $nfwName --region $region 2>$null | Out-Null
+        # Wait for firewall to be gone
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Seconds 15
+            $fwCheck = aws network-firewall describe-firewall --firewall-name $nfwName --query "Firewall.FirewallArn" --output text --region $region 2>$null
+            if ([string]::IsNullOrEmpty($fwCheck) -or $fwCheck -eq "None") { break }
+        }
+        Write-Host "  Network Firewall deleted: $nfwName" -ForegroundColor Green
+    }
+}
+
+Write-Host ""
+
 Write-Host "--- Subnets ---" -ForegroundColor Magenta
 
 Write-Host "Finding subnets tagged goat-demo=true..." -ForegroundColor Yellow
@@ -425,20 +495,32 @@ if (-not [string]::IsNullOrEmpty($subnetIds) -and $subnetIds -ne "None") {
         $totalFound++
 
         Write-Host "  Deleting subnet: $subnetId..." -ForegroundColor Yellow
-        try {
-            $result = aws ec2 delete-subnet --subnet-id $subnetId --region $region 2>&1
-            if ($LASTEXITCODE -ne 0) { throw $result }
-            Write-Host "  Deleted: $subnetId" -ForegroundColor Green
-            $deletedSubnets += $subnetId
-        } catch {
-            if ("$_" -match "not found") {
-                Write-Host "  Subnet $subnetId already deleted, skipping" -ForegroundColor Gray
-            } elseif ("$_" -match "DependencyViolation") {
-                Write-Host "  Subnet $subnetId has dependencies (resources still terminating). Re-run cleanup later." -ForegroundColor Yellow
-                $warnings += "Subnet dependency: $subnetId - re-run cleanup later"
-            } else {
-                Write-Host "  WARNING: Failed to delete subnet $subnetId`: $_" -ForegroundColor Red
-                $warnings += "Subnet delete failed: $subnetId"
+        $subnetRetries = 3
+        $subnetDeleted = $false
+        for ($attempt = 1; $attempt -le $subnetRetries; $attempt++) {
+            try {
+                $result = aws ec2 delete-subnet --subnet-id $subnetId --region $region 2>&1
+                if ($LASTEXITCODE -ne 0) { throw $result }
+                Write-Host "  Deleted: $subnetId" -ForegroundColor Green
+                $deletedSubnets += $subnetId
+                $subnetDeleted = $true
+                break
+            } catch {
+                if ("$_" -match "not found") {
+                    Write-Host "  Subnet $subnetId already deleted, skipping" -ForegroundColor Gray
+                    $subnetDeleted = $true
+                    break
+                } elseif ("$_" -match "DependencyViolation" -and $attempt -lt $subnetRetries) {
+                    Write-Host "  Subnet $subnetId has dependencies, waiting 20s... (attempt $attempt/$subnetRetries)" -ForegroundColor Gray
+                    Start-Sleep -Seconds 20
+                } elseif ("$_" -match "DependencyViolation") {
+                    Write-Host "  Subnet $subnetId still has dependencies after retries. Skipping." -ForegroundColor Yellow
+                    $warnings += "Subnet dependency: $subnetId"
+                } else {
+                    Write-Host "  WARNING: Failed to delete subnet $subnetId`: $_" -ForegroundColor Red
+                    $warnings += "Subnet delete failed: $subnetId"
+                    break
+                }
             }
         }
     }
@@ -507,20 +589,32 @@ if (-not [string]::IsNullOrEmpty($vpcIds) -and $vpcIds -ne "None") {
         }
 
         Write-Host "  Deleting VPC: $vpcId..." -ForegroundColor Yellow
-        try {
-            $result = aws ec2 delete-vpc --vpc-id $vpcId --region $region 2>&1
-            if ($LASTEXITCODE -ne 0) { throw $result }
-            Write-Host "  Deleted: $vpcId" -ForegroundColor Green
-            $deletedVpcs += $vpcId
-        } catch {
-            if ("$_" -match "not found") {
-                Write-Host "  VPC $vpcId already deleted, skipping" -ForegroundColor Gray
-            } elseif ("$_" -match "DependencyViolation") {
-                Write-Host "  VPC $vpcId has dependencies still terminating. Re-run cleanup later." -ForegroundColor Yellow
-                $warnings += "VPC dependency: $vpcId - re-run cleanup later"
-            } else {
-                Write-Host "  WARNING: Failed to delete VPC $vpcId`: $_" -ForegroundColor Red
-                $warnings += "VPC delete failed: $vpcId"
+        $vpcRetries = 3
+        $vpcDeleted = $false
+        for ($attempt = 1; $attempt -le $vpcRetries; $attempt++) {
+            try {
+                $result = aws ec2 delete-vpc --vpc-id $vpcId --region $region 2>&1
+                if ($LASTEXITCODE -ne 0) { throw $result }
+                Write-Host "  Deleted: $vpcId" -ForegroundColor Green
+                $deletedVpcs += $vpcId
+                $vpcDeleted = $true
+                break
+            } catch {
+                if ("$_" -match "not found") {
+                    Write-Host "  VPC $vpcId already deleted, skipping" -ForegroundColor Gray
+                    $vpcDeleted = $true
+                    break
+                } elseif ("$_" -match "DependencyViolation" -and $attempt -lt $vpcRetries) {
+                    Write-Host "  VPC $vpcId has dependencies, waiting 30s... (attempt $attempt/$vpcRetries)" -ForegroundColor Gray
+                    Start-Sleep -Seconds 30
+                } elseif ("$_" -match "DependencyViolation") {
+                    Write-Host "  VPC $vpcId still has dependencies after retries. Skipping." -ForegroundColor Yellow
+                    $warnings += "VPC dependency: $vpcId"
+                } else {
+                    Write-Host "  WARNING: Failed to delete VPC $vpcId`: $_" -ForegroundColor Red
+                    $warnings += "VPC delete failed: $vpcId"
+                    break
+                }
             }
         }
     }
@@ -788,7 +882,7 @@ if ($hasTlsResources) {
         }
     }
 
-    # Delete firewall rule group
+    # Delete firewall rule group (may need retries if policy deletion hasn't propagated)
     $nfwRuleGroupName = "goat-demo-tls-rules"
     try {
         $rgCheck = aws network-firewall describe-rule-group --rule-group-name $nfwRuleGroupName --type STATEFUL `
@@ -797,18 +891,29 @@ if ($hasTlsResources) {
     if (-not [string]::IsNullOrEmpty($rgCheck) -and $rgCheck -ne "None") {
         $totalFound++
         Write-Host "  Deleting firewall rule group: $nfwRuleGroupName..." -ForegroundColor Yellow
-        try {
-            $result = aws network-firewall delete-rule-group --rule-group-name $nfwRuleGroupName --type STATEFUL --region $region 2>&1
-            if ($LASTEXITCODE -ne 0) { throw $result }
-            Write-Host "  Deleted firewall rule group: $nfwRuleGroupName" -ForegroundColor Green
-            $countTlsFrag++
-        } catch {
-            if ("$_" -match "ResourceNotFoundException|not found") {
-                Write-Host "  Rule group already deleted, skipping" -ForegroundColor Gray
-            } else {
-                Write-Host "  WARNING: Failed to delete rule group: $_" -ForegroundColor Red
-                $warnings += "Firewall rule group delete failed: $nfwRuleGroupName"
-                $hasErrors = $true
+        $rgDeleted = $false
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                $result = aws network-firewall delete-rule-group --rule-group-name $nfwRuleGroupName --type STATEFUL --region $region 2>&1
+                if ($LASTEXITCODE -ne 0) { throw $result }
+                Write-Host "  Deleted firewall rule group: $nfwRuleGroupName" -ForegroundColor Green
+                $countTlsFrag++
+                $rgDeleted = $true
+                break
+            } catch {
+                if ("$_" -match "ResourceNotFoundException|not found") {
+                    Write-Host "  Rule group already deleted, skipping" -ForegroundColor Gray
+                    $rgDeleted = $true
+                    break
+                } elseif ("$_" -match "InvalidOperationException|still in use" -and $attempt -lt 5) {
+                    Write-Host "  Rule group still in use, waiting 15s... (attempt $attempt/5)" -ForegroundColor Gray
+                    Start-Sleep -Seconds 15
+                } else {
+                    Write-Host "  WARNING: Failed to delete rule group after retries: $_" -ForegroundColor Red
+                    $warnings += "Firewall rule group delete failed: $nfwRuleGroupName"
+                    $hasErrors = $true
+                    break
+                }
             }
         }
     }
@@ -1027,9 +1132,17 @@ if ($hasTlsResources) {
     }
 
     Write-Host "  Deleting scenario IAM roles..." -ForegroundColor Yellow
-    foreach ($roleName in @("goat-demo-tls-eks-role", "goat-demo-tls-node-role")) {
+    foreach ($roleName in @("goat-demo-tls-eks-role", "goat-demo-tls-node-role", "goat-demo-tls-ssm-role")) {
         $roleCheck = aws iam get-role --role-name $roleName --query "Role.RoleName" --output text 2>$null
         if (-not [string]::IsNullOrEmpty($roleCheck) -and $roleCheck -ne "None") {
+            # Remove from instance profile first (SSM role)
+            $profileName = $roleName -replace '-role$', '-profile'
+            $profCheck = aws iam get-instance-profile --instance-profile-name $profileName --query "InstanceProfile.InstanceProfileName" --output text 2>$null
+            if (-not [string]::IsNullOrEmpty($profCheck) -and $profCheck -ne "None" -and $LASTEXITCODE -eq 0) {
+                aws iam remove-role-from-instance-profile --instance-profile-name $profileName --role-name $roleName 2>$null
+                aws iam delete-instance-profile --instance-profile-name $profileName 2>$null
+                Write-Host "  Deleted instance profile: $profileName" -ForegroundColor Green
+            }
             # Detach managed policies
             $attached = aws iam list-attached-role-policies --role-name $roleName --query "AttachedPolicies[].PolicyArn" --output text 2>$null
             if (-not [string]::IsNullOrEmpty($attached) -and $attached -ne "None") {

@@ -7,7 +7,10 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Spinner from '@cloudscape-design/components/spinner';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea from '@cloudscape-design/components/textarea';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { invokeAgent } from '../agentcore';
+import '../styles/markdown.css';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -193,6 +196,28 @@ export default function ChatInterface({
     sendMessage(inputValue);
   };
 
+  /**
+   * Detect if the last assistant message is asking for a yes/no or choice
+   * confirmation and return the quick-reply options.
+   */
+  const getQuickReplies = (content: string): string[] => {
+    if (!content) return [];
+    // Check last 200 chars for common confirmation patterns
+    const tail = content.slice(-200).toLowerCase();
+    // "Reply 'yes' to start the capture or 'no' to cancel"
+    if (tail.includes("'yes'") && tail.includes("'no'")) {
+      return ['yes', 'no'];
+    }
+    // "Would you like me to..." / "Shall I..."
+    if (
+      (tail.includes('would you like me to') || tail.includes('shall i') || tail.includes('do you want me to')) &&
+      tail.includes('?')
+    ) {
+      return ['yes', 'no'];
+    }
+    return [];
+  };
+
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
@@ -242,8 +267,44 @@ export default function ChatInterface({
                     {msg.role === 'user' ? 'You' : 'G.O.A.T.'} ·{' '}
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </Box>
-                  <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {msg.content}
+                  <div className="goat-message-content">
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ children, className, ...props }) {
+                            // If it's a fenced code block (has className like "language-xxx"), render normally
+                            if (className) {
+                              return <code className={className} {...props}>{children}</code>;
+                            }
+                            // Inline code: make it clickable as a suggested action
+                            const text = String(children).trim();
+                            return (
+                              <code
+                                className="goat-action-chip"
+                                onClick={() => {
+                                  if (!isStreaming) {
+                                    setInputValue(text);
+                                    // Auto-send after a brief delay so user sees what's being sent
+                                    setTimeout(() => sendMessage(text), 100);
+                                  }
+                                }}
+                                title={`Click to send: "${text}"`}
+                                {...props}
+                              >
+                                {children}
+                              </code>
+                            );
+                          },
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {msg.content}
+                      </span>
+                    )}
                   </div>
                   {msg.incomplete && (
                     <StatusIndicator type="warning">
@@ -252,6 +313,22 @@ export default function ChatInterface({
                   )}
                   {isStreaming && idx === messages.length - 1 &&
                     msg.role === 'assistant' && !msg.incomplete && <Spinner size="normal" />}
+                  {/* Quick-reply buttons for the last assistant message */}
+                  {!isStreaming && idx === messages.length - 1 &&
+                    msg.role === 'assistant' && !msg.incomplete &&
+                    getQuickReplies(msg.content).length > 0 && (
+                      <div className="goat-quick-replies">
+                        {getQuickReplies(msg.content).map((reply) => (
+                          <button
+                            key={reply}
+                            className="goat-quick-reply-btn"
+                            onClick={() => sendMessage(reply)}
+                          >
+                            {reply}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                 </SpaceBetween>
               </Container>
 

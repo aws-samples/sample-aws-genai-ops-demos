@@ -1297,6 +1297,32 @@ export class NetworkInfraStack extends BaseInfraStack {
               'rm -rf /asset-output/numpy/tests /asset-output/pyarrow/tests 2>/dev/null || true',
             ].join(' && '),
           ],
+          local: {
+            tryBundle(outputDir: string) {
+              // Local bundling fallback when Docker is unavailable.
+              // Installs Linux x86_64 wheels for Lambda compatibility.
+              const { execSync } = require('child_process');
+              try {
+                execSync(
+                  `pip install --no-cache-dir --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 --only-binary=:all: --target "${outputDir}" -r requirements.txt`,
+                  { cwd: NETWORK_TRANSFORMATION_LAMBDA_DIR, stdio: 'inherit' },
+                );
+                // Copy source files
+                const fs = require('fs');
+                for (const f of fs.readdirSync(NETWORK_TRANSFORMATION_LAMBDA_DIR)) {
+                  if (f.endsWith('.py') || f === 'requirements.txt') {
+                    fs.copyFileSync(
+                      path.join(NETWORK_TRANSFORMATION_LAMBDA_DIR, f),
+                      path.join(outputDir, f),
+                    );
+                  }
+                }
+                return true;
+              } catch {
+                return false;
+              }
+            },
+          },
         },
       }),
       timeout: cdk.Duration.minutes(10),

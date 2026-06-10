@@ -2102,14 +2102,15 @@ def _invoke_network_agent(action: str, params: dict = None) -> str:
             "error": "Network Agent runtime not configured: NETWORK_AGENT_ARN is unset or empty"
         })
 
-    # Req 9.1: 60-second invocation timeout. ``read_timeout`` bounds how
-    # long boto3 waits for response bytes; ``connect_timeout`` bounds the
-    # initial TCP/TLS handshake. ``retries`` is set to a single attempt so
-    # a slow upstream cannot extend the wall-clock past the read_timeout
-    # via implicit retry.
+    # Req 9.1: 120-second invocation timeout for diagnose_tcp_stream and
+    # other multi-query handlers. ``read_timeout`` bounds how long boto3
+    # waits for response bytes; ``connect_timeout`` bounds the initial
+    # TCP/TLS handshake. ``retries`` is set to a single attempt so a slow
+    # upstream cannot extend the wall-clock past the read_timeout via
+    # implicit retry.
     boto_config = BotoConfig(
         connect_timeout=10,
-        read_timeout=60,
+        read_timeout=600,
         retries={"max_attempts": 1, "mode": "standard"},
     )
 

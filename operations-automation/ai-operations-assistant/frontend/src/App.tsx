@@ -15,6 +15,8 @@ import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import Alert from '@cloudscape-design/components/alert';
+import Toggle from '@cloudscape-design/components/toggle';
+import { applyMode, Mode } from '@cloudscape-design/global-styles';
 import ChatInterface from './components/ChatInterface';
 import PromptTemplatePanel from './components/PromptTemplatePanel';
 import KnowledgeManager from './components/KnowledgeManager';
@@ -256,6 +258,16 @@ export default function App() {
   const [user, setUser] = useState<{ username: string; password: string; idToken: string } | null>(null);
   const [showSignIn, setShowSignIn] = useState(false);
   const [targetAccount, setTargetAccount] = useState('');
+  const [darkMode, setDarkMode] = useState(() => {
+    const stored = localStorage.getItem('goat_dark_mode');
+    return stored === 'true';
+  });
+
+  // Apply dark/light mode
+  useEffect(() => {
+    applyMode(darkMode ? Mode.Dark : Mode.Light);
+    localStorage.setItem('goat_dark_mode', String(darkMode));
+  }, [darkMode]);
 
   // On mount, check for a stored session
   useEffect(() => {
@@ -298,6 +310,11 @@ export default function App() {
           logo: { src: '', alt: 'G.O.A.T.' },
         }}
         utilities={[
+          {
+            type: 'button',
+            text: darkMode ? '☀️ Light' : '🌙 Dark',
+            onClick: () => setDarkMode(!darkMode),
+          },
           ...(user
             ? [
                 {

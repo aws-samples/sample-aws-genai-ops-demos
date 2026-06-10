@@ -168,15 +168,73 @@ chmod +x setup-scenario-tls-fragmentation.sh
 
 The script takes ~5-7 minutes (Network Firewall provisioning is the main wait). Once complete, it prints a summary with the EC2 instance ID, ENI, and suggested queries.
 
+> **Note:** The EC2 instance's UserData starts a background curl loop that hits `ecr.<region>.amazonaws.com` with ML-KEM key exchange every **30 seconds** (~2 requests/minute). This means traffic is automatically flowing — you don't need to generate it manually. A 2-minute capture will contain ~4 TLS Client Hello frames with the fragmentation signature, which is enough for the agent to detect the pattern.
+
 ### Reproducing the TLS Fragmentation
 
-The setup script launches an EC2 instance that runs a curl loop in its UserData, automatically generating the fragmented traffic. To verify manually via SSM:
+The setup script launches an EC2 instance that runs a curl loop in its UserData, automatically generating the fragmented traffic. The setup summary prints the instance ID and ENI — use the ENI for packet capture in the G.O.A.T. app.
 
+**Getting the ENI** (if you missed the summary output):
+
+**PowerShell:**
 ```powershell
-aws ssm send-command --instance-ids <instance-id> --document-name "AWS-RunShellScript" --parameters 'commands=["curl --curves X25519MLKEM768:X25519 -v https://ecr.us-east-1.amazonaws.com/ 2>&1 | head -20"]' --output json --no-cli-pager
+# Find the scenario EC2 instance
+$instanceId = aws ec2 describe-instances --filters "Name=tag:goat-scenario,Values=tls-fragmentation" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text --no-cli-pager
+
+# Get its primary ENI
+$eniId = aws ec2 describe-instances --instance-ids $instanceId --query "Reservations[].Instances[].NetworkInterfaces[0].NetworkInterfaceId" --output text --no-cli-pager
+
+Write-Host "Instance: $instanceId"
+Write-Host "ENI: $eniId"
+```
+
+**Bash (macOS / Linux):**
+```bash
+# Find the scenario EC2 instance
+instance_id=$(aws ec2 describe-instances \
+  --filters "Name=tag:goat-scenario,Values=tls-fragmentation" "Name=instance-state-name,Values=running" \
+  --query "Reservations[].Instances[].InstanceId" --output text --no-cli-pager)
+
+# Get its primary ENI
+eni_id=$(aws ec2 describe-instances --instance-ids "$instance_id" \
+  --query "Reservations[].Instances[].NetworkInterfaces[0].NetworkInterfaceId" --output text --no-cli-pager)
+
+echo "Instance: $instance_id"
+echo "ENI: $eni_id"
+```
+
+**Generating additional TLS traffic manually** (via SSM — no SSH needed):
+
+**PowerShell:**
+```powershell
+# Single curl to ECR with ML-KEM key exchange (produces 1522-byte Client Hello)
+aws ssm send-command --instance-ids $instanceId --document-name "AWS-RunShellScript" --parameters 'commands=["curl --curves X25519MLKEM768:X25519 -v https://ecr.us-east-1.amazonaws.com/ 2>&1 | head -20"]' --output json --no-cli-pager
+
+# Burst of 10 curls to generate more pcap data for the capture
+aws ssm send-command --instance-ids $instanceId --document-name "AWS-RunShellScript" --parameters 'commands=["for i in $(seq 1 10); do curl --curves X25519MLKEM768:X25519 -s -o /dev/null https://ecr.us-east-1.amazonaws.com/ ; done; echo Done"]' --output json --no-cli-pager
+```
+
+**Bash (macOS / Linux):**
+```bash
+# Single curl to ECR with ML-KEM key exchange (produces 1522-byte Client Hello)
+aws ssm send-command --instance-ids "$instance_id" --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["curl --curves X25519MLKEM768:X25519 -v https://ecr.us-east-1.amazonaws.com/ 2>&1 | head -20"]' \
+  --output json --no-cli-pager
+
+# Burst of 10 curls to generate more pcap data for the capture
+aws ssm send-command --instance-ids "$instance_id" --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["for i in $(seq 1 10); do curl --curves X25519MLKEM768:X25519 -s -o /dev/null https://ecr.us-east-1.amazonaws.com/ ; done; echo Done"]' \
+  --output json --no-cli-pager
 ```
 
 You'll see `} [1522 bytes data]` in the TLS Client Hello output — this 1522-byte handshake is what fragments across TCP segments.
+
+**Using the ENI in the G.O.A.T. app** — after starting a capture, the traffic mirror will collect all packets from this ENI. Then transform and query:
+
+1. In the G.O.A.T. app: `Capture traffic from eni-xxxx` (replace with your ENI)
+2. Wait 1-2 minutes for traffic to accumulate, then: `stop my capture`
+3. Transform the raw data: `transform my capture`
+4. Analyze: `show TLS Client Hello sizes`
 
 ### Why the Network Firewall Drops the Connection
 

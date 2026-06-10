@@ -751,15 +751,26 @@ if (-not [string]::IsNullOrEmpty($nfwArn) -and $nfwArn -ne "None") {
     aws logs create-log-group --log-group-name $flowLogGroup --region $region 2>$null
     aws logs create-log-group --log-group-name $alertLogGroup --region $region 2>$null
 
-    $logConfigJson = @"
-{"LogDestinationConfigs":[{"LogType":"FLOW","LogDestinationType":"CloudWatchLogs","LogDestination":{"logGroup":"$flowLogGroup"}},{"LogType":"ALERT","LogDestinationType":"CloudWatchLogs","LogDestination":{"logGroup":"$alertLogGroup"}}]}
-"@
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+    # NFW requires adding log destinations one at a time
+    # Step 1: Add FLOW logging
+    $flowConfigJson = "{`"LogDestinationConfigs`":[{`"LogType`":`"FLOW`",`"LogDestinationType`":`"CloudWatchLogs`",`"LogDestination`":{`"logGroup`":`"$flowLogGroup`"}}]}"
     $logConfigFile = [System.IO.Path]::GetTempFileName()
-    [System.IO.File]::WriteAllText($logConfigFile, $logConfigJson)
+    [System.IO.File]::WriteAllText($logConfigFile, $flowConfigJson, $utf8NoBom)
     aws network-firewall update-logging-configuration `
         --firewall-name goat-demo-tls-nfw `
         --logging-configuration "file://$logConfigFile" `
-        --region $region 2>$null
+        --region $region 2>$null | Out-Null
+
+    # Step 2: Add ALERT logging (include FLOW to avoid removing it)
+    $bothConfigJson = "{`"LogDestinationConfigs`":[{`"LogType`":`"FLOW`",`"LogDestinationType`":`"CloudWatchLogs`",`"LogDestination`":{`"logGroup`":`"$flowLogGroup`"}},{`"LogType`":`"ALERT`",`"LogDestinationType`":`"CloudWatchLogs`",`"LogDestination`":{`"logGroup`":`"$alertLogGroup`"}}]}"
+    [System.IO.File]::WriteAllText($logConfigFile, $bothConfigJson, $utf8NoBom)
+    aws network-firewall update-logging-configuration `
+        --firewall-name goat-demo-tls-nfw `
+        --logging-configuration "file://$logConfigFile" `
+        --region $region 2>$null | Out-Null
+
     Remove-Item $logConfigFile -ErrorAction SilentlyContinue
     Write-Host "  Configured FLOW + ALERT logging" -ForegroundColor Gray
     Write-Host ""
@@ -791,11 +802,36 @@ Write-Host ""
 # 10. Launch EC2 Test Instance (replaces EKS)
 #
 # A simple t3.micro running AL2023 with a UserData script that loops
-# ML-KEM curl to ecr.<region>.amazonaws.com every 30 seconds. No IAM
-# instance profile needed - the curl to ECR is unauthenticated and returns
-# HTTP 404 which is fine for demonstrating the TLS handshake failure.
+# ML-KEM curl to ecr.<region>.amazonaws.com every 30 seconds.
+# IAM instance profile with SSM access enables manual verification via
+# aws ssm send-command.
 # ---------------------------------------------------------------------------
 Write-Host "--- EC2 Test Instance ---" -ForegroundColor Magenta
+
+# Create IAM role + instance profile for SSM access (idempotent)
+$ssmRoleName = "goat-demo-tls-ssm-role"
+$ssmProfileName = "goat-demo-tls-ssm-profile"
+Write-Host "Ensuring IAM instance profile for SSM..." -ForegroundColor Yellow
+$roleCheck = aws iam get-role --role-name $ssmRoleName --query "Role.RoleName" --output text 2>$null
+if ([string]::IsNullOrEmpty($roleCheck) -or $roleCheck -eq "None" -or $LASTEXITCODE -ne 0) {
+    $trustPolicy = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+    aws iam create-role --role-name $ssmRoleName --assume-role-policy-document $trustPolicy --tags Key=goat-demo,Value=true Key=goat-scenario,Value=tls-fragmentation --no-cli-pager 2>$null | Out-Null
+    aws iam attach-role-policy --role-name $ssmRoleName --policy-arn "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" 2>$null
+    Write-Host "  Created IAM role: $ssmRoleName" -ForegroundColor Green
+} else {
+    Write-Host "  IAM role exists: $ssmRoleName" -ForegroundColor Gray
+}
+
+$profileCheck = aws iam get-instance-profile --instance-profile-name $ssmProfileName --query "InstanceProfile.InstanceProfileName" --output text 2>$null
+if ([string]::IsNullOrEmpty($profileCheck) -or $profileCheck -eq "None" -or $LASTEXITCODE -ne 0) {
+    aws iam create-instance-profile --instance-profile-name $ssmProfileName --tags Key=goat-demo,Value=true Key=goat-scenario,Value=tls-fragmentation 2>$null | Out-Null
+    aws iam add-role-to-instance-profile --instance-profile-name $ssmProfileName --role-name $ssmRoleName 2>$null
+    # Wait for instance profile to propagate (IAM is eventually consistent)
+    Start-Sleep -Seconds 10
+    Write-Host "  Created instance profile: $ssmProfileName" -ForegroundColor Green
+} else {
+    Write-Host "  Instance profile exists: $ssmProfileName" -ForegroundColor Gray
+}
 
 if (-not [string]::IsNullOrEmpty($subnetPrivateId) -and $subnetPrivateId -ne "None") {
     # Check if instance already exists
@@ -843,19 +879,49 @@ if (-not [string]::IsNullOrEmpty($subnetPrivateId) -and $subnetPrivateId -ne "No
                 Write-Host "  Security group exists: $sgId" -ForegroundColor Green
             }
 
-            # Build UserData script
+            # Build UserData script — creates a systemd service for the curl loop
+            # so it auto-starts on every boot and survives reboots
             $userDataScript = @"
 #!/bin/bash
 # Wait for network to be ready
 sleep 10
-# MTU 1500 is already default on t3.micro (no jumbo frames in spoke VPC via TGW)
-echo "BOOTSTRAP_COMPLETE: AL2023 TLS fragmentation test instance ready"
-# Loop ML-KEM curl every 30 seconds
+
+# Create the curl script
+cat > /usr/local/bin/goat-tls-curl.sh << 'SCRIPT'
+#!/bin/bash
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null || echo "$region")
 while true; do
-  echo "[`$(date -u +%Y-%m-%dT%H:%M:%SZ)] Attempting HTTPS to ecr.$region.amazonaws.com with ML-KEM..."
-  curl --curves X25519MLKEM768:X25519 -sS -o /dev/null -w "HTTP %{http_code}\n" https://ecr.$region.amazonaws.com/ 2>&1 || echo "Connection failed (expected - firewall blocks fragmented Client Hello)"
-  sleep 30
+  curl --curves X25519MLKEM768:X25519 -sS -o /dev/null -w "[%{time_total}s] HTTP %{http_code}\n" "https://ecr.`${REGION}.amazonaws.com/" 2>&1 || echo "Connection failed"
+  sleep 20
 done
+SCRIPT
+chmod +x /usr/local/bin/goat-tls-curl.sh
+
+# Create systemd service
+cat > /etc/systemd/system/goat-tls-curl.service << 'UNIT'
+[Unit]
+Description=G.O.A.T. TLS Fragmentation Demo - ML-KEM curl loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/goat-tls-curl.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# Enable and start
+systemctl daemon-reload
+systemctl enable goat-tls-curl.service
+systemctl start goat-tls-curl.service
+
+echo "BOOTSTRAP_COMPLETE: AL2023 TLS fragmentation test instance ready (curl loop every 20s)"
 "@
             # Base64 encode the UserData
             $userDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataScript))
@@ -868,6 +934,7 @@ done
                     --instance-type t3.micro `
                     --subnet-id $subnetPrivateId `
                     --security-group-ids $sgId `
+                    --iam-instance-profile "Name=$ssmProfileName" `
                     --user-data $userDataB64 `
                     --tag-specifications "ResourceType=instance,Tags=[{Key=goat-demo,Value=true},{Key=goat-scenario,Value=tls-fragmentation},{Key=Name,Value=goat-demo-tls-test-instance},{Key=auto-delete,Value=no},{Key=goat-network-capture-allowed,Value=true}]" "ResourceType=network-interface,Tags=[{Key=goat-demo,Value=true},{Key=goat-scenario,Value=tls-fragmentation},{Key=Name,Value=goat-demo-tls-test-eni},{Key=auto-delete,Value=no},{Key=goat-network-capture-allowed,Value=true}]" `
                     --query "Instances[0].InstanceId" --output text --region $region 2>&1

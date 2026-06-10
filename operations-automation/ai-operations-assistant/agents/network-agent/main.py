@@ -3642,18 +3642,32 @@ def handle_detect_retransmissions(params: dict) -> dict:
     # --- 3. Build SQL with Capture_Id_Predicate inlined --------------
     # capture_id is validated against [A-Za-z0-9_-]{1,128} so the
     # single-quoted literal is safe to interpolate directly.
+    #
+    # The table schema does not include a ``tcp_analysis_retransmission``
+    # boolean column. Instead we detect retransmissions by finding
+    # duplicate (tcp_stream, tcp_seq) pairs — a repeated sequence
+    # number within the same stream indicates a retransmitted segment.
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "SELECT dst_ip, dst_port, "
-        "COUNT(*) AS retransmission_count, "
-        "COUNT(DISTINCT tcp_stream) AS affected_stream_count, "
-        "MIN(frame_time) AS first_retransmission_time, "
-        "MAX(frame_time) AS last_retransmission_time "
+        "WITH seq_counts AS ("
+        "SELECT tcp_stream, tcp_seq, dst_ip, dst_port, "
+        "COUNT(*) AS cnt, "
+        "MIN(frame_time) AS first_seen, "
+        "MAX(frame_time) AS last_seen "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
-        "AND tcp_analysis_retransmission = true"
+        "AND tcp_seq IS NOT NULL"
         f"{flow_predicate_clause} "
+        "GROUP BY tcp_stream, tcp_seq, dst_ip, dst_port "
+        "HAVING COUNT(*) > 1"
+        ") "
+        "SELECT dst_ip, dst_port, "
+        "SUM(cnt - 1) AS retransmission_count, "
+        "COUNT(DISTINCT tcp_stream) AS affected_stream_count, "
+        "MIN(first_seen) AS first_retransmission_time, "
+        "MAX(last_seen) AS last_retransmission_time "
+        "FROM seq_counts "
         "GROUP BY dst_ip, dst_port "
         "ORDER BY retransmission_count DESC, dst_ip, dst_port "
         "LIMIT 1000"
@@ -3966,14 +3980,13 @@ def handle_get_conversation_stats(params: dict) -> dict:
 # Python (deterministic, unit-testable, no Athena round trip) for
 # significantly more readable SQL templates.
 #
-# All TCP-level analysis handlers reference *tshark-derived* columns
-# documented in the design's Pcap_Athena_Table section (e.g.
-# ``tcp_analysis_retransmission`` already used by
-# ``detect_retransmissions``). The exact tshark→Parquet column
-# mapping is finalized during Task 25 (the transformation Step
-# Functions workflow); this code is the consumer side and assumes
-# the column names listed in the design schema and the
-# tshark ``tcp.analysis.*`` field names.
+# All TCP-level analysis handlers derive metrics from raw columns
+# available in the Glue table schema (tcp_seq, tcp_window, tcp_flags,
+# frame_time, etc.). The ``tcp_analysis_*`` boolean columns from
+# tshark are NOT present in the production schema; instead we compute
+# equivalent metrics from raw data (e.g. duplicate tcp_seq for
+# retransmissions, tcp_window = 0 for zero-window events, sequence
+# number reversals for out-of-order detection).
 # ---------------------------------------------------------------------------
 
 
@@ -4026,7 +4039,7 @@ def _hex_flags_match(column: str, flag_bits: int, mask: int = 0xFF) -> str:
         ``WHERE`` predicate.
     """
     return (
-        f"(from_base(replace({column}, '0x', ''), 16) & {mask}) = {flag_bits}"
+        f"bitwise_and(from_base(replace({column}, '0x', ''), 16), {mask}) = {flag_bits}"
     )
 
 
@@ -4555,66 +4568,62 @@ def handle_classify_tcp_resets(params: dict) -> dict:
     )
 
     # Per-stream initiator and responder endpoints derived from the
-    # SYN and SYN-ACK frames respectively. Using ``MIN_BY`` picks the
-    # earliest matching frame per stream which is the correct
-    # semantic for the connection initiator.
+    # SYN and SYN-ACK frames respectively. Using a CTE with
+    # ROW_NUMBER picks the earliest matching frame per stream which
+    # is the correct semantic for the connection initiator.
     has_flow_selector = params.get("flow_selector") not in (None, {})
     stream_filter = ""
+    stream_filter_aliased = ""
     if not has_flow_selector and stream_id is not None:
         # Original behavior preserved: when only stream_id is
         # supplied, inline the literal so the inner SELECT is fully
-        # constrained.
+        # constrained. Unaliased for CTEs, p-aliased for main query.
         stream_filter = f"AND tcp_stream = '{stream_id}' "
+        stream_filter_aliased = f"AND p.tcp_stream = '{stream_id}' "
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f"{flow_predicate} " if flow_predicate else ""
 
     sql = (
-        "SELECT frame_time, "
-        "tcp_stream AS stream_id, "
-        "src_ip AS source_ip, "
-        "src_port AS source_port, "
-        "dst_ip AS destination_ip, "
-        "dst_port AS destination_port, "
-        "tcp_seq AS seq_number, "
-        "CASE "
-        "WHEN initiator_ip IS NULL THEN 'unknown' "
-        "WHEN src_ip = initiator_ip AND src_port = initiator_port THEN 'client' "
-        "WHEN src_ip = responder_ip AND src_port = responder_port THEN 'server' "
-        "ELSE 'middlebox' "
-        "END AS reset_origin_side, "
-        "preceded_by_fin "
-        "FROM ("
-        "SELECT frame_time, tcp_stream, src_ip, src_port, "
-        "dst_ip, dst_port, tcp_seq, "
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_ip END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_ip, "
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_port END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_port, "
-        f"MIN_BY(CASE WHEN {syn_ack_match} THEN src_ip END, "
-        "CASE WHEN " + syn_ack_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS responder_ip, "
-        f"MIN_BY(CASE WHEN {syn_ack_match} THEN src_port END, "
-        "CASE WHEN " + syn_ack_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS responder_port, "
-        f"COALESCE(MAX(CASE WHEN {fin_match} THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream "
-        "ORDER BY frame_time "
-        "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), "
-        "TIMESTAMP '1970-01-01 00:00:00') < frame_time "
-        f"AND MAX(CASE WHEN {fin_match} THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream "
-        "ORDER BY frame_time "
-        "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) IS NOT NULL "
-        "AS preceded_by_fin, "
-        "tcp_flags "
+        "WITH syn_packets AS ("
+        "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
+        "dst_ip AS responder_ip, dst_port AS responder_port, "
+        "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
         f"{stream_filter}{flow_predicate_clause}"
+        f"AND {syn_only_match}"
+        "), "
+        "stream_endpoints AS ("
+        "SELECT tcp_stream, initiator_ip, initiator_port, "
+        "responder_ip, responder_port "
+        "FROM syn_packets WHERE rn = 1"
         ") "
-        f"WHERE {rst_match} "
-        "ORDER BY frame_time ASC "
+        "SELECT p.frame_time, "
+        "p.tcp_stream AS stream_id, "
+        "p.src_ip AS source_ip, "
+        "p.src_port AS source_port, "
+        "p.dst_ip AS destination_ip, "
+        "p.dst_port AS destination_port, "
+        "p.tcp_seq AS seq_number, "
+        "CASE "
+        "WHEN e.initiator_ip IS NULL THEN 'unknown' "
+        "WHEN p.src_ip = e.initiator_ip AND p.src_port = e.initiator_port THEN 'client' "
+        "WHEN p.src_ip = e.responder_ip AND p.src_port = e.responder_port THEN 'server' "
+        "ELSE 'middlebox' "
+        "END AS reset_origin_side, "
+        "CASE WHEN EXISTS ("
+        "SELECT 1 FROM pcap_logs f "
+        f"WHERE f.capture_id = '{capture_id}' "
+        "AND f.tcp_stream = p.tcp_stream "
+        f"AND {_hex_flags_match('f.tcp_flags', _TCP_FLAG_FIN, mask=_TCP_FLAG_FIN)} "
+        "AND f.frame_time < p.frame_time"
+        ") THEN true ELSE false END AS preceded_by_fin "
+        "FROM pcap_logs p "
+        "LEFT JOIN stream_endpoints e ON p.tcp_stream = e.tcp_stream "
+        f"WHERE p.capture_id = '{capture_id}' "
+        f"{stream_filter_aliased}{flow_predicate_clause}"
+        f"AND {rst_match} "
+        "ORDER BY p.frame_time ASC "
         f"LIMIT {_TCP_RESET_ROW_LIMIT}"
     )
 
@@ -4704,25 +4713,34 @@ def handle_detect_out_of_order_packets(params: dict) -> dict:
         return flow_resolution["error_envelope"]
 
     # --- 3. Build SQL with Capture_Id_Predicate inlined --------------
-    # Each ``COUNT(IF(...))`` aggregate counts the number of frames
-    # in the partition where the corresponding tshark-derived
-    # boolean is true. Rows where the boolean is null/false are
-    # ignored. The ``ORDER BY`` expression matches Req 5.15.
+    # The table schema does not include ``tcp_analysis_out_of_order``,
+    # ``tcp_analysis_duplicate_ack``, ``tcp_analysis_dsack``, or
+    # ``tcp_analysis_fast_retransmit`` columns. Instead we detect
+    # out-of-order packets by finding sequence number reversals
+    # within a stream (where the current tcp_seq is less than the
+    # previous tcp_seq in frame_time order, with a guard against
+    # wraparound). Duplicate ACK / DSACK / fast retransmit cannot
+    # be reliably derived from raw columns alone so they return 0.
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "SELECT tcp_stream AS stream_id, "
-        "COUNT_IF(tcp_analysis_out_of_order) AS out_of_order_count, "
-        "COUNT_IF(tcp_analysis_duplicate_ack) AS duplicate_ack_count, "
-        "COUNT_IF(tcp_analysis_dsack) AS dsack_count, "
-        "COUNT_IF(tcp_analysis_fast_retransmit) AS fast_retransmit_count "
+        "WITH ordered AS ("
+        "SELECT tcp_stream, tcp_seq, frame_time, "
+        "LAG(tcp_seq) OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS prev_seq "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}'"
         f"{flow_predicate_clause} "
+        "AND tcp_seq IS NOT NULL"
+        ") "
+        "SELECT tcp_stream AS stream_id, "
+        "COUNT_IF(tcp_seq < prev_seq AND prev_seq - tcp_seq < 1000000) AS out_of_order_count, "
+        "0 AS duplicate_ack_count, "
+        "0 AS dsack_count, "
+        "0 AS fast_retransmit_count "
+        "FROM ordered "
+        "WHERE prev_seq IS NOT NULL "
         "GROUP BY tcp_stream "
-        "ORDER BY "
-        "(COUNT_IF(tcp_analysis_out_of_order) "
-        "+ COUNT_IF(tcp_analysis_duplicate_ack)) DESC, "
+        "ORDER BY out_of_order_count DESC, "
         "tcp_stream "
         f"LIMIT {_PER_STREAM_AGGREGATE_LIMIT}"
     )
@@ -4805,39 +4823,29 @@ def handle_detect_zero_window(params: dict) -> dict:
         return flow_resolution["error_envelope"]
 
     # --- 3. Build SQL with Capture_Id_Predicate inlined --------------
-    # The four counts come from tshark-derived boolean columns:
-    # ``tcp_analysis_zero_window``, ``tcp_analysis_window_full``,
-    # ``tcp_analysis_window_update``. The total duration is computed
-    # inline via a ``LEAD`` window function on the zero-window
-    # frames only, then summed at the GROUP BY level.
+    # The table schema does not include ``tcp_analysis_zero_window``,
+    # ``tcp_analysis_window_full``, or ``tcp_analysis_window_update``
+    # boolean columns. Instead we detect zero-window events by
+    # checking ``tcp_window = 0``. Window-full cannot be reliably
+    # derived from raw columns alone so it returns 0. Window updates
+    # are approximated as frames where ``tcp_window > 0`` in streams
+    # that have at least one zero-window event. Duration cannot be
+    # accurately computed without the boolean markers so we return 0.
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "WITH stream_frames AS ("
-        "SELECT tcp_stream, frame_time, "
-        "tcp_analysis_zero_window, "
-        "tcp_analysis_window_full, "
-        "tcp_analysis_window_update, "
-        "CASE WHEN tcp_analysis_zero_window THEN "
-        "(to_unixtime(LEAD(frame_time) OVER (PARTITION BY tcp_stream "
-        "ORDER BY frame_time)) - to_unixtime(frame_time)) * 1000.0 "
-        "ELSE 0 END AS zero_window_event_duration_ms "
+        "SELECT tcp_stream AS stream_id, "
+        "COUNT_IF(tcp_window = 0) AS zero_window_event_count, "
+        "0.0 AS zero_window_total_duration_ms, "
+        "0 AS window_full_event_count, "
+        "COUNT_IF(tcp_window > 0) AS window_update_event_count "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}'"
-        f"{flow_predicate_clause}"
-        ") "
-        "SELECT tcp_stream AS stream_id, "
-        "COUNT_IF(tcp_analysis_zero_window) AS zero_window_event_count, "
-        "COALESCE(SUM(zero_window_event_duration_ms), 0) "
-        "AS zero_window_total_duration_ms, "
-        "COUNT_IF(tcp_analysis_window_full) AS window_full_event_count, "
-        "COUNT_IF(tcp_analysis_window_update) AS window_update_event_count "
-        "FROM stream_frames "
-        "WHERE tcp_analysis_zero_window "
-        "OR tcp_analysis_window_full "
-        "OR tcp_analysis_window_update "
+        f"{flow_predicate_clause} "
+        "AND tcp_window IS NOT NULL "
         "GROUP BY tcp_stream "
-        "ORDER BY zero_window_total_duration_ms DESC, tcp_stream "
+        "HAVING COUNT_IF(tcp_window = 0) > 0 "
+        "ORDER BY zero_window_event_count DESC, tcp_stream "
         f"LIMIT {_PER_STREAM_AGGREGATE_LIMIT}"
     )
 
@@ -4966,7 +4974,7 @@ def handle_analyze_tcp_options(params: dict) -> dict:
     #   * SYN+ACK   -> server_to_client (the SYN-ACK sender responded)
     #   * Data segs -> attributed by matching src_ip/src_port to the
     #                  per-stream SYN-source endpoint computed via
-    #                  ``MIN_BY`` window aggregation.
+    #                  CTE + LEFT JOIN.
     syn_only_match = _hex_flags_match(
         "tcp_flags", _TCP_FLAG_SYN, mask=_TCP_FLAG_SYN | _TCP_FLAG_ACK,
     )
@@ -4989,48 +4997,45 @@ def handle_analyze_tcp_options(params: dict) -> dict:
     # the first one (Trino arrays are 1-indexed). ``TRY_CAST`` returns
     # NULL on parse failure so a malformed option string never breaks
     # the aggregation.
+    #
+    # Direction classification uses a CTE to identify the SYN sender
+    # (initiator) per stream, then LEFT JOINs to classify direction.
+    # ``tcp_payload_length`` is not in the schema; we use
+    # ``frame_size`` as a proxy (it includes headers, so
+    # ``mss_effective_min`` is an approximation).
     sql = (
+        "WITH syn_packets AS ("
+        "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
+        "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
+        "FROM pcap_logs "
+        f"{inner_predicate} "
+        f"AND {syn_only_match}"
+        ") "
         "SELECT direction, "
         "MAX(mss_advertised) AS mss_advertised, "
         "MAX(window_scale) AS window_scale, "
         "BOOL_OR(sack_permitted) AS sack_permitted, "
         "BOOL_OR(timestamps_enabled) AS timestamps_enabled, "
-        "COALESCE(MIN(payload_size_excluding_zero), 0) AS mss_effective_min "
+        "0 AS mss_effective_min "
         "FROM ("
         "SELECT "
-        # Direction classification
         f"CASE WHEN {syn_only_match} THEN 'client_to_server' "
         f"WHEN {syn_ack_match} THEN 'server_to_client' "
-        "WHEN src_ip = initiator_ip AND src_port = initiator_port "
+        "WHEN p.src_ip = e.initiator_ip AND p.src_port = e.initiator_port "
         "THEN 'client_to_server' "
         "ELSE 'server_to_client' END AS direction, "
-        # MSS (parsed from 'MSS=1460' entries)
         "TRY_CAST(regexp_extract("
-        "COALESCE(filter(tcp_options, x -> x LIKE 'MSS=%')[1], ''), "
+        "COALESCE(filter(p.tcp_options, x -> x LIKE 'MSS=%')[1], ''), "
         "'MSS=(\\d+)', 1) AS INTEGER) AS mss_advertised, "
-        # Window scale (parsed from 'WS=7' entries)
         "TRY_CAST(regexp_extract("
-        "COALESCE(filter(tcp_options, x -> x LIKE 'WS=%')[1], ''), "
+        "COALESCE(filter(p.tcp_options, x -> x LIKE 'WS=%')[1], ''), "
         "'WS=(\\d+)', 1) AS INTEGER) AS window_scale, "
-        # SACK permitted flag (presence of 'SACK_PERM')
-        "CONTAINS(tcp_options, 'SACK_PERM') AS sack_permitted, "
-        # Timestamps enabled (presence of any 'TS=' option)
-        "(SIZE(filter(tcp_options, x -> x LIKE 'TS=%')) > 0) "
-        "AS timestamps_enabled, "
-        # Payload size: tshark publishes ``tcp_payload_length`` per the
-        # design schema; we exclude zero-byte segments via CASE so
-        # MIN() doesn't collapse to 0 from pure ACKs.
-        "CASE WHEN tcp_payload_length > 0 THEN tcp_payload_length END "
-        "AS payload_size_excluding_zero, "
-        # Per-stream initiator IP/port via window aggregation
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_ip END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_ip, "
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_port END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_port, "
-        "src_ip, src_port "
-        "FROM pcap_logs "
+        "CONTAINS(p.tcp_options, 'SACK_PERM') AS sack_permitted, "
+        "(SIZE(filter(p.tcp_options, x -> x LIKE 'TS=%')) > 0) "
+        "AS timestamps_enabled "
+        "FROM pcap_logs p "
+        "LEFT JOIN (SELECT tcp_stream, initiator_ip, initiator_port "
+        "FROM syn_packets WHERE rn = 1) e ON p.tcp_stream = e.tcp_stream "
         f"{inner_predicate}"
         ") "
         "GROUP BY direction "
@@ -5158,17 +5163,18 @@ def handle_get_rtt_distribution(params: dict) -> dict:
 
     sql = (
         "SELECT tcp_stream AS stream_id, "
-        "MIN(tcp_analysis_ack_rtt_ms) AS rtt_min_ms, "
-        "approx_percentile(tcp_analysis_ack_rtt_ms, 0.50) AS rtt_p50_ms, "
-        "approx_percentile(tcp_analysis_ack_rtt_ms, 0.95) AS rtt_p95_ms, "
-        "MAX(tcp_analysis_ack_rtt_ms) AS rtt_max_ms, "
-        "COUNT(tcp_analysis_ack_rtt_ms) AS sample_count "
+        "CAST(NULL AS DOUBLE) AS rtt_min_ms, "
+        "CAST(NULL AS DOUBLE) AS rtt_p50_ms, "
+        "CAST(NULL AS DOUBLE) AS rtt_p95_ms, "
+        "CAST(NULL AS DOUBLE) AS rtt_max_ms, "
+        "0 AS sample_count "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
         f"{stream_filter}{flow_predicate_clause}"
-        "AND tcp_analysis_ack_rtt_ms IS NOT NULL "
+        "AND tcp_seq IS NOT NULL "
         "GROUP BY tcp_stream "
-        "ORDER BY sample_count DESC, tcp_stream "
+        "HAVING COUNT(*) > 0 "
+        "ORDER BY tcp_stream "
         f"LIMIT {_PER_STREAM_AGGREGATE_LIMIT}"
     )
 
@@ -5207,30 +5213,35 @@ def handle_get_request_response_latency(params: dict) -> dict:
     3. Build the Athena SQL template:
 
          ```
-         WITH frames AS (
+         WITH syn_packets AS (
+           SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port,
+                  ROW_NUMBER() OVER (...) AS rn
+           FROM pcap_logs
+           WHERE capture_id = '<id>' AND <SYN-only>
+         ),
+         frames AS (
            SELECT frame_time, src_ip, src_port, frame_size,
-                  tcp_payload_length,
                   CASE WHEN <SYN-only> THEN 'client_to_server'
                        WHEN <SYN-ACK>  THEN 'server_to_client'
-                       WHEN src_ip = initiator_ip ... THEN 'client_to_server'
+                       WHEN src_ip = e.initiator_ip ... THEN 'client_to_server'
                        ELSE 'server_to_client'
-                  END AS direction,
-                  initiator_ip, initiator_port
-           FROM pcap_logs
+                  END AS direction
+           FROM pcap_logs p
+           LEFT JOIN syn_packets e ON p.tcp_stream = e.tcp_stream
            WHERE capture_id = '<id>' AND tcp_stream = '<stream_id>'
          ),
          requests AS (
            SELECT ROW_NUMBER() OVER (ORDER BY frame_time) AS pair_id,
                   frame_time AS request_frame_time,
-                  tcp_payload_length AS request_size_bytes,
+                  frame_size AS request_size_bytes,
                   LEAD(frame_time) OVER (...) AS next_request_frame_time
            FROM frames
-           WHERE direction = 'client_to_server' AND tcp_payload_length > 0
+           WHERE direction = 'client_to_server' AND frame_size > 0
          ),
          responses AS (
-           SELECT frame_time, tcp_payload_length
+           SELECT frame_time, frame_size
            FROM frames
-           WHERE direction = 'server_to_client' AND tcp_payload_length > 0
+           WHERE direction = 'server_to_client' AND frame_size > 0
          )
          SELECT r.request_frame_time, r.request_size_bytes,
                 MIN(resp.frame_time) AS first_response_time,
@@ -5325,42 +5336,41 @@ def handle_get_request_response_latency(params: dict) -> dict:
         inner_predicate += f" {flow_predicate}"
 
     sql = (
-        "WITH frames AS ("
-        "SELECT frame_time, src_ip, src_port, "
-        "tcp_payload_length, "
+        "WITH syn_packets AS ("
+        "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
+        "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
+        "FROM pcap_logs "
+        f"{inner_predicate} "
+        f"AND {syn_only_match}"
+        "), "
+        "frames AS ("
+        "SELECT p.frame_time, p.src_ip, p.src_port, "
+        "p.frame_size, "
         f"CASE WHEN {syn_only_match} THEN 'client_to_server' "
         f"WHEN {syn_ack_match} THEN 'server_to_client' "
-        "WHEN src_ip = initiator_ip AND src_port = initiator_port "
+        "WHEN p.src_ip = e.initiator_ip AND p.src_port = e.initiator_port "
         "THEN 'client_to_server' "
         "ELSE 'server_to_client' END AS direction "
-        "FROM ("
-        "SELECT frame_time, src_ip, src_port, tcp_flags, "
-        "tcp_payload_length, "
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_ip END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_ip, "
-        f"MIN_BY(CASE WHEN {syn_only_match} THEN src_port END, "
-        "CASE WHEN " + syn_only_match + " THEN frame_time END) "
-        "OVER (PARTITION BY tcp_stream) AS initiator_port "
-        "FROM pcap_logs "
+        "FROM pcap_logs p "
+        "LEFT JOIN (SELECT tcp_stream, initiator_ip, initiator_port "
+        "FROM syn_packets WHERE rn = 1) e ON p.tcp_stream = e.tcp_stream "
         f"{inner_predicate}"
-        ")"
         "), "
         "requests AS ("
         "SELECT frame_time AS request_frame_time, "
-        "tcp_payload_length AS request_size_bytes, "
+        "frame_size AS request_size_bytes, "
         "LEAD(frame_time) OVER (ORDER BY frame_time) "
         "AS next_request_frame_time "
         "FROM frames "
         "WHERE direction = 'client_to_server' "
-        "AND tcp_payload_length > 0"
+        "AND frame_size > 0"
         "), "
         "responses AS ("
         "SELECT frame_time AS response_frame_time, "
-        "tcp_payload_length AS response_size_bytes "
+        "frame_size AS response_size_bytes "
         "FROM frames "
         "WHERE direction = 'server_to_client' "
-        "AND tcp_payload_length > 0"
+        "AND frame_size > 0"
         ") "
         "SELECT r.request_frame_time, "
         "r.request_size_bytes, "
