@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 """CDK app for AI Incident Response Playbook Builder."""
 
-import os
-import sys
-
-# Add repo root to path for shared utilities
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-
 import aws_cdk as cdk
 from stack import PlaybookBuilderStack
+from shared.utils import get_region
 
 app = cdk.App()
 
-region = os.environ.get("CDK_DEFAULT_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+region = get_region()
 
 PlaybookBuilderStack(
     app,
     f"PlaybookBuilderStack-{region}",
     env=cdk.Environment(
-        account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
+        account=None,
         region=region,
     ),
+    description="AI Incident Response Playbook Builder - generates architecture-aware security playbooks (uksb-do9bhieqqh)(tag:ir-playbook-builder,security)",
 )
 
 app.synth()

@@ -3,7 +3,7 @@ set -e
 
 # Default values
 OUTPUT_FORMAT="both"
-MODEL_ID="anthropic.claude-3-5-sonnet-20241022-v2:0"
+MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0"
 REGION=""
 ORG_CONTEXT=""
 OUTPUT_DIR="./output"
@@ -186,7 +186,7 @@ echo "  (Read-only API calls — nothing is modified)"
 DISCOVERY_START=$(date +%s)
 PROFILE_PATH="$OUTPUT_DIR/reports/architecture-profile.json"
 
-python "$SRC_DIR/discovery.py" \
+python3 "$SRC_DIR/discovery.py" \
     --region "$REGION" \
     --output "$PROFILE_PATH"
 
@@ -223,7 +223,7 @@ if [[ -n "$ORG_CONTEXT" ]]; then
     GENERATE_ARGS+=("--org-context" "$ORG_CONTEXT")
 fi
 
-python "${GENERATE_ARGS[@]}"
+python3 "${GENERATE_ARGS[@]}"
 
 if [[ $? -ne 0 ]]; then
     echo "  ❌ Playbook generation failed"
@@ -238,7 +238,7 @@ echo "  ✓ Playbooks generated (${GENERATE_ELAPSED}s)"
 echo ""
 echo "Phase 3: Assembling output..."
 
-python "$SRC_DIR/output.py" \
+python3 "$SRC_DIR/output.py" \
     --output-dir "$OUTPUT_DIR" \
     --output-format "$OUTPUT_FORMAT"
 

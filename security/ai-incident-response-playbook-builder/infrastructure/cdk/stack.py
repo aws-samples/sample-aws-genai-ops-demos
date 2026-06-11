@@ -1,4 +1,8 @@
-"""CDK stack for AI Incident Response Playbook Builder — S3 output bucket."""
+"""CDK Stack for AI Incident Response Playbook Builder.
+
+This stack deploys:
+- S3 bucket for playbook output (SSM documents and markdown playbooks)
+"""
 
 import os
 
@@ -13,6 +17,8 @@ from constructs import Construct
 
 
 class PlaybookBuilderStack(Stack):
+    """Stack for AI Incident Response Playbook Builder."""
+
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -28,4 +34,11 @@ class PlaybookBuilderStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
+        # Outputs
+        CfnOutput(
+            self,
+            "OutputBucketName",
+            value=output_bucket.bucket_name,
+            description="S3 bucket for incident response playbook output",
+            export_name="PlaybookBuilderOutputBucket",
+        )

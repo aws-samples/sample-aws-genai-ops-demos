@@ -213,7 +213,7 @@ def slugify(name):
 def main():
     parser = argparse.ArgumentParser(description="Generate IR playbooks via Amazon Bedrock")
     parser.add_argument("--profile", required=True, help="Path to architecture profile JSON")
-    parser.add_argument("--model-id", default="anthropic.claude-3-5-sonnet-20241022-v2:0")
+    parser.add_argument("--model-id", default="us.anthropic.claude-sonnet-4-20250514-v1:0")
     parser.add_argument("--region", required=True)
     parser.add_argument("--output-dir", default="./output")
     parser.add_argument("--output-format", default="both", choices=["ssm", "markdown", "both"])
