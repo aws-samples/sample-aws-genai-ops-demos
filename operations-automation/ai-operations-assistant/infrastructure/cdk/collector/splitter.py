@@ -86,7 +86,8 @@ from collections import OrderedDict, defaultdict
 from typing import Any, Dict, Optional, Tuple
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import BotoCoreError, ClientError
 from scapy.all import (  # type: ignore[import-untyped]
     AsyncSniffer as Sniffer,
     Ether,
@@ -153,7 +154,20 @@ class VniLookupCache:
         self._ttl_seconds = ttl_seconds
         self._cache: "OrderedDict[int, Tuple[float, Any]]" = OrderedDict()
         self._lock = threading.Lock()
-        self._client = boto3.client("dynamodb")
+        # Bounded timeouts + retries so a transient DynamoDB slowdown
+        # cannot block frame ingestion indefinitely. Critically, the
+        # call is also wrapped in broad exception handling in
+        # ``_fetch_capture_id`` so a timeout NEVER propagates into the
+        # scapy sniffer callback (which would close the listen socket
+        # and silently stop all packet processing).
+        self._client = boto3.client(
+            "dynamodb",
+            config=BotoConfig(
+                connect_timeout=3,
+                read_timeout=3,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
+        )
 
     def lookup(self, vni: int) -> Optional[str]:
         """Return the ``capture_id`` for ``vni`` or ``None`` if absent.
@@ -196,9 +210,25 @@ class VniLookupCache:
                 Key={"vni": {"N": str(vni)}},
                 ConsistentRead=False,
             )
-        except ClientError as exc:
+        except (ClientError, BotoCoreError) as exc:
+            # BotoCoreError covers connect/read timeouts and endpoint
+            # connection failures (e.g. ConnectTimeoutError). These are
+            # transient — treat as a cache miss (drop this frame) and
+            # let the next lookup retry. Crucially we must NOT let this
+            # propagate to the scapy callback, which would close the
+            # sniffer socket and stop all capture.
             log.warning(
                 "DynamoDB get_item failed for vni=%s table=%s: %s",
+                vni,
+                self._table_name,
+                exc,
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001 — defensive catch-all
+            # Any unexpected error (e.g. credential refresh failure) must
+            # also be swallowed so the sniffer thread survives.
+            log.warning(
+                "Unexpected error during VNI lookup vni=%s table=%s: %s",
                 vni,
                 self._table_name,
                 exc,
@@ -351,6 +381,22 @@ class Demultiplexer:
         self._lock = threading.Lock()
 
     def handle_frame(self, packet: Packet) -> None:
+        """scapy ``prn`` callback — must NEVER raise.
+
+        Any exception raised in a scapy ``prn`` callback propagates into
+        the sniffer's recv loop and causes scapy to close the listen
+        socket, silently halting all packet processing while the service
+        still appears "active". We therefore swallow every exception here
+        and only increment an error counter so the failure is visible in
+        the periodic stats log without killing the sniffer.
+        """
+        try:
+            self._handle_frame_impl(packet)
+        except Exception as exc:  # noqa: BLE001 — protect the sniffer thread
+            self._stats["frames_handler_errors"] += 1
+            log.warning("handle_frame swallowed an exception: %s", exc)
+
+    def _handle_frame_impl(self, packet: Packet) -> None:
         # The splitter captures on the UNDERLAY interface (``eth0``) with
         # a BPF filter ``udp port 4789``, so each packet is a full
         # Ethernet/IP/UDP/VXLAN-encapsulated mirrored frame. We extract
@@ -500,11 +546,49 @@ def main() -> int:
     sniffer.start()
     log.info("splitter ready")
 
+    def _sniffer_alive() -> bool:
+        """Best-effort check that the AsyncSniffer thread is still running."""
+        try:
+            if getattr(sniffer, "running", False):
+                return True
+            thread = getattr(sniffer, "thread", None)
+            return bool(thread is not None and thread.is_alive())
+        except Exception:  # pragma: no cover — defensive
+            return False
+
     try:
         last_stats_at = time.monotonic()
         while not stop.is_set():
             stop.wait(timeout=5.0)
             now = time.monotonic()
+
+            # Watchdog: if the sniffer thread has died (e.g. scapy closed
+            # the listen socket after an unexpected error), restart it so
+            # capture resumes instead of silently halting while the
+            # service still reports "active". This is the safety net that
+            # backs up the exception-swallowing in handle_frame.
+            if not stop.is_set() and not _sniffer_alive():
+                log.warning(
+                    "sniffer thread is not alive — restarting it "
+                    "(stats so far: %s)",
+                    demux.stats_snapshot(),
+                )
+                try:
+                    try:
+                        sniffer.stop()
+                    except Exception:  # pragma: no cover — defensive
+                        pass
+                    sniffer = Sniffer(
+                        iface=INTERFACE,
+                        filter=BPF_FILTER,
+                        prn=demux.handle_frame,
+                        store=False,
+                    )
+                    sniffer.start()
+                    log.info("sniffer restarted")
+                except Exception as exc:  # noqa: BLE001 — keep main loop alive
+                    log.error("failed to restart sniffer: %s", exc)
+
             if now - last_stats_at >= 30.0:
                 log.info("stats: %s", demux.stats_snapshot())
                 last_stats_at = now

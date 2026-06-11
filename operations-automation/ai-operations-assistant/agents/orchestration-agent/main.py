@@ -2032,6 +2032,8 @@ def format_support_case_investigation_response(
 NETWORK_AGENT_ACTIONS = (
     # ENI Inventory
     "list_enis",
+    # Reverse DNS
+    "reverse_dns_lookup",
     # Capture Lifecycle
     "start_capture",
     "stop_capture",
@@ -2419,7 +2421,8 @@ def query_network_pcap(action: str, params: dict = None) -> str:
 
     Available actions (must match exactly — unsupported actions are rejected
     locally without invoking the runtime):
-    - ENI inventory: list_enis (params: vpc_id, instance_id, attachment_status — all optional)
+    - ENI inventory: list_enis (params: vpc_id, instance_id, attachment_status, tag_key, tag_value — all optional. Use tag_key="goat-network-capture-allowed" tag_value="true" to find ENIs eligible for packet capture)
+    - Reverse DNS: reverse_dns_lookup (params: ip [single IP string] OR ips [list of up to 50 IPs]). Resolves IP addresses to hostnames via PTR records. Use this to turn dst_ip/src_ip values from pcap rows into human-readable hostnames.
     - Capture lifecycle: start_capture, stop_capture, list_captures, transform_capture,
       get_capture_progress (start_capture params: eni_ids [list of 1-3], duration_minutes
       [1-60, default 15], filter_id, capture_id [optional], idempotency_token [optional])
@@ -3633,7 +3636,18 @@ packet capture and pcap analysis. Use it for any question that benefits from
 inspecting actual network traffic. The Network Agent organizes its actions in
 three groups:
 1. ENI inventory — "list_enis" enumerates Elastic Network Interfaces in the
-   account, optionally filtered by vpc_id, instance_id, or attachment_status.
+   account, optionally filtered by vpc_id, instance_id, attachment_status,
+   or tag_key/tag_value. To find ENIs eligible for packet capture, use
+   tag_key="goat-network-capture-allowed" and tag_value="true". This is
+   particularly useful when the user asks "which ENI can I capture?" or
+   "show me capture-eligible ENIs" — call list_enis with the tag filter
+   and present the results. Each ENI in the response includes a "tags"
+   dict with all its tags for easy identification.
+   Reverse DNS — "reverse_dns_lookup" resolves IP addresses to hostnames
+   via PTR records (params: "ip" for a single address, or "ips" for a
+   list of up to 50). Use it when a user asks "what host is <ip>?" or to
+   annotate dst_ip/src_ip values from pcap query results with
+   human-readable hostnames.
 2. Capture lifecycle — "start_capture", "stop_capture", "list_captures",
    "transform_capture", and "get_capture_progress" manage on-demand VPC
    Traffic Mirror sessions. A capture writes raw pcap files to S3, and
@@ -3648,6 +3662,66 @@ three groups:
    "detect_zero_window", "analyze_tcp_options", "get_rtt_distribution",
    "get_request_response_latency", or "diagnose_tcp_stream" for a
    one-shot structured TCP stream health report.
+
+PCAP_LOGS SCHEMA (for free-form "query_pcap" SELECTs — use this to
+investigate ANY network issue, not just the canned analyses above).
+Every row is one captured frame with these columns:
+- Frame: frame_time (timestamp), frame_size (bytes),
+  frame_payload_summary (first 256 bytes as hex)
+- L2: eth_src, eth_dst, eth_type
+- L3/IP: src_ip, dst_ip, ip_version, ip_ttl (TTL/hop limit — low or
+  decreasing values reveal routing loops/asymmetry), ip_id, ip_flags
+  (DF/MF), ip_frag_offset (non-zero = IP fragment), ip_total_length,
+  ip_proto_num, ip_dscp, ip_ecn (3=congestion experienced)
+- ICMP: icmp_type (3=unreachable, 11=time-exceeded), icmp_code
+  (type 3 code 4 = fragmentation-needed / PMTU black-hole)
+- L4 ports/transport: protocol (tcp/udp/icmp/icmpv6/other),
+  src_port, dst_port, udp_length
+- TCP: tcp_seq, tcp_ack, tcp_flags (hex), tcp_window (0 = zero-window),
+  tcp_options (array; MSS/WS/SACK_PERM/TS), tcp_stream (per-flow id),
+  tcp_urgent_ptr, tcp_payload_len (0 = pure ACK/SYN/FIN)
+- TLS: tls_content_type (22=handshake,21=alert,23=appdata),
+  tls_version, tls_handshake_type (1=ClientHello,2=ServerHello),
+  tls_record_size, tls_sni, tls_fragment_count
+- DNS: dns_qname, dns_qtype, dns_response_ips, dns_rcode
+  (2=SERVFAIL,3=NXDOMAIN), dns_id, dns_is_response
+Always filter by capture_id (the handler injects it automatically).
+Pick the columns relevant to the symptom: e.g. ICMP type/code for
+unreachables and PMTU, ip_ttl for routing loops, tcp_flags + tcp_window
+for resets/zero-window, dns_rcode for resolution failures, ip_flags +
+ip_frag_offset for IP fragmentation. Do NOT assume every investigation
+is about TLS.
+
+TLS CLIENT HELLO FRAGMENTATION DIAGNOSIS (ML-KEM / post-quantum):
+When investigating "connection reset"/"connection refused"/"image pull
+failing" symptoms to an HTTPS endpoint that traverses AWS Network
+Firewall, use "check_tls_hello_size" and look for this specific
+signature in the returned rows:
+- frame_size / record_size LARGER than the TCP MSS (~1460 bytes) — a
+  Client Hello around 1500+ bytes is the tell. Modern clients
+  (OpenSSL 3.5+, AL2023) default to post-quantum hybrid key exchange
+  (X25519MLKEM768), whose key share inflates the Client Hello past one
+  TCP segment.
+- fragment_count >= 2 — the Client Hello record spans multiple TCP
+  segments.
+- server_name (SNI) is null/empty on that same row — because the SNI
+  extension bytes fall in the SECOND segment, the SNI cannot be read
+  from the first segment alone.
+When you see (large record_size) AND (fragment_count >= 2) AND (null
+server_name) together, conclude: the TLS Client Hello is fragmented
+across two TCP segments, so AWS Network Firewall with a stateful
+"Drop Established" default action cannot reassemble the segments to
+read the SNI; its SNI-based pass rule (e.g. *.amazonaws.com) therefore
+never matches and the firewall drops the first segment. Corroborate
+with "detect_retransmissions" (the dropped Client Hello segment is
+retransmitted) and "classify_tcp_resets". The recommended remediation
+to surface to the user: switch the firewall policy's stateful default
+action from "aws:drop_established" to
+"aws:application_layer_drop_established" (which reassembles the
+application-layer message before rule evaluation), or add the
+AWS-recommended TCP pass rules; alternatively use VPC endpoints to
+bypass the firewall path. Present this as the root cause, not a
+transient error.
 
 Every Network Agent response uses the same envelope shape as the other tools
 (success, domain="network", data, formattedText, metadata.sourceApi,

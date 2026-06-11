@@ -1,0 +1,141 @@
+# G.O.A.T. Demo Scenarios - CDK Deployment Script
+#
+# Deploys demo scenario CDK stacks and creates Support cases for G.O.A.T. demos.
+# Uses the separate demo-scenarios-app.ts CDK entry point.
+
+param(
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("all", "account-health", "cloudwatch-incident", "tls-fragmentation")]
+    [string]$Scenario
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== G.O.A.T. Demo Scenarios Deployment ===" -ForegroundColor Cyan
+Write-Host "      Scenario: $Scenario" -ForegroundColor Gray
+
+# ---------------------------------------------------------------------------
+# Prerequisites
+# ---------------------------------------------------------------------------
+Write-Host "`nRunning prerequisites check..." -ForegroundColor Yellow
+& "$PSScriptRoot\..\..\..\shared\scripts\check-prerequisites.ps1" -RequireCDK
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Prerequisites check failed" -ForegroundColor Red
+    exit 1
+}
+
+$region = $global:AWS_REGION
+$cdkDir = "$PSScriptRoot\..\infrastructure\cdk"
+$cdkApp = "npx ts-node --prefer-ts-exts bin/demo-scenarios-app.ts"
+
+# ---------------------------------------------------------------------------
+# Helper: Deploy a CDK stack
+# ---------------------------------------------------------------------------
+function Invoke-CdkDeploy {
+    param([string]$StackName)
+    Write-Host "`nDeploying $StackName..." -ForegroundColor Yellow
+    Push-Location $cdkDir
+    npx cdk deploy $StackName --app $cdkApp --require-approval never --no-cli-pager
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+    if ($exitCode -ne 0) {
+        Write-Host "ERROR: Deployment of $StackName failed" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Helper: Create and resolve a Support case
+# ---------------------------------------------------------------------------
+function New-DemoSupportCase {
+    param([string]$Subject, [string]$Body)
+    try {
+        $caseId = aws support create-case `
+            --subject $Subject `
+            --communication-body $Body `
+            --service-code "general-info" `
+            --category-code "other" `
+            --severity-code "low" `
+            --language "en" `
+            --region us-east-1 `
+            --query "caseId" --output text --no-cli-pager 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            if ($caseId -match "SubscriptionRequiredException") {
+                Write-Host "  No Business or Enterprise Support plan detected -- skipping" -ForegroundColor Yellow
+                return ""
+            }
+            Write-Host "  WARNING: CreateCase failed: $caseId" -ForegroundColor Yellow
+            return ""
+        }
+        Start-Sleep -Seconds 5
+        aws support resolve-case --case-id $caseId --region us-east-1 --no-cli-pager 2>$null
+        Write-Host "  Created and resolved Support case: $caseId" -ForegroundColor Green
+        return $caseId
+    } catch {
+        Write-Host "  WARNING: Support API error: $_" -ForegroundColor Yellow
+        return ""
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Deployment Logic
+# ---------------------------------------------------------------------------
+$stackA = "GOATDemoScenarioA-$region"
+$stackC = "GOATDemoScenarioTLS-$region"
+
+switch ($Scenario) {
+    "all" {
+        Invoke-CdkDeploy $stackA
+        New-DemoSupportCase "General account review - G.O.A.T. demo" "This case was created for demo purposes by the G.O.A.T. provisioning scripts."
+        New-DemoSupportCase "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
+        Invoke-CdkDeploy $stackC
+        New-DemoSupportCase "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+    }
+    "account-health" {
+        Invoke-CdkDeploy $stackA
+        New-DemoSupportCase "General account review - G.O.A.T. demo" "This case was created for demo purposes by the G.O.A.T. provisioning scripts."
+    }
+    "cloudwatch-incident" {
+        New-DemoSupportCase "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
+    }
+    "tls-fragmentation" {
+        Invoke-CdkDeploy $stackC
+        New-DemoSupportCase "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Deployment Summary
+# ---------------------------------------------------------------------------
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "  G.O.A.T. Demo Scenario Deployment Complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Region: $region" -ForegroundColor Cyan
+
+if ($Scenario -eq "all" -or $Scenario -eq "account-health") {
+    $vpcId = aws cloudformation describe-stacks --stack-name $stackA --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" --output text --no-cli-pager
+    $inst1 = aws cloudformation describe-stacks --stack-name $stackA --query "Stacks[0].Outputs[?OutputKey=='Instance1Id'].OutputValue" --output text --no-cli-pager
+    Write-Host "  VPC:          $vpcId" -ForegroundColor Cyan
+    Write-Host "  EC2 Instance: $inst1" -ForegroundColor Cyan
+}
+
+if ($Scenario -eq "all" -or $Scenario -eq "tls-fragmentation") {
+    $ec2Id = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceId'].OutputValue" --output text --no-cli-pager
+    $eniId = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceEniId'].OutputValue" --output text --no-cli-pager
+    Write-Host "  TLS EC2:      $ec2Id" -ForegroundColor Cyan
+    Write-Host "  TLS ENI:      $eniId (for Network Agent capture)" -ForegroundColor Cyan
+}
+
+Write-Host ""
+Write-Host "  Suggested Demo Queries:" -ForegroundColor Yellow
+Write-Host '    "Give me a complete health check of my AWS account"' -ForegroundColor Gray
+Write-Host '    "We had application errors on April 1 - was there an AWS issue?"' -ForegroundColor Gray
+Write-Host '    "My EC2 instance cannot connect to ECR over HTTPS"' -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Cleanup:" -ForegroundColor Yellow
+Write-Host '    .\cleanup-scenarios.ps1    (PowerShell)' -ForegroundColor Gray
+Write-Host '    ./cleanup-scenarios.sh     (Bash)' -ForegroundColor Gray
+Write-Host ""

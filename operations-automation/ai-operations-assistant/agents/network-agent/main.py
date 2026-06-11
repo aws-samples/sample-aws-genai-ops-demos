@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import secrets
+import socket
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -441,6 +442,7 @@ def _map_eni_to_schema(eni: dict) -> dict:
     ``Attachment.Status`` when an attachment is present; otherwise the
     ENI is reported as ``unattached``. ``attached_instance_id`` comes
     from ``Attachment.InstanceId`` when present, ``None`` otherwise.
+    ``tags`` is a dict of key→value for all tags on the ENI.
     """
     attachment = eni.get("Attachment") or {}
     if attachment:
@@ -453,6 +455,10 @@ def _map_eni_to_schema(eni: dict) -> dict:
         attachment_status = "unattached"
         attached_instance_id = None
 
+    # Extract tags as a flat dict for easy filtering and display
+    raw_tags = eni.get("TagSet") or []
+    tags = {t["Key"]: t["Value"] for t in raw_tags if "Key" in t and "Value" in t}
+
     return {
         "eni_id": eni.get("NetworkInterfaceId"),
         "vpc_id": eni.get("VpcId"),
@@ -462,6 +468,7 @@ def _map_eni_to_schema(eni: dict) -> dict:
         "status": eni.get("Status"),
         "attachment_status": attachment_status,
         "attached_instance_id": attached_instance_id,
+        "tags": tags,
     }
 
 
@@ -528,6 +535,8 @@ def handle_list_enis(params: dict) -> dict:
     vpc_id_filter = params.get("vpc_id")
     instance_id_filter = params.get("instance_id")
     attachment_status_filter = params.get("attachment_status")
+    tag_key_filter = params.get("tag_key")
+    tag_value_filter = params.get("tag_value")
 
     # Validate filter shapes before any AWS call (EH-1: caller fault).
     if vpc_id_filter is not None and not isinstance(vpc_id_filter, str):
@@ -644,6 +653,18 @@ def handle_list_enis(params: dict) -> dict:
             for e in filtered
             if e["attachment_status"] == attachment_status_filter
         ]
+    if tag_key_filter:
+        # Filter ENIs that have the specified tag key (and optionally value)
+        if tag_value_filter:
+            filtered = [
+                e for e in filtered
+                if e.get("tags", {}).get(tag_key_filter) == tag_value_filter
+            ]
+        else:
+            filtered = [
+                e for e in filtered
+                if tag_key_filter in e.get("tags", {})
+            ]
 
     return build_response(
         success=True,
@@ -659,6 +680,124 @@ def handle_list_enis(params: dict) -> dict:
             attachment_status_filter,
         ),
         source_api="ec2:DescribeNetworkInterfaces",
+        data_freshness="real-time",
+    )
+
+
+# Reverse DNS
+
+
+def handle_reverse_dns_lookup(params: dict) -> dict:
+    """Resolve one or more IP addresses to hostnames via reverse DNS (PTR).
+
+    Accepts either a single ``ip`` (str) or a list of ``ips`` (list of
+    str), up to 50 addresses per call. Each address is resolved with a
+    bounded-timeout reverse lookup (``socket.gethostbyaddr``). Addresses
+    that have no PTR record (or fail to resolve) are reported with a
+    ``hostname`` of ``None`` and an ``error`` string rather than failing
+    the whole call.
+
+    Args:
+        params: dict with one of:
+            ``ip`` (str): a single IPv4/IPv6 address.
+            ``ips`` (list[str]): a list of addresses (max 50).
+
+    Returns:
+        Response envelope produced by :func:`build_response`. On success,
+        ``data.results`` is a list of ``{"ip", "hostname", "aliases",
+        "error"}`` dicts and ``data.count`` is the number resolved.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "socket:gethostbyaddr"
+
+    # Collect the address list from either ``ip`` or ``ips``.
+    raw_ips = []
+    single = params.get("ip")
+    many = params.get("ips")
+    if isinstance(single, str) and single.strip():
+        raw_ips.append(single.strip())
+    if isinstance(many, list):
+        raw_ips.extend([str(x).strip() for x in many if str(x).strip()])
+
+    # De-duplicate while preserving order.
+    seen = set()
+    ips = []
+    for ip in raw_ips:
+        if ip not in seen:
+            seen.add(ip)
+            ips.append(ip)
+
+    if not ips:
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=(
+                "reverse_dns_lookup: supply an 'ip' string or an 'ips' list "
+                "of IP addresses to resolve."
+            ),
+            source_api=source_api,
+            data_freshness="real-time",
+            error="invalid_parameter: no IP address supplied",
+            error_category="invalid_parameter",
+        )
+
+    if len(ips) > 50:
+        return build_response(
+            success=False,
+            data={"requested_count": len(ips)},
+            formatted_text=(
+                "reverse_dns_lookup: at most 50 IP addresses may be resolved "
+                f"per call (received {len(ips)})."
+            ),
+            source_api=source_api,
+            data_freshness="real-time",
+            error=f"invalid_parameter: {len(ips)} IPs exceeds limit of 50",
+            error_category="invalid_parameter",
+        )
+
+    # Bound each lookup so a slow resolver cannot hang the handler.
+    socket.setdefaulttimeout(3.0)
+
+    results = []
+    resolved_count = 0
+    for ip in ips:
+        entry = {"ip": ip, "hostname": None, "aliases": [], "error": None}
+        try:
+            hostname, aliases, _addrs = socket.gethostbyaddr(ip)
+            entry["hostname"] = hostname
+            entry["aliases"] = aliases or []
+            resolved_count += 1
+        except (socket.herror, socket.gaierror) as exc:
+            entry["error"] = f"no PTR record: {exc}"
+        except (socket.timeout, OSError) as exc:
+            entry["error"] = f"lookup failed: {exc}"
+        except Exception as exc:  # noqa: BLE001 — never fail the whole call
+            entry["error"] = f"unexpected error: {exc}"
+        results.append(entry)
+
+    # Build a short human-readable summary.
+    lines = []
+    for r in results:
+        if r["hostname"]:
+            lines.append(f"{r['ip']} -> {r['hostname']}")
+        else:
+            lines.append(f"{r['ip']} -> (no hostname: {r['error']})")
+    summary = (
+        f"Reverse DNS resolved {resolved_count}/{len(results)} address(es):\n"
+        + "\n".join(lines)
+    )
+
+    return build_response(
+        success=True,
+        data={
+            "results": results,
+            "count": resolved_count,
+            "requested_count": len(results),
+        },
+        formatted_text=summary,
+        source_api=source_api,
         data_freshness="real-time",
     )
 
@@ -2280,6 +2419,89 @@ def handle_transform_capture(params: dict) -> dict:
         )
 
     # ----------------------------------------------------------------
+    # Step 2b: empty-pcap pre-flight check.
+    #
+    # The Transformation_Workflow fails with a cryptic "could not
+    # register Athena partition" error when no pcap data was captured
+    # (e.g. the mirrored ENI generated no traffic, or the traffic
+    # never reached the collector). Detect this BEFORE starting the
+    # Step Functions execution and return a clear, actionable message
+    # so the chat surfaces the real cause instead of a generic
+    # workflow failure.
+    # ----------------------------------------------------------------
+    try:
+        data_bucket = _read_required_env(ENV_DATA_BUCKET_NAME)
+        s3 = _get_s3_client()
+        prefix = f"raw/{capture_id}/"
+        pcap_object_count = 0
+        pcap_total_bytes = 0
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=data_bucket, Prefix=prefix):
+            for obj in page.get("Contents", []) or []:
+                pcap_object_count += 1
+                pcap_total_bytes += int(obj.get("Size", 0) or 0)
+
+        if pcap_object_count == 0 or pcap_total_bytes == 0:
+            eni_ids = row.get("eni_ids", [])
+            eni_clause = (
+                f" mirrored from ENI(s) {', '.join(eni_ids)}"
+                if eni_ids else ""
+            )
+            return build_response(
+                success=False,
+                data={
+                    "capture_id": capture_id,
+                    "pcap_object_count": pcap_object_count,
+                    "pcap_total_bytes": pcap_total_bytes,
+                    "s3_prefix": f"s3://{data_bucket}/{prefix}",
+                },
+                formatted_text=(
+                    f"Capture {capture_id} contains no packet data, so there "
+                    f"is nothing to transform. The capture{eni_clause} wrote "
+                    f"{pcap_object_count} pcap file(s) totaling "
+                    f"{pcap_total_bytes} bytes to s3://{data_bucket}/{prefix}.\n\n"
+                    "This usually means one of:\n"
+                    "- The mirrored workload generated no traffic during the "
+                    "capture window (check that the source instance is running "
+                    "and actively making network connections).\n"
+                    "- The traffic mirror session could not reach the collector "
+                    "(check the mirror target and collector security group).\n"
+                    "- The capture was stopped before any traffic was mirrored "
+                    "(try a longer capture window).\n\n"
+                    "Start a fresh capture once the source is actively sending "
+                    "traffic, then transform again."
+                ),
+                source_api="s3:ListObjectsV2",
+                data_freshness="real-time",
+                error=(
+                    f"empty_pcap: capture {capture_id} has no pcap data "
+                    f"({pcap_object_count} objects, {pcap_total_bytes} bytes) "
+                    f"under {prefix}"
+                ),
+                error_category="empty_pcap",
+            )
+    except ValidationError:
+        # DATA_BUCKET_NAME not configured — fall through and let the
+        # workflow's own configuration handling report it. The
+        # empty-pcap check is best-effort and must not block transforms
+        # in environments where the bucket env var is wired differently.
+        logger.warning(
+            "transform_capture: DATA_BUCKET_NAME not set; skipping "
+            "empty-pcap pre-flight check for %s",
+            capture_id,
+        )
+    except (ClientError, BotoCoreError) as exc:
+        # If the pre-flight S3 listing itself fails, log and continue to
+        # the workflow rather than masking a transform the user asked
+        # for. The workflow has its own error handling.
+        logger.warning(
+            "transform_capture: empty-pcap pre-flight check failed for "
+            "%s (continuing to start workflow): %s",
+            capture_id,
+            exc,
+        )
+
+    # ----------------------------------------------------------------
     # Step 3: read the Transformation_Workflow ARN from the runtime
     # environment. Surface a configuration-error envelope rather than
     # crashing the dispatch loop when CDK Task 28 has not yet wired
@@ -3792,6 +4014,8 @@ def handle_check_tls_hello_size(params: dict) -> dict:
     sql = (
         "SELECT frame_size, "
         "tls_fragment_count AS fragment_count, "
+        "tls_record_size AS record_size, "
+        "tls_sni AS server_name, "
         "src_ip AS source_ip, "
         "src_port AS source_port, "
         "dst_ip AS destination_ip, "
@@ -7039,6 +7263,8 @@ def handle_diagnose_tcp_stream(params: dict) -> dict:
 ACTIONS = {
     # ENI Inventory
     "list_enis": handle_list_enis,
+    # Reverse DNS
+    "reverse_dns_lookup": handle_reverse_dns_lookup,
     # Capture Lifecycle
     "start_capture": handle_start_capture,
     "stop_capture": handle_stop_capture,

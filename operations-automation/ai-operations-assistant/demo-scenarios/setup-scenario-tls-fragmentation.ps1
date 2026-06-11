@@ -634,36 +634,59 @@ if (-not [string]::IsNullOrEmpty($tgwId) -and $tgwId -ne "None") {
             $tgwRtId = aws ec2 create-transit-gateway-route-table `
                 --transit-gateway-id $tgwId `
                 --tag-specifications (New-TagSpec "transit-gateway-route-table" "goat-demo-tls-tgw-rt") `
-                --query "TransitGatewayRouteTable.TransitGatewayRouteTableId" --output text --region $region 2>&1
-            Write-Host "  Created TGW route table: $tgwRtId" -ForegroundColor Gray
-            Start-Sleep -Seconds 10
+                --query "TransitGatewayRouteTable.TransitGatewayRouteTableId" --output text --region $region 2>$null
+            if ([string]::IsNullOrEmpty($tgwRtId) -or $tgwRtId -eq "None") {
+                Write-Host "  ERROR: Failed to create TGW route table" -ForegroundColor Red
+                $warnings += "TGW route table creation failed"
+            } else {
+                Write-Host "  Created TGW route table: $tgwRtId" -ForegroundColor Gray
+            }
         } else {
             Write-Host "  TGW route table exists: $tgwRtId" -ForegroundColor Gray
         }
 
-        # Associate both attachments with this route table
-        aws ec2 associate-transit-gateway-route-table --transit-gateway-route-table-id $tgwRtId --transit-gateway-attachment-id $tgwAttachSpokeId --region $region 2>$null
-        aws ec2 associate-transit-gateway-route-table --transit-gateway-route-table-id $tgwRtId --transit-gateway-attachment-id $tgwAttachInspId --region $region 2>$null
+        # Wait for route table to be available before associating
+        if (-not [string]::IsNullOrEmpty($tgwRtId) -and $tgwRtId -ne "None") {
+            $rtWait = 0
+            while ($rtWait -lt 60) {
+                $rtState = aws ec2 describe-transit-gateway-route-tables `
+                    --transit-gateway-route-table-ids $tgwRtId `
+                    --query "TransitGatewayRouteTables[0].State" --output text --region $region 2>$null
+                if ($rtState -eq "available") { break }
+                Start-Sleep -Seconds 5; $rtWait += 5
+            }
 
-        # CRITICAL: Wait for BOTH associations to reach "associated" state before
-        # creating routes. This race was the root cause of egress failures.
-        Write-Host "  Waiting for TGW route table associations to reach 'associated'..." -ForegroundColor Gray
-        foreach ($attToCheck in @($tgwAttachSpokeId, $tgwAttachInspId)) {
-            $assocWait = 0
-            while ($assocWait -lt 120) {
-                $assocState = aws ec2 get-transit-gateway-route-table-associations `
-                    --transit-gateway-route-table-id $tgwRtId `
-                    --filters "Name=transit-gateway-attachment-id,Values=$attToCheck" `
-                    --query "Associations[0].State" --output text --region $region 2>$null
-                if ($assocState -eq "associated") { break }
-                Start-Sleep -Seconds 10; $assocWait += 10
+            # Associate both attachments with this route table
+            $assocResult1 = aws ec2 associate-transit-gateway-route-table --transit-gateway-route-table-id $tgwRtId --transit-gateway-attachment-id $tgwAttachSpokeId --region $region 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  WARNING: Spoke association failed: $assocResult1" -ForegroundColor Yellow
             }
-            if ($assocState -ne "associated") {
-                Write-Host "  WARNING: Association for $attToCheck did not reach 'associated' (state: $assocState)" -ForegroundColor Yellow
-                $warnings += "TGW association for $attToCheck not confirmed"
+            $assocResult2 = aws ec2 associate-transit-gateway-route-table --transit-gateway-route-table-id $tgwRtId --transit-gateway-attachment-id $tgwAttachInspId --region $region 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  WARNING: Inspection association failed: $assocResult2" -ForegroundColor Yellow
             }
+
+            # CRITICAL: Wait for BOTH associations to reach "associated" state before
+            # creating routes. This race was the root cause of egress failures.
+            Write-Host "  Waiting for TGW route table associations to reach 'associated'..." -ForegroundColor Gray
+            foreach ($attToCheck in @($tgwAttachSpokeId, $tgwAttachInspId)) {
+                $assocWait = 0
+                $assocState = ""
+                while ($assocWait -lt 180) {
+                    $assocState = aws ec2 get-transit-gateway-route-table-associations `
+                        --transit-gateway-route-table-id $tgwRtId `
+                        --filters "Name=transit-gateway-attachment-id,Values=$attToCheck" `
+                        --query "Associations[0].State" --output text --region $region 2>$null
+                    if ($assocState -eq "associated") { break }
+                    Start-Sleep -Seconds 10; $assocWait += 10
+                }
+                if ($assocState -ne "associated") {
+                    Write-Host "  WARNING: Association for $attToCheck did not reach 'associated' (state: $assocState)" -ForegroundColor Yellow
+                    $warnings += "TGW association for $attToCheck not confirmed"
+                }
+            }
+            Write-Host "  Both associations confirmed" -ForegroundColor Green
         }
-        Write-Host "  Both associations confirmed" -ForegroundColor Green
 
         # Default route (0/0) -> inspection VPC attachment. Retry + verify.
         $tgwDefaultRouteOk = $false
@@ -881,7 +904,7 @@ if (-not [string]::IsNullOrEmpty($subnetPrivateId) -and $subnetPrivateId -ne "No
 
             # Build UserData script — creates a systemd service for the curl loop
             # so it auto-starts on every boot and survives reboots
-            $userDataScript = @"
+            $userDataScript = @'
 #!/bin/bash
 # Wait for network to be ready
 sleep 10
@@ -889,9 +912,9 @@ sleep 10
 # Create the curl script
 cat > /usr/local/bin/goat-tls-curl.sh << 'SCRIPT'
 #!/bin/bash
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null || echo "$region")
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null || echo "us-east-1")
 while true; do
-  curl --curves X25519MLKEM768:X25519 -sS -o /dev/null -w "[%{time_total}s] HTTP %{http_code}\n" "https://ecr.`${REGION}.amazonaws.com/" 2>&1 || echo "Connection failed"
+  curl --curves X25519MLKEM768:X25519 -sS -o /dev/null -w "[%{time_total}s] HTTP %{http_code}\n" "https://ecr.${REGION}.amazonaws.com/" 2>&1 || echo "Connection failed"
   sleep 20
 done
 SCRIPT
@@ -922,7 +945,7 @@ systemctl enable goat-tls-curl.service
 systemctl start goat-tls-curl.service
 
 echo "BOOTSTRAP_COMPLETE: AL2023 TLS fragmentation test instance ready (curl loop every 20s)"
-"@
+'@
             # Base64 encode the UserData
             $userDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataScript))
 

@@ -176,12 +176,40 @@ export interface GlueTableColumn {
 export const PCAP_LOGS_COLUMNS: readonly GlueTableColumn[] = [
   // Frame-level metadata (universal across protocols)
   { name: 'frame_time', type: 'timestamp', comment: 'Frame arrival time (post-VXLAN-decap)' },
-  { name: 'frame_size', type: 'bigint', comment: 'Wire frame size in bytes (post-VXLAN-decap)' },  // L3 / L4 endpoint + protocol identification
+  { name: 'frame_size', type: 'bigint', comment: 'Wire frame size in bytes (post-VXLAN-decap)' },
+
+  // L2 Ethernet fields
+  { name: 'eth_src', type: 'string', comment: 'Source MAC address' },
+  { name: 'eth_dst', type: 'string', comment: 'Destination MAC address' },
+  { name: 'eth_type', type: 'string', comment: 'EtherType hex (0x0800=IPv4, 0x86dd=IPv6, 0x0806=ARP)' },
+
+  // L3 / L4 endpoint + protocol identification
   { name: 'src_ip', type: 'string', comment: 'Source IPv4 or IPv6 address' },
   { name: 'dst_ip', type: 'string', comment: 'Destination IPv4 or IPv6 address' },
   { name: 'src_port', type: 'int', comment: 'TCP/UDP source port (0..65535)' },
   { name: 'dst_port', type: 'int', comment: 'TCP/UDP destination port (0..65535)' },
   { name: 'protocol', type: 'string', comment: 'Transport protocol (tcp/udp/icmp/...)' },
+
+  // IP-layer fields (universal L3 diagnostics — routing loops, PMTU,
+  // fragmentation, TTL/hop analysis). Populated for both IPv4 and IPv6
+  // where applicable.
+  { name: 'ip_version', type: 'int', comment: 'IP version (4 or 6)' },
+  { name: 'ip_ttl', type: 'int', comment: 'IPv4 TTL / IPv6 hop limit (low values reveal routing loops or premature drops)' },
+  { name: 'ip_id', type: 'int', comment: 'IPv4 identification field (correlates fragments of the same datagram)' },
+  { name: 'ip_flags', type: 'string', comment: 'IPv4 flags (DF=do not fragment, MF=more fragments)' },
+  { name: 'ip_frag_offset', type: 'int', comment: 'IPv4 fragment offset in 8-byte units (non-zero indicates an IP fragment)' },
+  { name: 'ip_total_length', type: 'int', comment: 'IPv4 total length / IPv6 payload length in bytes' },
+  { name: 'ip_proto_num', type: 'int', comment: 'IP protocol number (1=ICMP, 6=TCP, 17=UDP, 58=ICMPv6)' },
+  { name: 'ip_dscp', type: 'int', comment: 'DiffServ code point (QoS marking, 0..63)' },
+  { name: 'ip_ecn', type: 'int', comment: 'Explicit Congestion Notification bits (0..3; 3=CE congestion experienced)' },
+
+  // ICMP fields (reachability + PMTU diagnostics — unreachables,
+  // fragmentation-needed, TTL-exceeded). Null for non-ICMP frames.
+  { name: 'icmp_type', type: 'int', comment: 'ICMP/ICMPv6 type (3=dest unreachable, 11=time exceeded, 8/0=echo, ...)' },
+  { name: 'icmp_code', type: 'int', comment: 'ICMP/ICMPv6 code (e.g. type 3 code 4 = fragmentation needed / PMTU)' },
+
+  // UDP-specific length (useful for DNS/QUIC and amplification analysis)
+  { name: 'udp_length', type: 'int', comment: 'UDP datagram length including header in bytes' },
 
   // TCP-specific fields used by reconstruct_tcp_handshake, classify_tcp_resets,
   // detect_out_of_order_packets, detect_zero_window, analyze_tcp_options,
@@ -192,6 +220,8 @@ export const PCAP_LOGS_COLUMNS: readonly GlueTableColumn[] = [
   { name: 'tcp_options', type: 'array<string>', comment: 'TCP options on SYN (MSS, WS, SACK_PERM, TS, NOP, EOL)' },
   { name: 'tcp_stream', type: 'string', comment: 'tshark tcp.stream identifier (per-flow stream id)' },
   { name: 'tcp_window', type: 'int', comment: 'TCP receive window (post-scaling when computable)' },
+  { name: 'tcp_urgent_ptr', type: 'int', comment: 'TCP urgent pointer (non-zero only when URG flag set)' },
+  { name: 'tcp_payload_len', type: 'int', comment: 'TCP segment payload length in bytes (0 for pure ACK/SYN/FIN)' },
 
   // TLS-specific fields used by check_tls_hello_size and tls_sni_in_capture
   // resolution strategy
@@ -199,10 +229,16 @@ export const PCAP_LOGS_COLUMNS: readonly GlueTableColumn[] = [
   { name: 'tls_record_size', type: 'int', comment: 'TLS record size including header in bytes' },
   { name: 'tls_sni', type: 'string', comment: 'TLS Server Name Indication value extracted from Client Hello' },
   { name: 'tls_fragment_count', type: 'int', comment: 'Number of TLS records the Client Hello was fragmented across' },
+  { name: 'tls_version', type: 'string', comment: 'TLS record/handshake version (e.g. 0x0303=TLS1.2, 0x0304=TLS1.3)' },
+  { name: 'tls_content_type', type: 'int', comment: 'TLS record content type (20=ChangeCipherSpec, 21=Alert, 22=Handshake, 23=AppData)' },
 
   // DNS-specific fields used by dns_in_capture resolution strategy
   { name: 'dns_qname', type: 'string', comment: 'DNS question name' },
   { name: 'dns_response_ips', type: 'array<string>', comment: 'A/AAAA answer IP addresses observed in DNS responses' },
+  { name: 'dns_qtype', type: 'int', comment: 'DNS question type (1=A, 28=AAAA, 5=CNAME, 15=MX, ...)' },
+  { name: 'dns_rcode', type: 'int', comment: 'DNS response code (0=NOERROR, 2=SERVFAIL, 3=NXDOMAIN, ...)' },
+  { name: 'dns_id', type: 'int', comment: 'DNS transaction ID (correlates query with response)' },
+  { name: 'dns_is_response', type: 'boolean', comment: 'True if this DNS message is a response (QR bit set)' },
 
   // Generic hex preview for query_pcap free-form inspection
   { name: 'frame_payload_summary', type: 'string', comment: 'First 256 bytes of frame payload as hex (truncated)' },

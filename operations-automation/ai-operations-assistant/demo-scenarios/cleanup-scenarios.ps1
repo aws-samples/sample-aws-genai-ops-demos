@@ -430,54 +430,33 @@ Write-Host ""
 # 9. Delete subnets
 # ---------------------------------------------------------------------------
 
-# IMPORTANT: Before deleting subnets, ensure any TGW attachments in those
-# subnets are fully deleted. TGW attachments hold ENIs that block subnet deletion.
-Write-Host "--- Pre-Subnet: Cleaning TGW Attachments ---" -ForegroundColor Magenta
+# IMPORTANT: Initiate TGW attachment and NFW deletion now (they hold ENIs in
+# subnets). Section 11 will wait for completion and handle cleanup of the
+# TGW itself, route tables, rule groups, etc.
+Write-Host "--- Pre-Subnet: Initiating TGW/NFW Cleanup ---" -ForegroundColor Magenta
 $tgwAttachments = aws ec2 describe-transit-gateway-attachments `
-    --filters "Name=tag:goat-demo,Values=true" "Name=state,Values=available,deleting,pendingAcceptance" `
+    --filters "Name=tag:goat-demo,Values=true" "Name=state,Values=available" `
     --query "TransitGatewayAttachments[].TransitGatewayAttachmentId" --output text --region $region 2>$null
 if (-not [string]::IsNullOrEmpty($tgwAttachments) -and $tgwAttachments -ne "None") {
     foreach ($attId in ($tgwAttachments -split '\s+')) {
         if ([string]::IsNullOrEmpty($attId)) { continue }
-        $attState = aws ec2 describe-transit-gateway-attachments --transit-gateway-attachment-ids $attId `
-            --query "TransitGatewayAttachments[0].State" --output text --region $region 2>$null
-        if ($attState -eq "available") {
-            Write-Host "  Deleting TGW attachment: $attId..." -ForegroundColor Yellow
-            aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id $attId --region $region 2>$null | Out-Null
-        }
+        Write-Host "  Initiating TGW attachment deletion: $attId..." -ForegroundColor Yellow
+        aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id $attId --region $region 2>$null | Out-Null
     }
-    # Wait for all TGW attachments to fully delete
-    Write-Host "  Waiting for TGW attachments to fully delete..." -ForegroundColor Gray
-    foreach ($attId in ($tgwAttachments -split '\s+')) {
-        if ([string]::IsNullOrEmpty($attId)) { continue }
-        $maxWait = 180; $elapsed = 0
-        while ($elapsed -lt $maxWait) {
-            $attState = aws ec2 describe-transit-gateway-attachments --transit-gateway-attachment-ids $attId `
-                --query "TransitGatewayAttachments[0].State" --output text --region $region 2>$null
-            if ($attState -eq "deleted" -or [string]::IsNullOrEmpty($attState) -or $attState -eq "None") { break }
-            Start-Sleep -Seconds 15; $elapsed += 15
-        }
-    }
-    Write-Host "  TGW attachments cleared" -ForegroundColor Green
+    Write-Host "  TGW attachment deletions initiated (section 11 will wait)" -ForegroundColor Gray
 } else {
     Write-Host "  No active TGW attachments found" -ForegroundColor Gray
 }
 
-# Also delete any Network Firewalls BEFORE subnets (NFW holds ENIs in firewall subnets)
+# Initiate NFW deletion (don't wait — takes 5-10 min; section 11 waits)
 $nfwList = aws network-firewall list-firewalls --query "Firewalls[?contains(FirewallName,'goat-demo')].FirewallName" --output text --region $region 2>$null
 if (-not [string]::IsNullOrEmpty($nfwList) -and $nfwList -ne "None") {
     foreach ($nfwName in ($nfwList -split '\s+')) {
         if ([string]::IsNullOrEmpty($nfwName)) { continue }
-        Write-Host "  Deleting Network Firewall: $nfwName..." -ForegroundColor Yellow
+        Write-Host "  Initiating Network Firewall deletion: $nfwName..." -ForegroundColor Yellow
         aws network-firewall delete-firewall --firewall-name $nfwName --region $region 2>$null | Out-Null
-        # Wait for firewall to be gone
-        for ($i = 0; $i -lt 40; $i++) {
-            Start-Sleep -Seconds 15
-            $fwCheck = aws network-firewall describe-firewall --firewall-name $nfwName --query "Firewall.FirewallArn" --output text --region $region 2>$null
-            if ([string]::IsNullOrEmpty($fwCheck) -or $fwCheck -eq "None") { break }
-        }
-        Write-Host "  Network Firewall deleted: $nfwName" -ForegroundColor Green
     }
+    Write-Host "  NFW deletion initiated (section 11 will wait)" -ForegroundColor Gray
 }
 
 Write-Host ""
@@ -485,8 +464,10 @@ Write-Host ""
 Write-Host "--- Subnets ---" -ForegroundColor Magenta
 
 Write-Host "Finding subnets tagged goat-demo=true..." -ForegroundColor Yellow
+# Only delete subnets tagged with goat-scenario (scenario-owned), NOT CDK-owned subnets.
+# CDK-owned subnets (CollectorSubnet) are in the goat-demo-vpc and would break the collector if deleted.
 $subnetIds = aws ec2 describe-subnets `
-    --filters "Name=tag:goat-demo,Values=true" `
+    --filters "Name=tag:goat-scenario,Values=a,b,tls-fragmentation" `
     --query "Subnets[].SubnetId" --output text --region $region 2>$null
 
 if (-not [string]::IsNullOrEmpty($subnetIds) -and $subnetIds -ne "None") {
@@ -543,6 +524,16 @@ $vpcIds = aws ec2 describe-vpcs `
 if (-not [string]::IsNullOrEmpty($vpcIds) -and $vpcIds -ne "None") {
     foreach ($vpcId in ($vpcIds -split '\s+')) {
         if ([string]::IsNullOrEmpty($vpcId)) { continue }
+
+        # SKIP the shared GOAT VPC (owned by CDK, name=goat-demo-vpc).
+        # Deleting it or detaching its IGW breaks the collector.
+        $vpcName = aws ec2 describe-vpcs --vpc-ids $vpcId `
+            --query "Vpcs[0].Tags[?Key=='Name']|[0].Value" --output text --region $region 2>$null
+        if ($vpcName -eq "goat-demo-vpc") {
+            Write-Host "  Skipping shared GOAT VPC $vpcId (owned by CDK, not scenario)" -ForegroundColor Gray
+            continue
+        }
+
         $totalFound++
 
         # Detach and delete any IGWs attached to this VPC
