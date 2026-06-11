@@ -1,0 +1,428 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2025-01-15",
+
+  "phaseRiskMapping": {
+    "extended_support": {
+      "baseRiskLevel": "moyen",
+      "impacts": [
+        {
+          "dimension": "cost",
+          "severity": "warning",
+          "description": "Surcoût AWS Extended Support appliqué par instance-heure",
+          "details": "Les frais de support étendu augmentent chaque année (Year 1, Year 2, Year 3). Planifiez la migration pour éviter l'escalade des coûts.",
+          "sourceRef": "rds_extended_support_pricing"
+        },
+        {
+          "dimension": "security",
+          "severity": "info",
+          "description": "Patches de sécurité toujours fournis via Extended Support",
+          "details": "AWS continue de fournir les correctifs critiques et importants pendant la période de support étendu.",
+          "sourceRef": "extended_support_policy"
+        },
+        {
+          "dimension": "compliance",
+          "severity": "info",
+          "description": "Conformité maintenue mais surveillance recommandée",
+          "details": "Le support étendu maintient la couverture du modèle de responsabilité partagée AWS.",
+          "sourceRef": "shared_responsibility_model"
+        },
+        {
+          "dimension": "availability",
+          "severity": "info",
+          "description": "Aucun impact sur la disponibilité pendant le support étendu",
+          "details": "Les opérations de création et modification de ressources restent disponibles.",
+          "sourceRef": "extended_support_policy"
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "Planifier la migration vers la dernière version LTS supportée",
+          "effortLevel": "medium",
+          "priority": "monitor",
+          "targetVersion": "latest LTS",
+          "sourceRef": "rds_upgrade_guide"
+        },
+        {
+          "action": "Évaluer le surcoût Extended Support et comparer avec le coût de migration",
+          "effortLevel": "low",
+          "priority": "monitor",
+          "sourceRef": "rds_extended_support_pricing"
+        }
+      ]
+    },
+    "end_of_standard_support": {
+      "baseRiskLevel": "élevé",
+      "impacts": [
+        {
+          "dimension": "security",
+          "severity": "critical",
+          "description": "Aucun patch de sécurité automatique fourni par AWS",
+          "details": "Les vulnérabilités découvertes ne seront pas corrigées automatiquement. Surface d'attaque croissante avec le temps.",
+          "sourceRef": "end_of_standard_support_policy"
+        },
+        {
+          "dimension": "cost",
+          "severity": "warning",
+          "description": "Transition vers Extended Support avec surcoût immédiat",
+          "details": "Si Extended Support est disponible, les frais Year 1 s'appliquent automatiquement.",
+          "sourceRef": "rds_extended_support_pricing"
+        },
+        {
+          "dimension": "compliance",
+          "severity": "critical",
+          "description": "Non-conformité potentielle aux frameworks réglementaires",
+          "details": "L'absence de patches de sécurité peut enfreindre SOC2 CC6.1, PCI-DSS Requirement 6.2, et HIPAA §164.308(a)(1).",
+          "sourceRef": "aws_compliance_programs"
+        },
+        {
+          "dimension": "availability",
+          "severity": "warning",
+          "description": "Incompatibilité progressive avec les nouvelles fonctionnalités AWS",
+          "details": "Les nouvelles fonctionnalités et intégrations AWS peuvent ne plus supporter cette version.",
+          "sourceRef": "end_of_standard_support_policy"
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "Planifier la migration immédiatement avec estimation de l'effort",
+          "effortLevel": "medium",
+          "priority": "planned",
+          "targetVersion": "latest LTS",
+          "sourceRef": "rds_upgrade_guide"
+        },
+        {
+          "action": "Effectuer un audit de sécurité des versions non-patchées",
+          "effortLevel": "low",
+          "priority": "planned",
+          "sourceRef": "aws_security_best_practices"
+        },
+        {
+          "action": "Documenter les risques de conformité pour les auditeurs",
+          "effortLevel": "low",
+          "priority": "planned",
+          "sourceRef": "aws_compliance_programs"
+        }
+      ],
+      "complianceFrameworks": [
+        {
+          "framework": "SOC2",
+          "controlReference": "CC6.1",
+          "description": "Contrôles de sécurité logique et physique — les systèmes non-patchés ne satisfont pas les exigences de protection contre les accès non autorisés",
+          "sourceRef": "soc2_cc6_1"
+        },
+        {
+          "framework": "PCI-DSS",
+          "controlReference": "Requirement 6.2",
+          "description": "Installation des correctifs de sécurité critiques dans un délai d'un mois — impossible sans support actif du fournisseur",
+          "sourceRef": "pci_dss_req_6_2"
+        },
+        {
+          "framework": "HIPAA",
+          "controlReference": "§164.308(a)(1)",
+          "description": "Processus de gestion de la sécurité — l'analyse de risque doit identifier et corriger les vulnérabilités connues",
+          "sourceRef": "hipaa_security_rule"
+        }
+      ]
+    },
+    "end_of_life": {
+      "baseRiskLevel": "critique",
+      "impacts": [
+        {
+          "dimension": "security",
+          "severity": "critical",
+          "description": "Aucun correctif de sécurité disponible, même en cas de vulnérabilité critique",
+          "details": "Le modèle de responsabilité partagée AWS ne couvre plus le patching de sécurité pour cette version.",
+          "sourceRef": "shared_responsibility_model"
+        },
+        {
+          "dimension": "availability",
+          "severity": "critical",
+          "description": "Aucun support AWS disponible en cas d'incident",
+          "details": "AWS ne fournit plus d'assistance technique. Incompatibilité avec les nouvelles fonctionnalités. Impossibilité de déployer.",
+          "sourceRef": "end_of_life_policy"
+        },
+        {
+          "dimension": "compliance",
+          "severity": "critical",
+          "description": "Violation du modèle de responsabilité partagée AWS",
+          "details": "AWS ne couvre plus la sécurité de cette version. La responsabilité complète du patching incombe au client.",
+          "sourceRef": "shared_responsibility_model"
+        },
+        {
+          "dimension": "cost",
+          "severity": "warning",
+          "description": "Coûts cachés liés à la gestion manuelle de la sécurité",
+          "details": "Sans patches automatiques, les équipes doivent assumer la gestion de sécurité en interne, augmentant les coûts opérationnels.",
+          "sourceRef": "end_of_life_policy"
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "Migration d'urgence requise — migrer vers la dernière version supportée",
+          "effortLevel": "high",
+          "priority": "immediate",
+          "targetVersion": "latest LTS",
+          "sourceRef": "rds_upgrade_guide"
+        },
+        {
+          "action": "Isoler les ressources affectées en attendant la migration",
+          "effortLevel": "medium",
+          "priority": "immediate",
+          "sourceRef": "aws_security_best_practices"
+        },
+        {
+          "action": "Notifier les équipes compliance de la non-conformité",
+          "effortLevel": "low",
+          "priority": "immediate",
+          "sourceRef": "aws_compliance_programs"
+        }
+      ],
+      "complianceFrameworks": [
+        {
+          "framework": "SOC2",
+          "controlReference": "CC6.1",
+          "description": "Violation directe — aucun mécanisme de protection contre les vulnérabilités connues n'est en place",
+          "sourceRef": "soc2_cc6_1"
+        },
+        {
+          "framework": "SOC2",
+          "controlReference": "CC7.2",
+          "description": "Gestion des changements — l'impossibilité d'appliquer des correctifs compromet le processus de gestion des changements",
+          "sourceRef": "soc2_cc7_2"
+        },
+        {
+          "framework": "PCI-DSS",
+          "controlReference": "Requirement 6.2",
+          "description": "Non-conformité critique — les correctifs de sécurité ne peuvent plus être appliqués dans les délais requis",
+          "sourceRef": "pci_dss_req_6_2"
+        },
+        {
+          "framework": "HIPAA",
+          "controlReference": "§164.308(a)(1)",
+          "description": "Violation de l'obligation de gestion de la sécurité — les risques identifiés ne peuvent pas être corrigés via les mécanismes du fournisseur",
+          "sourceRef": "hipaa_security_rule"
+        }
+      ]
+    },
+    "block_create_update": {
+      "baseRiskLevel": "critique",
+      "impacts": [
+        {
+          "dimension": "availability",
+          "severity": "critical",
+          "description": "Impossibilité de créer ou modifier des ressources",
+          "details": "Les opérations CreateDBInstance, ModifyDBInstance et équivalents sont bloquées. Disaster recovery et scaling impossibles.",
+          "sourceRef": "block_create_update_policy"
+        },
+        {
+          "dimension": "security",
+          "severity": "critical",
+          "description": "Aucun correctif de sécurité et impossibilité de reconfigurer",
+          "details": "Impossible d'appliquer des changements de configuration de sécurité aux ressources existantes.",
+          "sourceRef": "block_create_update_policy"
+        },
+        {
+          "dimension": "compliance",
+          "severity": "critical",
+          "description": "Incapacité à répondre aux exigences d'audit",
+          "details": "L'impossibilité de modifier les ressources empêche la mise en conformité avec les nouvelles exigences réglementaires.",
+          "sourceRef": "aws_compliance_programs"
+        },
+        {
+          "dimension": "cost",
+          "severity": "warning",
+          "description": "Risque de coûts d'urgence en cas d'incident",
+          "details": "L'impossibilité de scaler ou recréer des ressources peut entraîner des interventions manuelles coûteuses.",
+          "sourceRef": "block_create_update_policy"
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "Compléter la migration immédiatement avant le blocage total des opérations",
+          "effortLevel": "high",
+          "priority": "immediate",
+          "targetVersion": "latest LTS",
+          "sourceRef": "rds_upgrade_guide"
+        },
+        {
+          "action": "Valider le plan de disaster recovery — les procédures actuelles sont potentiellement inopérantes",
+          "effortLevel": "medium",
+          "priority": "immediate",
+          "sourceRef": "aws_disaster_recovery"
+        },
+        {
+          "action": "Escalader au management — risque opérationnel critique nécessitant des ressources dédiées",
+          "effortLevel": "low",
+          "priority": "immediate",
+          "sourceRef": "block_create_update_policy"
+        }
+      ],
+      "complianceFrameworks": [
+        {
+          "framework": "SOC2",
+          "controlReference": "CC6.1",
+          "description": "Contrôles inopérants — impossible d'implémenter ou modifier les contrôles de sécurité sur les ressources bloquées",
+          "sourceRef": "soc2_cc6_1"
+        },
+        {
+          "framework": "SOC2",
+          "controlReference": "CC7.2",
+          "description": "Gestion des changements compromise — aucune modification possible sur les ressources affectées",
+          "sourceRef": "soc2_cc7_2"
+        },
+        {
+          "framework": "PCI-DSS",
+          "controlReference": "Requirement 6.2",
+          "description": "Non-conformité totale — impossible d'appliquer quelque correctif que ce soit",
+          "sourceRef": "pci_dss_req_6_2"
+        },
+        {
+          "framework": "HIPAA",
+          "controlReference": "§164.308(a)(1)",
+          "description": "Violation grave — impossibilité technique de corriger les vulnérabilités identifiées par l'analyse de risque",
+          "sourceRef": "hipaa_security_rule"
+        }
+      ]
+    }
+  },
+
+  "temporalRules": {
+    "escalationThresholdDays": 90,
+    "deminimisThresholdDays": 365
+  },
+
+  "extendedSupportPricing": [
+    {
+      "service": "RDS",
+      "versions": ["MySQL 5.7", "PostgreSQL 11", "PostgreSQL 12"],
+      "tiers": [
+        {
+          "year": 1,
+          "surcharge": "$0.10",
+          "description": "Year 1 Extended Support surcharge"
+        },
+        {
+          "year": 2,
+          "surcharge": "$0.20",
+          "description": "Year 2 Extended Support surcharge (doubles)"
+        },
+        {
+          "year": 3,
+          "surcharge": "$0.30",
+          "description": "Year 3 Extended Support surcharge (triples)"
+        }
+      ],
+      "unit": "per vCPU-hour",
+      "effectiveDate": "2024-03-01",
+      "sourceRef": "rds_extended_support_pricing"
+    },
+    {
+      "service": "ElastiCache",
+      "versions": ["Redis 6.x", "Memcached 1.6"],
+      "tiers": [
+        {
+          "year": 1,
+          "surcharge": "$0.10",
+          "description": "Year 1 Extended Support surcharge"
+        },
+        {
+          "year": 2,
+          "surcharge": "$0.20",
+          "description": "Year 2 Extended Support surcharge"
+        },
+        {
+          "year": 3,
+          "surcharge": "$0.30",
+          "description": "Year 3 Extended Support surcharge"
+        }
+      ],
+      "unit": "per vCPU-hour",
+      "effectiveDate": "2024-03-01",
+      "sourceRef": "elasticache_extended_support_pricing"
+    },
+    {
+      "service": "EKS",
+      "versions": ["Kubernetes 1.23", "Kubernetes 1.24", "Kubernetes 1.25"],
+      "tiers": [
+        {
+          "year": 1,
+          "surcharge": "$0.60",
+          "description": "Extended support per cluster per hour after standard support ends"
+        }
+      ],
+      "unit": "per cluster-hour",
+      "effectiveDate": "2024-02-01",
+      "sourceRef": "eks_extended_support_pricing"
+    },
+    {
+      "service": "OpenSearch",
+      "versions": ["Elasticsearch 7.x", "OpenSearch 1.x"],
+      "tiers": [
+        {
+          "year": 1,
+          "surcharge": "$0.10",
+          "description": "Year 1 Extended Support surcharge"
+        },
+        {
+          "year": 2,
+          "surcharge": "$0.20",
+          "description": "Year 2 Extended Support surcharge"
+        },
+        {
+          "year": 3,
+          "surcharge": "$0.30",
+          "description": "Year 3 Extended Support surcharge"
+        }
+      ],
+      "unit": "per instance-hour",
+      "effectiveDate": "2024-06-01",
+      "sourceRef": "opensearch_extended_support_pricing"
+    },
+    {
+      "service": "MemoryDB",
+      "versions": ["Redis 6.2"],
+      "tiers": [
+        {
+          "year": 1,
+          "surcharge": "$0.10",
+          "description": "Year 1 Extended Support surcharge"
+        },
+        {
+          "year": 2,
+          "surcharge": "$0.20",
+          "description": "Year 2 Extended Support surcharge"
+        },
+        {
+          "year": 3,
+          "surcharge": "$0.30",
+          "description": "Year 3 Extended Support surcharge"
+        }
+      ],
+      "unit": "per vCPU-hour",
+      "effectiveDate": "2024-03-01",
+      "sourceRef": "memorydb_extended_support_pricing"
+    }
+  ],
+
+  "sources": {
+    "rds_extended_support_pricing": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support-charges.html",
+    "rds_upgrade_guide": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.Upgrading.html",
+    "elasticache_extended_support_pricing": "https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/extended-support.html",
+    "eks_extended_support_pricing": "https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html#extended-support",
+    "opensearch_extended_support_pricing": "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/version-migration.html",
+    "memorydb_extended_support_pricing": "https://docs.aws.amazon.com/memorydb/latest/devguide/extended-support.html",
+    "extended_support_policy": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html",
+    "end_of_standard_support_policy": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html#extended-support-terms",
+    "end_of_life_policy": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_PostgreSQL.html#PostgreSQL.Concepts.General.DBVersions",
+    "block_create_update_policy": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html#extended-support-block",
+    "shared_responsibility_model": "https://docs.aws.amazon.com/whitepapers/latest/aws-risk-and-compliance/shared-responsibility-model.html",
+    "aws_compliance_programs": "https://docs.aws.amazon.com/whitepapers/latest/aws-risk-and-compliance/aws-compliance-programs.html",
+    "aws_security_best_practices": "https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture/welcome.html",
+    "aws_disaster_recovery": "https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-workloads-on-aws.html",
+    "soc2_cc6_1": "https://docs.aws.amazon.com/audit-manager/latest/userguide/SOC2.html",
+    "soc2_cc7_2": "https://docs.aws.amazon.com/audit-manager/latest/userguide/SOC2.html",
+    "pci_dss_req_6_2": "https://docs.aws.amazon.com/securityhub/latest/userguide/pci-controls.html",
+    "hipaa_security_rule": "https://docs.aws.amazon.com/whitepapers/latest/architecting-hipaa-security-and-compliance-on-aws/the-aws-shared-responsibility-model-and-hipaa.html"
+  }
+}

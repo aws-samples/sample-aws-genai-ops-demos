@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -38,6 +39,7 @@ const PRIORITY_OPTIONS = [
 ];
 
 export default function PlanOfAction() {
+  const location = useLocation();
   const [plans, setPlans] = useState<ActionPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState<FlashbarProps.MessageDefinition[]>([]);
@@ -66,6 +68,24 @@ export default function PlanOfAction() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Handle pre-filled state from risk assessment navigation
+  useEffect(() => {
+    const state = location.state as { prefill?: { service_name: string; item_id: string; item_name: string; priority: string; notes: string } } | null;
+    if (state?.prefill) {
+      setFormData(prev => ({
+        ...prev,
+        service_name: state.prefill!.service_name,
+        item_id: state.prefill!.item_id,
+        item_name: state.prefill!.item_name,
+        priority: state.prefill!.priority,
+        notes: state.prefill!.notes,
+      }));
+      setShowCreateModal(true);
+      // Clear the location state so re-renders don't re-trigger
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const loadData = async () => {
     try {
