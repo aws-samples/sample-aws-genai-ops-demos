@@ -154,6 +154,30 @@ export default function Investigations() {
               sortingComparator: (a, b) => (a.check_title || a.check_id || '').localeCompare(b.check_title || b.check_id || ''),
             },
             {
+              id: 'operator',
+              header: 'Agent Operator',
+              cell: (it) => {
+                if (!operatorBase) return <Box color="text-status-inactive" variant="small">—</Box>;
+                const execId = it.executionId;
+                const href = execId ? `${operatorBase}/investigation/${execId}` : `${operatorBase}/dashboard`;
+                return (
+                  <Button
+                    href={href}
+                    iconAlign="right"
+                    iconName="external"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="inline-link"
+                    ariaLabel={`Open investigation for ${it.check_title || it.check_id || 'finding'} in a new tab`}
+                    onClick={(e) => { e.stopPropagation(); }}
+                  >
+                    Open
+                  </Button>
+                );
+              },
+              width: 160,
+            },
+            {
               id: 'service',
               header: 'Service',
               cell: (it) => it.service_name || '—',
@@ -181,30 +205,6 @@ export default function Investigations() {
               sortingField: 'updatedAt',
               sortingComparator: (a, b) => (a.updatedAt || a.createdAt || '').localeCompare(b.updatedAt || b.createdAt || ''),
               width: 180,
-            },
-            {
-              id: 'operator',
-              header: 'Agent Operator',
-              cell: (it) => {
-                if (!operatorBase) return <Box color="text-status-inactive" variant="small">—</Box>;
-                const execId = it.executionId;
-                const href = execId ? `${operatorBase}/investigation/${execId}` : `${operatorBase}/dashboard`;
-                return (
-                  <Button
-                    href={href}
-                    iconAlign="right"
-                    iconName="external"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    variant="inline-link"
-                    ariaLabel={`Open investigation for ${it.check_title || it.check_id || 'finding'} in a new tab`}
-                    onClick={(e) => { e.stopPropagation(); }}
-                  >
-                    Open
-                  </Button>
-                );
-              },
-              width: 160,
             },
           ]}
           empty={
