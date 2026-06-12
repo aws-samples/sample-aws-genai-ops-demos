@@ -86,6 +86,35 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
       }
     });
 
+    // Schedule pour la collecte Health (toutes les 5 minutes)
+    const healthSchedule = new scheduler.CfnSchedule(this, 'HealthCollectionSchedule', {
+      name: 'aws-health-events-collection',
+      description: 'Poll AWS Health API every 5 minutes',
+      scheduleExpression: 'rate(5 minutes)',
+      scheduleExpressionTimezone: 'UTC',
+      flexibleTimeWindow: {
+        mode: 'OFF'
+      },
+      target: {
+        arn: `arn:aws:scheduler:::aws-sdk:bedrockagentcore:invokeAgentRuntime`,
+        roleArn: schedulerRole.roleArn,
+        input: JSON.stringify({
+          AgentRuntimeArn: props.agentRuntimeArn,
+          Payload: JSON.stringify({
+            action: 'collect_health_events',
+            refresh_origin: 'Auto'
+          })
+        }),
+        retryPolicy: {
+          maximumEventAgeInSeconds: 86400,
+          maximumRetryAttempts: 0
+        },
+        deadLetterConfig: {
+          arn: this.deadLetterQueue.queueArn
+        }
+      }
+    });
+
     // Outputs
     new cdk.CfnOutput(this, 'NotificationTopicArn', {
       value: this.notificationTopic.topicArn,
@@ -110,6 +139,11 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
     new cdk.CfnOutput(this, 'DeadLetterQueueUrl', {
       value: this.deadLetterQueue.queueUrl,
       description: 'SQS Dead Letter Queue for failed scheduler invocations'
+    });
+
+    new cdk.CfnOutput(this, 'HealthScheduleName', {
+      value: healthSchedule.name!,
+      description: 'EventBridge Scheduler name for Health events collection (every 5 minutes)'
     });
   }
 }

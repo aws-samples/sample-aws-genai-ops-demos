@@ -9,6 +9,7 @@ import Button from '@cloudscape-design/components/button';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Popover from '@cloudscape-design/components/popover';
 import { getDashboardMetrics, triggerExtraction, discoverAccountResources, DashboardMetrics } from '../api';
+import HealthPanel from '../components/HealthPanel';
 
 // Services covered by Discovery (account scan)
 const DISCOVERY_SERVICES = [
@@ -353,6 +354,8 @@ export default function Dashboard() {
               </Box>
             </Container>
           </Grid>
+
+          <HealthPanel />
 
           <Container header={<Header variant="h2">Status Breakdown</Header>}>
             <SpaceBetween size="m">
