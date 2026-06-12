@@ -545,6 +545,17 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       natGatewayId: this.natGateway.ref,
     });
 
+    // Return-path: after NFW processes spoke-bound return traffic (SYN-ACKs,
+    // response data), it exits to the FW subnet. This route sends it to the
+    // TGW which delivers it back to the spoke VPC via the inspection RT
+    // (10.99.0.0/16 → spoke attachment).
+    const inspFwReturnRoute = new ec2.CfnRoute(this, 'InspFwToSpokeViaTgw', {
+      routeTableId: inspFwRt.attrRouteTableId,
+      destinationCidrBlock: '10.99.0.0/16',
+      transitGatewayId: this.transitGateway.attrId,
+    });
+    inspFwReturnRoute.addDependency(this.spokeAttachment);
+
     new ec2.CfnSubnetRouteTableAssociation(this, 'InspFwRtAssoc', {
       subnetId: this.inspectionFwSubnet.attrSubnetId,
       routeTableId: inspFwRt.attrRouteTableId,
@@ -566,6 +577,17 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       destinationCidrBlock: '0.0.0.0/0',
       gatewayId: this.internetGateway.attrInternetGatewayId,
     });
+
+    // Return-path route: traffic coming back from the internet (via NAT)
+    // destined for the spoke VPC (10.99.0.0/16) must go through the NFW
+    // endpoint for symmetric inspection. Without this, return SYN-ACKs
+    // from ECR bypass the firewall and the TLS handshake never completes.
+    const inspNatReturnRoute = new ec2.CfnRoute(this, 'InspNatToSpokeViaNfw', {
+      routeTableId: inspNatRt.attrRouteTableId,
+      destinationCidrBlock: '10.99.0.0/16',
+      vpcEndpointId: nfwEndpointId,
+    });
+    inspNatReturnRoute.addDependency(this.networkFirewall);
 
     new ec2.CfnSubnetRouteTableAssociation(this, 'InspNatRtAssoc', {
       subnetId: this.inspectionNatSubnet.attrSubnetId,
