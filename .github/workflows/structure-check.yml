@@ -1,0 +1,105 @@
+name: Structure Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  structure-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect modified demo directories
+        id: detect
+        run: |
+          DEMOS=$(git diff --name-only origin/main...HEAD | grep -oP '^[^/]+/[^/]+' | sort -u | grep -v '^\.' | grep -v '^shared' | grep -v '^docs' || true)
+          echo "demos=$DEMOS" >> $GITHUB_OUTPUT
+          echo "Modified demos: $DEMOS"
+
+      - name: Check demo structure
+        run: |
+          EXIT_CODE=0
+          DEMOS="${{ steps.detect.outputs.demos }}"
+
+          if [ -z "$DEMOS" ]; then
+            echo "No demo directories modified — skipping structure check."
+            exit 0
+          fi
+
+          for DEMO in $DEMOS; do
+            echo ""
+            echo "=== Checking: $DEMO ==="
+
+            # Check README.md
+            if [ ! -f "$DEMO/README.md" ]; then
+              echo "❌ Missing README.md"
+              EXIT_CODE=1
+            else
+              echo "✅ README.md exists"
+              for SECTION in "## Contributing" "## Security" "## License"; do
+                if ! grep -q "$SECTION" "$DEMO/README.md"; then
+                  echo "❌ README missing section: $SECTION"
+                  EXIT_CODE=1
+                else
+                  echo "✅ README has: $SECTION"
+                fi
+              done
+            fi
+
+            # Check ARCHITECTURE.md (root or docs/)
+            if [ ! -f "$DEMO/ARCHITECTURE.md" ] && [ ! -f "$DEMO/docs/ARCHITECTURE.md" ] && [ ! -f "$DEMO/doc/ARCHITECTURE.md" ]; then
+              echo "❌ Missing ARCHITECTURE.md (checked root, docs/, and doc/)"
+              EXIT_CODE=1
+            else
+              echo "✅ ARCHITECTURE.md exists"
+            fi
+
+            # Check deploy scripts
+            if ! ls "$DEMO"/*.ps1 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.ps1 1>/dev/null 2>&1; then
+              echo "❌ Missing PowerShell deployment script (.ps1)"
+              EXIT_CODE=1
+            else
+              echo "✅ PowerShell script exists"
+            fi
+
+            if ! ls "$DEMO"/*.sh 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.sh 1>/dev/null 2>&1; then
+              echo "❌ Missing Bash deployment script (.sh)"
+              EXIT_CODE=1
+            else
+              echo "✅ Bash script exists"
+            fi
+
+            # Check for solution adoption tracking in CDK app file
+            APP_FILE=$(find "$DEMO" -name "app.py" -path "*/cdk/*" -o -name "app.ts" -path "*/cdk/*" 2>/dev/null | head -1)
+            if [ -n "$APP_FILE" ]; then
+              if ! grep -q "uksb-do9bhieqqh" "$APP_FILE"; then
+                echo "❌ Missing solution adoption tracking in $APP_FILE"
+                EXIT_CODE=1
+              else
+                echo "✅ Solution adoption tracking present"
+              fi
+            fi
+
+            # Check for hardcoded regions (excluding docs, comments, and fallbacks)
+            HARDCODED=$(grep -rn "us-east-1\|us-west-2\|eu-west-1\|ap-southeast-1" "$DEMO" \
+              --include="*.py" --include="*.ts" --include="*.ps1" --include="*.sh" \
+              | grep -v "README\|ARCHITECTURE\|#.*region\|//.*region\|fallback\|default\|Supported regions\|example\|node_modules\|cdk.out\|\.venv" || true)
+            if [ -n "$HARDCODED" ]; then
+              echo "⚠️  Possible hardcoded regions (review manually):"
+              echo "$HARDCODED" | head -5
+            fi
+
+            # Check directory naming (kebab-case)
+            DEMO_NAME=$(basename "$DEMO")
+            if echo "$DEMO_NAME" | grep -qP '[A-Z_]'; then
+              echo "❌ Directory name '$DEMO_NAME' should be kebab-case"
+              EXIT_CODE=1
+            else
+              echo "✅ Directory naming is kebab-case"
+            fi
+          done
+
+          exit $EXIT_CODE

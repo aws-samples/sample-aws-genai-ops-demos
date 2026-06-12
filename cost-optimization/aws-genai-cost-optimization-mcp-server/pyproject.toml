@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mcp-cost-optim-genai"
+name = "awslabs-genai-cost-optim-mcp-server"
 version = "0.1.0"
 description = "MCP server for AWS GenAI cost optimization insights"
 readme = "README.md"
@@ -18,15 +18,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ai = [
+    "boto3>=1.28.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "boto3>=1.28.0",
 ]
 
 [project.scripts]
-mcp-cost-optim-genai = "mcp_cost_optim_genai.server:main"
+awslabs-genai-cost-optim-mcp-server = "mcp_cost_optim_genai.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_cost_optim_genai"]

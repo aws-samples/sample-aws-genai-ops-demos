@@ -92,12 +92,76 @@ Write-Host ""
 
 $ECR_REGISTRY = "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
+# ---------------------------------------------------------------------------
+# CDK bootstrap pre-flight
+# ---------------------------------------------------------------------------
+# The CDK deploy step (~15 min) fails late with a confusing "SSM parameter
+# /cdk-bootstrap/hnb659fds/version not found" error if this account/region has
+# never been bootstrapped. Check upfront so the user sees the fix in seconds.
+aws ssm get-parameter --name /cdk-bootstrap/hnb659fds/version --region $AWS_REGION --output text 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "ERROR: CDK is not bootstrapped in $AWS_REGION for account $AWS_ACCOUNT_ID." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Run this once, then re-run deploy-all.ps1:"
+    Write-Host "  npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION"
+    Write-Host ""
+    exit 1
+}
+
 # =============================================================================
 # STEP 1: Install CDK dependencies and create S3 bucket for CodeBuild sources
 # =============================================================================
 Write-Host "[1/9] Installing CDK dependencies and preparing S3 bucket..." -ForegroundColor Cyan
 $BUCKET_NAME = "$ProjectName-cfn-templates-$AWS_ACCOUNT_ID"
 aws s3 mb "s3://$BUCKET_NAME" --region $AWS_REGION 2>$null
+
+# Verify the bucket lives in the target region. S3 bucket names are globally
+# unique, so if a previous deploy attempt created this bucket in a different
+# region the 'mb' above silently no-ops. CodeBuild refuses cross-region source
+# downloads and would fail ~18s into the first build (DOWNLOAD_SOURCE phase)
+# with a BucketRegionError. Fail fast here with an actionable message.
+#
+# Also handles the case where 'mb' failed for another reason (e.g., S3 name
+# cooldown after a recent DeleteBucket) so we abort instead of marching into
+# the CDK deploy with a bucket that doesn't exist.
+$BucketLocationRaw = (aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>&1) -join "`n"
+$BucketLocationExit = $LASTEXITCODE
+
+if ($BucketLocationExit -ne 0) {
+    Write-Host ""
+    Write-Host "ERROR: Could not verify S3 bucket '$BUCKET_NAME'." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  $BucketLocationRaw"
+    Write-Host ""
+    if ($BucketLocationRaw -match 'NoSuchBucket') {
+        Write-Host "The bucket does not exist. 'aws s3 mb' above likely failed silently."
+        Write-Host "A common cause is the S3 name-reuse cooldown after a recent DeleteBucket"
+        Write-Host "(can take several minutes). Wait a bit and re-run deploy-all.ps1, or try:"
+        Write-Host "  aws s3 mb s3://$BUCKET_NAME --region $AWS_REGION"
+    }
+    Write-Host ""
+    exit 1
+}
+
+$BucketLocation = $BucketLocationRaw
+# us-east-1 reports as 'None' (historical quirk of the S3 API)
+if (-not $BucketLocation -or $BucketLocation -eq 'None') {
+    $BucketLocation = 'us-east-1'
+}
+if ($BucketLocation -ne $AWS_REGION) {
+    Write-Host ""
+    Write-Host "ERROR: S3 bucket '$BUCKET_NAME' exists in '$BucketLocation' but this deploy targets '$AWS_REGION'." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "This typically happens after a previous deploy attempt ran against a different region."
+    Write-Host "CodeBuild in '$AWS_REGION' cannot pull sources from a bucket in '$BucketLocation'."
+    Write-Host ""
+    Write-Host "Fix: delete the misplaced bucket, then re-run deploy-all.ps1:"
+    Write-Host "  aws s3 rm s3://$BUCKET_NAME --recursive --region $BucketLocation"
+    Write-Host "  aws s3 rb s3://$BUCKET_NAME --region $BucketLocation"
+    Write-Host ""
+    exit 1
+}
 
 Push-Location cdk; npm install; Pop-Location
 Write-Host "  done."

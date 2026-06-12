@@ -45,6 +45,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 - Node.js 20+ with npm
 - `zip` utility
 - Git
+- **CDK bootstrap** — the target account + region must be bootstrapped before running the deploy script. If you've never deployed CDK to this account/region pair, run:
+  ```bash
+  npx cdk bootstrap aws://<account-id>/<region>
+  ```
+  Bootstrapping creates the IAM roles, S3 bucket, ECR repo, and SSM parameter that CDK uses to publish assets and assume deploy roles. It's a one-time, idempotent operation per account/region. Without it, the deploy fails on the first stack with `SSM parameter /cdk-bootstrap/hnb659fds/version not found`.
 
 No local Docker or Java required — container images are built in the cloud via AWS CodeBuild.
 
@@ -61,16 +66,25 @@ cd sample-aws-genai-ops-demos/observability/eks-investigation-devops-agent
 
 > **⚠️ Interactive step required during deployment:** The script will pause and ask you to generate a DevOps Agent webhook from the AWS console. Have a browser ready — the script prints the exact console URL to open.
 
-> **DevOps Agent region:** By default, the Agent Space is created in `us-east-1` regardless of your current default region for all the other stacks. To use a different supported region:
-> ```powershell
-> # PowerShell
-> $env:DEVOPS_AGENT_REGION = "eu-west-1"
-> .\deploy-all.ps1
-> ```
+> **Two regions, set them both.** The deploy uses two independent region variables:
+>
+> - `AWS_REGION` — where the CDK stacks (EKS, RDS, CloudFront, etc.) are deployed. If unset, the AWS CLI falls back to `aws configure get region`, which may not be what you want.
+> - `DEVOPS_AGENT_REGION` — where the DevOps Agent Space is created. Defaults to `us-east-1` because `AWS::DevOpsAgent` resources are not available in every region.
+>
+> For a same-region deployment (example: Ireland):
 > ```bash
 > # Bash
+> export AWS_REGION=eu-west-1
+> export AWS_DEFAULT_REGION=eu-west-1
 > export DEVOPS_AGENT_REGION=eu-west-1
 > bash deploy-all.sh
+> ```
+> ```powershell
+> # PowerShell
+> $env:AWS_REGION = "eu-west-1"
+> $env:AWS_DEFAULT_REGION = "eu-west-1"
+> $env:DEVOPS_AGENT_REGION = "eu-west-1"
+> .\deploy-all.ps1
 > ```
 
 ```bash
@@ -317,7 +331,10 @@ All costs approximate, based on `us-east-1` pricing.
 | CloudFront returns **403** | S3/OAC misconfigured | Re-run deployment |
 | Agent Space not found | CLI too old | Upgrade AWS CLI to >= 2.34.21 |
 | Investigation shows "no AWS account access" | Missing association | Re-run `.\scripts\setup-devops-agent.ps1` |
+| CDK fails with **`SSM parameter /cdk-bootstrap/hnb659fds/version not found`** | Account/region is not CDK-bootstrapped | Run `npx cdk bootstrap aws://<account-id>/<region>` once, then re-run `deploy-all.sh` |
 | CDK bootstrap "S3 bucket already exists" | Broken CDK bootstrap stack | Run `npx cdk bootstrap --force` or delete the orphaned S3 bucket `cdk-hnb659fds-assets-*` and re-bootstrap. See [CDK bootstrap troubleshooting](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-troubleshoot.html) |
+| Deploy targeted the wrong region | `AWS_REGION` unset, so CLI fell back to `aws configure get region` | `export AWS_REGION=<intended-region>` and `export AWS_DEFAULT_REGION=<same>` before running the script |
+| CodeBuild fails in **DOWNLOAD_SOURCE** with `BucketRegionError` (builds fail in ~18s) | The CodeBuild sources S3 bucket (`devops-agent-eks-cfn-templates-<account>`) exists in a different region than this deploy, left over from a previous attempt. CodeBuild cannot pull sources cross-region. | Delete the misplaced bucket and re-run: `aws s3 rm s3://devops-agent-eks-cfn-templates-<account> --recursive --region <old-region>` then `aws s3 rb s3://devops-agent-eks-cfn-templates-<account> --region <old-region>`. The deploy script now detects this upfront. |
 
 ## Recreating the Agent Space
 
