@@ -69,7 +69,7 @@ Each demo folder typically contains:
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
-- AWS CDK or Terraform (depending on demo)
+- AWS CDK (TypeScript or Python) for infrastructure deployment
 - Node.js 20+ (for CDK-based demos)
 - Python 3.10+ (for Python-based demos)
 
@@ -95,6 +95,21 @@ Each demo folder typically contains:
 ## Cost Considerations
 
 Each demo includes detailed cost estimates and optimization recommendations. Typical costs range from $10-50/month depending on usage patterns. See individual demo READMEs for specific cost breakdowns.
+
+## For Contributors
+
+This repository includes AI-assisted development guidance via steering files in `.kiro/steering/`. These files provide project standards, patterns, and anti-patterns to any AI coding assistant.
+
+| AI IDE | How to use the steering files |
+|--------|-------------------------------|
+| **Kiro** | Loads automatically from `.kiro/steering/` |
+| **Cursor** | Reference `.kiro/steering/contributor-guide.md` in project context or `.cursorrules` |
+| **GitHub Copilot** | Reference via `.github/copilot-instructions.md` |
+| **Cline** | Reference via `.clinerules` |
+| **Claude Code** | Reference via `CLAUDE.md` |
+| **Other** | Point your AI assistant to `.kiro/steering/contributor-guide.md` |
+
+Start with the [Contributor Guide](.kiro/steering/contributor-guide.md) for all project standards.
 
 ## Contributing
 

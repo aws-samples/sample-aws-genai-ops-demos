@@ -1,0 +1,13 @@
+{
+  "name": "Protect Governance Files",
+  "version": "1.0.0",
+  "description": "Prevent agent from modifying steering files and hooks",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["write"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "If this write targets any file under .kiro/steering/ or .kiro/hooks/, STOP. Do not modify these governance files. They are maintained by repo owners only. Explain this to the user and suggest they contact the maintainers if changes are needed."
+  }
+}
