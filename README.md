@@ -17,6 +17,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
+| AI Incident Response Playbook Builder | Security | Analyze AWS architecture and generate tailored IR playbooks with MITRE ATT&CK mapping, SSM Automation documents, and step-by-step response procedures | [security/ai-incident-response-playbook-builder/](security/ai-incident-response-playbook-builder/README.md) 
 
 ## Roadmap (Coming Soon)
 
@@ -43,6 +44,7 @@ observability/
 resilience/
 └── ai-chaos-engineering-with-fis/
 security/
+└── ai-incident-response-playbook-builder/
 └── prowler-security-findings-agent/
 shared/
 ├── scripts/                # Common prerequisite checks

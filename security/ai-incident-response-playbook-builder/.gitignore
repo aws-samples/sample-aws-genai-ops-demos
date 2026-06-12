@@ -1,0 +1,42 @@
+# CDK outputs
+**/cdk.out/
+**/cdk.out*/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+
+# Generated output (re-generated on each run)
+output/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+.env.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Generated docs
+*.docx
