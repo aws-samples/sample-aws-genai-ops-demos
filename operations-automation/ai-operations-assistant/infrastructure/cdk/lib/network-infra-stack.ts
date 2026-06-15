@@ -580,9 +580,9 @@ export class NetworkInfraStack extends BaseInfraStack {
    * by default, plus interface endpoints for DynamoDB / SSM / EC2 if
    * the operator subsequently adds private connectivity).
    *
-   * For the demo's bootstrap path (no VPC endpoints), the subnet is a
-   * **public** subnet so the AL2023 instance can reach the public S3
-   * and DynamoDB endpoints during UserData execution. A single AZ is
+   * For the demo, the subnet is a **private isolated** subnet with VPC
+   * endpoints (S3 Gateway, DynamoDB Gateway, SSM/EC2Messages Interface)
+   * providing connectivity to AWS APIs. A single AZ is
    * sufficient because the design provisions exactly one collector
    * (Req 6.1 explicitly says "no Auto Scaling Group, no NLB"); a
    * multi-AZ deployment would be over-engineered for the demo.
@@ -1768,31 +1768,32 @@ export class NetworkInfraStack extends BaseInfraStack {
 
     // ----- Network_Agent_VPC (Req 6.1) ------------------------------------
     //
-    // /24 dedicated VPC with one /28 public subnet hosting the
-    // collector. Public subnet (rather than private + NAT) is used
-    // because:
+    // /16 dedicated VPC with one /24 private subnet hosting the
+    // collector. Private subnet with VPC endpoints is used because:
     //
-    //   1. The demo's only outbound traffic is to AWS service
-    //      endpoints (S3, DynamoDB, EC2 metadata, dnf.amazon.com for
-    //      first-boot package install). All of those work over a
-    //      public IP without VPC endpoints.
-    //   2. A NAT Gateway costs ~$33/month per AZ in us-east-1, which
-    //      would dominate the demo's monthly bill.
-    //   3. The instance still has no public-facing service: ingress
-    //      is restricted to UDP/4789 from the VPC CIDR by the
-    //      security group, and AWS does not auto-assign a public
-    //      IPv4 by default. Operators must explicitly Associate
-    //      Address or use a NAT/IGW route to reach the public
-    //      Internet, which only happens during `dnf install` on
-    //      first boot.
+    //   1. The collector's only outbound traffic is to AWS service
+    //      endpoints (S3, DynamoDB, SSM). All of those are
+    //      reachable via VPC endpoints without internet access.
+    //   2. A NAT Gateway would cost ~$33/month per AZ in us-east-1,
+    //      which would dominate the demo's monthly bill. VPC
+    //      endpoints (S3 Gateway is free, Interface endpoints are
+    //      ~$7/month each) are more cost-effective.
+    //   3. No public IP or internet route means zero inbound attack
+    //      surface — the instance is only reachable via Traffic
+    //      Mirror (UDP/4789 from VPC) and SSM Session Manager.
+    //   4. First-boot package install (`dnf`) is handled by adding
+    //      packages to the AMI or using S3-hosted repos. The
+    //      bootstrap script uses only AWS CLI (pre-installed on
+    //      AL2023) and Python (pre-installed), so no external
+    //      package download is needed.
     //
     // `enableDnsSupport` and `enableDnsHostnames` are both true so
     // the orchestration agent's `active_dns_lookup` resolution
-    // strategy (Req 19.14) works for instances in this VPC.
+    // strategy (Req 19.14) works for instances in this VPC, and
+    // Interface VPC endpoints resolve correctly via private DNS.
     //
-    // `natGateways: 0` makes this an explicit no-NAT decision and
-    // keeps the public subnet's default route pointed at the IGW
-    // alone.
+    // `natGateways: 0` keeps costs minimal — all AWS API access
+    // goes through VPC endpoints.
     this.networkAgentVpc = new ec2.Vpc(this, 'NetworkAgentVpc', {
       vpcName: 'goat-demo-vpc',
       ipAddresses: ec2.IpAddresses.cidr(NETWORK_AGENT_VPC_CIDR),
@@ -1803,7 +1804,7 @@ export class NetworkInfraStack extends BaseInfraStack {
       subnetConfiguration: [
         {
           name: 'CollectorSubnet',
-          subnetType: ec2.SubnetType.PUBLIC,
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 24,
         },
       ],
@@ -1817,6 +1818,44 @@ export class NetworkInfraStack extends BaseInfraStack {
     cdk.Tags.of(this.networkAgentVpc).add('goat:component', 'network-agent');
     cdk.Tags.of(this.networkAgentVpc).add('goat-demo', 'true');
     cdk.Tags.of(this.networkAgentVpc).add('Name', 'goat-demo-vpc');
+
+    // ----- VPC Endpoints (private subnet connectivity) --------------------
+    //
+    // The collector runs in a PRIVATE_ISOLATED subnet with no internet
+    // access. These VPC endpoints provide the AWS API connectivity it
+    // needs:
+    //
+    //   - S3 (Gateway): Free. Used by the uploader to PutObject pcap
+    //     files and by bootstrap to download the CDK asset bundle.
+    //   - DynamoDB (Gateway): Free. Used by the splitter to read the
+    //     Vni_Lookup_Table.
+    //   - SSM, SSM Messages, EC2 Messages (Interface): Required for
+    //     Systems Manager Session Manager to work without internet.
+    //     Operators use SSM for break-glass access to the collector.
+
+    // S3 Gateway Endpoint (free, no per-hour charge)
+    this.networkAgentVpc.addGatewayEndpoint('S3Endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+    });
+
+    // DynamoDB Gateway Endpoint (free, no per-hour charge)
+    this.networkAgentVpc.addGatewayEndpoint('DynamoDbEndpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+    });
+
+    // SSM Interface Endpoints (required for Session Manager)
+    this.networkAgentVpc.addInterfaceEndpoint('SsmEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SSM,
+      privateDnsEnabled: true,
+    });
+    this.networkAgentVpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
+      privateDnsEnabled: true,
+    });
+    this.networkAgentVpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
+      privateDnsEnabled: true,
+    });
 
     // The single subnet in the VPC. We reference it explicitly (rather
     // than passing `vpcSubnets` blindly) so the collector's primary
