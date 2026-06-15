@@ -89,6 +89,21 @@ invoke_cdk_deploy() {
 new_demo_support_case() {
     local subject="$1"
     local body="$2"
+    local service_code="${3:-general-info}"
+    local category_code="${4:-other}"
+
+    # Check for existing case with the same subject (avoid duplicates)
+    local existing=""
+    existing=$(aws support describe-cases \
+        --include-resolved-cases \
+        --region us-east-1 \
+        --query "cases[?contains(subject,'$subject')].displayId | [0]" \
+        --output text --no-cli-pager 2>/dev/null) || true
+
+    if [ -n "$existing" ] && [ "$existing" != "None" ] && [ "$existing" != "null" ]; then
+        echo -e "  \033[0;90mSupport case already exists with subject '$subject' — skipping creation\033[0m"
+        return 0
+    fi
 
     local case_id=""
     local output=""
@@ -96,8 +111,8 @@ new_demo_support_case() {
     output=$(aws support create-case \
         --subject "$subject" \
         --communication-body "$body" \
-        --service-code "general-info" \
-        --category-code "other" \
+        --service-code "$service_code" \
+        --category-code "$category_code" \
         --severity-code "low" \
         --language "en" \
         --region us-east-1 \
@@ -131,7 +146,11 @@ case "$SCENARIO" in
         new_demo_support_case "General account review - G.O.A.T. demo" "This case was created for demo purposes by the G.O.A.T. provisioning scripts."
         new_demo_support_case "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
         invoke_cdk_deploy "$stack_c"
-        new_demo_support_case "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+        new_demo_support_case \
+            "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" \
+            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
+            "service-network-firewall" \
+            "general-guidance"
         ;;
     account-health)
         invoke_cdk_deploy "$stack_a"
@@ -142,7 +161,11 @@ case "$SCENARIO" in
         ;;
     tls-fragmentation)
         invoke_cdk_deploy "$stack_c"
-        new_demo_support_case "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+        new_demo_support_case \
+            "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" \
+            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
+            "service-network-firewall" \
+            "general-guidance"
         ;;
 esac
 

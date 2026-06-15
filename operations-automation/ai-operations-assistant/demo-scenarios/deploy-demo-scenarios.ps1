@@ -1,4 +1,4 @@
-# G.O.A.T. Demo Scenarios - CDK Deployment Script
+﻿# G.O.A.T. Demo Scenarios - CDK Deployment Script
 #
 # Deploys demo scenario CDK stacks and creates Support cases for G.O.A.T. demos.
 # Uses the separate demo-scenarios-app.ts CDK entry point.
@@ -29,6 +29,9 @@ $region = $global:AWS_REGION
 $cdkDir = "$PSScriptRoot\..\infrastructure\cdk"
 $cdkApp = "npx ts-node --prefer-ts-exts bin/demo-scenarios-app.ts"
 
+# Track created/found case IDs for summary
+$script:caseIds = @()
+
 # ---------------------------------------------------------------------------
 # Helper: Deploy a CDK stack
 # ---------------------------------------------------------------------------
@@ -46,16 +49,43 @@ function Invoke-CdkDeploy {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: Create and resolve a Support case
+# Helper: Create and resolve a Support case (with duplicate check)
+# Returns the case displayId (or existing one if duplicate found)
 # ---------------------------------------------------------------------------
 function New-DemoSupportCase {
-    param([string]$Subject, [string]$Body)
+    param(
+        [string]$Subject,
+        [string]$Body,
+        [string]$ServiceCode = "general-info",
+        [string]$CategoryCode = "other"
+    )
     try {
+        # Check for existing case with the same subject (avoid duplicates)
+        $existing = aws support describe-cases `
+            --include-resolved-cases `
+            --region us-east-1 `
+            --query "cases[?contains(subject,'$Subject')].displayId" `
+            --output text --no-cli-pager 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            if ($existing -match "SubscriptionRequired" -or $existing -match "not subscribed") {
+                Write-Host "  No Business or Enterprise Support plan -- skipping case creation" -ForegroundColor Yellow
+                return ""
+            }
+            Write-Host "  WARNING: Cannot query Support API: $existing" -ForegroundColor Yellow
+            return ""
+        }
+        if ($existing -and $existing.Trim() -ne "" -and $existing.Trim() -ne "None") {
+            $displayId = ($existing.Trim() -split "\s+")[0]
+            Write-Host "  Support case already exists: $displayId -- skipping creation" -ForegroundColor Gray
+            $script:caseIds += $displayId
+            return $displayId
+        }
+
         $caseId = aws support create-case `
             --subject $Subject `
             --communication-body $Body `
-            --service-code "general-info" `
-            --category-code "other" `
+            --service-code $ServiceCode `
+            --category-code $CategoryCode `
             --severity-code "low" `
             --language "en" `
             --region us-east-1 `
@@ -70,8 +100,17 @@ function New-DemoSupportCase {
         }
         Start-Sleep -Seconds 5
         aws support resolve-case --case-id $caseId --region us-east-1 --no-cli-pager 2>$null
-        Write-Host "  Created and resolved Support case: $caseId" -ForegroundColor Green
-        return $caseId
+        # Get the display ID for user-friendly output
+        $displayId = aws support describe-cases `
+            --case-id-list $caseId `
+            --include-resolved-cases `
+            --region us-east-1 `
+            --query "cases[0].displayId" `
+            --output text --no-cli-pager 2>$null
+        if (-not $displayId -or $displayId -eq "None") { $displayId = $caseId }
+        Write-Host "  Created and resolved Support case: $displayId" -ForegroundColor Green
+        $script:caseIds += $displayId
+        return $displayId
     } catch {
         Write-Host "  WARNING: Support API error: $_" -ForegroundColor Yellow
         return ""
@@ -90,7 +129,11 @@ switch ($Scenario) {
         New-DemoSupportCase "General account review - G.O.A.T. demo" "This case was created for demo purposes by the G.O.A.T. provisioning scripts."
         New-DemoSupportCase "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
         Invoke-CdkDeploy $stackC
-        New-DemoSupportCase "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+        New-DemoSupportCase `
+            -Subject "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" `
+            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
+            -ServiceCode "service-network-firewall" `
+            -CategoryCode "general-guidance"
     }
     "account-health" {
         Invoke-CdkDeploy $stackA
@@ -101,7 +144,11 @@ switch ($Scenario) {
     }
     "tls-fragmentation" {
         Invoke-CdkDeploy $stackC
-        New-DemoSupportCase "EC2 instance failing HTTPS to ECR - connection reset by peer" "An EC2 instance is failing HTTPS connections to ECR. The TLS Client Hello appears to suffer from fragmentation when using ML-KEM key exchange. Network Firewall is dropping the connection."
+        New-DemoSupportCase `
+            -Subject "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" `
+            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
+            -ServiceCode "service-network-firewall" `
+            -CategoryCode "general-guidance"
     }
 }
 
@@ -127,6 +174,17 @@ if ($Scenario -eq "all" -or $Scenario -eq "tls-fragmentation") {
     $eniId = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceEniId'].OutputValue" --output text --no-cli-pager
     Write-Host "  TLS EC2:      $ec2Id" -ForegroundColor Cyan
     Write-Host "  TLS ENI:      $eniId (for Network Agent capture)" -ForegroundColor Cyan
+}
+
+if ($script:caseIds.Count -gt 0) {
+    Write-Host ""
+    Write-Host "  Support Cases:" -ForegroundColor Yellow
+    foreach ($id in $script:caseIds) {
+        Write-Host "    $id" -ForegroundColor Cyan
+    }
+    Write-Host ""
+    Write-Host "  Try in G.O.A.T.:" -ForegroundColor Yellow
+    Write-Host "    `"Help me troubleshoot case $($script:caseIds[-1])`"" -ForegroundColor Gray
 }
 
 Write-Host ""

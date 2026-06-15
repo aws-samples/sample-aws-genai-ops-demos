@@ -3717,7 +3717,7 @@ with "detect_retransmissions" (the dropped Client Hello segment is
 retransmitted) and "classify_tcp_resets". The recommended remediation
 to surface to the user: switch the firewall policy's stateful default
 action from "aws:drop_established" to
-"aws:application_layer_drop_established" (which reassembles the
+"aws:drop_established_app_layer" (which reassembles the
 application-layer message before rule evaluation), or add the
 AWS-recommended TCP pass rules; alternatively use VPC endpoints to
 bypass the firewall path. Present this as the root cause, not a

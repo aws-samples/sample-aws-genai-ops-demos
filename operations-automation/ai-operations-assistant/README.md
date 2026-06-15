@@ -933,8 +933,8 @@ Agent: **Case Summary**
 
        **Recommended Next Actions**
        • Update the Network Firewall stateful rule group from the legacy
-         "drop established" default action to "aws:drop_strict" with
-         "flow:to_server, flow:established" qualifiers
+         "drop established" default action to "aws:drop_established_app_layer"
+         which reassembles multi-packet TLS Client Hello messages before rule evaluation
        • Alternatively, add a `pass` rule for the ECR endpoint that does
          not rely on SNI inspection
        • Verify the fix by re-running the capture after the rule change
@@ -968,12 +968,16 @@ Capture traffic from the EKS test pod and explain why ECR connections fail
 Why does my EKS pod fail to reach ECR?
 ```
 
+```
+Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped.
+```
+
 **Expected Combined Output:**
 - The agent identifies the AL2023 OpenSSL update as the triggering change
 - Packet capture shows TLS Client Hello messages of ~3.5 KB split across multiple TCP segments
 - The Network Firewall's legacy `drop established` rule fails to extract SNI from fragmented records
 - RST packets are classified as originating from a middlebox (the Network Firewall)
-- The agent recommends switching to `aws:drop_strict` with `flow:to_server, flow:established` qualifiers
+- The agent recommends switching to `aws:drop_established_app_layer` which reassembles multi-packet TLS Client Hello messages before rule evaluation
 - The agent links the finding to the known Support issue for this configuration
 - A complete root-cause chain is presented: AL2023 update → ML-KEM key share → oversized Client Hello → fragmentation → NFW SNI inspection failure → connection reset
 

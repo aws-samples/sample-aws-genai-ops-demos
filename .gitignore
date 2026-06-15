@@ -129,6 +129,8 @@ docs/
 .kiro/
 .hypothesis/
 .ash/
+tests/
+HANDOFF-resume.md
 
 # OS generated files
 .DS_Store

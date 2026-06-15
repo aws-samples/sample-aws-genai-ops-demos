@@ -55,6 +55,10 @@ def handle_describe_cases(params: dict) -> dict:
         kwargs = {}
         if params.get("caseIdList") or params.get("case_id_list"):
             kwargs["caseIdList"] = params.get("caseIdList") or params.get("case_id_list")
+        elif params.get("caseId") or params.get("case_id"):
+            # Normalize single case ID string to a list
+            single_id = params.get("caseId") or params.get("case_id")
+            kwargs["caseIdList"] = [single_id] if isinstance(single_id, str) else single_id
         # The AWS describe_cases API does NOT accept a "status" filter parameter.
         # Instead, it uses includeResolvedCases boolean. If the LLM passes
         # status="open", we ignore it and let includeResolvedCases handle filtering.

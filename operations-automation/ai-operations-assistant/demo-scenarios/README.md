@@ -9,6 +9,38 @@ Pre-built provisioning scripts that create controlled sets of AWS resources for 
 - **AWS Business or Enterprise Support plan** (optional) — required for Support case creation; scripts skip gracefully without one
 - **G.O.A.T. deployed** — run the main deployment first so agents are available to query the demo resources
 
+## CDK Deployment (Recommended)
+
+A unified CDK-based deployment script provisions all scenario resources via CloudFormation stacks and creates Support cases imperatively. This is the recommended approach — it's idempotent, handles dependencies, and integrates with the existing GOAT VPC for traffic mirroring.
+
+**Deploy a single scenario:**
+```powershell
+cd operations-automation\ai-operations-assistant\demo-scenarios
+.\deploy-demo-scenarios.ps1 -Scenario tls-fragmentation
+```
+
+**Deploy all scenarios:**
+```powershell
+.\deploy-demo-scenarios.ps1 -Scenario all
+```
+
+**Available scenarios:**
+| Parameter | What it deploys |
+|-----------|----------------|
+| `all` | Scenario A (account health) + B (CloudWatch incident) + C (TLS fragmentation) |
+| `account-health` | Scenario A CDK stack + Support case |
+| `cloudwatch-incident` | Support case only (no infrastructure) |
+| `tls-fragmentation` | Scenario C CDK stack (Transit Gateway, Network Firewall, EC2) + Support case |
+
+**Bash equivalent:**
+```bash
+./deploy-demo-scenarios.sh --scenario tls-fragmentation
+```
+
+The CDK scripts check for existing Support cases with the same subject before creating new ones, avoiding duplicates on re-run.
+
+> **Note:** The original CLI scripts (`setup-scenario-*.ps1/.sh`) remain available as an alternative. Both approaches produce identically tagged resources discoverable by the cleanup script.
+
 ## Scenario A: Full Account Health Check
 
 Creates resources that generate data across all five agent domains, enabling a comprehensive account health check demo.
@@ -244,7 +276,7 @@ The Network Firewall is configured with **`aws:drop_established`** stateful defa
 
 When the Client Hello fragments across two TCP segments, the firewall cannot extract the SNI from the first segment alone (the SNI field spans the boundary). The pass rule never matches, and the default `drop_established` action drops the connection.
 
-**Resolution**: Switch the firewall policy's stateful default action from `aws:drop_established` to **`aws:application_layer_drop_established`**, which reassembles multi-packet TLS Client Hello messages before rule evaluation.
+**Resolution**: Switch the firewall policy's stateful default action from `aws:drop_established` to **`aws:drop_established_app_layer`**, which reassembles multi-packet TLS Client Hello messages before rule evaluation.
 
 ### Suggested Demo Queries
 
@@ -253,12 +285,70 @@ After setup completes, open the G.O.A.T. app and try:
 | Query | What It Demonstrates |
 |-------|---------------------|
 | **"Capture traffic from eni-xxx and analyze the TLS handshake"** | Full Network Agent capture → transform → TLS analysis |
+| **"Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped."** | Cross-domain troubleshooting with full context (Network + Support) |
 | "Why is the EC2 instance failing to connect to ECR?" | Cross-domain correlation (Network + Support) |
 | "Show TLS Client Hello sizes" | Network Agent pcap query revealing 1527-byte fragmented record |
 | "Diagnose the TCP exchange to ECR" | TCP stream health report |
 | "Investigate support case case-xxx and capture traffic if relevant" | Support case-driven capture workflow |
 
 Use the ENI and support case IDs from the setup script's summary output.
+
+### Applying the Fix — Switch NFW to `aws:drop_established_app_layer`
+
+If the SYN black-hole persists or you want to demonstrate the fix working, switch the Network Firewall stateful default action from `aws:drop_established` to `aws:drop_established_app_layer`:
+
+```bash
+# Get the current firewall policy ARN
+POLICY_ARN=$(aws network-firewall describe-firewall-policy \
+  --firewall-policy-name goat-demo-tls-policy \
+  --query "FirewallPolicyResponse.FirewallPolicyArn" --output text)
+
+UPDATE_TOKEN=$(aws network-firewall describe-firewall-policy \
+  --firewall-policy-name goat-demo-tls-policy \
+  --query "UpdateToken" --output text)
+
+# Update the stateful default action to drop_established_app_layer
+aws network-firewall update-firewall-policy \
+  --firewall-policy-arn "$POLICY_ARN" \
+  --update-token "$UPDATE_TOKEN" \
+  --firewall-policy '{
+    "StatelessDefaultActions": ["aws:forward_to_sfe"],
+    "StatelessFragmentDefaultActions": ["aws:forward_to_sfe"],
+    "StatefulDefaultActions": ["aws:drop_established_app_layer"],
+    "StatefulEngineOptions": {"RuleOrder": "STRICT_ORDER"},
+    "StatefulRuleGroupReferences": [{"ResourceArn": "'"$(aws network-firewall describe-rule-group --rule-group-name goat-demo-tls-rules --type STATEFUL --query "RuleGroupResponse.RuleGroupArn" --output text)"'", "Priority": 1}]
+  }'
+```
+
+```powershell
+# PowerShell equivalent
+$policyArn = aws network-firewall describe-firewall-policy `
+  --firewall-policy-name goat-demo-tls-policy `
+  --query "FirewallPolicyResponse.FirewallPolicyArn" --output text
+
+$updateToken = aws network-firewall describe-firewall-policy `
+  --firewall-policy-name goat-demo-tls-policy `
+  --query "UpdateToken" --output text
+
+$ruleGroupArn = aws network-firewall describe-rule-group `
+  --rule-group-name goat-demo-tls-rules --type STATEFUL `
+  --query "RuleGroupResponse.RuleGroupArn" --output text
+
+$policy = @{
+  StatelessDefaultActions = @("aws:forward_to_sfe")
+  StatelessFragmentDefaultActions = @("aws:forward_to_sfe")
+  StatefulDefaultActions = @("aws:drop_established_app_layer")
+  StatefulEngineOptions = @{RuleOrder = "STRICT_ORDER"}
+  StatefulRuleGroupReferences = @(@{ResourceArn = $ruleGroupArn; Priority = 1})
+} | ConvertTo-Json -Depth 4 -Compress
+
+aws network-firewall update-firewall-policy `
+  --firewall-policy-arn $policyArn `
+  --update-token $updateToken `
+  --firewall-policy $policy
+```
+
+After applying the fix, the TLS instance should successfully connect to ECR. Run another capture to confirm the handshake completes.
 
 ### Cost Note
 
@@ -333,14 +423,16 @@ Every demo resource receives four tags for identification and cleanup:
 
 | Script | Platform | Purpose |
 |--------|----------|---------|
-| `setup-scenario-account-health.sh` | Bash | Provision Account Health Check resources |
-| `setup-scenario-account-health.ps1` | PowerShell | Provision Account Health Check resources |
-| `setup-scenario-cloudwatch-incident.sh` | Bash | Provision CloudWatch Incident Correlation resources |
-| `setup-scenario-cloudwatch-incident.ps1` | PowerShell | Provision CloudWatch Incident Correlation resources |
-| `setup-scenario-tls-fragmentation.sh` | Bash | Provision TLS Fragmentation Scenario resources |
-| `setup-scenario-tls-fragmentation.ps1` | PowerShell | Provision TLS Fragmentation Scenario resources |
-| `cleanup-scenarios.sh` | Bash | Remove all demo resources |
-| `cleanup-scenarios.ps1` | PowerShell | Remove all demo resources |
+| `deploy-demo-scenarios.ps1` | PowerShell | **CDK deployment** — deploy scenarios via CloudFormation (recommended) |
+| `deploy-demo-scenarios.sh` | Bash | **CDK deployment** — deploy scenarios via CloudFormation (recommended) |
+| `setup-scenario-account-health.sh` | Bash | CLI provisioning — Account Health Check resources |
+| `setup-scenario-account-health.ps1` | PowerShell | CLI provisioning — Account Health Check resources |
+| `setup-scenario-cloudwatch-incident.sh` | Bash | CLI provisioning — CloudWatch Incident Correlation resources |
+| `setup-scenario-cloudwatch-incident.ps1` | PowerShell | CLI provisioning — CloudWatch Incident Correlation resources |
+| `setup-scenario-tls-fragmentation.sh` | Bash | CLI provisioning — TLS Fragmentation Scenario resources |
+| `setup-scenario-tls-fragmentation.ps1` | PowerShell | CLI provisioning — TLS Fragmentation Scenario resources |
+| `cleanup-scenarios.sh` | Bash | Remove all demo resources (both CDK and CLI) |
+| `cleanup-scenarios.ps1` | PowerShell | Remove all demo resources (both CDK and CLI) |
 
 PowerShell and Bash versions of each script produce identical AWS resources. Choose whichever matches your operating system.
 
