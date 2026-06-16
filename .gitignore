@@ -150,3 +150,6 @@ ssm-*.txt
 # wheels live in operations-automation/ai-operations-assistant/infrastructure/cdk/collector/wheels/
 # (committed for offline bootstrap) and are NOT matched by this root-anchored pattern.
 /*.whl
+
+# Per-account reinstall scripts (contain profile names / account-specific config)
+reinstall-goat.ps1

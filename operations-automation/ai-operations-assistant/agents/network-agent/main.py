@@ -594,8 +594,40 @@ def handle_list_enis(params: dict) -> dict:
     # Paginate ec2:DescribeNetworkInterfaces so the result is exhaustive
     # regardless of total ENI count (Req 2.6). On any botocore error,
     # surface the failure without returning a partial list (Req 2.8).
+    resolved_vpc_ids = None
     try:
         ec2 = _get_ec2_client()
+
+        # Resolve a VPC *name* to its vpc-... ID when the caller did not
+        # already pass an identifier. The orchestration LLM frequently
+        # forwards the human-readable VPC name (e.g. "goat-demo-vpc")
+        # straight into ``vpc_id``; EC2's ``vpc-id`` filter only matches
+        # real identifiers, so without this the list silently comes back
+        # empty. If the value starts with "vpc-" we treat it as an ID;
+        # otherwise we look it up by the ``Name`` tag.
+        if vpc_id_filter:
+            if vpc_id_filter.startswith("vpc-"):
+                resolved_vpc_ids = {vpc_id_filter}
+            else:
+                vpc_resp = ec2.describe_vpcs(
+                    Filters=[{"Name": "tag:Name", "Values": [vpc_id_filter]}]
+                )
+                resolved_vpc_ids = {
+                    v["VpcId"] for v in vpc_resp.get("Vpcs", [])
+                }
+                if resolved_vpc_ids:
+                    logger.info(
+                        "list_enis: resolved VPC name %r to %s",
+                        vpc_id_filter,
+                        ", ".join(sorted(resolved_vpc_ids)),
+                    )
+                else:
+                    logger.info(
+                        "list_enis: vpc_id %r is neither a vpc-id nor a "
+                        "matching VPC Name tag; result will be empty.",
+                        vpc_id_filter,
+                    )
+
         paginator = ec2.get_paginator("describe_network_interfaces")
         all_enis = []
         for page in paginator.paginate():
@@ -642,7 +674,7 @@ def handle_list_enis(params: dict) -> dict:
     # compose freely (Reqs 2.3, 2.4, 2.5). Filters use exact match.
     filtered = all_enis
     if vpc_id_filter:
-        filtered = [e for e in filtered if e["vpc_id"] == vpc_id_filter]
+        filtered = [e for e in filtered if e["vpc_id"] in (resolved_vpc_ids or set())]
     if instance_id_filter:
         filtered = [
             e for e in filtered if e["attached_instance_id"] == instance_id_filter

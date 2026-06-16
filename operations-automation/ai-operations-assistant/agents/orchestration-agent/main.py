@@ -2415,7 +2415,7 @@ def query_network_pcap(action: str, params: dict = None) -> str:
 
     Available actions (must match exactly — unsupported actions are rejected
     locally without invoking the runtime):
-    - ENI inventory: list_enis (params: vpc_id, instance_id, attachment_status, tag_key, tag_value — all optional. Use tag_key="goat-network-capture-allowed" tag_value="true" to find ENIs eligible for packet capture)
+    - ENI inventory: list_enis (params: vpc_id, instance_id, attachment_status, tag_key, tag_value — all optional. Use tag_key="goat-network-capture-allowed" tag_value="true" to find ENIs eligible for packet capture. The vpc_id param accepts either a real "vpc-..." identifier OR a VPC Name; do NOT guess — prefer the capture-allowed tag filter, or pass instance_id, when you only know a human-readable name)
     - Reverse DNS: reverse_dns_lookup (params: ip [single IP string] OR ips [list of up to 50 IPs]). Resolves IP addresses to hostnames via PTR records. Use this to turn dst_ip/src_ip values from pcap rows into human-readable hostnames.
     - Capture lifecycle: start_capture, stop_capture, list_captures, transform_capture,
       get_capture_progress (start_capture params: eni_ids [list of 1-3], duration_minutes
@@ -3636,6 +3636,13 @@ three groups:
    "show me capture-eligible ENIs" — call list_enis with the tag filter
    and present the results. Each ENI in the response includes a "tags"
    dict with all its tags for easy identification.
+   IMPORTANT — the vpc_id filter must be a real VPC identifier of the form
+   "vpc-xxxxxxxx". NEVER pass a human-readable VPC name (e.g. "goat-demo-vpc")
+   as vpc_id and assume it is an ID. When the user only gives a VPC name,
+   prefer the capture-allowed tag filter
+   (tag_key="goat-network-capture-allowed", tag_value="true") or filter by
+   instance_id instead. (The Network Agent will also resolve a VPC Name tag
+   to its ID as a fallback, but the tag/instance filter is the reliable path.)
    Reverse DNS — "reverse_dns_lookup" resolves IP addresses to hostnames
    via PTR records (params: "ip" for a single address, or "ips" for a
    list of up to 50). Use it when a user asks "what host is <ip>?" or to
@@ -3698,6 +3705,34 @@ The orchestration agent transparently maintains a per-conversation
 ``capture_id`` (along with its ENIs, deadline, duration, and lifecycle
 status). Use this entry when resolving anaphoric references in the
 chat and when planning follow-up Network Agent invocations:
+
+0. FRESH INVESTIGATION TAKES PRECEDENCE (most important rule).
+   When the user describes a NEW network/connectivity problem
+   (e.g. "my instance can't reach X", "HTTPS to ECR is failing",
+   "the connection is being dropped through the firewall") and does
+   NOT explicitly reference an existing capture -- i.e. there is no
+   anaphor like "my capture" AND no explicit ``capture_id`` in the
+   message -- you MUST start a fresh investigation:
+     a. Call ``list_enis`` to discover the relevant ENI(s) (use the
+        ``goat-network-capture-allowed=true`` tag filter, an
+        ``instance_id``, or a real ``vpc-...`` id).
+     b. Follow the CAPTURE LIFECYCLE WORKFLOW to propose a NEW
+        ``start_capture``.
+   You MUST NOT reuse a ``capture_id`` that merely appeared earlier
+   in the conversation, and you MUST NOT call a Pcap_Query_Action
+   (``diagnose_tcp_stream``, ``query_pcap``, ``check_tls_hello_size``,
+   ``search_fragmented_packets``, etc.) against an old capture to
+   answer a newly-described problem. Old captures reflect a prior
+   point in time and will typically return "no traffic was observed
+   for the supplied selector" -- which is misleading, not a
+   diagnosis. Only run a Pcap_Query_Action when EITHER the user
+   explicitly asks to analyze an existing/active capture (anaphor or
+   explicit id), OR you have just started and transformed a capture
+   in THIS same investigation.
+   Also: when the user explicitly asks to "list the ENIs", "find the
+   ENI with the right tag", or similar, you MUST answer by calling
+   ``list_enis`` -- never satisfy such a request with a
+   Pcap_Query_Action.
 
 1. ANAPHORIC SUBSTITUTION (automatic). When the user types "my
    capture", "the capture", "this capture", "stop my capture",

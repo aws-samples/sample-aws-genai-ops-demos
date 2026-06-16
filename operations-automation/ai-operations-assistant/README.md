@@ -624,9 +624,11 @@ The `list_enis` action enumerates all Elastic Network Interfaces visible in the 
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `vpc_id` | string | Filter to ENIs in a specific VPC |
+| `vpc_id` | string | Filter to ENIs in a specific VPC (accepts a `vpc-...` ID or a VPC Name tag — names are auto-resolved to IDs) |
 | `instance_id` | string | Filter to ENIs attached to a specific EC2 instance |
 | `attachment_status` | `attached` \| `unattached` | Filter by attachment state |
+| `tag_key` | string | Filter to ENIs with this tag key present |
+| `tag_value` | string | Combined with `tag_key`, filter to ENIs where the tag matches this value (e.g. `tag_key=goat-network-capture-allowed`, `tag_value=true`) |
 
 Filters compose freely — supply any combination to narrow results. The action paginates the EC2 API exhaustively so no ENIs are truncated regardless of account size.
 

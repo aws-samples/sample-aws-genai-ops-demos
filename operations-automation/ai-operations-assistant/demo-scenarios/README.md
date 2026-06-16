@@ -181,7 +181,7 @@ Reproduces the AWS Network Firewall + Amazon Linux 2023 OpenSSL ML-KEM TLS Clien
 | EC2 instance | t3.micro (AL2023) | Runs curl loop to ECR with ML-KEM key exchange |
 | Support case | Resolved case | Describes the TLS fragmentation connectivity issue |
 
-All resources are tagged with `goat-demo=true` and `goat-scenario=tls-fragmentation`.
+All resources are tagged with `goat-demo=true` and `goat-scenario=connectivity`.
 
 ### Setup Instructions
 
@@ -285,7 +285,7 @@ After setup completes, open the G.O.A.T. app and try:
 | Query | What It Demonstrates |
 |-------|---------------------|
 | **"Capture traffic from eni-xxx and analyze the TLS handshake"** | Full Network Agent capture → transform → TLS analysis |
-| **"Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped."** | Cross-domain troubleshooting with full context (Network + Support) |
+| **"Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connection is routed through the TGW and the Network Firewall in the inspection VPC but it is dropped."** | Cross-domain troubleshooting with full context (Network + Support) |
 | "Why is the EC2 instance failing to connect to ECR?" | Cross-domain correlation (Network + Support) |
 | "Show TLS Client Hello sizes" | Network Agent pcap query revealing 1527-byte fragmented record |
 | "Diagnose the TCP exchange to ECR" | TCP stream health report |
@@ -415,7 +415,7 @@ Every demo resource receives four tags for identification and cleanup:
 | Tag Key | Value | Purpose |
 |---------|-------|---------|
 | `goat-demo` | `true` | Identifies all demo resources for cleanup |
-| `goat-scenario` | `a`, `b`, or `tls-fragmentation` | Identifies which scenario created the resource |
+| `goat-scenario` | `a`, `b`, or `connectivity` | Identifies which scenario created the resource |
 | `Name` | `goat-demo-<descriptive>` | Human-readable name in AWS Console |
 | `auto-delete` | `no` | Prevents automated cleanup policies from removing resources prematurely |
 
