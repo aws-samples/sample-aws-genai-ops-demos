@@ -1,5 +1,6 @@
 ﻿import * as path from 'path';
 import { readFileSync } from 'fs';
+import * as crypto from 'crypto';
 import * as cdk from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
@@ -1901,27 +1902,16 @@ export class NetworkInfraStack extends BaseInfraStack {
       'NLB Traffic Mirror Target health check (TCP/8081) from in-VPC NLB nodes.',
     );
 
-    // ----- Collector asset bundle (splitter + uploader + bootstrap) -------
+    // ----- Collector asset bundle (splitter + uploader + bootstrap + wheels) -
     //
-    // Bundles `splitter.py`, `uploader.sh`, and `bootstrap.sh` into
-    // a single zip uploaded to the CDK assets bucket. The
-    // bootstrap UserData downloads this zip on first boot via
-    // `aws s3 cp`, extracts it into `/opt/goat-collector/`, and
-    // configures systemd units to run the splitter and uploader.
-    //
-    // The asset's contents are read once by the bootstrap script;
-    // there is no mechanism today for the running instance to pick
-    // up updates short of a re-deploy. That tradeoff is acceptable
-    // for a demo (the splitter has no in-flight work to preserve;
-    // restarting it is cheap) and matches every other CDK-managed
-    // EC2 deployment idiom.
+    // Bundles `splitter.py`, `uploader.sh`, `bootstrap.sh`, and
+    // pre-downloaded pip wheels (scapy) into a single zip uploaded to
+    // the CDK assets bucket. The bootstrap UserData downloads this zip
+    // on first boot via `aws s3 cp`, extracts it into
+    // `/opt/goat-collector/`, and installs wheels from the local
+    // `wheels/` subdirectory — no internet access required.
     this.collectorAsset = new s3Assets.Asset(this, 'CollectorAsset', {
       path: COLLECTOR_ASSET_DIR,
-      // Exclude the README and any inline test scaffolding from the
-      // shipped asset; the bootstrap only needs the three executable
-      // files. Keeping the asset slim shaves ~10 KB off the upload
-      // and reduces the surface area an attacker could inspect on
-      // the live instance.
       exclude: ['README.md', '__pycache__/**', '*.pyc'],
     });
 
@@ -2023,6 +2013,19 @@ export class NetworkInfraStack extends BaseInfraStack {
       path.join(COLLECTOR_ASSET_DIR, COLLECTOR_BOOTSTRAP_FILENAME),
       { encoding: 'utf-8' },
     );
+
+    // Hash the raw bootstrap template so any change to bootstrap.sh forces
+    // a new instance logical ID (and therefore a CloudFormation
+    // replacement). L1 CfnInstance treats a UserData change as
+    // update-without-interruption, and cloud-init only runs UserData on
+    // first boot — so without this, an edited bootstrap script would never
+    // actually re-run on the existing collector. Mirrors the
+    // `TlsInstance${userDataHash}` pattern in the demo scenario stack.
+    const bootstrapHash = crypto
+      .createHash('sha256')
+      .update(bootstrapTemplate)
+      .digest('hex')
+      .slice(0, 8);
     // Fn.sub treats every ${...} as a CloudFormation substitution variable.
     // The bootstrap script contains bash ${VAR} references (INSTALL_DIR,
     // OUTPUT_DIR, ENV_FILE, etc.) that must be preserved literally. We first
@@ -2059,7 +2062,7 @@ export class NetworkInfraStack extends BaseInfraStack {
       cpuType: ec2.AmazonLinuxCpuType.X86_64,
     }).getImage(this).imageId;
 
-    const collectorCfnInstance = new ec2.CfnInstance(this, 'CollectorInstance', {
+    const collectorCfnInstance = new ec2.CfnInstance(this, `CollectorInstance${bootstrapHash}`, {
       instanceType: 't3.small',
       imageId: collectorAmiId,
       iamInstanceProfile: collectorInstanceProfile.ref,

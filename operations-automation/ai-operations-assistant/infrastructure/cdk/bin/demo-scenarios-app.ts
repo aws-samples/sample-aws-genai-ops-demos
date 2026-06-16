@@ -25,15 +25,15 @@ const scenarioA = new DemoScenarioAccountHealthStack(app, `GOATDemoScenarioA-${r
 });
 
 // ---------------------------------------------------------------------------
-// Scenario C: TLS Fragmentation
+// Scenario C: Connectivity
 // Uses the existing GOAT network infra VPC (from deploy-all.ps1) so that
-// the traffic mirror target (NLB → collector) can reach the TLS instance's ENI.
+// the traffic mirror target (NLB → collector) can reach the app instance's ENI.
 // The VPC ID is imported from the GOATNetworkAgentVpcId CloudFormation export.
 // ---------------------------------------------------------------------------
-new DemoScenarioTlsFragmentationStack(app, `GOATDemoScenarioTLS-${region}`, {
+new DemoScenarioTlsFragmentationStack(app, `GOATDemoScenarioC-${region}`, {
   env,
   goatVpcExportName: 'GOATNetworkAgentVpcId',
-  description: 'G.O.A.T. Demo Scenario C - TLS Fragmentation inspection topology',
+  description: 'G.O.A.T. Demo Scenario C - Network connectivity investigation topology',
 });
 
 // ---------------------------------------------------------------------------

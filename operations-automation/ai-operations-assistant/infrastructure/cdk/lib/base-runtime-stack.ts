@@ -115,6 +115,18 @@ export class BaseRuntimeStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
+    // Content fingerprint of the agent source. Used as the CodeBuild
+    // trigger's physical resource ID so a new container build is only
+    // triggered when the agent source actually changes — not on every
+    // `cdk deploy`. (Previously this used `Date.now()`, which forced a
+    // 5-10 minute rebuild on every no-op synth.)
+    // -----------------------------------------------------------------------
+    const sourceFingerprint = cdk.FileSystem.fingerprint(agentSourcePath, {
+      exclude: ['venv/**', '__pycache__/**', '*.pyc', '.git/**',
+        'node_modules/**', '.DS_Store', '*.log', 'build/**', 'dist/**'],
+    });
+
+    // -----------------------------------------------------------------------
     // Trigger CodeBuild via AwsCustomResource
     // -----------------------------------------------------------------------
     const buildTrigger = new cr.AwsCustomResource(this, 'TriggerCodeBuild', {
@@ -122,13 +134,13 @@ export class BaseRuntimeStack extends cdk.Stack {
         service: 'CodeBuild',
         action: 'startBuild',
         parameters: { projectName: buildProjectName },
-        physicalResourceId: cr.PhysicalResourceId.of(`build-${Date.now()}`),
+        physicalResourceId: cr.PhysicalResourceId.of(`build-${sourceFingerprint}`),
       },
       onUpdate: {
         service: 'CodeBuild',
         action: 'startBuild',
         parameters: { projectName: buildProjectName },
-        physicalResourceId: cr.PhysicalResourceId.of(`build-${Date.now()}`),
+        physicalResourceId: cr.PhysicalResourceId.of(`build-${sourceFingerprint}`),
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({

@@ -16,6 +16,18 @@ export interface DomainInfraConfig {
   exportPrefix: string;
   /** Docker image tag name, e.g. "goat_cost_agent" */
   imageTag: string;
+  /**
+   * AgentCore workload identity name used to scope the
+   * `GetWorkloadAccessToken*` IAM permissions. AgentCore derives the
+   * workload identity from the runtime name, so this MUST match the
+   * `runtimeName` configured on the corresponding RuntimeStack.
+   *
+   * Defaults to `goat_${domainName}_agent`, which matches the naming
+   * convention used by every sub-agent. The orchestration agent is the
+   * one exception (`domainName: 'orch'` but `runtimeName:
+   * 'goat_orchestration_agent'`), so it overrides this value.
+   */
+  workloadIdentityName?: string;
   /** Additional IAM policy statements for the AgentCore runtime role */
   domainPolicies: iam.PolicyStatement[];
 }
@@ -39,6 +51,11 @@ export class BaseInfraStack extends cdk.Stack {
     super(scope, id, props);
 
     const { domainName, exportPrefix, imageTag, domainPolicies } = config;
+
+    // AgentCore workload identity name — defaults to the standard
+    // `goat_<domain>_agent` convention but can be overridden when the
+    // runtime name diverges from the domain name (e.g. orchestration).
+    const workloadIdentityName = config.workloadIdentityName ?? `goat_${domainName}_agent`;
 
     // -----------------------------------------------------------------------
     // ECR Repository
@@ -114,7 +131,7 @@ export class BaseInfraStack extends cdk.Stack {
       ],
       resources: [
         `arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default`,
-        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default/workload-identity/goat_${domainName}_agent-*`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default/workload-identity/${workloadIdentityName}-*`,
       ],
     }));
 

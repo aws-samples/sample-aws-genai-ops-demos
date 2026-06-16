@@ -150,6 +150,10 @@ export class OrchInfraStack extends BaseInfraStack {
       domainName: 'orch',
       exportPrefix: 'GOATOrchAgent',
       imageTag: 'goat_orch_agent',
+      // Must match OrchRuntimeStack's runtimeName so the
+      // GetWorkloadAccessToken* IAM permissions resolve against the
+      // orchestration runtime's actual AgentCore workload identity.
+      workloadIdentityName: 'goat_orchestration_agent',
       domainPolicies: policies,
     }, props);
   }

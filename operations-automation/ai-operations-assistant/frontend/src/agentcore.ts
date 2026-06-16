@@ -69,7 +69,7 @@ function isTokenExpired(token: string): boolean {
 }
 
 /**
- * Refresh the Cognito ID token using stored credentials.
+ * Refresh the Cognito ID token using the stored refresh token.
  * Returns a fresh ID token or null if refresh fails.
  */
 async function refreshIdToken(): Promise<string | null> {
@@ -77,25 +77,26 @@ async function refreshIdToken(): Promise<string | null> {
   if (!stored) return null;
 
   try {
-    const { username, password } = JSON.parse(stored);
-    if (!username || !password) return null;
+    const { username, refreshToken } = JSON.parse(stored);
+    if (!refreshToken) return null;
 
     const client = new CognitoIdentityProviderClient({ region });
     const response = await client.send(
       new InitiateAuthCommand({
-        AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
+        AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
         ClientId: userPoolClientId,
-        AuthParameters: { USERNAME: username, PASSWORD: password },
+        AuthParameters: { REFRESH_TOKEN: refreshToken },
       }),
     );
 
     const newIdToken = response.AuthenticationResult?.IdToken;
     if (!newIdToken) return null;
 
-    // Update stored session with new token
+    // REFRESH_TOKEN_AUTH does not return a new refresh token, so reuse
+    // the existing one. Update only the ID token in the stored session.
     sessionStorage.setItem(
       'goat_user',
-      JSON.stringify({ username, password, idToken: newIdToken }),
+      JSON.stringify({ username, refreshToken, idToken: newIdToken }),
     );
 
     return newIdToken;

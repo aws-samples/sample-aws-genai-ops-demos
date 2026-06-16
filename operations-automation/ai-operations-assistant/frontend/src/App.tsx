@@ -50,7 +50,7 @@ function ChatPage({
   accountContext,
   onSessionExpired,
 }: {
-  user: { username: string; password: string; idToken: string } | null;
+  user: { username: string; idToken: string; refreshToken: string } | null;
   accountContext?: string;
   onSessionExpired?: () => void;
 }) {
@@ -159,7 +159,7 @@ function SettingsPage({
 // ---------------------------------------------------------------------------
 interface SignInModalProps {
   visible: boolean;
-  onSignIn: (idToken: string, username: string, password: string) => void;
+  onSignIn: (idToken: string, username: string, refreshToken: string) => void;
 }
 
 function SignInModal({ visible, onSignIn }: SignInModalProps) {
@@ -182,10 +182,16 @@ function SignInModal({ visible, onSignIn }: SignInModalProps) {
       });
       const response = await cognitoClient.send(command);
       const idToken = response.AuthenticationResult?.IdToken;
+      const refreshToken = response.AuthenticationResult?.RefreshToken;
       if (!idToken) {
         throw new Error('Authentication succeeded but no ID token was returned.');
       }
-      onSignIn(idToken, username, password);
+      if (!refreshToken) {
+        throw new Error('Authentication succeeded but no refresh token was returned.');
+      }
+      // Pass the refresh token (not the password) so the session can be
+      // renewed without persisting credentials client-side.
+      onSignIn(idToken, username, refreshToken);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Authentication failed.';
       setError(message);
@@ -255,7 +261,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [user, setUser] = useState<{ username: string; password: string; idToken: string } | null>(null);
+  const [user, setUser] = useState<{ username: string; idToken: string; refreshToken: string } | null>(null);
   const [showSignIn, setShowSignIn] = useState(false);
   const [targetAccount, setTargetAccount] = useState('');
   const [darkMode, setDarkMode] = useState(() => {
@@ -284,8 +290,8 @@ export default function App() {
     }
   }, []);
 
-  const handleSignIn = useCallback((idToken: string, username: string, password: string) => {
-    const session = { username, password, idToken };
+  const handleSignIn = useCallback((idToken: string, username: string, refreshToken: string) => {
+    const session = { username, idToken, refreshToken };
     sessionStorage.setItem('goat_user', JSON.stringify(session));
     setUser(session);
     setShowSignIn(false);

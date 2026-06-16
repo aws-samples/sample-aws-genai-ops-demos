@@ -1,11 +1,11 @@
-﻿# G.O.A.T. Demo Scenarios - CDK Deployment Script
+# G.O.A.T. Demo Scenarios - CDK Deployment Script
 #
 # Deploys demo scenario CDK stacks and creates Support cases for G.O.A.T. demos.
 # Uses the separate demo-scenarios-app.ts CDK entry point.
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet("all", "account-health", "cloudwatch-incident", "tls-fragmentation")]
+    [ValidateSet("all", "account-health", "cloudwatch-incident", "connectivity")]
     [string]$Scenario
 )
 
@@ -121,7 +121,7 @@ function New-DemoSupportCase {
 # Deployment Logic
 # ---------------------------------------------------------------------------
 $stackA = "GOATDemoScenarioA-$region"
-$stackC = "GOATDemoScenarioTLS-$region"
+$stackC = "GOATDemoScenarioC-$region"
 
 switch ($Scenario) {
     "all" {
@@ -131,7 +131,7 @@ switch ($Scenario) {
         Invoke-CdkDeploy $stackC
         New-DemoSupportCase `
             -Subject "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" `
-            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
+            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
             -ServiceCode "service-network-firewall" `
             -CategoryCode "general-guidance"
     }
@@ -142,11 +142,11 @@ switch ($Scenario) {
     "cloudwatch-incident" {
         New-DemoSupportCase "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
     }
-    "tls-fragmentation" {
+    "connectivity" {
         Invoke-CdkDeploy $stackC
         New-DemoSupportCase `
             -Subject "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" `
-            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
+            -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
             -ServiceCode "service-network-firewall" `
             -CategoryCode "general-guidance"
     }
@@ -169,11 +169,11 @@ if ($Scenario -eq "all" -or $Scenario -eq "account-health") {
     Write-Host "  EC2 Instance: $inst1" -ForegroundColor Cyan
 }
 
-if ($Scenario -eq "all" -or $Scenario -eq "tls-fragmentation") {
-    $ec2Id = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceId'].OutputValue" --output text --no-cli-pager
-    $eniId = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceEniId'].OutputValue" --output text --no-cli-pager
-    Write-Host "  TLS EC2:      $ec2Id" -ForegroundColor Cyan
-    Write-Host "  TLS ENI:      $eniId (for Network Agent capture)" -ForegroundColor Cyan
+if ($Scenario -eq "all" -or $Scenario -eq "connectivity") {
+    $ec2Id = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='AppInstanceId'].OutputValue" --output text --no-cli-pager
+    $eniId = aws cloudformation describe-stacks --stack-name $stackC --query "Stacks[0].Outputs[?OutputKey=='AppInstanceEniId'].OutputValue" --output text --no-cli-pager
+    Write-Host "  App EC2:      $ec2Id" -ForegroundColor Cyan
+    Write-Host "  App ENI:      $eniId (for Network Agent capture)" -ForegroundColor Cyan
 }
 
 if ($script:caseIds.Count -gt 0) {

@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 /** Supported sub-agent domains */
-export const DOMAINS = ['cost', 'health', 'support', 'trusted_advisor', 'cur'] as const;
+export const DOMAINS = ['cost', 'health', 'support', 'trusted_advisor', 'cur', 'network'] as const;
 export type Domain = typeof DOMAINS[number];
 
 // ---------------------------------------------------------------------------

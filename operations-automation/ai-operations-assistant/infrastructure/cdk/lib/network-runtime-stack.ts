@@ -36,6 +36,8 @@ export class NetworkRuntimeStack extends BaseRuntimeStack {
           CAPTURE_STATE_TABLE: cdk.Fn.importValue('GOATNetworkAgentCaptureStateTableName'),
           VNI_LOOKUP_TABLE: cdk.Fn.importValue('GOATNetworkAgentVniLookupTableName'),
           STOP_CAPTURE_INVOKER_LAMBDA_ARN: cdk.Fn.importValue('GOATNetworkAgentStopCaptureInvokerLambdaArn'),
+          SCHEDULE_GROUP_NAME: cdk.Fn.importValue('GOATNetworkAgentAutoStopScheduleGroupName'),
+          SCHEDULER_TARGET_ROLE_ARN: cdk.Fn.importValue('GOATNetworkAgentSchedulerTargetRoleArn'),
           TRAFFIC_MIRROR_FILTER_ID: cdk.Fn.importValue('GOATNetworkAgentTrafficMirrorFilterId'),
           TRAFFIC_MIRROR_TARGET_ID: cdk.Fn.importValue('GOATNetworkAgentTrafficMirrorTargetId'),
           COLLECTOR_INSTANCE_ID: cdk.Fn.importValue('GOATNetworkAgentCollectorInstanceId'),

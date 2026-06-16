@@ -1,17 +1,17 @@
 <mxfile host="65bd71144e">
     <diagram name="G.O.A.T. Architecture" id="goat-arch-1">
-        <mxGraphModel dx="1554" dy="1113" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+        <mxGraphModel dx="777" dy="577" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" background="#ffffff" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
-                <mxCell id="title-bar" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#232F3E;strokeColor=#232F3E;fontColor=#000000;" parent="1" vertex="1">
+                <mxCell id="title-bar" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#B3B3B3;strokeColor=#232F3E;fontColor=#000000;" parent="1" vertex="1">
                     <mxGeometry x="40" y="30" width="1520" height="50" as="geometry"/>
                 </mxCell>
                 <mxCell id="title-text" value="&lt;font color=&quot;#ffffff&quot;&gt;G.O.A.T. — GenAI Operations Analytics Tool&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
                     <mxGeometry x="60" y="35" width="500" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="title-sub" value="Multi-Agent Architecture on Amazon Bedrock AgentCore" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontColor=#000000;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="35" width="440" height="40" as="geometry"/>
+                <mxCell id="title-sub" value="Multi-Agent Architecture on Amazon Bedrock AgentCore + Network Capture Pipeline" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="1000" y="35" width="540" height="40" as="geometry"/>
                 </mxCell>
                 <mxCell id="aws-cloud" value="&lt;font color=&quot;#ffffff&quot;&gt;AWS Cloud&lt;/font&gt;" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#000000;dashed=0;" parent="1" vertex="1">
                     <mxGeometry x="40" y="100" width="1520" height="1060" as="geometry"/>
@@ -46,7 +46,7 @@
                 <mxCell id="orch-group" value="Orchestration Layer (Amazon Bedrock AgentCore)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FF9900;verticalAlign=top;align=left;spacingLeft=10;fontSize=13;fontStyle=1;fontColor=#000000;arcSize=8;" parent="1" vertex="1">
                     <mxGeometry x="80" y="330" width="1440" height="180" as="geometry"/>
                 </mxCell>
-                <mxCell id="orch-agent" value="Orchestration Agent&#10;Strands Agent SDK + @tool&#10;Amazon Nova Pro" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF9900;strokeColor=#cc7a00;fontColor=#000000;fontSize=12;fontStyle=1;align=center;" parent="1" vertex="1">
+                <mxCell id="orch-agent" value="Orchestration Agent&#10;Strands Agent SDK + @tool&#10;Claude Opus 4.6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF9900;strokeColor=#cc7a00;fontColor=#000000;fontSize=12;fontStyle=1;align=center;" parent="1" vertex="1">
                     <mxGeometry x="560" y="370" width="240" height="80" as="geometry"/>
                 </mxCell>
                 <mxCell id="orch-cap1" value="Intent&#10;Classification" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=center;fontColor=#000000;" parent="1" vertex="1">
@@ -88,8 +88,11 @@
                 <mxCell id="cur-agent" value="CUR Agent&#10;&#10;Cost &amp;amp; Usage Reports&#10;Athena Queries" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=center;fontStyle=0;fontColor=#000000;" parent="1" vertex="1">
                     <mxGeometry x="1080" y="590" width="200" height="100" as="geometry"/>
                 </mxCell>
+                <mxCell id="network-agent" value="Network Agent&#10;&#10;VPC Packet Capture&#10;TCP/TLS/DNS Analysis&#10;Reverse DNS Lookup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=center;fontStyle=0;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="1310" y="590" width="200" height="100" as="geometry"/>
+                </mxCell>
                 <mxCell id="agentcore-label" value="BedrockAgentCoreApp&#10;@app.entrypoint" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#000000;fontStyle=2;" parent="1" vertex="1">
-                    <mxGeometry x="1310" y="620" width="150" height="40" as="geometry"/>
+                    <mxGeometry x="120" y="710" width="150" height="40" as="geometry"/>
                 </mxCell>
                 <mxCell id="datasource-group" value="AWS Data Sources (boto3 API Calls)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9C27B0;verticalAlign=top;align=left;spacingLeft=10;fontSize=13;fontStyle=1;fontColor=#000000;arcSize=8;" parent="1" vertex="1">
                     <mxGeometry x="80" y="790" width="1440" height="160" as="geometry"/>
@@ -118,6 +121,9 @@
                 <mxCell id="aws-glue" value="Glue&#10;Catalog" style="sketch=0;outlineConnect=0;fontColor=#000000;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.glue;" parent="1" vertex="1">
                     <mxGeometry x="1340" y="840" width="50" height="50" as="geometry"/>
                 </mxCell>
+                <mxCell id="aws-vpc-mirror" value="VPC Traffic&#10;Mirror" style="sketch=0;outlineConnect=0;fontColor=#000000;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.vpc;" parent="1" vertex="1">
+                    <mxGeometry x="1440" y="840" width="50" height="50" as="geometry"/>
+                </mxCell>
                 <mxCell id="storage-group" value="Persistence Layer (DynamoDB)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C925D1;verticalAlign=top;align=left;spacingLeft=10;fontSize=13;fontStyle=1;fontColor=#000000;arcSize=8;" parent="1" vertex="1">
                     <mxGeometry x="80" y="990" width="1440" height="140" as="geometry"/>
                 </mxCell>
@@ -139,7 +145,7 @@
                 <mxCell id="arrow-3" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#333333;fontColor=#000000;" parent="1" source="s3-frontend" target="react-app" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-4" value="Auth" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#DD344C;dashed=1;dashPattern=8 8;fontColor=#000000;" parent="1" source="react-app" target="cognito-up" edge="1">
+                <mxCell id="arrow-4" value="Auth" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#DD344C;dashed=1;dashPattern=8 8;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="react-app" target="cognito-up" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="arrow-5" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;fontColor=#000000;" parent="1" source="cognito-up" target="cognito-idp" edge="1">
@@ -148,48 +154,57 @@
                 <mxCell id="arrow-6" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;fontColor=#000000;" parent="1" source="cognito-idp" target="iam-roles" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-7" value="&lt;font color=&quot;#ffffff&quot;&gt;Natural Language Query&lt;br&gt;(AgentCore SDK)&lt;/font&gt;" style="endArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#FF9900;entryX=0.371;entryY=-0.012;entryDx=0;entryDy=0;entryPerimeter=0;fontColor=#000000;" parent="1" source="react-app" target="orch-agent" edge="1">
+                <mxCell id="arrow-7" value="&lt;font&gt;Natural Language Query&lt;br&gt;(AgentCore SDK)&lt;/font&gt;" style="endArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#FF9900;entryX=0.371;entryY=-0.012;entryDx=0;entryDy=0;entryPerimeter=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="react-app" target="orch-agent" edge="1">
                     <mxGeometry x="0.196" y="20" relative="1" as="geometry">
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="arrow-8" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="cost-agent" edge="1">
+                <mxCell id="arrow-8" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="cost-agent" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-9" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="health-agent" edge="1">
+                <mxCell id="arrow-9" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="health-agent" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-10" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="support-agent" edge="1">
+                <mxCell id="arrow-10" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="support-agent" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-11" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="ta-agent" edge="1">
+                <mxCell id="arrow-11" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="ta-agent" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-12" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="cur-agent" edge="1">
+                <mxCell id="arrow-12" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="cur-agent" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-13" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="cost-agent" target="aws-ce" edge="1">
+                <mxCell id="arrow-12b" value="@tool" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#6c8ebf;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="network-agent" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-13" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="cost-agent" target="aws-ce" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="arrow-14" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="cost-agent" target="aws-coh" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-15" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="health-agent" target="aws-health" edge="1">
+                <mxCell id="arrow-15" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="health-agent" target="aws-health" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-16" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="support-agent" target="aws-support" edge="1">
+                <mxCell id="arrow-16" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="support-agent" target="aws-support" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-17" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="ta-agent" target="aws-ta" edge="1">
+                <mxCell id="arrow-17" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="ta-agent" target="aws-ta" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-18" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="cur-agent" target="aws-athena" edge="1">
+                <mxCell id="arrow-18" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="cur-agent" target="aws-athena" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="arrow-19" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="aws-athena" target="aws-s3-cur" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="arrow-20" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#9C27B0;dashed=1;fontColor=#000000;" parent="1" source="aws-athena" target="aws-glue" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-net-athena" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#6c8ebf;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="network-agent" target="aws-athena" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-net-mirror" value="boto3" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#6c8ebf;dashed=1;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="network-agent" target="aws-vpc-mirror" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="arrow-21" value="" style="endArrow=classic;html=1;rounded=1;strokeWidth=1;strokeColor=#C925D1;dashed=1;dashPattern=4 4;exitX=0.2;exitY=1;exitDx=0;exitDy=0;fontColor=#000000;" parent="1" source="react-app" target="ddb-conv" edge="1">
@@ -201,7 +216,7 @@
                 <mxCell id="arrow-23" value="" style="endArrow=classic;html=1;rounded=1;strokeWidth=1;strokeColor=#C925D1;dashed=1;dashPattern=4 4;exitX=0.8;exitY=1;exitDx=0;exitDy=0;fontColor=#000000;" parent="1" source="react-app" target="ddb-prefs" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="arrow-24" value="&lt;font color=&quot;#ffffff&quot;&gt;Streamed Response&lt;/font&gt;" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#FF9900;dashed=1;dashPattern=8 8;exitX=0.5;exitY=0;exitDx=0;exitDy=0;fontColor=#000000;" parent="1" source="orch-agent" target="react-app" edge="1">
+                <mxCell id="arrow-24" value="&lt;font&gt;Streamed Response&lt;/font&gt;" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#FF9900;dashed=1;dashPattern=8 8;exitX=0.5;exitY=0;exitDx=0;exitDy=0;fontColor=#000000;labelBackgroundColor=none;" parent="1" source="orch-agent" target="react-app" edge="1">
                     <mxGeometry x="-0.6978" y="-29" relative="1" as="geometry">
                         <mxPoint as="offset"/>
                     </mxGeometry>
@@ -247,6 +262,15 @@
                 </mxCell>
                 <mxCell id="legend-4-text" value="Authentication" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#000000;" parent="1" vertex="1">
                     <mxGeometry x="1380" y="1098" width="120" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-5" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#6c8ebf;dashed=1;fontColor=#000000;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1320" y="1135" as="sourcePoint"/>
+                        <mxPoint x="1370" y="1135" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-5-text" value="Network Agent (pcap)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="1380" y="1123" width="120" height="25" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>

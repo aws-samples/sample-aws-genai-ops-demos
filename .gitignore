@@ -140,3 +140,13 @@ HANDOFF-resume.md
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Temp SSM scratch files (created when sending ad-hoc SSM RunShellScript commands)
+ssm-cmd.json
+ssm-*.json
+ssm-*.txt
+
+# Stray root-level Python wheels. The real, intentionally-bundled collector
+# wheels live in operations-automation/ai-operations-assistant/infrastructure/cdk/collector/wheels/
+# (committed for offline bootstrap) and are NOT matched by this root-anchored pattern.
+/*.whl

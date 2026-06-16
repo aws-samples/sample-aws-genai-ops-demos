@@ -108,7 +108,7 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
 
     // Common tags for all resources in this stack
     cdk.Tags.of(this).add('goat-demo', 'true');
-    cdk.Tags.of(this).add('goat-scenario', 'tls-fragmentation');
+    cdk.Tags.of(this).add('goat-scenario', 'connectivity');
     cdk.Tags.of(this).add('auto-delete', 'no');
 
     // Single AZ for all subnets in this scenario
@@ -142,9 +142,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-private' },
+        { key: 'Name', value: 'goat-demo-app-private' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -155,9 +155,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-spoke-tgw' },
+        { key: 'Name', value: 'goat-demo-app-tgw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -170,9 +170,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       enableDnsSupport: true,
       enableDnsHostnames: true,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-inspection-vpc' },
+        { key: 'Name', value: 'goat-demo-security-vpc' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -186,9 +186,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-nat' },
+        { key: 'Name', value: 'goat-demo-sec-nat' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -199,9 +199,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-fw' },
+        { key: 'Name', value: 'goat-demo-sec-fw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -212,9 +212,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-tgw' },
+        { key: 'Name', value: 'goat-demo-sec-tgw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -226,9 +226,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       defaultRouteTableAssociation: 'disable',
       defaultRouteTablePropagation: 'disable',
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-tgw' },
+        { key: 'Name', value: 'goat-demo-tgw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -243,9 +243,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       vpcId: this.spokeVpcId,
       subnetIds: [this.spokeTgwSubnet.attrSubnetId],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-tgw-attach-spoke' },
+        { key: 'Name', value: 'goat-demo-tgw-attach-spoke' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -256,9 +256,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       vpcId: this.inspectionVpc.attrVpcId,
       subnetIds: [this.inspectionTgwSubnet.attrSubnetId],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-tgw-attach-insp' },
+        { key: 'Name', value: 'goat-demo-tgw-attach-sec' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -273,9 +273,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     this.spokeTgwRouteTable = new ec2.CfnTransitGatewayRouteTable(this, 'TgwRouteTableSpoke', {
       transitGatewayId: this.transitGateway.attrId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-tgw-rt-spoke' },
+        { key: 'Name', value: 'goat-demo-tgw-rt-spoke' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -284,9 +284,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     this.inspectionTgwRouteTable = new ec2.CfnTransitGatewayRouteTable(this, 'TgwRouteTableInspection', {
       transitGatewayId: this.transitGateway.attrId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-tgw-rt-insp' },
+        { key: 'Name', value: 'goat-demo-tgw-rt-sec' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -333,7 +333,7 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     // Uses Suricata-compatible rules string format (tls.sni keyword)
     this.firewallRuleGroup = new networkfirewall.CfnRuleGroup(this, 'NfwRuleGroup', {
       capacity: 100,
-      ruleGroupName: 'goat-demo-tls-rules',
+      ruleGroupName: 'goat-demo-fw-rules',
       type: 'STATEFUL',
       ruleGroup: {
         rulesSource: {
@@ -344,16 +344,16 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
         },
       },
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-rules' },
+        { key: 'Name', value: 'goat-demo-fw-rules' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
 
     // Firewall policy with aws:drop_established default action
     this.firewallPolicy = new networkfirewall.CfnFirewallPolicy(this, 'NfwPolicy', {
-      firewallPolicyName: 'goat-demo-tls-policy',
+      firewallPolicyName: 'goat-demo-fw-policy',
       firewallPolicy: {
         statelessDefaultActions: ['aws:forward_to_sfe'],
         statelessFragmentDefaultActions: ['aws:forward_to_sfe'],
@@ -369,25 +369,25 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
         ],
       },
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-policy' },
+        { key: 'Name', value: 'goat-demo-fw-policy' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
 
     // Network Firewall in firewall subnet (10.98.1.0/24)
     this.networkFirewall = new networkfirewall.CfnFirewall(this, 'NetworkFirewall', {
-      firewallName: 'goat-demo-tls-nfw',
+      firewallName: 'goat-demo-fw',
       firewallPolicyArn: this.firewallPolicy.attrFirewallPolicyArn,
       vpcId: this.inspectionVpc.attrVpcId,
       subnetMappings: [
         { subnetId: this.inspectionFwSubnet.attrSubnetId },
       ],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-nfw' },
+        { key: 'Name', value: 'goat-demo-fw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -397,13 +397,13 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     // -----------------------------------------------------------------------
 
     const flowLogGroup = new logs.CfnLogGroup(this, 'NfwFlowLogGroup', {
-      logGroupName: '/aws/network-firewall/goat-demo-tls-flow',
+      logGroupName: '/aws/network-firewall/goat-demo-fw-flow',
       retentionInDays: 7,
     });
     flowLogGroup.cfnOptions.deletionPolicy = cdk.CfnDeletionPolicy.DELETE;
 
     const alertLogGroup = new logs.CfnLogGroup(this, 'NfwAlertLogGroup', {
-      logGroupName: '/aws/network-firewall/goat-demo-tls-alert',
+      logGroupName: '/aws/network-firewall/goat-demo-fw-alert',
       retentionInDays: 7,
     });
     alertLogGroup.cfnOptions.deletionPolicy = cdk.CfnDeletionPolicy.DELETE;
@@ -416,14 +416,14 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
             logType: 'FLOW',
             logDestinationType: 'CloudWatchLogs',
             logDestination: {
-              logGroup: '/aws/network-firewall/goat-demo-tls-flow',
+              logGroup: '/aws/network-firewall/goat-demo-fw-flow',
             },
           },
           {
             logType: 'ALERT',
             logDestinationType: 'CloudWatchLogs',
             logDestination: {
-              logGroup: '/aws/network-firewall/goat-demo-tls-alert',
+              logGroup: '/aws/network-firewall/goat-demo-fw-alert',
             },
           },
         ],
@@ -437,9 +437,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     this.natEip = new ec2.CfnEIP(this, 'NatEip', {
       domain: 'vpc',
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-nat-eip' },
+        { key: 'Name', value: 'goat-demo-sec-nat-eip' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -448,9 +448,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       subnetId: this.inspectionNatSubnet.attrSubnetId,
       allocationId: this.natEip.attrAllocationId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-nat-gw' },
+        { key: 'Name', value: 'goat-demo-sec-nat-gw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -461,9 +461,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
 
     this.internetGateway = new ec2.CfnInternetGateway(this, 'InternetGateway', {
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-igw' },
+        { key: 'Name', value: 'goat-demo-sec-igw' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -484,9 +484,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     const spokePrivateRt = new ec2.CfnRouteTable(this, 'SpokePrivateRouteTable', {
       vpcId: this.spokeVpcId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-spoke-private-rt' },
+        { key: 'Name', value: 'goat-demo-app-private-rt' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -508,9 +508,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     const inspTgwRt = new ec2.CfnRouteTable(this, 'InspTgwRouteTable', {
       vpcId: this.inspectionVpc.attrVpcId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-tgw-rt' },
+        { key: 'Name', value: 'goat-demo-sec-tgw-rt' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -532,9 +532,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     const inspFwRt = new ec2.CfnRouteTable(this, 'InspFwRouteTable', {
       vpcId: this.inspectionVpc.attrVpcId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-fw-rt' },
+        { key: 'Name', value: 'goat-demo-sec-fw-rt' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -565,9 +565,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     const inspNatRt = new ec2.CfnRouteTable(this, 'InspNatRouteTable', {
       vpcId: this.inspectionVpc.attrVpcId,
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-insp-nat-rt' },
+        { key: 'Name', value: 'goat-demo-sec-nat-rt' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -600,7 +600,7 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
 
     // IAM role with SSM managed policy for Session Manager access
     const tlsSsmRole = new iam.CfnRole(this, 'TlsSsmRole', {
-      roleName: 'goat-demo-tls-ssm-role',
+      roleName: 'goat-demo-app-ssm-role',
       assumeRolePolicyDocument: {
         Version: '2012-10-17',
         Statement: [
@@ -615,9 +615,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
         'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore',
       ],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-ssm-role' },
+        { key: 'Name', value: 'goat-demo-app-ssm-role' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -625,12 +625,12 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     // Instance profile referencing the IAM role
     const tlsInstanceProfile = new iam.CfnInstanceProfile(this, 'TlsInstanceProfile', {
       roles: [tlsSsmRole.ref],
-      instanceProfileName: 'goat-demo-tls-instance-profile',
+      instanceProfileName: 'goat-demo-app-instance-profile',
     });
 
     // Security group for the TLS instance (all outbound allowed, no inbound)
     const tlsSecurityGroup = new ec2.CfnSecurityGroup(this, 'TlsInstanceSg', {
-      groupDescription: 'Security group for goat-demo TLS fragmentation instance',
+      groupDescription: 'Security group for goat-demo app instance',
       vpcId: this.spokeVpcId,
       securityGroupEgress: [
         {
@@ -640,9 +640,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
         },
       ],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-instance-sg' },
+        { key: 'Name', value: 'goat-demo-app-instance-sg' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
@@ -709,9 +709,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       subnetId: this.spokePrivateSubnet.attrSubnetId,
       groupSet: [tlsSecurityGroup.attrGroupId],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-instance' },
+        { key: 'Name', value: 'goat-demo-app-instance' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
         { key: 'goat-network-capture-allowed', value: 'true' },
       ],
@@ -732,9 +732,9 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
         },
       ],
       tags: [
-        { key: 'Name', value: 'goat-demo-tls-instance' },
+        { key: 'Name', value: 'goat-demo-app-instance' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'tls-fragmentation' },
+        { key: 'goat-scenario', value: 'connectivity' },
         { key: 'auto-delete', value: 'no' },
         { key: 'goat-network-capture-allowed', value: 'true' },
       ],
@@ -747,14 +747,14 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
     // Stack Outputs — TLS Instance
     // -----------------------------------------------------------------------
 
-    new cdk.CfnOutput(this, 'TlsInstanceId', {
+    new cdk.CfnOutput(this, 'AppInstanceId', {
       value: tlsInstance.ref,
-      description: 'EC2 instance ID for TLS fragmentation demo',
+      description: 'EC2 instance ID for connectivity demo',
     });
 
-    new cdk.CfnOutput(this, 'TlsInstanceEniId', {
+    new cdk.CfnOutput(this, 'AppInstanceEniId', {
       value: tlsEni.attrId,
-      description: 'Primary ENI ID of TLS fragmentation instance (for Network Agent capture)',
+      description: 'Primary ENI ID of app instance (for Network Agent capture)',
     });
   }
 }

@@ -90,7 +90,18 @@ try {
         $cdkOutput = npx -y cdk bootstrap "aws://$accountId/$currentRegion" --no-cli-pager 2>&1
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
+        # CDK may return non-zero for warnings (e.g. "Unknown option --cliPager")
+        # Only treat as failure if output contains real error indicators
+        $hasRealError = $false
         if ($cdkExitCode -ne 0) {
+            $cdkOutput | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Error|fail|Unable|Cannot|denied|credentials" -and $line -notmatch "^\[Warning" -and $line -notmatch "Unknown option") {
+                    $hasRealError = $true
+                }
+            }
+        }
+        if ($hasRealError) {
             Write-Host "      ERROR: CDK bootstrap failed" -ForegroundColor Red
             $cdkOutput | ForEach-Object {
                 $line = $_.ToString()
@@ -141,15 +152,24 @@ try {
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
         if ($cdkExitCode -ne 0) {
-            Write-Host "      ERROR: CDK deployment failed" -ForegroundColor Red
-            # Display error details (filter out noise like warnings and progress)
+            # Check if it's a real error or just CDK warnings
+            $hasRealError = $false
             $cdkOutput | ForEach-Object {
                 $line = $_.ToString()
-                if ($line -match "Error|error|fail|Unable|Cannot|denied|not found|credentials" -and $line -notmatch "^\[Warning") {
-                    Write-Host "      $line" -ForegroundColor Red
+                if ($line -match "Error|error|fail|Unable|Cannot|denied|not found|credentials" -and $line -notmatch "^\[Warning" -and $line -notmatch "Unknown option" -and $line -notmatch "will be ignored") {
+                    $hasRealError = $true
                 }
             }
-            exit 1
+            if ($hasRealError) {
+                Write-Host "      ERROR: CDK deployment failed" -ForegroundColor Red
+                $cdkOutput | ForEach-Object {
+                    $line = $_.ToString()
+                    if ($line -match "Error|error|fail|Unable|Cannot|denied|not found|credentials" -and $line -notmatch "^\[Warning" -and $line -notmatch "Unknown option") {
+                        Write-Host "      $line" -ForegroundColor Red
+                    }
+                }
+                exit 1
+            }
         }
         Write-Host "      OK: Stack deployed successfully" -ForegroundColor Green
     }

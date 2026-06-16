@@ -70,15 +70,33 @@ dnf -y install \
 # Best effort — do not fail if AWS CLI is already present.
 dnf -y install awscli || true
 
-# Install scapy in the system site-packages so systemd's PATH-free
-# environment can import it without virtualenv activation.
-# The pip self-upgrade is best-effort: on AL2023 the base pip is
-# rpm-managed and "pip install --upgrade pip" fails with "Cannot
-# uninstall pip ... RECORD file not found". That failure is harmless
-# (the existing pip installs scapy fine) but would abort the whole
-# bootstrap under `set -e`, so we guard it with `|| true`.
-python3 -m pip install --upgrade --no-cache-dir pip || true
-python3 -m pip install --no-cache-dir 'scapy>=2.5.0,<3' 'boto3>=1.34.0'
+# -----------------------------------------------------------------------------
+# 1b. Install Python 3.11 for the splitter.
+#
+# The splitter imports boto3, and the bundled boto3 wheel requires
+# Python >= 3.10. AL2023's default ``python3`` is 3.9, so we install
+# python3.11 (and its pip) explicitly and run the splitter under it.
+# Non-fatal: if this install fails, the bootstrap continues and the
+# interpreter selection below falls back to ``python3``.
+# -----------------------------------------------------------------------------
+dnf -y install python3.11 python3.11-pip || \
+  echo "[bootstrap] WARNING: python3.11 install failed; will fall back to python3"
+
+# Select a Python >= 3.10 interpreter for the splitter and its pip
+# dependency install. Prefer python3.11; fall back to python3 only when
+# 3.11 is unavailable (in which case the boto3 import would fail, but
+# the bootstrap still completes so the NLB health responder starts).
+if command -v python3.11 >/dev/null 2>&1; then
+  PYTHON_BIN=python3.11
+else
+  PYTHON_BIN=python3
+fi
+echo "[bootstrap] using Python interpreter for splitter: ${PYTHON_BIN}"
+
+# Ensure pip is available for the chosen interpreter even if the
+# python3.11-pip package did not land (ensurepip ships with CPython and
+# works offline). Non-fatal.
+${PYTHON_BIN} -m ensurepip --upgrade >/dev/null 2>&1 || true
 
 # -----------------------------------------------------------------------------
 # 2. Download the collector asset bundle.
@@ -99,6 +117,34 @@ aws s3 cp \
 unzip -o /tmp/goat-collector-asset.zip -d "${INSTALL_DIR}"
 chmod 0755 "${INSTALL_DIR}/uploader.sh"
 chmod 0644 "${INSTALL_DIR}/splitter.py"
+
+# -----------------------------------------------------------------------------
+# 2b. Install scapy + boto3 from the bundled wheels directory (no internet
+# needed), using the Python 3.11 interpreter selected above so the boto3
+# wheel's ``Requires-Python: >=3.10`` constraint is satisfied.
+#
+# Every install path is non-fatal: under ``set -e`` a failed pip install
+# would otherwise abort the whole bootstrap, leaving the NLB health
+# responder unstarted and the collector silently dropping all mirrored
+# traffic. We log a warning instead and let the bootstrap finish so the
+# health responder, VXLAN device, and uploader still come up.
+# -----------------------------------------------------------------------------
+PIP_INSTALL_OK=0
+if [ -d "${INSTALL_DIR}/wheels" ] && ls "${INSTALL_DIR}/wheels"/*.whl 1>/dev/null 2>&1; then
+  ${PYTHON_BIN} -m pip install --no-cache-dir --no-index --find-links="${INSTALL_DIR}/wheels" scapy boto3 \
+    && PIP_INSTALL_OK=1 \
+    || echo "[bootstrap] WARNING: bundled wheel install (.whl) failed under ${PYTHON_BIN}; splitter may fail"
+elif [ -d "${INSTALL_DIR}/wheels" ] && ls "${INSTALL_DIR}/wheels"/*.tar.gz 1>/dev/null 2>&1; then
+  ${PYTHON_BIN} -m pip install --no-cache-dir --no-index --find-links="${INSTALL_DIR}/wheels" scapy boto3 \
+    && PIP_INSTALL_OK=1 \
+    || echo "[bootstrap] WARNING: bundled wheel install (.tar.gz) failed under ${PYTHON_BIN}; splitter may fail"
+else
+  # Fallback: try PyPI (works if instance has internet access).
+  ${PYTHON_BIN} -m pip install --no-cache-dir 'scapy>=2.5.0,<3' 'boto3>=1.34.0' \
+    && PIP_INSTALL_OK=1 \
+    || echo "[bootstrap] WARNING: packages not available from wheels or PyPI — splitter may fail"
+fi
+echo "[bootstrap] dependency install result: PIP_INSTALL_OK=${PIP_INSTALL_OK} (interpreter ${PYTHON_BIN})"
 
 # -----------------------------------------------------------------------------
 # 3. Configure the VXLAN tunnel interface on UDP/4789.
@@ -188,7 +234,7 @@ After=goat-collector-vxlan.service
 [Service]
 Type=simple
 EnvironmentFile=${ENV_FILE}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/splitter.py
+ExecStart=/usr/bin/${PYTHON_BIN} ${INSTALL_DIR}/splitter.py
 Restart=always
 RestartSec=5
 # scapy needs CAP_NET_RAW to read frames from the VXLAN device. Granting
