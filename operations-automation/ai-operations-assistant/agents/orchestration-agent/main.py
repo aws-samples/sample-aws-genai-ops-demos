@@ -2049,6 +2049,8 @@ NETWORK_AGENT_ACTIONS = (
     "get_rtt_distribution",
     "get_request_response_latency",
     "diagnose_tcp_stream",
+    # Maintenance
+    "cleanup_orphaned_sessions",
 )
 
 

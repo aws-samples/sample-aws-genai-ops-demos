@@ -1110,6 +1110,82 @@ def _check_opt_in_tag(eni_ids: list) -> None:
         raise ValidationError(message, error_category="unauthorized")
 
 
+def _cleanup_orphaned_mirror_sessions(eni_ids: list) -> int:
+    """Delete Traffic Mirror sessions on the given ENIs that are not tracked in DynamoDB.
+
+    Queries ``ec2:DescribeTrafficMirrorSessions`` filtered by ENI,
+    checks each session's description against the Capture_State_Table
+    (our sessions are described as ``goat-network-capture <capture_id>``),
+    and deletes any session whose capture_id either (a) doesn't exist
+    in DynamoDB or (b) has status ``stopped``/``transformed``.
+
+    Returns the number of sessions deleted.
+    """
+    ec2 = _get_ec2_client()
+    deleted_count = 0
+
+    for eni_id in eni_ids:
+        try:
+            resp = ec2.describe_traffic_mirror_sessions(
+                Filters=[{"Name": "network-interface-id", "Values": [eni_id]}]
+            )
+        except (ClientError, BotoCoreError) as exc:
+            logger.warning(
+                "_cleanup_orphaned_mirror_sessions: failed to describe "
+                "sessions for ENI %s: %s", eni_id, exc,
+            )
+            continue
+
+        for session in resp.get("TrafficMirrorSessions", []):
+            session_id = session.get("TrafficMirrorSessionId")
+            description = session.get("Description", "")
+
+            # Our sessions are always described as "goat-network-capture <capture_id>"
+            is_goat_session = description.startswith("goat-network-capture ")
+            capture_id_from_desc = (
+                description.split("goat-network-capture ", 1)[1].strip()
+                if is_goat_session else None
+            )
+
+            # Determine if this is an orphan
+            is_orphan = False
+            if not is_goat_session:
+                # Not one of ours — could be from a different tool. Delete
+                # anyway since it's blocking our ENI and we own these ENIs
+                # (they carry the goat-network-capture-allowed tag).
+                is_orphan = True
+            elif capture_id_from_desc:
+                # Check DynamoDB for this capture
+                try:
+                    row = state.get_capture(capture_id_from_desc)
+                    if row is None:
+                        is_orphan = True  # Not in DDB — orphan from a prior install
+                    elif row.get("status") in ("stopped", "transformed"):
+                        is_orphan = True  # Capture ended but session wasn't cleaned
+                except Exception:
+                    # Can't reach DDB — be conservative and delete anyway
+                    is_orphan = True
+
+            if is_orphan and session_id:
+                try:
+                    ec2.delete_traffic_mirror_session(
+                        TrafficMirrorSessionId=session_id
+                    )
+                    deleted_count += 1
+                    logger.info(
+                        "_cleanup_orphaned_mirror_sessions: deleted orphan "
+                        "session %s on ENI %s (capture_id=%s)",
+                        session_id, eni_id, capture_id_from_desc or "unknown",
+                    )
+                except (ClientError, BotoCoreError) as exc:
+                    logger.warning(
+                        "_cleanup_orphaned_mirror_sessions: failed to delete "
+                        "session %s: %s", session_id, exc,
+                    )
+
+    return deleted_count
+
+
 def _create_mirror_sessions_for_eni_set(
     capture_id: str,
     eni_ids: list,
@@ -1599,15 +1675,64 @@ def handle_start_capture(params: dict) -> dict:
 
     # ----------------------------------------------------------------
     # Step 7: create Traffic Mirror sessions (Req 3.1)
+    #
+    # Self-healing: if CreateTrafficMirrorSession fails because the ENI
+    # "is already being used by" another session, query sessions on that
+    # ENI, delete any orphans (sessions whose capture_id is not tracked
+    # in DynamoDB), and retry once. This recovers from stale sessions
+    # left behind by a prior install or a failed stop_capture without
+    # manual intervention.
     # ----------------------------------------------------------------
     created_sessions: list = []
     try:
         created_sessions = _create_mirror_sessions_for_eni_set(
             capture_id, eni_ids, filter_id, target_id
         )
-    except (ClientError, BotoCoreError) as exc:
-        # Roll back any partial sessions we did create before failing
-        # (Req 3.6). No VNI rows have been written yet at this point.
+    except ClientError as exc:
+        error_msg = str(exc)
+        # Detect "already in use" / per-interface limit errors
+        if "already being used" in error_msg or "TrafficMirrorSessionsPerInterfaceLimitExceeded" in error_msg:
+            logger.warning(
+                "start_capture: mirror session creation failed due to existing "
+                "session(s) on ENI(s). Attempting orphan cleanup and retry. "
+                "Error: %s", error_msg,
+            )
+            # Clean up orphaned sessions on the requested ENIs
+            cleaned = _cleanup_orphaned_mirror_sessions(eni_ids)
+            if cleaned > 0:
+                logger.info(
+                    "start_capture: cleaned %d orphaned mirror session(s). Retrying.",
+                    cleaned,
+                )
+                # Retry once after cleanup
+                _rollback_mirror_sessions(created_sessions)
+                created_sessions = []
+                try:
+                    created_sessions = _create_mirror_sessions_for_eni_set(
+                        capture_id, eni_ids, filter_id, target_id
+                    )
+                except (ClientError, BotoCoreError) as retry_exc:
+                    _rollback_mirror_sessions(created_sessions)
+                    return _aws_error_response(
+                        "start_capture", retry_exc, source_api,
+                        "ec2:CreateTrafficMirrorSession",
+                    )
+            else:
+                # No orphans found — the session is legitimately in use
+                _rollback_mirror_sessions(created_sessions)
+                return _aws_error_response(
+                    "start_capture", exc, source_api,
+                    "ec2:CreateTrafficMirrorSession",
+                )
+        else:
+            # Roll back any partial sessions we did create before failing
+            # (Req 3.6). No VNI rows have been written yet at this point.
+            _rollback_mirror_sessions(created_sessions)
+            return _aws_error_response(
+                "start_capture", exc, source_api,
+                "ec2:CreateTrafficMirrorSession",
+            )
+    except BotoCoreError as exc:
         _rollback_mirror_sessions(created_sessions)
         return _aws_error_response(
             "start_capture", exc, source_api, "ec2:CreateTrafficMirrorSession"
@@ -7284,6 +7409,95 @@ def handle_diagnose_tcp_stream(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# cleanup_orphaned_sessions action
+# ---------------------------------------------------------------------------
+
+
+def handle_cleanup_orphaned_sessions(params: dict) -> dict:
+    """Remove orphaned Traffic Mirror sessions blocking capture on one or more ENIs.
+
+    This action is a convenience wrapper around the internal
+    ``_cleanup_orphaned_mirror_sessions`` helper, exposed so the
+    orchestration agent (or an operator) can explicitly request
+    cleanup when ``start_capture`` reports an "already in use" error.
+
+    In practice, ``start_capture`` already auto-heals by calling
+    the same helper internally. This action exists for cases where
+    manual/explicit cleanup is needed (e.g. after a reinstall, or
+    when the orchestration agent wants to preemptively clear stale
+    sessions before proposing a new capture).
+
+    Args:
+        params: Dict with:
+            ``eni_ids`` (list of str, required): ENI identifiers to
+            check for orphaned mirror sessions.
+
+    Returns:
+        Response envelope with ``data.cleaned_count`` and per-ENI
+        details.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ec2:DescribeTrafficMirrorSessions"
+
+    # Validate eni_ids
+    raw_eni_ids = params.get("eni_ids")
+    if raw_eni_ids is None:
+        # No eni_ids supplied — clean ALL goat-network sessions in the account
+        try:
+            ec2 = _get_ec2_client()
+            resp = ec2.describe_traffic_mirror_sessions()
+            all_sessions = resp.get("TrafficMirrorSessions", [])
+            # Extract unique ENI IDs from all sessions
+            eni_set = set()
+            for s in all_sessions:
+                eni = s.get("NetworkInterfaceId")
+                if eni:
+                    eni_set.add(eni)
+            target_enis = sorted(eni_set) if eni_set else []
+        except (ClientError, BotoCoreError) as exc:
+            return _aws_error_response(
+                "cleanup_orphaned_sessions", exc, source_api,
+                "ec2:DescribeTrafficMirrorSessions",
+            )
+    else:
+        try:
+            target_enis = validate_eni_ids(raw_eni_ids)
+        except ValidationError as exc:
+            return _validation_error_response(
+                "cleanup_orphaned_sessions", exc, source_api
+            )
+
+    if not target_enis:
+        return build_response(
+            success=True,
+            data={"cleaned_count": 0, "message": "No ENIs to check."},
+            formatted_text="No orphaned Traffic Mirror sessions found (no ENIs to check).",
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    cleaned = _cleanup_orphaned_mirror_sessions(target_enis)
+
+    return build_response(
+        success=True,
+        data={
+            "cleaned_count": cleaned,
+            "eni_ids_checked": target_enis,
+        },
+        formatted_text=(
+            f"Cleaned {cleaned} orphaned Traffic Mirror session(s) "
+            f"across {len(target_enis)} ENI(s)."
+            if cleaned > 0
+            else f"No orphaned sessions found on {len(target_enis)} ENI(s)."
+        ),
+        source_api=source_api,
+        data_freshness="real-time",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Action dispatch table (Req 1.2)
 #
 # Maps each action string from the design document to its handler function
@@ -7318,6 +7532,8 @@ ACTIONS = {
     "get_rtt_distribution": handle_get_rtt_distribution,
     "get_request_response_latency": handle_get_request_response_latency,
     "diagnose_tcp_stream": handle_diagnose_tcp_stream,
+    # Maintenance
+    "cleanup_orphaned_sessions": handle_cleanup_orphaned_sessions,
 }
 
 

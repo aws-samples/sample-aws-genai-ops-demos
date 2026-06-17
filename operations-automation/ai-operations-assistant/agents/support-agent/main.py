@@ -40,6 +40,51 @@ def _is_subscription_error(error: Exception) -> bool:
     )
 
 
+import re
+
+# Pattern matching the full AWS Support case ID format: case-XXXXXXXXXX-YYYY-NNNNNN
+_FULL_CASE_ID_PATTERN = re.compile(r"^case-\d+-\d{4}-\d+$")
+
+
+def _is_display_id(case_id: str) -> bool:
+    """Return True if ``case_id`` looks like a numeric display ID rather than
+    the full ``case-XXXXXXXXXX-YYYY-NNNNNN`` format.
+
+    Display IDs are purely numeric (e.g. ``178126584700003``). The AWS Support
+    ``DescribeCases`` API only accepts the full format in ``caseIdList`` — numeric
+    display IDs must be resolved by listing cases and matching ``displayId``.
+    """
+    if not case_id:
+        return False
+    # Full format always starts with "case-"
+    if _FULL_CASE_ID_PATTERN.match(case_id):
+        return False
+    # Numeric-only strings are display IDs
+    return case_id.strip().isdigit()
+
+
+def _resolve_display_id_to_case(support_client, display_id: str) -> dict | None:
+    """Look up a support case by its numeric display ID.
+
+    Paginates through ``DescribeCases`` (resolved included) and returns
+    the first case whose ``displayId`` matches. Returns None if not found
+    after exhausting all pages.
+
+    This is the only reliable way to look up a case by display ID since
+    the AWS API's ``caseIdList`` parameter does not accept display IDs.
+    """
+    paginator = support_client.get_paginator("describe_cases")
+    page_iterator = paginator.paginate(
+        includeResolvedCases=True,
+        includeCommunications=False,
+    )
+    for page in page_iterator:
+        for case in page.get("cases", []):
+            if case.get("displayId") == display_id:
+                return case
+    return None
+
+
 def handle_describe_cases(params: dict) -> dict:
     """Retrieve AWS Support cases with optional filters.
 
@@ -53,12 +98,83 @@ def handle_describe_cases(params: dict) -> dict:
         support_client = boto3.client("support", region_name=SUPPORT_API_REGION)
 
         kwargs = {}
+        target_case_id = None
+
         if params.get("caseIdList") or params.get("case_id_list"):
-            kwargs["caseIdList"] = params.get("caseIdList") or params.get("case_id_list")
+            raw_list = params.get("caseIdList") or params.get("case_id_list")
+            # Check if any item in the list is a display ID that needs resolution
+            resolved_ids = []
+            display_id_cases = []
+            for cid in (raw_list if isinstance(raw_list, list) else [raw_list]):
+                if _is_display_id(str(cid)):
+                    found = _resolve_display_id_to_case(support_client, str(cid))
+                    if found:
+                        display_id_cases.append(found)
+                        resolved_ids.append(found["caseId"])
+                    else:
+                        return {
+                            "success": False,
+                            "domain": "support",
+                            "error": f"Support case with display ID '{cid}' not found in this account.",
+                        }
+                else:
+                    resolved_ids.append(cid)
+            if display_id_cases and not resolved_ids:
+                # All were display IDs and we already have the full case objects
+                cases = display_id_cases
+                return {
+                    "success": True,
+                    "domain": "support",
+                    "data": {"cases": _serialize_cases(cases), "count": len(cases)},
+                    "formattedText": _format_support_cases(cases),
+                    "metadata": {
+                        "sourceApi": "support:DescribeCases",
+                        "queryTimestamp": datetime.now(timezone.utc).isoformat(),
+                        "dataFreshness": "real-time",
+                    },
+                }
+            if resolved_ids:
+                kwargs["caseIdList"] = resolved_ids
         elif params.get("caseId") or params.get("case_id"):
             # Normalize single case ID string to a list
             single_id = params.get("caseId") or params.get("case_id")
-            kwargs["caseIdList"] = [single_id] if isinstance(single_id, str) else single_id
+            single_id_str = str(single_id).strip()
+
+            # If it's a numeric display ID, resolve it by pagination lookup
+            if _is_display_id(single_id_str):
+                logger.info(
+                    "describe_cases: resolving display ID '%s' to full case ID",
+                    single_id_str,
+                )
+                found_case = _resolve_display_id_to_case(support_client, single_id_str)
+                if found_case:
+                    # Return the resolved case directly (we already have it)
+                    cases = [found_case]
+                    return {
+                        "success": True,
+                        "domain": "support",
+                        "data": {"cases": _serialize_cases(cases), "count": len(cases)},
+                        "formattedText": _format_support_cases(cases),
+                        "metadata": {
+                            "sourceApi": "support:DescribeCases",
+                            "queryTimestamp": datetime.now(timezone.utc).isoformat(),
+                            "dataFreshness": "real-time",
+                            "resolvedFromDisplayId": single_id_str,
+                            "resolvedCaseId": found_case.get("caseId"),
+                        },
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "domain": "support",
+                        "error": (
+                            f"Support case with display ID '{single_id_str}' not found "
+                            f"in this account. Searched all cases (including resolved). "
+                            f"Verify the case number is correct."
+                        ),
+                    }
+            else:
+                kwargs["caseIdList"] = [single_id_str] if isinstance(single_id_str, str) else single_id
         # The AWS describe_cases API does NOT accept a "status" filter parameter.
         # Instead, it uses includeResolvedCases boolean. If the LLM passes
         # status="open", we ignore it and let includeResolvedCases handle filtering.
@@ -116,7 +232,27 @@ def handle_communications(params: dict) -> dict:
 
         support_client = boto3.client("support", region_name=SUPPORT_API_REGION)
 
-        kwargs = {"caseId": case_id}
+        # Resolve display ID to full case ID if needed
+        case_id_str = str(case_id).strip()
+        if _is_display_id(case_id_str):
+            logger.info(
+                "describe_communications: resolving display ID '%s' to full case ID",
+                case_id_str,
+            )
+            found_case = _resolve_display_id_to_case(support_client, case_id_str)
+            if found_case:
+                case_id_str = found_case["caseId"]
+            else:
+                return {
+                    "success": False,
+                    "domain": "support",
+                    "error": (
+                        f"Support case with display ID '{case_id}' not found "
+                        f"in this account. Cannot retrieve communications."
+                    ),
+                }
+
+        kwargs = {"caseId": case_id_str}
         if params.get("afterTime") or params.get("after_time"):
             kwargs["afterTime"] = params.get("afterTime") or params.get("after_time")
         if params.get("beforeTime") or params.get("before_time"):
