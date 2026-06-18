@@ -150,6 +150,33 @@ deploy_stack() {
     echo -e "\n\033[0;33mDeploying $stack_name...\033[0m"
     echo -e "\033[0;90m      ($description)\033[0m"
 
+    # Pre-check: if the stack is stuck in DELETE_FAILED from a prior run,
+    # force-delete it first. This is common with AgentCore runtimes that
+    # timeout during deletion -- not a real error, just a CFN timeout.
+    local stack_status=""
+    stack_status=$(aws cloudformation describe-stacks --stack-name "$stack_name" \
+        --query "Stacks[0].StackStatus" --output text --no-cli-pager 2>/dev/null) || stack_status="DOES_NOT_EXIST"
+    # Guard: if the result contains unexpected characters (not a valid status), treat as non-existent
+    if [[ ! "$stack_status" =~ ^[A-Z_]+$ ]]; then
+        stack_status="DOES_NOT_EXIST"
+    fi
+    if [ "$stack_status" = "DELETE_FAILED" ]; then
+        echo -e "\033[0;33m      Stack is in DELETE_FAILED state (normal - AgentCore runtime deletion timeout).\033[0m"
+        echo -e "\033[0;33m      Force-deleting before redeploy...\033[0m"
+        local failed_resources=""
+        failed_resources=$(aws cloudformation describe-stack-resources --stack-name "$stack_name" \
+            --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" \
+            --output text --no-cli-pager 2>/dev/null || echo "")
+        if [ -n "$failed_resources" ] && [ "$failed_resources" != "None" ]; then
+            aws cloudformation delete-stack --stack-name "$stack_name" \
+                --retain-resources $failed_resources --no-cli-pager 2>/dev/null || true
+        else
+            aws cloudformation delete-stack --stack-name "$stack_name" --no-cli-pager 2>/dev/null || true
+        fi
+        aws cloudformation wait stack-delete-complete --stack-name "$stack_name" --no-cli-pager 2>/dev/null || true
+        echo -e "\033[0;32m      Done - proceeding with fresh deploy.\033[0m"
+    fi
+
     # Build CDK context args for "Bring Your Own VPC" if provided
     local extra_args=""
     if [[ "$stack_name" == *"NetworkInfra"* ]] || [[ "$stack_name" == *"NetworkData"* ]]; then

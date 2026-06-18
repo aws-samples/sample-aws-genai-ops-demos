@@ -156,3 +156,5 @@ reinstall-goat.ps1
 
 # Demo comparison scripts (account-specific, for slide screenshots)
 demo-reachability-analyzer.ps1
+
+reinstall-goat.sh

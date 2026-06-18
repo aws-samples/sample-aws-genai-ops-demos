@@ -107,6 +107,26 @@ function Deploy-Stack {
     Write-Host "`nDeploying $StackName..." -ForegroundColor Yellow
     Write-Host "      ($Description)" -ForegroundColor Gray
 
+    # Pre-check: if the stack is stuck in DELETE_FAILED from a prior run,
+    # force-delete it first. This is common with AgentCore runtimes that
+    # timeout during deletion — not a real error, just a CFN timeout.
+    $stackStatus = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].StackStatus" --output text --no-cli-pager 2>$null
+    if ($stackStatus -eq "DELETE_FAILED") {
+        Write-Host "      Stack is in DELETE_FAILED state (normal - AgentCore runtime deletion timeout)." -ForegroundColor DarkYellow
+        Write-Host "      Force-deleting before redeploy..." -ForegroundColor DarkYellow
+        $failedResources = aws cloudformation describe-stack-resources --stack-name $StackName `
+            --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" `
+            --output text --no-cli-pager 2>$null
+        $retainList = @(($failedResources -split '\s+') | Where-Object { $_ -and $_ -ne "None" })
+        if ($retainList.Count -gt 0) {
+            aws cloudformation delete-stack --stack-name $StackName --retain-resources $retainList --no-cli-pager 2>$null
+        } else {
+            aws cloudformation delete-stack --stack-name $StackName --no-cli-pager 2>$null
+        }
+        aws cloudformation wait stack-delete-complete --stack-name $StackName --no-cli-pager 2>$null
+        Write-Host "      Done - proceeding with fresh deploy." -ForegroundColor Green
+    }
+
     # Build CDK context args for "Bring Your Own VPC" if provided
     $extraArgs = ""
     if ($StackName -match "NetworkInfra" -or $StackName -match "NetworkData") {
