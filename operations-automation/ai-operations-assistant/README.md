@@ -343,6 +343,7 @@ The agent's IAM role has `ec2:CreateTrafficMirrorSession` and `ec2:DeleteTraffic
 ### Deployment
 
 ```powershell
+# Windows (PowerShell)
 .\deploy-all.ps1 `
   -DeploymentMode full `
   -VpcId "vpc-0abc123def456" `
@@ -351,12 +352,21 @@ The agent's IAM role has `ec2:CreateTrafficMirrorSession` and `ec2:DeleteTraffic
   -SkipVpcEndpoints
 ```
 
+```bash
+# macOS / Linux
+./deploy-all.sh --mode full \
+  --vpc-id vpc-0abc123def456 \
+  --subnet-ids subnet-aaa111,subnet-bbb222 \
+  --vpc-cidr 10.0.0.0/16 \
+  --skip-vpc-endpoints
+```
+
 Or via CDK directly:
-```powershell
-npx cdk deploy GOATNetworkInfra-us-east-1 `
-  -c goatExistingVpcId=vpc-0abc123def456 `
-  -c goatCollectorSubnetIds=subnet-aaa111,subnet-bbb222 `
-  -c goatVpcCidr=10.0.0.0/16 `
+```bash
+npx cdk deploy GOATNetworkInfra-us-east-1 \
+  -c goatExistingVpcId=vpc-0abc123def456 \
+  -c goatCollectorSubnetIds=subnet-aaa111,subnet-bbb222 \
+  -c goatVpcCidr=10.0.0.0/16 \
   -c goatSkipVpcEndpoints=true
 ```
 

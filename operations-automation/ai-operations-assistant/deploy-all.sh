@@ -24,9 +24,33 @@ while [[ $# -gt 0 ]]; do
             ORCH_MODEL_ID_PROVIDED=true
             shift 2
             ;;
+        --vpc-id)
+            VPC_ID="$2"
+            shift 2
+            ;;
+        --subnet-ids)
+            SUBNET_IDS="$2"
+            shift 2
+            ;;
+        --vpc-cidr)
+            VPC_CIDR="$2"
+            shift 2
+            ;;
+        --skip-vpc-endpoints)
+            SKIP_VPC_ENDPOINTS=true
+            shift
+            ;;
+        --collector-instance-type)
+            COLLECTOR_INSTANCE_TYPE="$2"
+            shift 2
+            ;;
+        --collector-volume-gib)
+            COLLECTOR_VOLUME_GIB="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--mode full|cost|health|support|trusted-advisor|cur|network] [--orch-model-id MODEL_ID]"
+            echo "Usage: $0 [--mode full|cost|health|support|trusted-advisor|cur|network] [--orch-model-id MODEL_ID] [--vpc-id VPC_ID] [--subnet-ids SUBNET_IDS] [--vpc-cidr CIDR] [--skip-vpc-endpoints] [--collector-instance-type TYPE] [--collector-volume-gib SIZE]"
             exit 1
             ;;
     esac
@@ -76,6 +100,16 @@ region="$AWS_REGION"
 echo -e "\n\033[0;33mInstalling frontend dependencies...\033[0m"
 echo -e "\033[0;90m      (Installing React, Vite, Cognito SDK, and Cloudscape components)\033[0m"
 pushd frontend > /dev/null
+# Remove stale environment config and build artifacts from prior installs.
+# The correct values are regenerated in section 7 after all stacks are deployed.
+if [ -f ".env.production.local" ]; then
+    rm -f ".env.production.local"
+    echo -e "\033[0;90m      Removed stale .env.production.local (will regenerate after deploy)\033[0m"
+fi
+if [ -d "dist" ]; then
+    rm -rf "dist"
+    echo -e "\033[0;90m      Removed stale dist/ (will rebuild after deploy)\033[0m"
+fi
 npm install
 popd > /dev/null
 
@@ -116,9 +150,25 @@ deploy_stack() {
     echo -e "\n\033[0;33mDeploying $stack_name...\033[0m"
     echo -e "\033[0;90m      ($description)\033[0m"
 
+    # Build CDK context args for "Bring Your Own VPC" if provided
+    local extra_args=""
+    if [[ "$stack_name" == *"NetworkInfra"* ]] || [[ "$stack_name" == *"NetworkData"* ]]; then
+        local context_parts=""
+        [ -n "$VPC_ID" ] && context_parts="$context_parts -c goatExistingVpcId=$VPC_ID"
+        [ -n "$SUBNET_IDS" ] && context_parts="$context_parts -c goatCollectorSubnetIds=$SUBNET_IDS"
+        [ -n "$VPC_CIDR" ] && context_parts="$context_parts -c goatVpcCidr=$VPC_CIDR"
+        [ "$SKIP_VPC_ENDPOINTS" = "true" ] && context_parts="$context_parts -c goatSkipVpcEndpoints=true"
+        [ -n "$COLLECTOR_INSTANCE_TYPE" ] && context_parts="$context_parts -c goatCollectorInstanceType=$COLLECTOR_INSTANCE_TYPE"
+        [ -n "$COLLECTOR_VOLUME_GIB" ] && context_parts="$context_parts -c goatCollectorVolumeGib=$COLLECTOR_VOLUME_GIB"
+        extra_args="$context_parts"
+    fi
+
     local deploy_args=("--cdk-directory" "$CDK_DIR" "--stack-name" "$stack_name")
     if [ "$skip_bootstrap" = "true" ]; then
         deploy_args+=("--skip-bootstrap")
+    fi
+    if [ -n "$extra_args" ]; then
+        deploy_args+=("--extra-args" "$extra_args")
     fi
 
     "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" "${deploy_args[@]}"

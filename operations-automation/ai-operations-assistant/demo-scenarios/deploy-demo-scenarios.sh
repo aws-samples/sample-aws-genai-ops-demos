@@ -5,7 +5,7 @@
 # Uses the separate demo-scenarios-app.ts CDK entry point.
 #
 # Usage:
-#   ./deploy-demo-scenarios.sh --scenario <all|account-health|cloudwatch-incident|tls-fragmentation>
+#   ./deploy-demo-scenarios.sh --scenario <all|account-health|cloudwatch-incident|connectivity>
 #
 # NOTE: Make this script executable with: chmod +x deploy-demo-scenarios.sh
 
@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "\033[0;31mUnknown option: $1\033[0m"
-            echo "Usage: $0 --scenario <all|account-health|cloudwatch-incident|tls-fragmentation>"
+            echo "Usage: $0 --scenario <all|account-health|cloudwatch-incident|connectivity>"
             exit 1
             ;;
     esac
@@ -36,17 +36,17 @@ if [ -z "$SCENARIO" ]; then
     echo ""
     echo "Usage: $0 --scenario <value>"
     echo ""
-    echo "Valid values: all, account-health, cloudwatch-incident, tls-fragmentation"
+    echo "Valid values: all, account-health, cloudwatch-incident, connectivity"
     exit 1
 fi
 
 case "$SCENARIO" in
-    all|account-health|cloudwatch-incident|tls-fragmentation)
+    all|account-health|cloudwatch-incident|connectivity)
         ;;
     *)
         echo -e "\033[0;31mERROR: Invalid scenario '$SCENARIO'\033[0m"
         echo ""
-        echo "Valid values: all, account-health, cloudwatch-incident, tls-fragmentation"
+        echo "Valid values: all, account-health, cloudwatch-incident, connectivity"
         exit 1
         ;;
 esac
@@ -60,11 +60,11 @@ echo -e "\033[0;90m      Scenario: $SCENARIO\033[0m"
 echo -e "\n\033[0;33mRunning prerequisites check...\033[0m"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../../../../shared/scripts/check-prerequisites.sh" --require-cdk
+source "$SCRIPT_DIR/../../../shared/scripts/check-prerequisites.sh" --require-cdk
 
 # AWS_REGION is now exported by the prerequisites script
 region="$AWS_REGION"
-CDK_DIR="$SCRIPT_DIR/../../infrastructure/cdk"
+CDK_DIR="$SCRIPT_DIR/../infrastructure/cdk"
 CDK_APP="npx ts-node --prefer-ts-exts bin/demo-scenarios-app.ts"
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ new_demo_support_case() {
 # Deployment Logic
 # ---------------------------------------------------------------------------
 stack_a="GOATDemoScenarioA-$region"
-stack_c="GOATDemoScenarioTLS-$region"
+stack_c="GOATDemoScenarioC-$region"
 
 case "$SCENARIO" in
     all)
@@ -148,7 +148,7 @@ case "$SCENARIO" in
         invoke_cdk_deploy "$stack_c"
         new_demo_support_case \
             "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" \
-            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
+            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connection is routed through the TGW and the Network Firewall in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
             "service-network-firewall" \
             "general-guidance"
         ;;
@@ -159,11 +159,11 @@ case "$SCENARIO" in
     cloudwatch-incident)
         new_demo_support_case "CloudWatch monitoring gaps and missing alarms on Apr 1 - G.O.A.T. demo" "Our team noticed a CloudWatch lifecycle event on April 1 resulting in monitoring gaps. Several alarms were missing or misconfigured."
         ;;
-    tls-fragmentation)
+    connectivity)
         invoke_cdk_deploy "$stack_c"
         new_demo_support_case \
             "EC2 instance failing HTTPS to ECR - connection reset by peer in $region" \
-            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
+            "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connection is routed through the TGW and the Network Firewall in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." \
             "service-network-firewall" \
             "general-guidance"
         ;;
@@ -186,11 +186,11 @@ if [ "$SCENARIO" = "all" ] || [ "$SCENARIO" = "account-health" ]; then
     echo -e "  \033[0;36mEC2 Instance: $inst1\033[0m"
 fi
 
-if [ "$SCENARIO" = "all" ] || [ "$SCENARIO" = "tls-fragmentation" ]; then
-    ec2_id=$(aws cloudformation describe-stacks --stack-name "$stack_c" --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceId'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "N/A")
-    eni_id=$(aws cloudformation describe-stacks --stack-name "$stack_c" --query "Stacks[0].Outputs[?OutputKey=='TlsInstanceEniId'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "N/A")
-    echo -e "  \033[0;36mTLS EC2:      $ec2_id\033[0m"
-    echo -e "  \033[0;36mTLS ENI:      $eni_id (for Network Agent capture)\033[0m"
+if [ "$SCENARIO" = "all" ] || [ "$SCENARIO" = "connectivity" ]; then
+    ec2_id=$(aws cloudformation describe-stacks --stack-name "$stack_c" --query "Stacks[0].Outputs[?OutputKey=='AppInstanceId'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "N/A")
+    eni_id=$(aws cloudformation describe-stacks --stack-name "$stack_c" --query "Stacks[0].Outputs[?OutputKey=='AppInstanceEniId'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "N/A")
+    echo -e "  \033[0;36mApp EC2:      $ec2_id\033[0m"
+    echo -e "  \033[0;36mApp ENI:      $eni_id (for Network Agent capture)\033[0m"
 fi
 
 echo ""
