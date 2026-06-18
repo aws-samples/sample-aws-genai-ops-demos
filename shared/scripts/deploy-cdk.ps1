@@ -6,7 +6,8 @@ param(
     [string]$CdkDirectory,
     [string]$StackName = "",
     [switch]$DestroyStack = $false,
-    [switch]$SkipBootstrap = $false
+    [switch]$SkipBootstrap = $false,
+    [string]$ExtraArgs = ""
 )
 
 # Set PYTHONPATH to include shared utilities
@@ -145,9 +146,9 @@ try {
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         if ([string]::IsNullOrEmpty($StackName)) {
-            $cdkOutput = npx -y cdk deploy --require-approval never --no-cli-pager 2>&1
+            $cdkOutput = npx -y cdk deploy --require-approval never --no-cli-pager $ExtraArgs 2>&1
         } else {
-            $cdkOutput = npx -y cdk deploy $StackName --require-approval never --no-cli-pager 2>&1
+            $cdkOutput = npx -y cdk deploy $StackName --require-approval never --no-cli-pager $ExtraArgs 2>&1
         }
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction

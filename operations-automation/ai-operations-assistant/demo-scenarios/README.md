@@ -16,7 +16,7 @@ A unified CDK-based deployment script provisions all scenario resources via Clou
 **Deploy a single scenario:**
 ```powershell
 cd operations-automation\ai-operations-assistant\demo-scenarios
-.\deploy-demo-scenarios.ps1 -Scenario tls-fragmentation
+.\deploy-demo-scenarios.ps1 -Scenario connectivity
 ```
 
 **Deploy all scenarios:**
@@ -30,11 +30,11 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 | `all` | Scenario A (account health) + B (CloudWatch incident) + C (TLS fragmentation) |
 | `account-health` | Scenario A CDK stack + Support case |
 | `cloudwatch-incident` | Support case only (no infrastructure) |
-| `tls-fragmentation` | Scenario C CDK stack (Transit Gateway, Network Firewall, EC2) + Support case |
+| `connectivity` | Scenario C CDK stack (Transit Gateway, Network Firewall, EC2) + Support case |
 
 **Bash equivalent:**
 ```bash
-./deploy-demo-scenarios.sh --scenario tls-fragmentation
+./deploy-demo-scenarios.sh --scenario connectivity
 ```
 
 The CDK scripts check for existing Support cases with the same subject before creating new ones, avoiding duplicates on re-run.
@@ -188,17 +188,16 @@ All resources are tagged with `goat-demo=true` and `goat-scenario=connectivity`.
 **Windows (PowerShell):**
 ```powershell
 cd operations-automation\ai-operations-assistant\demo-scenarios
-.\setup-scenario-tls-fragmentation.ps1
+.\deploy-demo-scenarios.ps1 -Scenario connectivity
 ```
 
 **macOS / Linux:**
 ```bash
 cd operations-automation/ai-operations-assistant/demo-scenarios
-chmod +x setup-scenario-tls-fragmentation.sh
-./setup-scenario-tls-fragmentation.sh
+./deploy-demo-scenarios.sh --scenario connectivity
 ```
 
-The script takes ~5-7 minutes (Network Firewall provisioning is the main wait). Once complete, it prints a summary with the EC2 instance ID, ENI, and suggested queries.
+The CDK deployment takes ~5-7 minutes (Network Firewall provisioning is the main wait). Once complete, it prints a summary with the EC2 instance ID, ENI, and suggested queries.
 
 > **Note:** The EC2 instance's UserData starts a background curl loop that hits `ecr.<region>.amazonaws.com` with ML-KEM key exchange every **30 seconds** (~2 requests/minute). This means traffic is automatically flowing — you don't need to generate it manually. A 2-minute capture will contain ~4 TLS Client Hello frames with the fragmentation signature, which is enough for the agent to detect the pattern.
 
@@ -211,7 +210,7 @@ The setup script launches an EC2 instance that runs a curl loop in its UserData,
 **PowerShell:**
 ```powershell
 # Find the scenario EC2 instance
-$instanceId = aws ec2 describe-instances --filters "Name=tag:goat-scenario,Values=tls-fragmentation" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text --no-cli-pager
+$instanceId = aws ec2 describe-instances --filters "Name=tag:goat-scenario,Values=connectivity" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text --no-cli-pager
 
 # Get its primary ENI
 $eniId = aws ec2 describe-instances --instance-ids $instanceId --query "Reservations[].Instances[].NetworkInterfaces[0].NetworkInterfaceId" --output text --no-cli-pager
@@ -224,7 +223,7 @@ Write-Host "ENI: $eniId"
 ```bash
 # Find the scenario EC2 instance
 instance_id=$(aws ec2 describe-instances \
-  --filters "Name=tag:goat-scenario,Values=tls-fragmentation" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:goat-scenario,Values=connectivity" "Name=instance-state-name,Values=running" \
   --query "Reservations[].Instances[].InstanceId" --output text --no-cli-pager)
 
 # Get its primary ENI
@@ -429,8 +428,8 @@ Every demo resource receives four tags for identification and cleanup:
 | `setup-scenario-account-health.ps1` | PowerShell | CLI provisioning — Account Health Check resources |
 | `setup-scenario-cloudwatch-incident.sh` | Bash | CLI provisioning — CloudWatch Incident Correlation resources |
 | `setup-scenario-cloudwatch-incident.ps1` | PowerShell | CLI provisioning — CloudWatch Incident Correlation resources |
-| `setup-scenario-tls-fragmentation.sh` | Bash | CLI provisioning — TLS Fragmentation Scenario resources |
-| `setup-scenario-tls-fragmentation.ps1` | PowerShell | CLI provisioning — TLS Fragmentation Scenario resources |
+| `setup-scenario-tls-fragmentation.sh` | Bash | CLI provisioning — Connectivity Scenario resources (legacy, use CDK instead) |
+| `setup-scenario-tls-fragmentation.ps1` | PowerShell | CLI provisioning — Connectivity Scenario resources (legacy, use CDK instead) |
 | `cleanup-scenarios.sh` | Bash | Remove all demo resources (both CDK and CLI) |
 | `cleanup-scenarios.ps1` | PowerShell | Remove all demo resources (both CDK and CLI) |
 

@@ -76,6 +76,65 @@ export interface NetworkInfraStackProps extends cdk.StackProps {
    * @see {@link STOP_CAPTURE_INVOKER_DEFAULT_RUNTIME_NAME}
    */
   readonly networkAgentRuntimeArn?: string;
+
+  // -------------------------------------------------------------------------
+  // "Bring Your Own VPC" props — allow deploying the collector into an
+  // existing customer VPC/subnet instead of creating a dedicated VPC.
+  // When none of these are set, the stack creates its own VPC (demo default).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Existing VPC ID to deploy the collector into. When set, the stack
+   * imports this VPC via `ec2.Vpc.fromLookup()` instead of creating a
+   * new one. The VPC must have DNS support and DNS hostnames enabled.
+   *
+   * IMPORTANT: Traffic Mirror requires the source ENI and the mirror
+   * target (NLB) to be in the SAME VPC. The customer's workloads must
+   * reside in this VPC for captures to work.
+   */
+  readonly existingVpcId?: string;
+
+  /**
+   * Subnet ID(s) where the collector instance and NLB will be placed.
+   * Required when `existingVpcId` is set. Can be one subnet (single-AZ)
+   * or multiple (multi-AZ NLB). Subnets must have connectivity to S3
+   * and DynamoDB (via VPC endpoints or NAT).
+   */
+  readonly collectorSubnetIds?: string[];
+
+  /**
+   * CIDR block of the existing VPC. Used to scope the collector's
+   * security group ingress rules (VXLAN UDP/4789 + health check TCP/8081).
+   * Required when `existingVpcId` is set. Example: `"10.0.0.0/16"`.
+   *
+   * If omitted when `existingVpcId` is provided, falls back to
+   * `0.0.0.0/0` for VXLAN ingress (less secure but functional).
+   */
+  readonly vpcCidr?: string;
+
+  /**
+   * Skip creation of VPC endpoints (S3 Gateway, DynamoDB Gateway,
+   * SSM/EC2Messages Interface). Set to `true` when deploying into an
+   * existing VPC that already has the required endpoints, or when the
+   * subnet has NAT/internet connectivity.
+   *
+   * Defaults to `false` (endpoints are created) when creating the
+   * demo VPC, and to `true` when `existingVpcId` is provided (assumes
+   * the customer VPC already has connectivity).
+   */
+  readonly skipVpcEndpoints?: boolean;
+
+  /**
+   * EC2 instance type for the collector. Defaults to `t3.small`.
+   * For heavy capture workloads, consider `t3.medium` or `m5.large`.
+   */
+  readonly collectorInstanceType?: string;
+
+  /**
+   * Root EBS volume size (GiB) for the collector. Defaults to 30.
+   * Increase for long-running captures with high traffic volumes.
+   */
+  readonly collectorVolumeGib?: number;
 }
 
 /**
@@ -597,7 +656,7 @@ export class NetworkInfraStack extends BaseInfraStack {
    * runs in this VPC (or a peered VPC) and inherits the VPC's DNS
    * configuration.
    */
-  public readonly networkAgentVpc: ec2.Vpc;
+  public readonly networkAgentVpc: ec2.IVpc;
 
   /**
    * Dedicated security group for the collector EC2 instance. Allows:
@@ -1769,103 +1828,108 @@ export class NetworkInfraStack extends BaseInfraStack {
 
     // ----- Network_Agent_VPC (Req 6.1) ------------------------------------
     //
-    // /16 dedicated VPC with one /24 private subnet hosting the
-    // collector. Private subnet with VPC endpoints is used because:
+    // Two modes:
+    //   A. Demo mode (default): creates a dedicated /16 VPC with a single
+    //      private isolated /24 subnet, VPC endpoints, and full control.
+    //   B. BYOV (Bring Your Own VPC): imports an existing VPC by ID and
+    //      places the collector in customer-specified subnet(s). Skips
+    //      VPC endpoint creation by default (assumes customer infra).
     //
-    //   1. The collector's only outbound traffic is to AWS service
-    //      endpoints (S3, DynamoDB, SSM). All of those are
-    //      reachable via VPC endpoints without internet access.
-    //   2. A NAT Gateway would cost ~$33/month per AZ in us-east-1,
-    //      which would dominate the demo's monthly bill. VPC
-    //      endpoints (S3 Gateway is free, Interface endpoints are
-    //      ~$7/month each) are more cost-effective.
-    //   3. No public IP or internet route means zero inbound attack
-    //      surface — the instance is only reachable via Traffic
-    //      Mirror (UDP/4789 from VPC) and SSM Session Manager.
-    //   4. First-boot package install (`dnf`) is handled by adding
-    //      packages to the AMI or using S3-hosted repos. The
-    //      bootstrap script uses only AWS CLI (pre-installed on
-    //      AL2023) and Python (pre-installed), so no external
-    //      package download is needed.
+    // The mode is determined by whether `props.existingVpcId` is set.
+    // -----------------------------------------------------------------------
+
+    const isExistingVpc = !!props?.existingVpcId;
+    const resolvedInstanceType = props?.collectorInstanceType ?? 't3.small';
+    const resolvedVolumeGib = props?.collectorVolumeGib ?? COLLECTOR_ROOT_VOLUME_GIB;
+    // When using an existing VPC, default to skipping endpoint creation
+    const shouldSkipEndpoints = props?.skipVpcEndpoints ?? isExistingVpc;
+
+    let collectorSubnet: ec2.SelectedSubnets;
+    let resolvedVpcCidr: string;
+
+    if (isExistingVpc) {
+      // ----- Mode B: Import existing VPC ---------------------------------
+      this.networkAgentVpc = ec2.Vpc.fromLookup(this, 'ExistingVpc', {
+        vpcId: props!.existingVpcId!,
+      });
+
+      // Resolve the CIDR for security group ingress rules
+      resolvedVpcCidr = props?.vpcCidr ?? this.networkAgentVpc.vpcCidrBlock;
+
+      // Select subnets by the provided IDs
+      if (props?.collectorSubnetIds && props.collectorSubnetIds.length > 0) {
+        collectorSubnet = this.networkAgentVpc.selectSubnets({
+          subnetFilters: [ec2.SubnetFilter.byIds(props.collectorSubnetIds)],
+        });
+      } else {
+        // Fallback: use the VPC's first private subnet
+        collectorSubnet = this.networkAgentVpc.selectSubnets({
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        });
+        if (collectorSubnet.subnetIds.length === 0) {
+          collectorSubnet = this.networkAgentVpc.selectSubnets({
+            subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          });
+        }
+      }
+    } else {
+      // ----- Mode A: Create dedicated demo VPC ---------------------------
+      resolvedVpcCidr = NETWORK_AGENT_VPC_CIDR;
+
+      this.networkAgentVpc = new ec2.Vpc(this, 'NetworkAgentVpc', {
+        vpcName: 'goat-demo-vpc',
+        ipAddresses: ec2.IpAddresses.cidr(NETWORK_AGENT_VPC_CIDR),
+        maxAzs: 2,
+        natGateways: 0,
+        enableDnsSupport: true,
+        enableDnsHostnames: true,
+        subnetConfiguration: [
+          {
+            name: 'CollectorSubnet',
+            subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+            cidrMask: 24,
+          },
+        ],
+      });
+      cdk.Tags.of(this.networkAgentVpc).add('goat:component', 'network-agent');
+      cdk.Tags.of(this.networkAgentVpc).add('goat-demo', 'true');
+      cdk.Tags.of(this.networkAgentVpc).add('Name', 'goat-demo-vpc');
+
+      collectorSubnet = this.networkAgentVpc.selectSubnets({
+        subnetGroupName: 'CollectorSubnet',
+      });
+    }
+
+    // ----- VPC Endpoints (conditional) ------------------------------------
     //
-    // `enableDnsSupport` and `enableDnsHostnames` are both true so
-    // the orchestration agent's `active_dns_lookup` resolution
-    // strategy (Req 19.14) works for instances in this VPC, and
-    // Interface VPC endpoints resolve correctly via private DNS.
-    //
-    // `natGateways: 0` keeps costs minimal — all AWS API access
-    // goes through VPC endpoints.
-    this.networkAgentVpc = new ec2.Vpc(this, 'NetworkAgentVpc', {
-      vpcName: 'goat-demo-vpc',
-      ipAddresses: ec2.IpAddresses.cidr(NETWORK_AGENT_VPC_CIDR),
-      maxAzs: 2,
-      natGateways: 0,
-      enableDnsSupport: true,
-      enableDnsHostnames: true,
-      subnetConfiguration: [
-        {
-          name: 'CollectorSubnet',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-          cidrMask: 24,
-        },
-      ],
-      // Tagging is the standard CDK idiom for resource labels; the
-      // tag key matches the tag the Network Agent uses to filter ENIs
-      // it owns vs. ENIs it should not touch. The collector ENI itself
-      // is never an opt-in target -- `start_capture` rejects requests
-      // whose `eni_ids` overlap with the collector -- but the tag here
-      // documents that the VPC was created by this stack.
-    });
-    cdk.Tags.of(this.networkAgentVpc).add('goat:component', 'network-agent');
-    cdk.Tags.of(this.networkAgentVpc).add('goat-demo', 'true');
-    cdk.Tags.of(this.networkAgentVpc).add('Name', 'goat-demo-vpc');
+    // Created only when NOT skipped. In demo mode (Mode A) they provide
+    // S3/DynamoDB/SSM connectivity to the isolated subnet. In BYOV mode
+    // (Mode B) the customer typically already has them or uses NAT.
+    if (!shouldSkipEndpoints) {
+      // S3 Gateway Endpoint (free, no per-hour charge)
+      this.networkAgentVpc.addGatewayEndpoint('S3Endpoint', {
+        service: ec2.GatewayVpcEndpointAwsService.S3,
+      });
 
-    // ----- VPC Endpoints (private subnet connectivity) --------------------
-    //
-    // The collector runs in a PRIVATE_ISOLATED subnet with no internet
-    // access. These VPC endpoints provide the AWS API connectivity it
-    // needs:
-    //
-    //   - S3 (Gateway): Free. Used by the uploader to PutObject pcap
-    //     files and by bootstrap to download the CDK asset bundle.
-    //   - DynamoDB (Gateway): Free. Used by the splitter to read the
-    //     Vni_Lookup_Table.
-    //   - SSM, SSM Messages, EC2 Messages (Interface): Required for
-    //     Systems Manager Session Manager to work without internet.
-    //     Operators use SSM for break-glass access to the collector.
+      // DynamoDB Gateway Endpoint (free, no per-hour charge)
+      this.networkAgentVpc.addGatewayEndpoint('DynamoDbEndpoint', {
+        service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+      });
 
-    // S3 Gateway Endpoint (free, no per-hour charge)
-    this.networkAgentVpc.addGatewayEndpoint('S3Endpoint', {
-      service: ec2.GatewayVpcEndpointAwsService.S3,
-    });
-
-    // DynamoDB Gateway Endpoint (free, no per-hour charge)
-    this.networkAgentVpc.addGatewayEndpoint('DynamoDbEndpoint', {
-      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
-    });
-
-    // SSM Interface Endpoints (required for Session Manager)
-    this.networkAgentVpc.addInterfaceEndpoint('SsmEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SSM,
-      privateDnsEnabled: true,
-    });
-    this.networkAgentVpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
-      privateDnsEnabled: true,
-    });
-    this.networkAgentVpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
-      privateDnsEnabled: true,
-    });
-
-    // The single subnet in the VPC. We reference it explicitly (rather
-    // than passing `vpcSubnets` blindly) so the collector's primary
-    // ENI lands in the right place and its private IP is selectable
-    // (the agent's collector-readiness check does not need the IP, but
-    // future operator tooling may).
-    const collectorSubnet = this.networkAgentVpc.selectSubnets({
-      subnetGroupName: 'CollectorSubnet',
-    });
+      // SSM Interface Endpoints (required for Session Manager)
+      this.networkAgentVpc.addInterfaceEndpoint('SsmEndpoint', {
+        service: ec2.InterfaceVpcEndpointAwsService.SSM,
+        privateDnsEnabled: true,
+      });
+      this.networkAgentVpc.addInterfaceEndpoint('SsmMessagesEndpoint', {
+        service: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
+        privateDnsEnabled: true,
+      });
+      this.networkAgentVpc.addInterfaceEndpoint('Ec2MessagesEndpoint', {
+        service: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
+        privateDnsEnabled: true,
+      });
+    }
 
     // ----- Collector security group (Reqs 6.2, 6.6) -----------------------
     //
@@ -1892,12 +1956,12 @@ export class NetworkInfraStack extends BaseInfraStack {
       allowAllOutbound: true,
     });
     this.collectorSecurityGroup.addIngressRule(
-      ec2.Peer.ipv4(NETWORK_AGENT_VPC_CIDR),
+      ec2.Peer.ipv4(resolvedVpcCidr),
       ec2.Port.udp(VXLAN_UDP_PORT),
       'VXLAN-encapsulated mirrored traffic from in-VPC sources (UDP/4789).',
     );
     this.collectorSecurityGroup.addIngressRule(
-      ec2.Peer.ipv4(NETWORK_AGENT_VPC_CIDR),
+      ec2.Peer.ipv4(resolvedVpcCidr),
       ec2.Port.tcp(COLLECTOR_HEALTHCHECK_PORT),
       'NLB Traffic Mirror Target health check (TCP/8081) from in-VPC NLB nodes.',
     );
@@ -2063,7 +2127,7 @@ export class NetworkInfraStack extends BaseInfraStack {
     }).getImage(this).imageId;
 
     const collectorCfnInstance = new ec2.CfnInstance(this, `CollectorInstance${bootstrapHash}`, {
-      instanceType: 't3.small',
+      instanceType: resolvedInstanceType,
       imageId: collectorAmiId,
       iamInstanceProfile: collectorInstanceProfile.ref,
       networkInterfaces: [
@@ -2081,7 +2145,7 @@ export class NetworkInfraStack extends BaseInfraStack {
         {
           deviceName: '/dev/xvda',
           ebs: {
-            volumeSize: COLLECTOR_ROOT_VOLUME_GIB,
+            volumeSize: resolvedVolumeGib,
             volumeType: 'gp3',
             encrypted: true,
             deleteOnTermination: true,
@@ -2195,7 +2259,9 @@ export class NetworkInfraStack extends BaseInfraStack {
       vpc: this.networkAgentVpc,
       internetFacing: false,
       crossZoneEnabled: true,
-      vpcSubnets: { subnetGroupName: 'CollectorSubnet' },
+      vpcSubnets: isExistingVpc
+        ? { subnets: collectorSubnet.subnets }
+        : { subnetGroupName: 'CollectorSubnet' },
       loadBalancerName: `goat-collector-nlb-${this.region}`,
     });
 

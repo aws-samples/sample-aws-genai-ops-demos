@@ -301,6 +301,83 @@ aws cognito-idp admin-list-groups-for-user \
 
 Users not in this group will see capture-related prompt templates in a disabled state in the frontend, and the Orchestration Agent will refuse capture lifecycle requests with a message identifying the required group.
 
+## Deploying in Your Own VPC (Bring Your Own VPC)
+
+By default, GOAT creates a dedicated demo VPC (`10.99.0.0/16`) with the collector, NLB, and VPC endpoints pre-configured. To capture traffic from your own workloads instead, deploy the Network Agent into your existing VPC.
+
+### Prerequisites
+
+**Same-account requirement:** GOAT must be deployed in the same AWS account as the workloads you want to capture. VPC Traffic Mirroring does not support cross-account sessions.
+
+**Tag your ENIs for capture opt-in:**
+
+Every ENI you want to mirror must carry the tag:
+```
+goat-network-capture-allowed = true
+```
+
+Add it to either the ENI or its parent EC2 instance:
+```bash
+aws ec2 create-tags --resources i-0abc123def456 --tags Key=goat-network-capture-allowed,Value=true
+```
+
+Without this tag, `start_capture` is rejected. This is an intentional safety gate — GOAT never mirrors traffic from workloads that haven't been explicitly opted in.
+
+**Subnet connectivity:** The subnet(s) where the collector is placed must have access to:
+- Amazon S3 (for pcap uploads)
+- Amazon DynamoDB (for VNI lookup reads)
+- Systems Manager (for operator SSM access)
+
+This can be via VPC endpoints, a NAT Gateway, or any existing internet path. If your subnet already has these, pass `-SkipVpcEndpoints` to avoid creating duplicates.
+
+**IAM — the Network Agent runtime role:**
+The agent's IAM role has `ec2:CreateTrafficMirrorSession` and `ec2:DeleteTrafficMirrorSession` scoped to all network interfaces in the deploying account and region (`arn:aws:ec2:<region>:<account>:network-interface/*`). This means the agent can mirror **any ENI in the account** — the application-level opt-in tag (`goat-network-capture-allowed=true`) is the control that restricts which ENIs are actually capturable. No changes to the agent's IAM are needed when targeting customer workloads in the same account.
+
+**IAM — no changes needed on your workloads:**
+- Your instances do not need any additional IAM permissions
+- Your security groups do not need inbound rules — mirroring is a passive VPC-level copy
+- The only IAM requirement is that whoever adds the opt-in tag has `ec2:CreateTags` on the target resources
+
+**Cognito user group:** Users who trigger captures must be in the `GOATNetworkCaptureUsers` Cognito group (added during user creation). Read-only actions (list ENIs, query pcap data) work without group membership.
+
+### Deployment
+
+```powershell
+.\deploy-all.ps1 `
+  -DeploymentMode full `
+  -VpcId "vpc-0abc123def456" `
+  -SubnetIds "subnet-aaa111,subnet-bbb222" `
+  -VpcCidr "10.0.0.0/16" `
+  -SkipVpcEndpoints
+```
+
+Or via CDK directly:
+```powershell
+npx cdk deploy GOATNetworkInfra-us-east-1 `
+  -c goatExistingVpcId=vpc-0abc123def456 `
+  -c goatCollectorSubnetIds=subnet-aaa111,subnet-bbb222 `
+  -c goatVpcCidr=10.0.0.0/16 `
+  -c goatSkipVpcEndpoints=true
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `VpcId` | Yes | Your existing VPC ID. The collector and NLB deploy here. |
+| `SubnetIds` | Yes | Comma-separated subnet ID(s) for the collector. Can be one (single-AZ) or multiple (multi-AZ NLB). |
+| `VpcCidr` | Recommended | Your VPC's CIDR block (e.g. `10.0.0.0/16`). Used in the collector security group to scope VXLAN ingress. Falls back to `0.0.0.0/0` if omitted. |
+| `SkipVpcEndpoints` | Optional | Skip creating S3/DynamoDB/SSM VPC endpoints if your subnets already have connectivity. |
+| `CollectorInstanceType` | Optional | Default: `t3.small`. Use `t3.medium` or `m5.large` for heavy workloads. |
+| `CollectorVolumeGib` | Optional | Default: `30`. Increase for long-running captures. |
+
+### What GOAT provisions in your VPC
+
+- 1× EC2 instance (collector) with a dedicated security group (UDP/4789 inbound from VPC CIDR)
+- 1× internal Network Load Balancer (Traffic Mirror target, cross-AZ)
+- 1× Traffic Mirror filter (TCP/UDP/ICMP, both directions)
+- DynamoDB tables and S3 bucket for capture state and pcap data (these are account-level, not VPC-specific)
+
+GOAT does **not** modify your existing route tables, security groups, NACLs, or instances.
+
 ## Demo Scenarios
 
 G.O.A.T. includes pre-built demo scenarios with provisioning scripts that create controlled sets of AWS resources, generating data across all six agent domains. This lets you demonstrate cross-domain correlation with real operational data.
@@ -369,38 +446,31 @@ Other suggested queries for Scenario B:
 
 > **Note:** Scenario B depends on the real CloudWatch health event from April 1, 2026 being visible in the AWS Health API history. If the event has aged out of the Health API retention window, the Health agent will not return it — but the Support case still demonstrates cross-domain querying. Scenario B creates no billable resources.
 
-### Scenario C: TLS Fragmentation Reproduction
+### Scenario C: Network Connectivity Investigation
 
-Reproduces the AWS Network Firewall + Amazon Linux 2023 OpenSSL 3.5.5 ML-KEM TLS Client Hello fragmentation failure mode. Provisions an EKS cluster, an AWS Network Firewall with the legacy `drop established` configuration, and a test pod that triggers the failure against ECR — enabling the Network Agent to detect and correlate the issue with Health events and Support data.
+Reproduces a network connectivity failure caused by AWS Network Firewall stateful TLS inspection. Provisions an EC2 instance (AL2023, t3.micro) behind an AWS Network Firewall with the legacy `drop_established` default action, routed via a Transit Gateway. The instance's curl with ML-KEM (X25519MLKEM768) generates oversized TLS Client Hello messages that fragment across multiple TCP segments — enabling the Network Agent to detect the firewall drop and identify the root cause.
 
 **Setup:**
 
-```bash
-# macOS / Linux
-cd operations-automation/ai-operations-assistant/demo-scenarios
-chmod +x setup-scenario-tls.sh
-./setup-scenario-tls.sh
-```
-
 ```powershell
-# Windows (PowerShell)
+# Deploy via CDK (after deploy-all.ps1)
 cd operations-automation\ai-operations-assistant\demo-scenarios
-.\setup-scenario-tls.ps1
+.\deploy-demo-scenarios.ps1 -Scenario connectivity
 ```
 
 **Suggested demo query:**
 
 ```
-Capture traffic from the EKS test pod and explain why ECR connections fail
+Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connection is routed through the TGW and the Network Firewall in the inspection VPC but it is dropped.
 ```
 
 Other suggested queries:
-- "Why does my EKS pod fail to reach ECR?"
-- "Start a capture on the EKS node ENI and check for TLS fragmentation"
+- "My EC2 instance cannot connect to ECR over HTTPS"
+- "Help me investigate case 178094835100381"
 
-**Expected agent correlation:** The orchestration agent correlates the Amazon Linux 2023 update event (OpenSSL 3.5.5 with ML-KEM) from the Health agent, the TLS Client Hello fragmentation and middlebox RSTs from the Network agent, and the known issue identifier from the Support agent into a single root-cause explanation.
+**Expected agent correlation:** The orchestration agent discovers the capture-eligible ENI, proposes a packet capture, identifies fragmented TLS Client Hello messages and middlebox-originated TCP RSTs from the Network Firewall, then recommends switching from `aws:drop_established` to `aws:drop_established_app_layer`.
 
-> **Cost note:** Scenario C creates billable resources — an EKS cluster (1–2 t3.medium nodes), an AWS Network Firewall, and a dedicated VPC. Run the cleanup script after your demo to avoid ongoing charges. All resources are tagged with `goat-demo=true` and `goat-scenario=tls-fragmentation`.
+> **Cost note:** Scenario C creates billable resources — a Transit Gateway, an AWS Network Firewall, a NAT Gateway, and a t3.micro EC2 instance. Run the cleanup script after your demo to avoid ongoing charges. All resources are tagged with `goat-demo=true` and `goat-scenario=connectivity`.
 
 ### Cleanup
 
@@ -419,7 +489,7 @@ cd operations-automation\ai-operations-assistant\demo-scenarios
 .\cleanup-scenarios.ps1
 ```
 
-The cleanup script finds all resources tagged with `goat-demo=true` (including `goat-scenario=tls-fragmentation` resources) and removes them in dependency order. Scripts are idempotent — safe to re-run.
+The cleanup script finds all resources tagged with `goat-demo=true` (including `goat-scenario=connectivity` resources) and removes them in dependency order. Scripts are idempotent — safe to re-run.
 
 For detailed scenario descriptions, step-by-step instructions, and expected agent correlations, see the [Demo Scenarios Guide](./demo-scenarios/README.md).
 
@@ -477,6 +547,16 @@ For detailed architecture, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 - If a stack is stuck, check CloudFormation events in the AWS Console
 
 ### Runtime Issues
+
+**"User pool client does not exist" error on sign-in**
+- This happens when the frontend was built with Cognito config from a prior deployment. The `deploy-all.ps1` script cleans stale config automatically, but if you deployed stacks manually after a partial failure, the frontend may have old values baked in.
+- Fix: delete `frontend/.env.production.local` and `frontend/dist/`, then redeploy the frontend:
+  ```powershell
+  Remove-Item frontend\.env.production.local, frontend\dist -Recurse -Force
+  .\scripts\build-frontend.ps1 -UserPoolId <pool-id> -UserPoolClientId <client-id> -IdentityPoolId <identity-pool-id> -AgentRuntimeArn <orch-arn> -Region <region>
+  cd infrastructure\cdk
+  npx cdk deploy GOATFrontend-<region> --exclusively --require-approval never
+  ```
 
 **"No prompt found in payload" error**
 - Verify the frontend is sending `{ "prompt": "your question" }` format
@@ -944,44 +1024,42 @@ Agent: **Case Summary**
          immediate workaround is needed before the firewall rule update
 ```
 
-### TLS Fragmentation Reproduction Scenario
+### Network Connectivity Investigation Scenario
 
 **Purpose:**
-Reproduces the AWS Network Firewall + Amazon Linux 2023 OpenSSL 3.5.5 ML-KEM TLS Client Hello fragmentation failure mode, demonstrating how the Network Agent detects and correlates the issue with Health events and Support case data.
+Demonstrates how the Network Agent detects and diagnoses a network connectivity failure caused by AWS Network Firewall stateful TLS inspection. The scenario provisions a centralized inspection architecture (Transit Gateway + Network Firewall) where an EC2 instance's ML-KEM TLS Client Hello is dropped because the firewall can't read the SNI from fragmented TCP segments.
 
 **Prerequisites:**
 - G.O.A.T. deployed with the Network Agent module (`--mode network` or `--mode full`)
 - Network capture authorization (user in `GOATNetworkCaptureUsers` group)
-- EKS cluster access permissions for the scenario VPC
-- At least one ENI tagged with `goat-network-capture-allowed=true` in the scenario VPC
+- Demo Scenario C deployed (`deploy-demo-scenarios.ps1 -Scenario connectivity`)
+- At least one ENI tagged with `goat-network-capture-allowed=true` in the GOAT VPC
 
 **Expected Agent Correlation:**
-- **Health domain:** Amazon Linux 2023 update event (AL2023-2026-004) showing OpenSSL 3.5.5 upgrade with ML-KEM enabled by default
-- **Network domain:** TLS Client Hello fragmentation detected — `check_tls_hello_size` returns frames exceeding 1400 bytes with fragment count > 1; `classify_tcp_resets` shows middlebox-originated RSTs
-- **Support domain:** Known issue identifier linking the AL2023 OpenSSL update to Network Firewall SNI inspection failures with the legacy `drop established` configuration
+- **Network domain:** TLS Client Hello fragmentation detected — `check_tls_hello_size` returns frames exceeding 1400 bytes with fragment count > 1; `classify_tcp_resets` shows middlebox-originated RSTs; `diagnose_tcp_stream` provides a comprehensive per-stream report
+- **Support domain:** Matching support case describing the ECR connectivity issue and Network Firewall configuration
 
 **Suggested Demo Queries:**
 
 ```
-Capture traffic from the EKS test pod and explain why ECR connections fail
+Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connection is routed through the TGW and the Network Firewall in the inspection VPC but it is dropped.
 ```
 
 ```
-Why does my EKS pod fail to reach ECR?
+My EC2 instance cannot connect to ECR over HTTPS
 ```
 
 ```
-Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.us-east-1.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-tls-inspection-vpc but it is dropped.
+Help me investigate case 178094835100381
 ```
 
 **Expected Combined Output:**
-- The agent identifies the AL2023 OpenSSL update as the triggering change
-- Packet capture shows TLS Client Hello messages of ~3.5 KB split across multiple TCP segments
-- The Network Firewall's legacy `drop established` rule fails to extract SNI from fragmented records
+- The agent discovers the capture-eligible ENI and proposes a packet capture
+- Packet capture shows TLS Client Hello messages split across multiple TCP segments (exceeds 1460-byte MSS)
+- The Network Firewall's legacy `drop_established` default action fails to extract SNI from fragmented records
 - RST packets are classified as originating from a middlebox (the Network Firewall)
 - The agent recommends switching to `aws:drop_established_app_layer` which reassembles multi-packet TLS Client Hello messages before rule evaluation
-- The agent links the finding to the known Support issue for this configuration
-- A complete root-cause chain is presented: AL2023 update → ML-KEM key share → oversized Client Hello → fragmentation → NFW SNI inspection failure → connection reset
+- A complete root-cause chain is presented: ML-KEM key share → oversized Client Hello → TCP fragmentation → NFW SNI inspection failure → connection reset
 
 ## Contributing
 

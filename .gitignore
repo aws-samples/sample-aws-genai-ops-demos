@@ -153,3 +153,6 @@ ssm-*.txt
 
 # Per-account reinstall scripts (contain profile names / account-specific config)
 reinstall-goat.ps1
+
+# Demo comparison scripts (account-specific, for slide screenshots)
+demo-reachability-analyzer.ps1

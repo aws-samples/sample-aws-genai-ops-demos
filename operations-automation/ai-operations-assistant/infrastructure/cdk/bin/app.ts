@@ -103,6 +103,36 @@ const curInfra = new CURInfraStack(app, `GOATCURInfra-${region}`, { env });
 const networkInfra = new NetworkInfraStack(app, `GOATNetworkInfra-${region}`, {
   env,
   networkDataBucketName: resolvedNetworkDataBucketName,
+  // "Bring Your Own VPC" context values — when set, the collector deploys
+  // into an existing customer VPC/subnet instead of creating a dedicated one.
+  // Pass via: npx cdk deploy -c goatExistingVpcId=vpc-xxx -c goatCollectorSubnetIds=subnet-aaa,subnet-bbb
+  existingVpcId: (() => {
+    const v = app.node.tryGetContext('goatExistingVpcId');
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  })(),
+  collectorSubnetIds: (() => {
+    const v = app.node.tryGetContext('goatCollectorSubnetIds');
+    if (typeof v === 'string' && v.trim()) {
+      return v.trim().split(',').map((s: string) => s.trim()).filter((s: string) => s);
+    }
+    return undefined;
+  })(),
+  vpcCidr: (() => {
+    const v = app.node.tryGetContext('goatVpcCidr');
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  })(),
+  skipVpcEndpoints: (() => {
+    const v = app.node.tryGetContext('goatSkipVpcEndpoints');
+    return v === 'true' || v === true ? true : undefined;
+  })(),
+  collectorInstanceType: (() => {
+    const v = app.node.tryGetContext('goatCollectorInstanceType');
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  })(),
+  collectorVolumeGib: (() => {
+    const v = app.node.tryGetContext('goatCollectorVolumeGib');
+    return typeof v === 'string' && v.trim() ? parseInt(v.trim(), 10) : undefined;
+  })(),
 });
 if (networkDataStack !== undefined) {
   networkInfra.addDependency(networkDataStack);

@@ -7,7 +7,17 @@ param(
     [ValidateSet("full", "cost", "health", "support", "trusted-advisor", "cur", "network")]
     [string]$DeploymentMode = "full",
 
-    [string]$OrchModelId = ""
+    [string]$OrchModelId = "",
+
+    # --- "Bring Your Own VPC" parameters (Network Agent) ---
+    # When set, the collector deploys into an existing VPC/subnet.
+    # Leave unset for the default demo VPC.
+    [string]$VpcId = "",
+    [string]$SubnetIds = "",       # Comma-separated subnet IDs
+    [string]$VpcCidr = "",         # e.g. "10.0.0.0/16"
+    [switch]$SkipVpcEndpoints,
+    [string]$CollectorInstanceType = "",
+    [int]$CollectorVolumeGib = 0
 )
 
 # ---------------------------------------------------------------------------
@@ -43,6 +53,18 @@ $cdkDir = "infrastructure/cdk"
 Write-Host "`nInstalling frontend dependencies..." -ForegroundColor Yellow
 Write-Host "      (Installing React, Vite, Cognito SDK, and Cloudscape components)" -ForegroundColor Gray
 Push-Location frontend
+# Remove stale environment config and build artifacts from prior installs.
+# The correct values are regenerated in section 7 after all stacks are deployed.
+# Without this, a partial redeploy can leave old Cognito/ARN values in the
+# build, causing "User pool client does not exist" errors at sign-in.
+if (Test-Path ".env.production.local") {
+    Remove-Item ".env.production.local" -Force
+    Write-Host "      Removed stale .env.production.local (will regenerate after deploy)" -ForegroundColor DarkGray
+}
+if (Test-Path "dist") {
+    Remove-Item "dist" -Recurse -Force
+    Write-Host "      Removed stale dist/ (will rebuild after deploy)" -ForegroundColor DarkGray
+}
 npm install
 Pop-Location
 
@@ -85,10 +107,23 @@ function Deploy-Stack {
     Write-Host "`nDeploying $StackName..." -ForegroundColor Yellow
     Write-Host "      ($Description)" -ForegroundColor Gray
 
+    # Build CDK context args for "Bring Your Own VPC" if provided
+    $extraArgs = ""
+    if ($StackName -match "NetworkInfra" -or $StackName -match "NetworkData") {
+        $contextParts = @()
+        if (-not [string]::IsNullOrEmpty($VpcId)) { $contextParts += "-c goatExistingVpcId=$VpcId" }
+        if (-not [string]::IsNullOrEmpty($SubnetIds)) { $contextParts += "-c goatCollectorSubnetIds=$SubnetIds" }
+        if (-not [string]::IsNullOrEmpty($VpcCidr)) { $contextParts += "-c goatVpcCidr=$VpcCidr" }
+        if ($SkipVpcEndpoints) { $contextParts += "-c goatSkipVpcEndpoints=true" }
+        if (-not [string]::IsNullOrEmpty($CollectorInstanceType)) { $contextParts += "-c goatCollectorInstanceType=$CollectorInstanceType" }
+        if ($CollectorVolumeGib -gt 0) { $contextParts += "-c goatCollectorVolumeGib=$CollectorVolumeGib" }
+        if ($contextParts.Count -gt 0) { $extraArgs = $contextParts -join " " }
+    }
+
     if ($SkipBootstrap) {
-        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $cdkDir -StackName $StackName -SkipBootstrap
+        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $cdkDir -StackName $StackName -SkipBootstrap -ExtraArgs $extraArgs
     } else {
-        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $cdkDir -StackName $StackName
+        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $cdkDir -StackName $StackName -ExtraArgs $extraArgs
     }
 
     if ($LASTEXITCODE -ne 0) {
