@@ -254,6 +254,35 @@ if ($DeploymentMode -eq "full") {
 }
 
 # ---------------------------------------------------------------------------
+# 5b. DevOps Agent Integration (MCP Server registration)
+# ---------------------------------------------------------------------------
+if ($DeploymentMode -eq "full") {
+    Write-Host "`n--- DevOps Agent Integration ---" -ForegroundColor Magenta
+
+    Deploy-Stack -StackName "GOATDevOpsIntegration-$region" `
+        -Description "Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication" `
+        -SkipBootstrap
+
+    # Retrieve MCP endpoint and registration command from stack outputs
+    $devopsStackName = "GOATDevOpsIntegration-$region"
+    $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager
+    $registerCommand = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='RegisterCommand'].OutputValue" --output text --no-cli-pager
+    $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager
+
+    # Register MCP server with DevOps Agent
+    Write-Host "`nRegistering MCP server with DevOps Agent..." -ForegroundColor Cyan
+    try {
+        Invoke-Expression $registerCommand
+        $registrationStatus = "Registered"
+        Write-Host "  DevOps Agent registration successful" -ForegroundColor Green
+    } catch {
+        $registrationStatus = "Failed (manual registration required)"
+        Write-Host "  WARNING: DevOps Agent registration failed. Register manually:" -ForegroundColor Yellow
+        Write-Host "  $registerCommand" -ForegroundColor Yellow
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 6. Retrieve stack outputs for frontend build
 # ---------------------------------------------------------------------------
 Write-Host "`n--- Retrieving Stack Outputs ---" -ForegroundColor Magenta
@@ -352,6 +381,11 @@ if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
 }
 if ($DeploymentMode -eq "full") {
     Write-Host "  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)" -ForegroundColor Cyan
+}
+if ($DeploymentMode -eq "full" -and -not [string]::IsNullOrEmpty($mcpEndpointUrl)) {
+    Write-Host "  MCP Endpoint:         $mcpEndpointUrl" -ForegroundColor Cyan
+    Write-Host "  Health Check:         $healthCheckUrl" -ForegroundColor Cyan
+    Write-Host "  Registration:         $registrationStatus" -ForegroundColor Cyan
 }
 if (-not [string]::IsNullOrEmpty($OrchModelId)) {
     Write-Host "  Orchestration Model:  $OrchModelId" -ForegroundColor Cyan

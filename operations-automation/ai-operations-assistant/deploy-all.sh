@@ -311,6 +311,34 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. DevOps Agent Integration (MCP Server registration)
+# ---------------------------------------------------------------------------
+if [ "$DEPLOYMENT_MODE" = "full" ]; then
+    echo -e "\n\033[0;35m--- DevOps Agent Integration ---\033[0m"
+
+    deploy_stack "GOATDevOpsIntegration-$region" \
+        "Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication" \
+        "true"
+
+    # Retrieve MCP endpoint and registration command from stack outputs
+    devops_stack_name="GOATDevOpsIntegration-$region"
+    mcp_endpoint_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager)
+    register_command=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='RegisterCommand'].OutputValue" --output text --no-cli-pager)
+    health_check_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager)
+
+    # Register MCP server with DevOps Agent
+    echo -e "\n\033[0;36mRegistering MCP server with DevOps Agent...\033[0m"
+    if eval "$register_command" 2>/dev/null; then
+        registration_status="Registered"
+        echo -e "\033[0;32m  DevOps Agent registration successful\033[0m"
+    else
+        registration_status="Failed (manual registration required)"
+        echo -e "\033[0;33m  WARNING: DevOps Agent registration failed. Register manually:\033[0m"
+        echo -e "\033[0;33m  $register_command\033[0m"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Retrieve stack outputs for frontend build
 # ---------------------------------------------------------------------------
 echo -e "\n\033[0;35m--- Retrieving Stack Outputs ---\033[0m"
@@ -422,6 +450,11 @@ if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
 fi
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     echo -e "\033[0;36m  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)\033[0m"
+fi
+if [ "$DEPLOYMENT_MODE" = "full" ] && [ -n "$mcp_endpoint_url" ]; then
+    echo -e "\033[0;36m  MCP Endpoint:         $mcp_endpoint_url\033[0m"
+    echo -e "\033[0;36m  Health Check:         $health_check_url\033[0m"
+    echo -e "\033[0;36m  Registration:         $registration_status\033[0m"
 fi
 if [ -n "$ORCH_MODEL_ID" ]; then
     echo -e "\033[0;36m  Orchestration Model:  $ORCH_MODEL_ID\033[0m"

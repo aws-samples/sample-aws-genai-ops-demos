@@ -166,5 +166,12 @@ reinstall-goat.sh
 vitest.config.ts
 vitest.config.js
 
+# TypeScript build cache
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+
+# Internal planning documents
+PRFAQ*.docx
+
 # Property-based testing database
 .hypothesis/
