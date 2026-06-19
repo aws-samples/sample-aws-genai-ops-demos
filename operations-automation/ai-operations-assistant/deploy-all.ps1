@@ -110,7 +110,10 @@ function Deploy-Stack {
     # Pre-check: if the stack is stuck in DELETE_FAILED from a prior run,
     # force-delete it first. This is common with AgentCore runtimes that
     # timeout during deletion — not a real error, just a CFN timeout.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $stackStatus = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].StackStatus" --output text --no-cli-pager 2>$null
+    $ErrorActionPreference = $prevEAP
     if ($stackStatus -eq "DELETE_FAILED") {
         Write-Host "      Stack is in DELETE_FAILED state (normal - AgentCore runtime deletion timeout)." -ForegroundColor DarkYellow
         Write-Host "      Force-deleting before redeploy..." -ForegroundColor DarkYellow
@@ -275,7 +278,7 @@ if ($DeploymentMode -eq "full") {
         $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>$null
         $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>$null
     } else {
-        Write-Host "  DevOps integration directory not found — skipping." -ForegroundColor DarkGray
+        Write-Host "  DevOps integration directory not found - skipping." -ForegroundColor DarkGray
     }
 }
 
