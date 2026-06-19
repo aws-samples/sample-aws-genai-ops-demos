@@ -259,26 +259,23 @@ if ($DeploymentMode -eq "full") {
 if ($DeploymentMode -eq "full") {
     Write-Host "`n--- DevOps Agent Integration ---" -ForegroundColor Magenta
 
-    Deploy-Stack -StackName "GOATDevOpsIntegration-$region" `
-        -Description "Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication" `
-        -SkipBootstrap
+    # The DevOps integration has its own CDK app (separate from the main app)
+    $devopsIntegrationCdkDir = Join-Path $PSScriptRoot "devops-integration\infrastructure\cdk"
+    if (Test-Path $devopsIntegrationCdkDir) {
+        Write-Host "`nDeploying GOATDevOpsIntegration-$region..." -ForegroundColor Yellow
+        Write-Host "      (Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication)" -ForegroundColor Gray
+        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $devopsIntegrationCdkDir -StackName "GOATDevOpsIntegration-$region" -SkipBootstrap
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  WARNING: DevOps Agent Integration deployment failed (non-fatal)." -ForegroundColor Yellow
+            Write-Host "  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately." -ForegroundColor Yellow
+        }
 
-    # Retrieve MCP endpoint and registration command from stack outputs
-    $devopsStackName = "GOATDevOpsIntegration-$region"
-    $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager
-    $registerCommand = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='RegisterCommand'].OutputValue" --output text --no-cli-pager
-    $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager
-
-    # Register MCP server with DevOps Agent
-    Write-Host "`nRegistering MCP server with DevOps Agent..." -ForegroundColor Cyan
-    try {
-        Invoke-Expression $registerCommand
-        $registrationStatus = "Registered"
-        Write-Host "  DevOps Agent registration successful" -ForegroundColor Green
-    } catch {
-        $registrationStatus = "Failed (manual registration required)"
-        Write-Host "  WARNING: DevOps Agent registration failed. Register manually:" -ForegroundColor Yellow
-        Write-Host "  $registerCommand" -ForegroundColor Yellow
+        # Retrieve MCP endpoint and registration command from stack outputs
+        $devopsStackName = "GOATDevOpsIntegration-$region"
+        $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>$null
+        $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>$null
+    } else {
+        Write-Host "  DevOps integration directory not found — skipping." -ForegroundColor DarkGray
     }
 }
 
@@ -385,7 +382,6 @@ if ($DeploymentMode -eq "full") {
 if ($DeploymentMode -eq "full" -and -not [string]::IsNullOrEmpty($mcpEndpointUrl)) {
     Write-Host "  MCP Endpoint:         $mcpEndpointUrl" -ForegroundColor Cyan
     Write-Host "  Health Check:         $healthCheckUrl" -ForegroundColor Cyan
-    Write-Host "  Registration:         $registrationStatus" -ForegroundColor Cyan
 }
 if (-not [string]::IsNullOrEmpty($OrchModelId)) {
     Write-Host "  Orchestration Model:  $OrchModelId" -ForegroundColor Cyan

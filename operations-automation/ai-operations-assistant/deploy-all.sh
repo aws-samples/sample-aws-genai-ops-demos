@@ -316,25 +316,23 @@ fi
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     echo -e "\n\033[0;35m--- DevOps Agent Integration ---\033[0m"
 
-    deploy_stack "GOATDevOpsIntegration-$region" \
-        "Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication" \
-        "true"
+    # The DevOps integration has its own CDK app (separate from the main app)
+    devops_integration_cdk_dir="$SCRIPT_DIR/devops-integration/infrastructure/cdk"
+    if [ -d "$devops_integration_cdk_dir" ]; then
+        echo -e "\n\033[0;33mDeploying GOATDevOpsIntegration-$region...\033[0m"
+        echo "      (Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication)"
+        source "../../shared/scripts/deploy-cdk.sh" "$devops_integration_cdk_dir" "GOATDevOpsIntegration-$region" "true"
+        if [ $? -ne 0 ]; then
+            echo -e "\033[0;33m  WARNING: DevOps Agent Integration deployment failed (non-fatal).\033[0m"
+            echo -e "\033[0;33m  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately.\033[0m"
+        fi
 
-    # Retrieve MCP endpoint and registration command from stack outputs
-    devops_stack_name="GOATDevOpsIntegration-$region"
-    mcp_endpoint_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager)
-    register_command=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='RegisterCommand'].OutputValue" --output text --no-cli-pager)
-    health_check_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager)
-
-    # Register MCP server with DevOps Agent
-    echo -e "\n\033[0;36mRegistering MCP server with DevOps Agent...\033[0m"
-    if eval "$register_command" 2>/dev/null; then
-        registration_status="Registered"
-        echo -e "\033[0;32m  DevOps Agent registration successful\033[0m"
+        # Retrieve MCP endpoint from stack outputs
+        devops_stack_name="GOATDevOpsIntegration-$region"
+        mcp_endpoint_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
+        health_check_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
     else
-        registration_status="Failed (manual registration required)"
-        echo -e "\033[0;33m  WARNING: DevOps Agent registration failed. Register manually:\033[0m"
-        echo -e "\033[0;33m  $register_command\033[0m"
+        echo "  DevOps integration directory not found — skipping."
     fi
 fi
 
@@ -454,7 +452,6 @@ fi
 if [ "$DEPLOYMENT_MODE" = "full" ] && [ -n "$mcp_endpoint_url" ]; then
     echo -e "\033[0;36m  MCP Endpoint:         $mcp_endpoint_url\033[0m"
     echo -e "\033[0;36m  Health Check:         $health_check_url\033[0m"
-    echo -e "\033[0;36m  Registration:         $registration_status\033[0m"
 fi
 if [ -n "$ORCH_MODEL_ID" ]; then
     echo -e "\033[0;36m  Orchestration Model:  $ORCH_MODEL_ID\033[0m"
