@@ -67,27 +67,16 @@ export class GOATDevOpsIntegrationStack extends cdk.Stack {
 
     // ─── Register MCP Server with DevOps Agent ─────────────────────────────
     // Uses AWS::DevOpsAgent::Service with mcpserversigv4 service type
-    // This auto-registers the MCP server so DevOps Agent can discover it
-
-    new cdk.CfnResource(this, "McpServiceRegistration", {
-      type: "AWS::DevOpsAgent::Service",
-      properties: {
-        ServiceType: "mcpserversigv4",
-        ServiceDetails: {
-          MCPServerSigV4: {
-            Name: `goat-network-agent-${region}`,
-            Endpoint: integration.mcpEndpointUrl,
-            Description:
-              "GOAT Network Agent - packet-level L7 diagnostics for VPC traffic analysis",
-            AuthorizationConfig: {
-              Region: region,
-              Service: "execute-api",
-              RoleArn: integration.devOpsAgentRoleArn,
-            },
-          },
-        },
-      },
-    });
+    // ─── DevOps Agent Registration ──────────────────────────────────────────
+    // NOTE: Registration with DevOps Agent is handled externally.
+    // The AWS::DevOpsAgent::Service resource type fails with "AlreadyExists"
+    // if the service was previously registered (registration persists across
+    // stack deletions). The AwsCustomResource approach requires @aws-sdk/client-devopsagent
+    // which doesn't exist yet.
+    //
+    // Use the RegisterCommand stack output below for manual registration, or
+    // use the DevOps Agent console. Once registered, the service persists
+    // until explicitly deregistered.
 
     // ─── CDK Stack Outputs ────────────────────────────────────────────────
 
