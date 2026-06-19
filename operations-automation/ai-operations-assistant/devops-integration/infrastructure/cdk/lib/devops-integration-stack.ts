@@ -67,16 +67,103 @@ export class GOATDevOpsIntegrationStack extends cdk.Stack {
 
     // ─── Register MCP Server with DevOps Agent ─────────────────────────────
     // Uses AWS::DevOpsAgent::Service with mcpserversigv4 service type
-    // ─── DevOps Agent Registration ──────────────────────────────────────────
-    // NOTE: Registration with DevOps Agent is handled externally.
-    // The AWS::DevOpsAgent::Service resource type fails with "AlreadyExists"
-    // if the service was previously registered (registration persists across
-    // stack deletions). The AwsCustomResource approach requires @aws-sdk/client-devopsagent
-    // which doesn't exist yet.
-    //
-    // Use the RegisterCommand stack output below for manual registration, or
-    // use the DevOps Agent console. Once registered, the service persists
-    // until explicitly deregistered.
+    // ─── DevOps Agent Registration (Idempotent) ────────────────────────────
+    // Uses a Custom Resource Lambda that checks if the service is already
+    // registered before calling register. This avoids the "AlreadyExists"
+    // error that occurs with the raw AWS::DevOpsAgent::Service resource type
+    // (registrations persist across stack deletions).
+
+    const registrationServiceName = `goat-network-agent-${region}`;
+
+    const registerLambda = new lambda.Function(this, "RegisterServiceFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "index.handler",
+      timeout: cdk.Duration.seconds(60),
+      code: lambda.Code.fromInline(`
+const { execSync } = require('child_process');
+exports.handler = async (event) => {
+  const props = event.ResourceProperties;
+  const requestType = event.RequestType;
+  const physicalId = props.ServiceName || 'mcp-registration';
+
+  // On Delete, we intentionally do NOT deregister — the service should persist
+  if (requestType === 'Delete') {
+    return { PhysicalResourceId: physicalId, Data: { Status: 'Retained' } };
+  }
+
+  try {
+    // Check if already registered by listing services and grepping for our name
+    const listResult = execSync(
+      'aws devops-agent list-services --output json --no-cli-pager 2>/dev/null || echo "{\\"services\\":[]}"',
+      { encoding: 'utf-8', timeout: 30000 }
+    );
+    const services = JSON.parse(listResult);
+    const existing = (services.services || []).find(s =>
+      s.serviceDetails?.mcpServerSigV4?.name === props.ServiceName
+    );
+
+    if (existing) {
+      console.log('Service already registered:', props.ServiceName);
+      return { PhysicalResourceId: physicalId, Data: { Status: 'AlreadyRegistered', ServiceId: existing.serviceId || 'unknown' } };
+    }
+
+    // Not registered — register now
+    const registerCmd = [
+      'aws devops-agent register-service',
+      '--service mcpserversigv4',
+      '--name', JSON.stringify(props.ServiceName),
+      '--endpoint', JSON.stringify(props.Endpoint),
+      '--authorizationConfig', JSON.stringify(JSON.stringify(props.AuthorizationConfig)),
+      '--no-cli-pager'
+    ].join(' ');
+
+    console.log('Registering:', registerCmd);
+    const result = execSync(registerCmd, { encoding: 'utf-8', timeout: 30000 });
+    console.log('Registration result:', result);
+    return { PhysicalResourceId: physicalId, Data: { Status: 'Registered' } };
+  } catch (err) {
+    // If registration fails with AlreadyExists, treat as success
+    if (err.message && (err.message.includes('AlreadyExists') || err.message.includes('already exists'))) {
+      console.log('Service already exists (caught in error handler)');
+      return { PhysicalResourceId: physicalId, Data: { Status: 'AlreadyRegistered' } };
+    }
+    console.error('Registration failed:', err.message);
+    // Don't fail the stack — registration is non-critical
+    return { PhysicalResourceId: physicalId, Data: { Status: 'Failed', Error: err.message } };
+  }
+};
+`),
+    });
+
+    registerLambda.addToRolePolicy(
+      new cdk.aws_iam.PolicyStatement({
+        actions: ["devops-agent:RegisterService", "devops-agent:ListServices"],
+        resources: ["*"],
+      })
+    );
+
+    const registrationProvider = new cdk.custom_resources.Provider(
+      this,
+      "RegistrationProvider",
+      {
+        onEventHandler: registerLambda,
+      }
+    );
+
+    new cdk.CustomResource(this, "McpServiceRegistration", {
+      serviceToken: registrationProvider.serviceToken,
+      properties: {
+        ServiceName: registrationServiceName,
+        Endpoint: integration.mcpEndpointUrl,
+        AuthorizationConfig: {
+          region: region,
+          service: "execute-api",
+          mcpRoleArn: integration.devOpsAgentRoleArn,
+        },
+        // Force update on redeploy by including endpoint URL (changes if API GW recreated)
+        EndpointHash: integration.mcpEndpointUrl,
+      },
+    });
 
     // ─── CDK Stack Outputs ────────────────────────────────────────────────
 
