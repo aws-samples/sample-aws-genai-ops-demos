@@ -71,7 +71,7 @@ Each sub-agent follows the same pattern:
 | Support | AWS Support | `describe_cases`, `describe_communications`, `search_cases` |
 | Trusted Advisor | Trusted Advisor v2 | `list_checks`, `list_recommendations` |
 | CUR | Athena (Cost and Usage Report) | `query_cur_data`, `get_resource_costs`, `analyze_usage_patterns` |
-| Network | EC2, DynamoDB, Athena, S3, EventBridge Scheduler, Step Functions | 21 actions (see below) |
+| Network | EC2, DynamoDB, Athena, S3, EventBridge Scheduler, Step Functions | 21 actions exposed via MCP (see below) |
 
 ### Network Agent — Extended Architecture
 
@@ -125,6 +125,107 @@ The Network Agent is the most complex sub-agent, providing on-demand VPC packet 
 6. Glue partition registered → Athena queryable
 7. Pcap Query Actions run SQL against `pcap_logs` with automatic `capture_id` predicate injection
 
+### DevOps Agent Integration (MCP)
+
+The Network Agent is also exposed to the **AWS DevOps Agent** via a native MCP (Model Context Protocol) server. This is a **SEPARATE** integration path from the GOAT chat application — the GOAT frontend uses the Strands Agent SDK and AgentCore runtimes directly, while DevOps Agent connects via JSON-RPC 2.0 over streamable HTTP with SigV4 authentication.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          AWS DevOps Agent                                 │
+│                        (MCP Client, SigV4)                               │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │ JSON-RPC 2.0 over HTTPS
+                               │ POST / (MCP messages)
+                               │ GET /health (monitoring)
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│            API Gateway (IAM Auth, execute-api:Invoke)                     │
+│                                                                          │
+│   POST /  →  Integration Lambda (MCP Handler)                            │
+│   GET /health  →  Integration Lambda (Health Check)                      │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   Integration Lambda (MCP Handler)                        │
+│                   Code.fromAsset('dist/') — esbuild bundled              │
+│                                                                          │
+│  ┌────────────────────┐                                                  │
+│  │  JSON-RPC 2.0      │                                                  │
+│  │  Router            │──→ initialize   → protocolVersion, capabilities  │
+│  │                    │──→ tools/list   → 21 MCP tool definitions        │
+│  │                    │──→ tools/call   → adapter → processInvocation    │
+│  │                    │──→ ping         → empty result                   │
+│  │                    │──→ notifications/initialized → HTTP 204           │
+│  └────────────────────┘                                                  │
+│           │                                                              │
+│           ▼ (tools/call only)                                            │
+│  ┌────────────────────────────────────────────────────────────┐          │
+│  │  tools/call Adapter                                        │          │
+│  │  params.name → action_name                                 │          │
+│  │  params.arguments → parameters                             │          │
+│  │  Mcp-Session-Id header → session_id (idempotency)          │          │
+│  └────────────────────────┬───────────────────────────────────┘          │
+│                           │                                              │
+│                           ▼                                              │
+│  ┌────────────────────────────────────────────────────────────┐          │
+│  │  processInvocation (existing business logic)                │          │
+│  │  validateRequest → checkAuthorization → checkRateLimit* →  │          │
+│  │  generateIdempotencyToken → invokeNetworkAgent → format    │          │
+│  │  * Rate limiter fails open (try-catch wrapper)             │          │
+│  └────────────────────────────────────────────────────────────┘          │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │ @aws-sdk/client-bedrock-agentcore
+                               │ InvokeAgentRuntimeCommand
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Network Agent Runtime (AgentCore)                      │
+│              NETWORK_AGENT_ARN env var → InvokeAgentRuntime               │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**MCP protocol flow:**
+1. DevOps Agent sends `initialize` → receives server capabilities (protocol version `2024-11-05`)
+2. DevOps Agent sends `tools/list` → receives 21 MCP tool definitions (23 in registry minus 2 hidden)
+3. DevOps Agent sends `tools/call` with tool name and arguments → adapter maps to `processInvocation` → Network Agent executes via `InvokeAgentRuntimeCommand` → response wrapped as `CallToolResult`
+
+**Hidden tools** (not exposed via `tools/list`):
+- `full_diagnostic` — composite action not supported by the Network Agent runtime directly
+- `cleanup_orphaned_sessions` — maintenance utility without a Network Agent counterpart
+
+**Agent proxy:**
+- Uses `@aws-sdk/client-bedrock-agentcore` with `InvokeAgentRuntimeCommand` (NOT `@aws-sdk/client-bedrock-agent-runtime` which is standard Bedrock Agents)
+- Payload format: `{"action": "action_name", "params": {...}}`
+- `NETWORK_AGENT_ARN` env var provides the runtime ARN
+
+**Registration:**
+- The `GOATDevOpsIntegration` CDK stack includes an `AWS::DevOpsAgent::Service` CloudFormation resource with type `mcpserversigv4`
+- This auto-registers the MCP server endpoint with DevOps Agent at deploy time — no manual CLI step required
+- The IAM role trusts `aidevops.amazonaws.com` with confused deputy protection (`aws:SourceAccount` + `aws:SourceArn` conditions)
+
+**Tool descriptions:**
+- Enriched workflow-aware descriptions (no `[Category:]` prefix)
+- `start_capture`, `stop_capture`, `transform_capture` include confirmation prompts ("IMPORTANT: Before calling this tool, you MUST stop and ask the user for explicit confirmation")
+- `query_pcap` uses `sql` parameter (not `query`)
+
+**Rate limiting:**
+- Rate limiter wrapped in try-catch — fails open if DynamoDB is unavailable
+- The Network Agent has its own rate limiting as a backstop
+- `AUTHORIZED_ROLE_ARNS=*` — API Gateway IAM auth is the real access gate
+
+**Key differences from GOAT chat path:**
+
+| Aspect | GOAT Chat App | DevOps Agent (MCP) |
+|--------|---------------|-------------------|
+| Protocol | Strands Agent SDK (AgentCore invoke) | JSON-RPC 2.0 over streamable HTTP |
+| Auth | Cognito → Identity Pool → SigV4 | IAM SigV4 (`aidevops.amazonaws.com` role) |
+| Discovery | Orchestration agent knows sub-agent ARNs | MCP `tools/list` returns 21 tool definitions |
+| Invocation | `{"action": "...", "params": {...}}` | `{"method": "tools/call", "params": {"name": "...", "arguments": {...}}}` |
+| Response | `DevOpsAgentResponse` envelope | `CallToolResult` (JSON-RPC 2.0 result) |
+| Session | DynamoDB conversation context | `Mcp-Session-Id` header |
+| Agent SDK | `@aws-sdk/client-bedrock-agentcore` | `@aws-sdk/client-bedrock-agentcore` (same) |
+| Access gate | Cognito group membership | API Gateway IAM auth (`AUTHORIZED_ROLE_ARNS=*`) |
+
 ## Infrastructure (CDK)
 
 All infrastructure is defined in TypeScript CDK with a base-class pattern:
@@ -144,6 +245,19 @@ infrastructure/cdk/
 │   ├── network-infra-stack.ts      # Extended: VPC, collector, NLB, DDB, Glue, SFN
 │   └── network-data-stack.ts       # Network data bucket (conditional)
 └── collector/                      # Collector bootstrap + bundled wheels
+
+devops-integration/
+├── dist/                                   # esbuild output (Code.fromAsset target)
+├── src/
+│   ├── constructs/
+│   │   └── agent-integration-template.ts  # Reusable CDK construct (MCP server)
+│   ├── lambda/                             # MCP handler, tools-call adapter, session mgr, agent-proxy
+│   ├── schemas/                            # Action schemas + MCP descriptions (21 exposed tools)
+│   └── types/                              # Shared interfaces (MCP types, errors)
+├── infrastructure/cdk/
+│   └── lib/devops-integration-stack.ts     # Stack using the template construct
+└── docs/
+    └── AGENT-INTEGRATION-GUIDE.md          # Integration guide for new agents
 ```
 
 **Stack dependency graph:**
@@ -154,11 +268,13 @@ Data ─────────────────────────
 CostInfra → CostRuntime ──────────────────────────────┤
 HealthInfra → HealthRuntime ──────────────────────────┤
 SupportInfra → SupportRuntime ────────────────────────┤
-TAInfra → TARunt ime ─────────────────────────────────┤
+TAInfra → TARuntime ──────────────────────────────────┤
 CURInfra → CURRuntime ───────────────────────────────┤
 NetworkData? → NetworkInfra → NetworkRuntime ──────────┤
                                                       │
 OrchInfra → OrchRuntime (receives all sub-agent ARNs) ┤
+                                                      │
+GOATDevOpsIntegration (MCP server for DevOps Agent) ──┤
                                                       │
                                       Frontend ◄──────┘
 ```
@@ -169,13 +285,13 @@ OrchInfra → OrchRuntime (receives all sub-agent ARNs) ┤
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    GOAT Network Agent VPC (10.99.0.0/16)                 │
 │                                                                         │
-│  ┌─────────────────────────┐   ┌──────────────────────────────────────┐│
-│  │ App Subnet (10.99.13/24)│   │ Collector Subnet (10.99.0/24)        ││
-│  │                         │   │  [PRIVATE_ISOLATED + VPC Endpoints]  ││
-│  │  EC2 (t3.micro, AL2023) │   │  EC2 (t3.small) + NLB               ││
-│  │  curl --curves MLKEM    │   │  scapy splitter + S3 uploader        ││
-│  │  → TGW → NFW → ECR     │   │  Traffic Mirror Target               ││
-│  └────────────┬────────────┘   └──────────────────────────────────────┘│
+│  ┌─────────────────────────────┐   ┌──────────────────────────────────┐│
+│  │ App Subnet (10.99.13/24)    │   │ Collector Subnet (10.99.0/24)    ││
+│  │                             │   │  [PRIVATE_ISOLATED + VPC Endpts] ││
+│  │  EC2 (t3.micro, AL2023)     │   │  EC2 (t3.small) + NLB           ││
+│  │  curl --curves MLKEM        │   │  scapy splitter + S3 uploader   ││
+│  │  → TGW → NFW → ECR         │   │  Traffic Mirror Target           ││
+│  └────────────┬────────────────┘   └──────────────────────────────────┘│
 └───────────────┼─────────────────────────────────────────────────────────┘
                 │ TGW (appliance mode)
                 ▼
@@ -197,6 +313,7 @@ OrchInfra → OrchRuntime (receives all sub-agent ARNs) ┤
 | User → Frontend | Cognito USER_PASSWORD_AUTH + refresh tokens (no plaintext password storage) |
 | Frontend → AgentCore | Cognito Identity Pool → temporary STS credentials → SigV4 |
 | Orchestration → Sub-agents | AgentCore workload identity (IAM-scoped per runtime) |
+| DevOps Agent → MCP endpoint | IAM SigV4 via `aidevops.amazonaws.com` trusted role + confused deputy protection |
 | Capture write actions | Cognito group `GOATNetworkCaptureUsers` authorization gate |
 | Pcap SQL | Hand-rolled shape validator + predicate injector (no raw SQL passthrough) |
 | Collector | Private isolated subnet, no internet, only VPC endpoints (S3/DDB/SSM) |
@@ -216,6 +333,7 @@ OrchInfra → OrchRuntime (receives all sub-agent ARNs) ┤
 | Network Firewall (demo scenario) | ~$25 |
 | NAT Gateway (demo scenario) | ~$33 |
 | Transit Gateway (demo scenario) | ~$36 |
+| DevOps Integration (API GW + Lambda) | < $1 (pay-per-invoke) |
 | **Total (full demo with network scenario)** | **~$48–90/month** |
 | **Total (core only, no network scenario)** | **~$8–48/month** |
 

@@ -126,11 +126,14 @@ venv.bak/
 # Internal documentation and configuration
 samples/
 docs/
+!**/devops-integration/docs/
 .kiro/
 .hypothesis/
 .ash/
 tests/
+test/
 HANDOFF-resume.md
+**/HANDOFF.md
 
 # OS generated files
 .DS_Store
@@ -158,3 +161,10 @@ reinstall-goat.ps1
 demo-reachability-analyzer.ps1
 
 reinstall-goat.sh
+
+# Test configuration (not needed for deployment)
+vitest.config.ts
+vitest.config.js
+
+# Property-based testing database
+.hypothesis/
