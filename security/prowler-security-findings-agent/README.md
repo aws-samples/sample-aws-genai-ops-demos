@@ -21,6 +21,22 @@ In addition, the dashboard ships a **⌘K command palette**, URL-synced filters,
 - **Key Technologies**: Prowler, Amazon DevOps Agent, Amazon Bedrock (Nova Lite 2), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
 - **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Bedrock usage per finding you click "Generate AI Insights" on (see [Cost](#cost))
 
+## Why not just a third-party CSPM?
+
+This demo doesn't replace commercial CSPMs — it shows what's possible when you build on AWS-native primitives with GenAI. Prowler sends findings to Security Hub via the `-S` flag, so it complements your existing AWS security posture tooling.
+
+| Capability | This project | Other CSPMs |
+|---|---|---|
+| Compliance frameworks | 8+ (HIPAA, GDPR, SOC 2, ISO 27001, NIST, CIS, PCI, FSBP) | Varies (typically 5-10, often behind a paywall) |
+| Remediation guidance | AI-generated playbook with CLI + CDK code, tailored per finding | Static runbooks or generic fix suggestions |
+| Autonomous investigation | DevOps Agent dispatches, investigates, reports back | None (some offer ticket creation, not investigation) |
+| Data residency | 100% in your AWS account — no data leaves | Findings sent to vendor SaaS (data sovereignty concern) |
+| Cost model | Pay-per-use AWS primitives (~$0.50/scan + Bedrock tokens) | Per-asset/month licensing ($5-15/workload/month typical) |
+| Customization | Full source — modify checks, prompts, UI, agent skills | Limited to vendor's extension model |
+| Security Hub integration | Prowler `-S` flag sends ASFF findings natively | Some support ASFF export |
+
+**The positioning:** "This shows what's possible when you add Bedrock + DevOps Agent on top of Prowler — going from 'you have a problem' to 'here's how to fix it in 30 seconds,' without sending your security data to a third party."
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.drawio.svg)

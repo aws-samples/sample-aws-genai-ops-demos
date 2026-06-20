@@ -225,6 +225,7 @@ export default function Findings() {
   // which PropertyFilter's simple string compare can't express.
   const [frameworkFilter, setFrameworkFilter] = useState<string | null>(null);
   const [groupByCheck, setGroupByCheck] = useState<boolean>(false);
+  const [autoGroupApplied, setAutoGroupApplied] = useState(false);
   const [selected, setSelected] = useState<Finding[]>([]);
   const [bulkBusy, setBulkBusy] = useState<null | 'investigate' | 'insights'>(null);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
@@ -249,6 +250,21 @@ export default function Findings() {
     if (groupBy === 'check') setGroupByCheck(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-enable grouping when there are many findings with repeated checks,
+  // unless the user arrived via a deep-link with explicit filters or already
+  // toggled grouping manually.
+  useEffect(() => {
+    if (autoGroupApplied) return;
+    if (items.length < 100) return;
+    // Only auto-group if there's significant repetition (avg >2 resources per check)
+    const uniqueChecks = new Set(items.map((f) => f.check_id)).size;
+    if (uniqueChecks > 0 && items.length / uniqueChecks >= 2.5) {
+      setGroupByCheck(true);
+      setAutoGroupApplied(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   // state → URL (keeps the URL shareable / back-button friendly).
   useEffect(() => {
@@ -402,9 +418,13 @@ export default function Findings() {
           description="All Prowler findings for this account. Click a row to see the AI-generated insight and dispatch a DevOps Agent investigation."
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Toggle checked={groupByCheck} onChange={(e) => setGroupByCheck(e.detail.checked)}>
+              <Button
+                variant={groupByCheck ? 'primary' : 'normal'}
+                iconName="view-vertical"
+                onClick={() => { setGroupByCheck(!groupByCheck); setAutoGroupApplied(true); }}
+              >
                 Group by check
-              </Toggle>
+              </Button>
               <Button iconName="refresh" onClick={load} loading={loading} ariaLabel="Refresh findings">Refresh</Button>
             </SpaceBetween>
           }
