@@ -81,33 +81,60 @@ export class GOATDevOpsIntegrationStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(60),
       code: lambda.Code.fromInline(`
 const { execSync } = require('child_process');
-exports.handler = async (event) => {
-  const props = event.ResourceProperties;
-  const requestType = event.RequestType;
-  const physicalId = props.ServiceName || 'mcp-registration';
 
-  // On Delete, we intentionally do NOT deregister — the service should persist
-  if (requestType === 'Delete') {
-    return { PhysicalResourceId: physicalId, Data: { Status: 'Retained' } };
-  }
-
+function findServiceId(serviceName) {
   try {
-    // Check if already registered by listing services and grepping for our name
     const listResult = execSync(
       'aws devops-agent list-services --output json --no-cli-pager 2>/dev/null || echo "{\\"services\\":[]}"',
       { encoding: 'utf-8', timeout: 30000 }
     );
     const services = JSON.parse(listResult);
     const existing = (services.services || []).find(s =>
-      s.serviceDetails?.mcpServerSigV4?.name === props.ServiceName
+      s.serviceDetails?.mcpServerSigV4?.name === serviceName
     );
+    return existing ? existing.serviceId : null;
+  } catch (err) {
+    console.warn('Could not list services:', err.message);
+    return null;
+  }
+}
 
-    if (existing) {
-      console.log('Service already registered:', props.ServiceName);
-      return { PhysicalResourceId: physicalId, Data: { Status: 'AlreadyRegistered', ServiceId: existing.serviceId || 'unknown' } };
+exports.handler = async (event) => {
+  const props = event.ResourceProperties;
+  const requestType = event.RequestType;
+  const physicalId = props.ServiceName || 'mcp-registration';
+
+  // On Delete, deregister the service so cdk destroy works cleanly
+  if (requestType === 'Delete') {
+    const serviceId = findServiceId(props.ServiceName);
+    if (serviceId) {
+      try {
+        console.log('Deregistering service:', serviceId);
+        execSync(
+          'aws devops-agent deregister-service --service-id ' + JSON.stringify(serviceId) + ' --no-cli-pager',
+          { encoding: 'utf-8', timeout: 30000 }
+        );
+        console.log('Deregistered successfully');
+        return { PhysicalResourceId: physicalId, Data: { Status: 'Deregistered' } };
+      } catch (err) {
+        // Don't fail the delete - just log the issue
+        console.warn('Deregistration failed (continuing):', err.message);
+      }
+    } else {
+      console.log('No registered service found for:', props.ServiceName);
+    }
+    return { PhysicalResourceId: physicalId, Data: { Status: 'DeleteComplete' } };
+  }
+
+  try {
+    // Check if already registered
+    const existingId = findServiceId(props.ServiceName);
+    if (existingId) {
+      console.log('Service already registered:', props.ServiceName, 'id:', existingId);
+      return { PhysicalResourceId: physicalId, Data: { Status: 'AlreadyRegistered', ServiceId: existingId } };
     }
 
-    // Not registered — register now
+    // Not registered - register now
     const registerCmd = [
       'aws devops-agent register-service',
       '--service mcpserversigv4',
@@ -122,13 +149,12 @@ exports.handler = async (event) => {
     console.log('Registration result:', result);
     return { PhysicalResourceId: physicalId, Data: { Status: 'Registered' } };
   } catch (err) {
-    // If registration fails with AlreadyExists, treat as success
     if (err.message && (err.message.includes('AlreadyExists') || err.message.includes('already exists'))) {
       console.log('Service already exists (caught in error handler)');
       return { PhysicalResourceId: physicalId, Data: { Status: 'AlreadyRegistered' } };
     }
     console.error('Registration failed:', err.message);
-    // Don't fail the stack — registration is non-critical
+    // Don't fail the stack - registration is non-critical
     return { PhysicalResourceId: physicalId, Data: { Status: 'Failed', Error: err.message } };
   }
 };
@@ -137,7 +163,7 @@ exports.handler = async (event) => {
 
     registerLambda.addToRolePolicy(
       new cdk.aws_iam.PolicyStatement({
-        actions: ["devops-agent:RegisterService", "devops-agent:ListServices"],
+        actions: ["devops-agent:RegisterService", "devops-agent:DeregisterService", "devops-agent:ListServices"],
         resources: ["*"],
       })
     );
