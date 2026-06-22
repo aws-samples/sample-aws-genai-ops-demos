@@ -109,7 +109,7 @@ function Deploy-Stack {
 
     # Pre-check: if the stack is stuck in DELETE_FAILED from a prior run,
     # force-delete it first. This is common with AgentCore runtimes that
-    # timeout during deletion — not a real error, just a CFN timeout.
+    # timeout during deletion - not a real error, just a CFN timeout.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $stackStatus = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].StackStatus" --output text --no-cli-pager 2>$null
