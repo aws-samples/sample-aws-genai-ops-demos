@@ -163,8 +163,7 @@ demo-reachability-analyzer.ps1
 reinstall-goat.sh
 
 # Test configuration (not needed for deployment)
-vitest.config.ts
-vitest.config.js
+# vitest.config.ts is kept in repo for local dev — only ignore generated outputs
 
 # TypeScript build cache
 tsconfig.tsbuildinfo
