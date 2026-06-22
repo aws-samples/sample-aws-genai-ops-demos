@@ -257,26 +257,41 @@ if ($DeploymentMode -eq "full") {
 }
 
 # ---------------------------------------------------------------------------
-# 5b. DevOps Agent Integration (MCP Server registration)
+# 5b. DevOps Agent Integration (MCP Server + esbuild bundle)
 # ---------------------------------------------------------------------------
 if ($DeploymentMode -eq "full") {
     Write-Host "`n--- DevOps Agent Integration ---" -ForegroundColor Magenta
 
-    # The DevOps integration has its own CDK app (separate from the main app)
-    $devopsIntegrationCdkDir = Join-Path $PSScriptRoot "devops-integration\infrastructure\cdk"
+    $devopsDir = Join-Path $PSScriptRoot "devops-integration"
+    $devopsIntegrationCdkDir = Join-Path $devopsDir "infrastructure\cdk"
     if (Test-Path $devopsIntegrationCdkDir) {
-        Write-Host "`nDeploying GOATDevOpsIntegration-$region..." -ForegroundColor Yellow
-        Write-Host "      (Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication)" -ForegroundColor Gray
-        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $devopsIntegrationCdkDir -StackName "GOATDevOpsIntegration-$region" -SkipBootstrap
+        # Step 1: Build the MCP handler with esbuild
+        Write-Host "`nBuilding MCP handler (esbuild)..." -ForegroundColor Yellow
+        Push-Location $devopsDir
+        npx esbuild src/lambda/mcp-handler.ts --bundle --platform=node --target=node20 --outfile=dist/mcp-handler.js "--external:@aws-sdk/client-bedrock-agent-runtime" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  WARNING: DevOps Agent Integration deployment failed (non-fatal)." -ForegroundColor Yellow
-            Write-Host "  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately." -ForegroundColor Yellow
-        }
+            Write-Host "  WARNING: esbuild failed. Skipping DevOps Agent Integration." -ForegroundColor Yellow
+            Pop-Location
+        } else {
+            Write-Host "      OK: MCP handler built (dist/mcp-handler.js)" -ForegroundColor Green
+            Pop-Location
 
-        # Retrieve MCP endpoint and registration command from stack outputs
-        $devopsStackName = "GOATDevOpsIntegration-$region"
-        $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>$null
-        $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>$null
+            # Step 2: Deploy the CDK stack
+            Write-Host "`nDeploying GOATDevOpsIntegration-$region..." -ForegroundColor Yellow
+            Write-Host "      (MCP server endpoint, IAM role, and DevOps Agent registration)" -ForegroundColor Gray
+            & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory $devopsIntegrationCdkDir -StackName "GOATDevOpsIntegration-$region" -SkipBootstrap
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  WARNING: DevOps Agent Integration deployment failed (non-fatal)." -ForegroundColor Yellow
+                Write-Host "  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately." -ForegroundColor Yellow
+            }
+
+            # Step 3: Retrieve MCP endpoint from stack outputs
+            $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            $devopsStackName = "GOATDevOpsIntegration-$region"
+            $mcpEndpointUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>$null
+            $healthCheckUrl = aws cloudformation describe-stacks --stack-name $devopsStackName --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>$null
+            $ErrorActionPreference = $prevEAP2
+        }
     } else {
         Write-Host "  DevOps integration directory not found - skipping." -ForegroundColor DarkGray
     }

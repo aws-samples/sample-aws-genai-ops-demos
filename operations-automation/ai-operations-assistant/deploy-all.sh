@@ -311,28 +311,40 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5b. DevOps Agent Integration (MCP Server registration)
+# 5b. DevOps Agent Integration (MCP Server + esbuild bundle)
 # ---------------------------------------------------------------------------
 if [ "$DEPLOYMENT_MODE" = "full" ]; then
     echo -e "\n\033[0;35m--- DevOps Agent Integration ---\033[0m"
 
-    # The DevOps integration has its own CDK app (separate from the main app)
-    devops_integration_cdk_dir="$SCRIPT_DIR/devops-integration/infrastructure/cdk"
+    devops_dir="$SCRIPT_DIR/devops-integration"
+    devops_integration_cdk_dir="$devops_dir/infrastructure/cdk"
     if [ -d "$devops_integration_cdk_dir" ]; then
-        echo -e "\n\033[0;33mDeploying GOATDevOpsIntegration-$region...\033[0m"
-        echo "      (Deploying MCP server endpoint and DevOps Agent IAM role for SigV4 authentication)"
-        source "../../shared/scripts/deploy-cdk.sh" "$devops_integration_cdk_dir" "GOATDevOpsIntegration-$region" "true"
-        if [ $? -ne 0 ]; then
-            echo -e "\033[0;33m  WARNING: DevOps Agent Integration deployment failed (non-fatal).\033[0m"
-            echo -e "\033[0;33m  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately.\033[0m"
-        fi
+        # Step 1: Build the MCP handler with esbuild
+        echo -e "\n\033[0;33mBuilding MCP handler (esbuild)...\033[0m"
+        pushd "$devops_dir" > /dev/null
+        if npx esbuild src/lambda/mcp-handler.ts --bundle --platform=node --target=node20 --outfile=dist/mcp-handler.js "--external:@aws-sdk/client-bedrock-agent-runtime" 2>/dev/null; then
+            echo -e "\033[0;32m      OK: MCP handler built (dist/mcp-handler.js)\033[0m"
+            popd > /dev/null
 
-        # Retrieve MCP endpoint from stack outputs
-        devops_stack_name="GOATDevOpsIntegration-$region"
-        mcp_endpoint_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
-        health_check_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
+            # Step 2: Deploy the CDK stack
+            echo -e "\n\033[0;33mDeploying GOATDevOpsIntegration-$region...\033[0m"
+            echo "      (MCP server endpoint, IAM role, and DevOps Agent registration)"
+            source "../../shared/scripts/deploy-cdk.sh" "$devops_integration_cdk_dir" "GOATDevOpsIntegration-$region" "true"
+            if [ $? -ne 0 ]; then
+                echo -e "\033[0;33m  WARNING: DevOps Agent Integration deployment failed (non-fatal).\033[0m"
+                echo -e "\033[0;33m  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately.\033[0m"
+            fi
+
+            # Step 3: Retrieve MCP endpoint from stack outputs
+            devops_stack_name="GOATDevOpsIntegration-$region"
+            mcp_endpoint_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='McpEndpointUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
+            health_check_url=$(aws cloudformation describe-stacks --stack-name "$devops_stack_name" --query "Stacks[0].Outputs[?OutputKey=='HealthCheckUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
+        else
+            echo -e "\033[0;33m  WARNING: esbuild failed. Skipping DevOps Agent Integration.\033[0m"
+            popd > /dev/null
+        fi
     else
-        echo "  DevOps integration directory not found — skipping."
+        echo "  DevOps integration directory not found - skipping."
     fi
 fi
 

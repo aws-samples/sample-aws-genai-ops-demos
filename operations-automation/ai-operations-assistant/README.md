@@ -202,7 +202,7 @@ G.O.A.T. supports three deployment modes to match your needs.
 
 ### Full Deployment (All Modules)
 
-Deploys all 6 sub-agents, the orchestration agent, and the frontend.
+Deploys all 6 sub-agents, the orchestration agent, the DevOps Agent MCP integration, and the frontend.
 
 **macOS / Linux:**
 ```bash
@@ -653,6 +653,17 @@ operations-automation/ai-operations-assistant/
 │       ├── base-runtime-stack.ts      # Shared RuntimeStack pattern
 │       ├── orch-infra-stack.ts        # Orchestration InfraStack
 │       └── frontend-stack.ts          # S3 + CloudFront
+│
+├── devops-integration/                # DevOps Agent MCP Integration
+│   ├── src/                           # MCP handler, agent-proxy, schemas
+│   │   ├── lambda/                    # Lambda handlers (mcp-handler, tools-call-adapter)
+│   │   ├── schemas/                   # Action schemas + MCP descriptions (21 tools)
+│   │   ├── constructs/                # AgentIntegrationTemplate CDK construct
+│   │   └── types/                     # TypeScript interfaces
+│   ├── infrastructure/cdk/            # Separate CDK app for DevOps Agent stack
+│   ├── dist/                          # esbuild output (built at deploy time)
+│   ├── docs/                          # AGENT-INTEGRATION-GUIDE.md
+│   └── package.json                   # Dependencies
 │
 ├── scripts/                           # Build utilities
 │   ├── build-frontend.ps1             # Frontend build (PowerShell)
