@@ -35,10 +35,11 @@ A React + Cloudscape frontend provides streaming chat, prompt templates, knowled
 - AWS account with appropriate permissions
 - Amazon Bedrock model access enabled for **Amazon Nova Pro** and **Amazon Nova Lite** — enable in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess) under "Model access"
 - Amazon Bedrock AgentCore available in your region
+- **DevOps Agent MCP server access** — required for the DevOps Agent integration. Your account must allow third-party MCP server registration. If the deployment fails with "This account can only register internally allowlisted MCP servers", you need to enable custom MCP server access for your account through the DevOps Agent console (Capability Providers → MCP Server → Register). If you cannot register, your account may need to be onboarded to the DevOps Agent preview with custom MCP server support.
 - **Cost Explorer enabled** — activate in the [Billing console](https://console.aws.amazon.com/billing/home#/costexplorer) if not already enabled (first-time activation takes up to 24 hours to populate data)
 - **Support Agent & Trusted Advisor Agent**: Require an AWS Business, Enterprise On-Ramp, or Enterprise Support plan. Without one, these agents will return subscription errors. The other agents work on any plan.
 - **CUR module only**: A Cost and Usage Report delivered to S3 with an Athena/Glue table (see [CUR Setup](#cur-setup) below)
-- Services used: Bedrock AgentCore, Bedrock (Nova models), Cognito, DynamoDB, S3, CloudFront, CodeBuild, ECR, Athena (for CUR)
+- Services used: Bedrock AgentCore, Bedrock (Nova models), Cognito, DynamoDB, S3, CloudFront, CodeBuild, ECR, Athena (for CUR), DevOps Agent
 
 ### IAM Permissions
 
@@ -683,17 +684,55 @@ To remove all deployed resources:
 
 **macOS / Linux:**
 ```bash
-cd operations-automation/ai-operations-assistant/infrastructure/cdk
+cd operations-automation/ai-operations-assistant
+
+# 1. Deregister MCP server from DevOps Agent (if registered)
+# Note: The CLI SDK returns mcpserversigv4 details as SDK_UNKNOWN_MEMBER,
+# so we match on serviceType instead of the nested name field.
+SERVICE_ID=$(aws devops-agent list-services --output json --no-cli-pager 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for svc in data.get('services', []):
+        if svc.get('serviceType') == 'mcpserversigv4':
+            print(svc['serviceId']); break
+except: pass" 2>/dev/null)
+[ -n "$SERVICE_ID" ] && aws devops-agent deregister-service --service-id "$SERVICE_ID" --no-cli-pager
+
+# 2. Destroy DevOps Agent integration stack
+aws cloudformation delete-stack --stack-name "GOATDevOpsIntegration-$(aws configure get region)" --no-cli-pager
+
+# 3. Destroy demo scenarios
+cd infrastructure/cdk
+npx cdk destroy --all --app "npx ts-node --prefer-ts-exts bin/demo-scenarios-app.ts" --force
+
+# 4. Destroy core GOAT stacks
 npx cdk destroy --all --force
 ```
 
 **Windows (PowerShell):**
 ```powershell
-cd operations-automation\ai-operations-assistant\infrastructure\cdk
+cd operations-automation\ai-operations-assistant
+
+# 1. Deregister MCP server from DevOps Agent (if registered)
+# Note: The CLI SDK returns mcpserversigv4 details as SDK_UNKNOWN_MEMBER,
+# so we match on serviceType instead of the nested name field.
+$services = aws devops-agent list-services --output json --no-cli-pager 2>$null | ConvertFrom-Json
+$svc = $services.services | Where-Object { $_.serviceType -eq "mcpserversigv4" }
+if ($svc) { aws devops-agent deregister-service --service-id $svc.serviceId --no-cli-pager }
+
+# 2. Destroy DevOps Agent integration stack
+aws cloudformation delete-stack --stack-name "GOATDevOpsIntegration-$((aws configure get region).Trim())" --no-cli-pager
+
+# 3. Destroy demo scenarios
+cd infrastructure\cdk
+npx cdk destroy --all --app "npx ts-node --prefer-ts-exts bin/demo-scenarios-app.ts" --force
+
+# 4. Destroy core GOAT stacks
 npx cdk destroy --all --force
 ```
 
-> **Note**: This destroys all stacks. ECR repositories and S3 buckets with `removalPolicy: DESTROY` are cleaned up automatically.
+> **Note**: Steps must be executed in order. The DevOps Agent integration stack must be destroyed before the NetworkRuntime stack (it imports the NetworkAgentRuntimeArn export). ECR repositories and S3 buckets with `removalPolicy: DESTROY` are cleaned up automatically.
 
 ## Key Technologies
 
