@@ -175,9 +175,6 @@ export class AgentIntegrationTemplate extends Construct {
           StringEquals: {
             "aws:SourceAccount": cdk.Stack.of(this).account,
           },
-          ArnLike: {
-            "aws:SourceArn": `arn:aws:aidevops:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:service/*`,
-          },
         },
       })
     );
