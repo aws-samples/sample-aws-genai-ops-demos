@@ -89,11 +89,12 @@ export class AgentIntegrationTemplate extends Construct {
     });
 
     // Allow Lambda to invoke the agent runtime
+    // The SDK appends /runtime-endpoint/DEFAULT to the ARN, so we need a wildcard
     lambdaRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ["bedrock-agent-runtime:InvokeAgentRuntime"],
-        resources: [agentRuntimeArn],
+        actions: ["bedrock-agentcore:InvokeAgentRuntime"],
+        resources: [agentRuntimeArn, `${agentRuntimeArn}/*`],
       })
     );
 
@@ -183,7 +184,7 @@ export class AgentIntegrationTemplate extends Construct {
     this.devOpsAgentRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ["bedrock-agent-runtime:InvokeAgentRuntime"],
+        actions: ["bedrock-agentcore:InvokeAgentRuntime"],
         resources: [agentRuntimeArn],
       })
     );
