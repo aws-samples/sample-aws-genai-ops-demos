@@ -268,8 +268,11 @@ if ($DeploymentMode -eq "full") {
         # Step 1: Build the MCP handler with esbuild
         Write-Host "`nBuilding MCP handler (esbuild)..." -ForegroundColor Yellow
         Push-Location $devopsDir
-        npx esbuild src/lambda/mcp-handler.ts --bundle --platform=node --target=node20 --outfile=dist/mcp-handler.js "--external:@aws-sdk/client-bedrock-agent-runtime" 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $prevEAP3 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        $esbuildOutput = npx esbuild src/lambda/mcp-handler.ts --bundle --platform=node --target=node20 --outfile=dist/mcp-handler.js "--external:@aws-sdk/client-bedrock-agent-runtime" 2>&1
+        $esbuildExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevEAP3
+        if ($esbuildExit -ne 0) {
             Write-Host "  WARNING: esbuild failed. Skipping DevOps Agent Integration." -ForegroundColor Yellow
             Pop-Location
         } else {
