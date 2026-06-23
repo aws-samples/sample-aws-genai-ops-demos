@@ -169,8 +169,5 @@ reinstall-goat.sh
 tsconfig.tsbuildinfo
 **/tsconfig.tsbuildinfo
 
-# Internal planning documents
-PRFAQ*.docx
-
 # Property-based testing database
 .hypothesis/
