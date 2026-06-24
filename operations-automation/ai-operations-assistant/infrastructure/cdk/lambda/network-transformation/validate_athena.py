@@ -130,7 +130,7 @@ def _build_validation_sql(capture_id: str) -> str:
     upstream validator were relaxed.
     """
     safe_id = capture_id.replace("'", "''")
-    return f"SELECT 1 FROM pcap_logs WHERE capture_id = '{safe_id}' LIMIT 1"
+    return f"SELECT 1 FROM pcap_logs WHERE capture_id = '{safe_id}' LIMIT 1"  # nosec B608 — capture_id validated by Capture_Id_Format regex, quotes escaped above
 
 
 def _wait_for_query(

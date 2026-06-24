@@ -419,7 +419,7 @@ def _dns_in_capture(capture_id: str, hostname: str) -> List[str]:
     embedded apostrophes defensively before interpolation.
     """
     safe_hostname = hostname.replace("'", "''")
-    sql = (
+    sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; hostname escaped above
         "SELECT DISTINCT ip "
         "FROM pcap_logs "
         "CROSS JOIN UNNEST(dns_response_ips) AS t(ip) "
@@ -440,7 +440,7 @@ def _tls_sni_in_capture(capture_id: str, hostname: str) -> List[str]:
     single entry.
     """
     safe_hostname = hostname.replace("'", "''")
-    sql = (
+    sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; hostname escaped above
         "SELECT DISTINCT dst_ip AS ip "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
@@ -1005,7 +1005,7 @@ def query_matched_streams(
     if not predicate:
         return 0, []
 
-    sql = (
+    sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; predicate built by build_flow_predicate
         "WITH matched AS ("
         "SELECT tcp_stream, src_ip, src_port, dst_ip, dst_port, frame_time, tcp_flags "
         "FROM pcap_logs "

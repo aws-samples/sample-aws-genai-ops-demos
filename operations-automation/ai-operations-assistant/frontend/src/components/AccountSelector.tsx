@@ -40,7 +40,7 @@ export default function AccountSelector({
   onChange,
   accounts = [],
 }: AccountSelectorProps) {
-  const [customId, setCustomId] = useState(selectedAccountId);
+  const [customId, setCustomId] = useState(selectedAccountId); // nosemgrep: react-props-in-state — initial value only, not sync'd
 
   // Build dropdown options from the provided account list
   const options: SelectProps.Option[] = [

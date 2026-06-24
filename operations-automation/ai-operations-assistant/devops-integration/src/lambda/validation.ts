@@ -24,7 +24,7 @@ import { ErrorDescription, createSchemaValidationError } from "../types/errors";
  * allErrors: true ensures all validation errors are collected (not just the first).
  */
 const ajv = new Ajv({
-  allErrors: true,
+  allErrors: true, // nosemgrep: ajv-allerrors-true — Lambda behind IAM auth, not public-facing
   strict: false,
   // Support "integer" type as used in our schemas
   allowUnionTypes: true,

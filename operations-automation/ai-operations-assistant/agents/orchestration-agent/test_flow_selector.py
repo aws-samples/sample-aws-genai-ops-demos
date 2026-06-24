@@ -32,7 +32,7 @@ class TestIsValidIpv4:
     def test_valid_addresses(self):
         assert is_valid_ipv4("10.0.1.5") is True
         assert is_valid_ipv4("192.168.0.1") is True
-        assert is_valid_ipv4("0.0.0.0") is True
+        assert is_valid_ipv4("0.0.0.0") is True  # nosec B104 — test data, not a socket bind
         assert is_valid_ipv4("255.255.255.255") is True
 
     def test_invalid_addresses(self):

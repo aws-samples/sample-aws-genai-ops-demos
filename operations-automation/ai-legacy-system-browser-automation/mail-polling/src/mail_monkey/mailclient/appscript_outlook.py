@@ -109,7 +109,7 @@ class AppscriptOutlookClient(BaseClient):
                 k.subject: subject, 
                 k.content: content,
                 k.category: category or [],
-                k.is_private: is_private,
+                k.is_private: is_private,  # nosemgrep: is-function-without-parentheses — k.is_private is an AppleScript keyword constant, not a method call
                 k.end_time: end_time or (datetime.now() + timedelta(minutes=15)),
                 k.start_time: start_time or datetime.now(),
             }

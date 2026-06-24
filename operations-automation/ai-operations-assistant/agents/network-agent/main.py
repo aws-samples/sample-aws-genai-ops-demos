@@ -11,7 +11,12 @@ Mirrors the architectural pattern of the existing G.O.A.T. sub-agents
 This module implements the response envelope helper, the ACTIONS dispatch
 table for all 20 documented actions, and the entrypoint that routes to
 handler stubs. Handler bodies are filled in by subsequent tasks.
+
+Security note: All SQL f-strings in this module use capture_id values validated
+by Capture_Id_Format (alphanumeric + hyphens only, no quotes) and predicates
+built by the validated flow_selector pipeline. Not raw user SQL.
 """
+# nosec B608 — see Security note in module docstring
 
 import json
 import logging
@@ -7374,7 +7379,7 @@ def handle_diagnose_tcp_stream(params: dict) -> dict:
 
     # Multi-stream case (Req 18.13): return up to 20 reports as an
     # array under ``data.reports``.
-    formatted_sections = [
+    formatted_sections = [  # nosemgrep: string-concat-in-list — intentional conditional string building
         f"diagnose_tcp_stream returned {len(reports)} report(s) "
         f"for capture {capture_id}"
         + (

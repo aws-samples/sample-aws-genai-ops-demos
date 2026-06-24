@@ -572,6 +572,7 @@ if [ -n "$EKS_CLUSTER_NAME" ] && [ "$EKS_CLUSTER_NAME" != "None" ]; then
         PRE_EXISTING["test-pod"]="true"
     else
         print_yellow "Deploying test pod ($TEST_POD_NAME)..."
+        # shellcheck disable=SC2002 — heredoc pipe to kubectl is idiomatic, not useless-cat
         cat <<EOF | kubectl apply -f - 2>&1 >/dev/null
 apiVersion: v1
 kind: Pod

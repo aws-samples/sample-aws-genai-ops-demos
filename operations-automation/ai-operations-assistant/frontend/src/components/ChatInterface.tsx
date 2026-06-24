@@ -275,7 +275,7 @@ export default function ChatInterface({
                           code({ children, className, ...props }) {
                             // If it's a fenced code block (has className like "language-xxx"), render normally
                             if (className) {
-                              return <code className={className} {...props}>{children}</code>;
+                              return <code className={className} {...props}>{children}</code>; // nosemgrep: react-props-spreading
                             }
                             // Inline code: make it clickable as a suggested action
                             const text = String(children).trim();
@@ -290,7 +290,7 @@ export default function ChatInterface({
                                   }
                                 }}
                                 title={`Click to send: "${text}"`}
-                                {...props}
+                                {...props} // nosemgrep: react-props-spreading — ReactMarkdown component props are trusted
                               >
                                 {children}
                               </code>

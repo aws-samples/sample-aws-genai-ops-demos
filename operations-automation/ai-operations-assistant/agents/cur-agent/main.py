@@ -295,7 +295,7 @@ def handle_resource_costs(params: dict) -> dict:
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        sql_query = (
+        sql_query = (  # nosec B608 — conditions built from validated enum values, not raw user SQL
             f"SELECT "
             f"line_item_resource_id, "
             f"product_product_name, "
@@ -370,7 +370,7 @@ def handle_usage_patterns(params: dict) -> dict:
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        sql_query = (
+        sql_query = (  # nosec B608 — conditions built from validated enum values, not raw user SQL
             f"SELECT "
             f"{date_trunc} AS usage_period, "
             f"product_product_name, "

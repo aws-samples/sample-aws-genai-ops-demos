@@ -148,8 +148,10 @@ def handle_create_service(request_data: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         print(f"❌ Create service failed: {str(e)}")
-        return create_error_response(500, f"Failed to create service: {str(e)}")def handle
-_get_service(service_name: str) -> Dict[str, Any]:
+        return create_error_response(500, f"Failed to create service: {str(e)}")
+
+
+def handle_get_service(service_name: str) -> Dict[str, Any]:
     """
     Get a specific service configuration.
     """

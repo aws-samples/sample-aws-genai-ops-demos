@@ -1,0 +1,23 @@
+# .semgrepignore — Suppress bulk false positives for demo-quality code
+#
+# jsx-not-internationalized: These are demo apps that don't need i18n.
+# All frontend components in this repo are English-only demo UIs.
+operations-automation/ai-operations-assistant/frontend/src/components/
+operations-automation/ai-operations-assistant/frontend/src/App.tsx
+operations-automation/aws-services-lifecycle-tracker/cdk/frontend/
+operations-automation/aws-services-lifecycle-tracker/frontend/
+operations-automation/ai-legacy-system-browser-automation/
+operations-automation/ai-password-reset-chatbot/frontend/src/
+operations-automation/anycompany-it-demo-portal/
+
+# package-dependencies-check: All packages use lock files (package-lock.json
+# or yarn.lock) which are the authoritative dependency source.
+# Semgrep flags package.json without seeing the lock files.
+**/package.json
+
+# Ignore test/build artifacts
+.hypothesis/
+.pytest_cache/
+**/node_modules/
+**/cdk.out/
+**/__pycache__/

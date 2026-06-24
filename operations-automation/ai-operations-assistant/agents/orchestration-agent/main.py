@@ -3592,7 +3592,7 @@ def _create_agent() -> Agent:
 _session_manager = SessionManager(agent_factory=_create_agent)
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt() -> str:  # nosec B608 — f-string prompt template, not SQL
     """Build system prompt with current date for accurate time references."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     current_year = datetime.now(timezone.utc).strftime("%Y")
