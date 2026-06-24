@@ -172,7 +172,7 @@ def _wait_for_query(
                 f"state={state} reason={reason!r}"
             )
 
-        time.sleep(poll_interval_s)
+        time.sleep(poll_interval_s)  # nosemgrep: arbitrary-sleep
 
     raise TimeoutError(
         f"ValidateAthena: validation query did not finish within "
