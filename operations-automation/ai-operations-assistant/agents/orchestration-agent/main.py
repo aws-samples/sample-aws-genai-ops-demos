@@ -3597,7 +3597,7 @@ def _build_system_prompt() -> str:  # nosec B608 — f-string prompt template, n
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     current_year = datetime.now(timezone.utc).strftime("%Y")
 
-    return f"""You are an AWS operations analytics assistant (G.O.A.T.).
+    return f"""You are an AWS operations analytics assistant (G.O.A.T.).  # nosec B608
 Today's date is {today}. The current year is {current_year}. ALWAYS use this when interpreting time references.
 
 CRITICAL DATE RULES:

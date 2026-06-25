@@ -420,7 +420,7 @@ def _dns_in_capture(capture_id: str, hostname: str) -> List[str]:
     """
     safe_hostname = hostname.replace("'", "''")
     sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; hostname escaped above
-        "SELECT DISTINCT ip "
+        "SELECT DISTINCT ip "  # nosec B608
         "FROM pcap_logs "
         "CROSS JOIN UNNEST(dns_response_ips) AS t(ip) "
         f"WHERE capture_id = '{capture_id}' "
@@ -441,7 +441,7 @@ def _tls_sni_in_capture(capture_id: str, hostname: str) -> List[str]:
     """
     safe_hostname = hostname.replace("'", "''")
     sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; hostname escaped above
-        "SELECT DISTINCT dst_ip AS ip "
+        "SELECT DISTINCT dst_ip AS ip "  # nosec B608
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
         f"AND lower(tls_sni) = lower('{safe_hostname}') "
@@ -1006,7 +1006,7 @@ def query_matched_streams(
         return 0, []
 
     sql = (  # nosec B608 — capture_id validated by Capture_Id_Format; predicate built by build_flow_predicate
-        "WITH matched AS ("
+        "WITH matched AS ("  # nosec B608
         "SELECT tcp_stream, src_ip, src_port, dst_ip, dst_port, frame_time, tcp_flags "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' AND {predicate}"

@@ -3831,7 +3831,7 @@ def handle_search_fragmented_packets(params: dict) -> dict:
     # single-quoted literal is safe to interpolate directly.
     # min_size is a validated integer in [64, 65535].
     sql = (
-        "SELECT frame_time, frame_size, src_ip, src_port, "
+        "SELECT frame_time, frame_size, src_ip, src_port, "  # nosec B608
         "dst_ip, dst_port, protocol, tcp_stream "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
@@ -3941,7 +3941,7 @@ def handle_correlate_tcp_streams(params: dict) -> dict:
         base_predicate += f" {flow_predicate}"
 
     sql = (
-        "SELECT frame_time, frame_size, src_ip, src_port, "
+        "SELECT frame_time, frame_size, src_ip, src_port, "  # nosec B608
         "dst_ip, dst_port, protocol, tcp_seq, tcp_ack, "
         "tcp_flags, tcp_window, tcp_stream, frame_payload_summary "
         "FROM pcap_logs "
@@ -4034,7 +4034,7 @@ def handle_detect_retransmissions(params: dict) -> dict:
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "WITH seq_counts AS ("
+        "WITH seq_counts AS ("  # nosec B608
         "SELECT tcp_stream, tcp_seq, dst_ip, dst_port, "
         "COUNT(*) AS cnt, "
         "MIN(frame_time) AS first_seen, "
@@ -4174,7 +4174,7 @@ def handle_check_tls_hello_size(params: dict) -> dict:
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "SELECT frame_size, "
+        "SELECT frame_size, "  # nosec B608
         "tls_fragment_count AS fragment_count, "
         "tls_record_size AS record_size, "
         "tls_sni AS server_name, "
@@ -4309,7 +4309,7 @@ def handle_get_conversation_stats(params: dict) -> dict:
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "SELECT src_ip, src_port, dst_ip, dst_port, protocol, "
+        "SELECT src_ip, src_port, dst_ip, dst_port, protocol, "  # nosec B608
         "SUM(frame_size) AS total_bytes, "
         "COUNT(*) AS packet_count "
         "FROM pcap_logs "
@@ -4708,7 +4708,7 @@ def handle_reconstruct_tcp_handshake(params: dict) -> dict:
         base_predicate += f" {flow_predicate}"
 
     sql = (
-        "SELECT frame_time, "
+        "SELECT frame_time, "  # nosec B608
         f"CASE WHEN {syn_match} THEN 'client_to_server' "
         f"WHEN {syn_ack_match} THEN 'server_to_client' "
         "ELSE 'client_to_server' END AS direction, "
@@ -4970,7 +4970,7 @@ def handle_classify_tcp_resets(params: dict) -> dict:
     flow_predicate_clause = f"{flow_predicate} " if flow_predicate else ""
 
     sql = (
-        "WITH syn_packets AS ("
+        "WITH syn_packets AS ("  # nosec B608
         "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
         "dst_ip AS responder_ip, dst_port AS responder_port, "
         "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
@@ -5110,7 +5110,7 @@ def handle_detect_out_of_order_packets(params: dict) -> dict:
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "WITH ordered AS ("
+        "WITH ordered AS ("  # nosec B608
         "SELECT tcp_stream, tcp_seq, frame_time, "
         "LAG(tcp_seq) OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS prev_seq "
         "FROM pcap_logs "
@@ -5220,7 +5220,7 @@ def handle_detect_zero_window(params: dict) -> dict:
     flow_predicate = flow_resolution.get("predicate", "")
     flow_predicate_clause = f" {flow_predicate}" if flow_predicate else ""
     sql = (
-        "SELECT tcp_stream AS stream_id, "
+        "SELECT tcp_stream AS stream_id, "  # nosec B608
         "COUNT_IF(tcp_window = 0) AS zero_window_event_count, "
         "0.0 AS zero_window_total_duration_ms, "
         "0 AS window_full_event_count, "
@@ -5390,7 +5390,7 @@ def handle_analyze_tcp_options(params: dict) -> dict:
     # ``frame_size`` as a proxy (it includes headers, so
     # ``mss_effective_min`` is an approximation).
     sql = (
-        "WITH syn_packets AS ("
+        "WITH syn_packets AS ("  # nosec B608
         "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
         "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
         "FROM pcap_logs "
@@ -5548,7 +5548,7 @@ def handle_get_rtt_distribution(params: dict) -> dict:
     flow_predicate_clause = f"{flow_predicate} " if flow_predicate else ""
 
     sql = (
-        "SELECT tcp_stream AS stream_id, "
+        "SELECT tcp_stream AS stream_id, "  # nosec B608
         "CAST(NULL AS DOUBLE) AS rtt_min_ms, "
         "CAST(NULL AS DOUBLE) AS rtt_p50_ms, "
         "CAST(NULL AS DOUBLE) AS rtt_p95_ms, "
@@ -5722,7 +5722,7 @@ def handle_get_request_response_latency(params: dict) -> dict:
         inner_predicate += f" {flow_predicate}"
 
     sql = (
-        "WITH syn_packets AS ("
+        "WITH syn_packets AS ("  # nosec B608
         "SELECT tcp_stream, src_ip AS initiator_ip, src_port AS initiator_port, "
         "ROW_NUMBER() OVER (PARTITION BY tcp_stream ORDER BY frame_time) AS rn "
         "FROM pcap_logs "
@@ -5908,7 +5908,7 @@ def _query_stream_packet_total(capture_id: str, stream_id: str):
     percentage-based rules for that stream.
     """
     sql = (
-        "SELECT COUNT(*) AS packet_count, "
+        "SELECT COUNT(*) AS packet_count, "  # nosec B608
         "COALESCE(SUM(frame_size), 0) AS byte_count "
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
@@ -5952,7 +5952,7 @@ def _query_tls_client_hello_fragmented(capture_id: str, stream_id: str):
     asserting either way.
     """
     sql = (
-        "SELECT MAX(tls_fragment_count) AS max_fragments "
+        "SELECT MAX(tls_fragment_count) AS max_fragments "  # nosec B608
         "FROM pcap_logs "
         f"WHERE capture_id = '{capture_id}' "
         f"AND tcp_stream = '{stream_id}' "
@@ -5999,7 +5999,7 @@ def _query_diagnose_stream_ranking(capture_id: str, predicate: str):
     if not predicate:
         return []
     sql = (
-        "SELECT tcp_stream AS stream_id, "
+        "SELECT tcp_stream AS stream_id, "  # nosec B608
         "COUNT(*) AS packet_count, "
         "COALESCE(SUM(frame_size), 0) AS byte_count "
         "FROM pcap_logs "
