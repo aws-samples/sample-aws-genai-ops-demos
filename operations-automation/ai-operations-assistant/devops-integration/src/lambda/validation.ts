@@ -23,8 +23,9 @@ import { ErrorDescription, createSchemaValidationError } from "../types/errors";
  * Singleton Ajv instance configured for JSON Schema draft-07 compatibility.
  * allErrors: true ensures all validation errors are collected (not just the first).
  */
+// nosemgrep: ajv-allerrors-true — Lambda behind IAM auth, not public-facing; allErrors needed for helpful validation messages
 const ajv = new Ajv({
-  allErrors: true, // nosemgrep: ajv-allerrors-true — Lambda behind IAM auth, not public-facing
+  allErrors: true,
   strict: false,
   // Support "integer" type as used in our schemas
   allowUnionTypes: true,

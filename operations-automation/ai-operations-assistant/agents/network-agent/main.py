@@ -7380,10 +7380,10 @@ def handle_diagnose_tcp_stream(params: dict) -> dict:
     # Multi-stream case (Req 18.13): return up to 20 reports as an
     # array under ``data.reports``.
     formatted_sections = [  # nosemgrep: string-concat-in-list — intentional conditional string building
-        f"diagnose_tcp_stream returned {len(reports)} report(s) "
+        f"diagnose_tcp_stream returned {len(reports)} report(s) "  # nosemgrep: string-concat-in-list
         f"for capture {capture_id}"
         + (
-            f" (capped at {_DIAGNOSE_MAX_REPORTS} streams; ranked "
+            f" (capped at {_DIAGNOSE_MAX_REPORTS} streams; ranked "  # nosemgrep: string-concat-in-list
             "by packet count desc, ties by bytes desc)"
             if cap_applied
             else ""
