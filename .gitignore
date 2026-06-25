@@ -132,6 +132,7 @@ docs/
 .ash/
 tests/
 test/
+**/test_*.py
 HANDOFF-resume.md
 **/HANDOFF.md
 

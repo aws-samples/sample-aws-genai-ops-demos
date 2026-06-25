@@ -1402,7 +1402,7 @@ export class NetworkInfraStack extends BaseInfraStack {
               // on the developer's machine where they already have full shell access.
               const { execSync } = require('child_process'); // nosemgrep: lazy-load-module — CDK synth-time code in tryBundle, not a request handler
               try {
-                execSync(
+                execSync( // nosemgrep: detect-child-process — outputDir is CDK-internal (AssetStaging), not user input
                   `pip install --no-cache-dir --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 --only-binary=:all: --target "${outputDir}" -r requirements.txt`,
                   { cwd: NETWORK_TRANSFORMATION_LAMBDA_DIR, stdio: 'inherit' },
                 );
