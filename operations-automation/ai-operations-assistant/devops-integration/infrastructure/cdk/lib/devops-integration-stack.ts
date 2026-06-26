@@ -69,8 +69,8 @@ export class GOATDevOpsIntegrationStack extends cdk.Stack {
     // Uses AWS::DevOpsAgent::Service with mcpserversigv4 service type
     // ─── DevOps Agent Registration (CloudFormation Resource) ─────────────────
     // Uses AWS::DevOpsAgent::Service directly via CfnResource.
-    // DeletionPolicy: Retain prevents deregistration on stack delete, which
-    // avoids "AlreadyExists" errors on redeploy (the registration persists).
+    // DeletionPolicy: Delete ensures the service is deregistered when the stack
+    // is destroyed, preventing "AlreadyExists" errors on redeploy.
 
     const registrationServiceName = `goat-network-agent-${region}`;
 
@@ -92,7 +92,7 @@ export class GOATDevOpsIntegrationStack extends cdk.Stack {
         },
       },
     });
-    mcpRegistration.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    mcpRegistration.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // ─── CDK Stack Outputs ────────────────────────────────────────────────
 
