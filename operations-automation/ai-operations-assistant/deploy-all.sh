@@ -329,7 +329,7 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
             # Step 2: Deploy the CDK stack
             echo -e "\n\033[0;33mDeploying GOATDevOpsIntegration-$region...\033[0m"
             echo "      (MCP server endpoint, IAM role, and DevOps Agent registration)"
-            source "../../shared/scripts/deploy-cdk.sh" "$devops_integration_cdk_dir" "GOATDevOpsIntegration-$region" "true"
+            "$SHARED_SCRIPTS_DIR/deploy-cdk.sh" --cdk-directory "$devops_integration_cdk_dir" --stack-name "GOATDevOpsIntegration-$region" --skip-bootstrap
             if [ $? -ne 0 ]; then
                 echo -e "\033[0;33m  WARNING: DevOps Agent Integration deployment failed (non-fatal).\033[0m"
                 echo -e "\033[0;33m  The core GOAT solution is deployed. DevOps Agent integration can be deployed separately.\033[0m"
@@ -470,19 +470,23 @@ if [ -n "$ORCH_MODEL_ID" ]; then
 fi
 echo ""
 echo -e "\033[0;33m  Next Steps:\033[0m"
-echo -e "\033[0;90m    1. Create an admin user (copy-paste these two commands):\033[0m"
+echo -e "\033[0;90m    1. Create an admin user with full permissions (copy-paste all commands):\033[0m"
 echo ""
 echo -e "\033[0;37m       aws cognito-idp admin-create-user --user-pool-id $user_pool_id --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS\033[0m"
 echo ""
 echo -e "\033[0;37m       aws cognito-idp admin-set-user-password --user-pool-id $user_pool_id --username admin --password \"YourSecurePassword123!\" --permanent\033[0m"
 echo ""
+if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
+    echo -e "\033[0;37m       aws cognito-idp admin-add-user-to-group --user-pool-id $user_pool_id --username admin --group-name GOATNetworkCaptureUsers\033[0m"
+    echo ""
+fi
 echo -e "\033[0;90m       (Replace the email and password with your own values)\033[0m"
 echo -e "\033[0;90m    2. Sign in at the Website URL above with your created admin credentials\033[0m"
 echo -e "\033[0;90m    3. Try a query like: 'What are my top cost optimization opportunities?'\033[0m"
-if [ "$DEPLOYMENT_MODE" != "full" ]; then
-    echo -e "\033[0;90m    4. To add more modules later, re-run with --mode full\033[0m"
-fi
 if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
-    echo -e "\033[0;90m    Note: To use capture actions, add users to the GOATNetworkCaptureUsers Cognito group\033[0m"
+    echo -e "\033[0;90m    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)\033[0m"
+fi
+if [ "$DEPLOYMENT_MODE" != "full" ]; then
+    echo -e "\033[0;90m    5. To add more modules later, re-run with --mode full\033[0m"
 fi
 echo ""

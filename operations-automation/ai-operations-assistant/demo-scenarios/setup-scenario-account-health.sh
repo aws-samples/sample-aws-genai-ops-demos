@@ -12,9 +12,23 @@
 # All resources are tagged with goat-demo=true for cleanup.
 # Script is idempotent - safe to re-run after partial failures.
 #
-# Usage: ./setup-scenario-account-health.sh
+# Usage:
+#   ./setup-scenario-account-health.sh                       # Create a new VPC
+#   ./setup-scenario-account-health.sh --vpc-id vpc-0abc123  # Reuse an existing VPC
 
 set -o pipefail
+
+# ---------------------------------------------------------------------------
+# Parse command line arguments
+# ---------------------------------------------------------------------------
+PARAM_VPC_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --vpc-id) PARAM_VPC_ID="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--vpc-id VPC_ID]"; exit 1 ;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 # Color helpers (matching deploy-all.sh patterns)
@@ -77,29 +91,43 @@ echo ""
 # ---------------------------------------------------------------------------
 print_magenta "--- VPC and Networking ---"
 
-print_yellow "Checking for existing goat-demo VPC..."
-VPC_ID=$(aws ec2 describe-vpcs \
-    --filters "Name=tag:goat-demo,Values=true" "Name=tag:Name,Values=goat-demo-vpc" \
-    --query "Vpcs[0].VpcId" --output text --region "$REGION" 2>/dev/null)
-
-if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-    print_green "  VPC already exists: $VPC_ID"
-else
-    print_yellow "Creating dedicated VPC (10.99.0.0/16)..."
-    VPC_ID=$(aws ec2 create-vpc \
-        --cidr-block 10.99.0.0/16 \
-        --tag-specifications 'ResourceType=vpc,Tags=[{Key=goat-demo,Value=true},{Key=goat-scenario,Value=a},{Key=Name,Value=goat-demo-vpc},{Key=auto-delete,Value=no}]' \
-        --query "Vpc.VpcId" --output text --region "$REGION" 2>&1)
+if [ -n "$PARAM_VPC_ID" ]; then
+    # User provided an existing VPC - validate it exists
+    print_yellow "Using provided VPC: $PARAM_VPC_ID"
+    vpc_check=$(aws ec2 describe-vpcs --vpc-ids "$PARAM_VPC_ID" --query "Vpcs[0].VpcId" --output text --region "$REGION" 2>&1)
     if [ $? -ne 0 ]; then
-        print_red "  WARNING: Failed to create VPC: $VPC_ID"
-        WARNINGS+=("VPC creation failed")
-        VPC_ID=""
-    else
-        print_green "  Created VPC: $VPC_ID"
+        print_red "  ERROR: Provided VPC $PARAM_VPC_ID not found or inaccessible: $vpc_check"
+        exit 1
+    fi
+    VPC_ID="$PARAM_VPC_ID"
+    print_green "  VPC validated: $VPC_ID"
+    # Ensure DNS hostnames enabled (required for RDS)
+    aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-hostnames '{"Value":true}' --region "$REGION" 2>/dev/null
+else
+    print_yellow "Checking for existing goat-demo-vpc..."
+    VPC_ID=$(aws ec2 describe-vpcs \
+        --filters "Name=tag:goat-demo,Values=true" "Name=tag:Name,Values=goat-demo-vpc" \
+        --query "Vpcs[0].VpcId" --output text --region "$REGION" 2>/dev/null)
 
-        # Enable DNS hostnames (required for RDS)
-        aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-hostnames '{"Value":true}' --region "$REGION" 2>/dev/null
-        print_gray "  Enabled DNS hostnames on VPC"
+    if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+        print_green "  Shared VPC already exists: $VPC_ID"
+    else
+        print_yellow "Creating shared VPC goat-demo-vpc (10.99.0.0/16)..."
+        VPC_ID=$(aws ec2 create-vpc \
+            --cidr-block 10.99.0.0/16 \
+            --tag-specifications 'ResourceType=vpc,Tags=[{Key=goat-demo,Value=true},{Key=Name,Value=goat-demo-vpc},{Key=auto-delete,Value=no}]' \
+            --query "Vpc.VpcId" --output text --region "$REGION" 2>&1)
+        if [ $? -ne 0 ]; then
+            print_red "  WARNING: Failed to create VPC: $VPC_ID"
+            WARNINGS+=("VPC creation failed")
+            VPC_ID=""
+        else
+            print_green "  Created VPC: $VPC_ID"
+
+            # Enable DNS hostnames (required for RDS)
+            aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-hostnames '{"Value":true}' --region "$REGION" 2>/dev/null
+            print_gray "  Enabled DNS hostnames on VPC"
+        fi
     fi
 fi
 

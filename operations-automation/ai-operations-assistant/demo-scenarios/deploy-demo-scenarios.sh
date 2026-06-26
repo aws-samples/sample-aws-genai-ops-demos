@@ -16,6 +16,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SCENARIO=""
 
+# Track case IDs for summary
+CASE_IDS=()
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --scenario)
@@ -101,7 +104,8 @@ new_demo_support_case() {
         --output text --no-cli-pager 2>/dev/null) || true
 
     if [ -n "$existing" ] && [ "$existing" != "None" ] && [ "$existing" != "null" ]; then
-        echo -e "  \033[0;90mSupport case already exists with subject '$subject' — skipping creation\033[0m"
+        echo -e "  \033[0;90mSupport case already exists: $existing -- skipping creation\033[0m"
+        CASE_IDS+=("$existing")
         return 0
     fi
 
@@ -131,7 +135,17 @@ new_demo_support_case() {
     case_id="$output"
     sleep 5
     aws support resolve-case --case-id "$case_id" --region us-east-1 --no-cli-pager > /dev/null 2>&1 || true
-    echo -e "  \033[0;32mCreated and resolved Support case: $case_id\033[0m"
+    # Get the display ID for user-friendly output
+    local display_id=""
+    display_id=$(aws support describe-cases \
+        --case-id-list "$case_id" \
+        --include-resolved-cases \
+        --region us-east-1 \
+        --query "cases[0].displayId" \
+        --output text --no-cli-pager 2>/dev/null) || display_id="$case_id"
+    if [ -z "$display_id" ] || [ "$display_id" == "None" ]; then display_id="$case_id"; fi
+    echo -e "  \033[0;32mCreated and resolved Support case: $display_id\033[0m"
+    CASE_IDS+=("$display_id")
 }
 
 # ---------------------------------------------------------------------------
@@ -191,6 +205,17 @@ if [ "$SCENARIO" = "all" ] || [ "$SCENARIO" = "connectivity" ]; then
     eni_id=$(aws cloudformation describe-stacks --stack-name "$stack_c" --query "Stacks[0].Outputs[?OutputKey=='AppInstanceEniId'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "N/A")
     echo -e "  \033[0;36mApp EC2:      $ec2_id\033[0m"
     echo -e "  \033[0;36mApp ENI:      $eni_id (for Network Agent capture)\033[0m"
+fi
+
+if [ ${#CASE_IDS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "  \033[0;33mSupport Cases:\033[0m"
+    for id in "${CASE_IDS[@]}"; do
+        echo -e "    \033[0;36m$id\033[0m"
+    done
+    echo ""
+    echo -e "  \033[0;33mTry in G.O.A.T.:\033[0m"
+    echo -e "  \033[0;90m  \"Help me troubleshoot case ${CASE_IDS[-1]}\"\033[0m"
 fi
 
 echo ""

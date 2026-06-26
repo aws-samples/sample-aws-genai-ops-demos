@@ -38,7 +38,7 @@ $region = $global:AWS_REGION
 # ---------------------------------------------------------------------------
 Write-Host "`nChecking Scenario C deployment..." -ForegroundColor Yellow
 
-$scenarioCStack = "GOATScenarioC-$region"
+$scenarioCStack = "GOATDemoScenarioC-$region"
 $stackStatus = aws cloudformation describe-stacks `
     --stack-name $scenarioCStack `
     --query "Stacks[0].StackStatus" `
