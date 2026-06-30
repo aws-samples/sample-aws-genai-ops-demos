@@ -26,6 +26,12 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/stvxdpzfcr22)
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.drawio.svg)
