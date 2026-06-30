@@ -8,6 +8,12 @@ Many enterprises have legacy IT systems that only expose web interfaces - no API
 
 **The Solution**: An AI agent monitors email for requests, then autonomously navigates legacy web portals to fulfill those requests - creating tickets, checking inventory, placing orders, and sending notifications.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/rfiichk51xhp)
+
 ## Architecture
 
 ```
