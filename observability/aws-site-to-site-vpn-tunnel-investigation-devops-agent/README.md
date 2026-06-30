@@ -31,6 +31,12 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 | **Throughput Monitoring** | Metric-math alarm detects performance degradation — agent investigates even when tunnels remain UP |
 | **BGP Route Monitoring** | CloudWatch Logs metric filter detects BGP route withdrawals — agent investigates routing changes that don't affect tunnel state |
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/zive0mxjced6)
+
 ## Architecture
 
 ![Architecture](architecture.drawio.png)

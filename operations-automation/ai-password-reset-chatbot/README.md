@@ -2,6 +2,13 @@
 
 A conversational chatbot that guides users through Cognito's native password reset flow using Amazon Bedrock AgentCore Runtime, AgentCore Memory, and Strands Agents with Nova 2 Lite.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/ufpudjubuptn)
+
+
 ## Architecture
 
 ```

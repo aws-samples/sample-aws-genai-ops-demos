@@ -21,6 +21,12 @@ In addition, the dashboard ships a **⌘K command palette**, URL-synced filters,
 - **Key Technologies**: Prowler, Amazon DevOps Agent, Amazon Bedrock (Nova Lite 2), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
 - **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Bedrock usage per finding you click "Generate AI Insights" on (see [Cost](#cost))
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/demo/lxqexdsy2lyi)
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.drawio.svg)

@@ -34,6 +34,12 @@
 - `infrastructure/` - Graviton-optimized CDK/Terraform templates
 - `scripts/` - Testing and validation automation
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/fvkujoodtetd)
+
 ## Architecture
 
 ```

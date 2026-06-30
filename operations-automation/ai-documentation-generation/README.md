@@ -46,6 +46,13 @@ Our `additionalPlanContext` requests:
 
 **Note**: The actual output structure and content are determined by AWS Transform based on your codebase and our guidance. Results may vary depending on the project type, size, and complexity.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/ki9ixucx9ntd)
+
+
 ## Architecture
 
 ```

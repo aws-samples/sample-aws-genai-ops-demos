@@ -22,6 +22,12 @@
 
 **Processing Time**: ~2–8 minutes depending on account complexity
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/myu8jllhi41j)
+
 ## Example Output
 
 **Playbooks Generated** (varies by architecture):
