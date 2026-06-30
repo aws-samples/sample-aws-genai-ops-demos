@@ -12,6 +12,12 @@ Analyzes your codebase to detect AWS GenAI patterns and provides structured find
 - **AWS Credentials** (optional): For AI-powered prompt detection with higher accuracy
 - **Kiro IDE** (if using as Kiro Power)
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/0k9wijggdroj)
+
 ## Installation
 
 ### Using `uvx`
