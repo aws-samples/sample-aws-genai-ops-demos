@@ -28,7 +28,7 @@
 
 | Component | Details |
 |-----------|---------|
-| **Amazon DevOps Agent** | Receives webhook alerts, reads VPN tunnel logs and CloudWatch metrics, queries the MCP server for business context, and produces root-cause analysis. |
+| **AWS DevOps Agent** | Receives webhook alerts, reads VPN tunnel logs and CloudWatch metrics, queries the MCP server for business context, and produces root-cause analysis. |
 | **MCP Server** | Lambda behind API Gateway (REST + API key). Implements JSON-RPC 2.0 with 3 tools: `get_service_dependencies`, `get_cost_impact`, `get_compliance_status`. |
 | **Operator App** | Web UI for on-demand chat with the agent — used for scenarios like traffic-selector and bgp-route-withdraw where time-scoped prompts produce better results. |
 

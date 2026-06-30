@@ -1,7 +1,7 @@
 {
   "name": "prowler-security-findings-agent-cdk",
   "version": "1.0.0",
-  "description": "CDK deployment for the Prowler + Amazon DevOps Agent + Bedrock Nova Lite security findings demo",
+  "description": "CDK deployment for the Prowler + AWS DevOps Agent + Bedrock Nova Lite security findings demo",
   "main": "app.ts",
   "scripts": {
     "build": "tsc",

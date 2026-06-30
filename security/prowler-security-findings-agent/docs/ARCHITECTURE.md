@@ -4,7 +4,7 @@
 
 1. Run Prowler against the deployed AWS account on a schedule and on-demand from the UI.
 2. Persist findings in a queryable, dashboard-ready store.
-3. For the findings that matter (CRITICAL / HIGH / failing), produce an AI-generated remediation playbook with Amazon Bedrock Nova Lite 2, and feed it into Amazon DevOps Agent so the investigation starts with concrete next steps.
+3. For the findings that matter (CRITICAL / HIGH / failing), produce an AI-generated remediation playbook with Amazon Bedrock Nova Lite 2, and feed it into AWS DevOps Agent so the investigation starts with concrete next steps.
 4. Expose the whole thing as a modern single-page dashboard.
 
 ## High-level view
