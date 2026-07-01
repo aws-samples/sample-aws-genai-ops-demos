@@ -180,12 +180,6 @@ cd cdk && npm install && cd ..
 # Install Python dependencies for MCP Lambda (vendored, pure Python)
 pip3 install pg8000 --target cdk/lambda/mcp-transaction-insights/ --quiet --no-compile 2>/dev/null || true
 
-# Bootstrap CDK if not already done (idempotent)
-echo "  Bootstrapping CDK environment (if needed)..."
-cd cdk
-npx cdk bootstrap "aws://$AWS_ACCOUNT_ID/$AWS_REGION" --no-cli-pager 2>&1 | tail -3
-cd ..
-
 echo "  done."
 echo ""
 
@@ -1104,7 +1098,7 @@ fi
 cd ../..
 
 # Find S3 bucket
-S3_BUCKET="$PROJECT_NAME-$ENVIRONMENT-portal-$AWS_ACCOUNT_ID"
+S3_BUCKET="$PROJECT_NAME-$ENVIRONMENT-merchant-portal-$AWS_ACCOUNT_ID"
 
 echo "  Uploading to S3..."
 aws s3 sync services/merchant-portal/dist/ "s3://$S3_BUCKET/" --delete --region "$AWS_REGION"

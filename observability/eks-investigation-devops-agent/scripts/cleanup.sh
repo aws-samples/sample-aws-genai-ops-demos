@@ -61,7 +61,6 @@ fi
 echo ""
 echo "[3/15] Emptying and deleting S3 buckets..."
 BUCKETS=(
-  "${PROJECT_NAME}-${ENVIRONMENT}-portal-${ACCOUNT_ID}"
   "${PROJECT_NAME}-${ENVIRONMENT}-merchant-portal-${ACCOUNT_ID}"
   "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
 )

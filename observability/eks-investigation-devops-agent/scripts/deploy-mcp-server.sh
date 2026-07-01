@@ -6,6 +6,10 @@
 # Updates the Lambda env var with the RDS endpoint, then registers the
 # AgentCore Gateway as an MCP server in DevOps Agent.
 #
+# DevOps Agent reaches the Gateway over its public HTTPS endpoint, authenticated
+# via Cognito OAuth client-credentials (TLS-encrypted). No VPC/private connection
+# is required for this managed, authenticated path.
+#
 # Usage:
 #   source scripts/deploy-mcp-server.sh
 #   deploy_mcp_server <project_name> <environment>
@@ -146,123 +150,11 @@ deploy_mcp_server() {
     fi
 
     # -----------------------------------------------------------------------
-    # Create private connection for DevOps Agent → AgentCore Gateway
-    # -----------------------------------------------------------------------
-    local PRIVATE_CONN_NAME="mcp-gw-conn"
-    local GATEWAY_HOST="${GATEWAY_ID}.gateway.bedrock-agentcore.${REGION}.amazonaws.com"
-
-    echo "  Setting up private connection '$PRIVATE_CONN_NAME'..."
-    local CONN_STATUS=$(aws devops-agent describe-private-connection \
-        --name "$PRIVATE_CONN_NAME" \
-        --region "$DA_REGION" \
-        --query "status" --output text --no-cli-pager 2>/dev/null || echo "NOT_FOUND")
-
-    local NEED_CREATE="false"
-
-    if [ "$CONN_STATUS" = "NOT_FOUND" ] || [ "$CONN_STATUS" = "None" ]; then
-        NEED_CREATE="true"
-    elif [ "$CONN_STATUS" = "DELETE_IN_PROGRESS" ]; then
-        echo "  Private connection is being deleted. Waiting..."
-        for i in $(seq 1 30); do
-            CONN_STATUS=$(aws devops-agent describe-private-connection \
-                --name "$PRIVATE_CONN_NAME" --region "$DA_REGION" \
-                --query "status" --output text --no-cli-pager 2>/dev/null || echo "GONE")
-            if [ "$CONN_STATUS" = "GONE" ] || [ "$CONN_STATUS" = "None" ] || [ "$CONN_STATUS" = "NOT_FOUND" ]; then
-                break
-            fi
-            sleep 10
-        done
-        NEED_CREATE="true"
-    elif [ "$CONN_STATUS" = "ACTIVE" ]; then
-        # Verify the connection points to the current Gateway
-        local EXISTING_HOST=$(aws devops-agent describe-private-connection \
-            --name "$PRIVATE_CONN_NAME" --region "$DA_REGION" \
-            --output json --no-cli-pager 2>/dev/null \
-            | jq -r '.hostAddress // empty' 2>/dev/null || echo "")
-        if [ "$EXISTING_HOST" != "$GATEWAY_HOST" ]; then
-            echo "  Private connection points to stale Gateway ($EXISTING_HOST)."
-            echo "  Deleting and recreating for current Gateway ($GATEWAY_HOST)..."
-            aws devops-agent delete-private-connection \
-                --name "$PRIVATE_CONN_NAME" --region "$DA_REGION" --no-cli-pager 2>/dev/null || true
-            echo "  Waiting for deletion to complete..."
-            for i in $(seq 1 60); do
-                local DEL_STATUS=$(aws devops-agent describe-private-connection \
-                    --name "$PRIVATE_CONN_NAME" --region "$DA_REGION" \
-                    --query "status" --output text --no-cli-pager 2>/dev/null || echo "GONE")
-                if [ "$DEL_STATUS" = "GONE" ] || [ "$DEL_STATUS" = "None" ] || [ "$DEL_STATUS" = "NOT_FOUND" ]; then
-                    echo "  ✓ Deletion complete"
-                    break
-                fi
-                if [ "$i" -eq 60 ]; then
-                    echo "  WARNING: Deletion still in progress after 10 minutes."
-                fi
-                sleep 10
-            done
-            NEED_CREATE="true"
-        else
-            echo "  Private connection already exists and points to correct Gateway"
-        fi
-    else
-        echo "  Private connection in unexpected state: $CONN_STATUS. Recreating..."
-        aws devops-agent delete-private-connection \
-            --name "$PRIVATE_CONN_NAME" --region "$DA_REGION" --no-cli-pager 2>/dev/null || true
-        sleep 30
-        NEED_CREATE="true"
-    fi
-
-    if [ "$NEED_CREATE" = "true" ]; then
-        local VPC_ID=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --query "Stacks[0].Outputs[?OutputKey=='McpVpcId'].OutputValue" \
-            --output text --region "$REGION")
-        local SUBNET_IDS=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --query "Stacks[0].Outputs[?OutputKey=='McpSubnetIds'].OutputValue" \
-            --output text --region "$REGION")
-        local SUBNET_ARR=$(echo "$SUBNET_IDS" | jq -R 'split(",")')
-
-        aws devops-agent create-private-connection \
-            --name "$PRIVATE_CONN_NAME" \
-            --mode "$(jq -n \
-                --arg host "$GATEWAY_HOST" \
-                --arg vpc "$VPC_ID" \
-                --argjson subnets "$SUBNET_ARR" \
-                '{serviceManaged: {hostAddress: $host, vpcId: $vpc, subnetIds: $subnets, portRanges: ["443"]}}')" \
-            --region "$DA_REGION" \
-            --no-cli-pager --output json 2>&1 | tail -3
-
-        echo "  Waiting for private connection to become active..."
-        for i in $(seq 1 60); do
-            CONN_STATUS=$(aws devops-agent describe-private-connection \
-                --name "$PRIVATE_CONN_NAME" \
-                --region "$DA_REGION" \
-                --query "status" --output text --no-cli-pager 2>/dev/null || echo "UNKNOWN")
-            if [ "$CONN_STATUS" = "ACTIVE" ]; then
-                echo "  ✓ Private connection is ACTIVE"
-                echo "  Waiting 30s for DNS propagation..."
-                sleep 30
-                break
-            fi
-            if [ "$CONN_STATUS" = "CREATE_FAILED" ]; then
-                echo "  ERROR: Private connection creation failed."
-                return 1
-            fi
-            if [ "$i" -eq 60 ]; then
-                echo "  WARNING: Private connection not active after 10 minutes."
-            fi
-            sleep 10
-        done
-    fi
-
-    # -----------------------------------------------------------------------
     # Register Gateway as MCP server in DevOps Agent
     # -----------------------------------------------------------------------
-    # Known issue: OAuth registration with --private-connection-name fails
-    # because DevOps Agent routes the token exchange through the private
-    # connection, which cannot reach the Cognito auth domain.
-    # Workaround: register without private connection (OAuth auto-refreshes).
-    # The MCP endpoint is still authenticated via OAuth and encrypted (TLS).
-    # TODO: Add --private-connection-name once the service-side issue is resolved.
+    # DevOps Agent connects to the AgentCore Gateway over its public HTTPS
+    # endpoint, authenticated via Cognito OAuth client-credentials (TLS-encrypted).
+    # No VPC/private connection is required for this managed, authenticated path.
     # -----------------------------------------------------------------------
     echo "  Registering MCP server in DevOps Agent..."
 
