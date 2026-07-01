@@ -246,7 +246,7 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
 
     // Create S3 bucket for CodeBuild source
     const sourceBucket = new s3.Bucket(this, 'SourceBucket', {
-      bucketName: `aws-services-lifecycle-tracker-sources-${this.account}-${this.region}`,
+      bucketName: `aws-svc-lifecycle-src-${this.account}-${this.region}`,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       // No lifecycle rules - keep source files indefinitely for CodeBuild

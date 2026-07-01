@@ -157,6 +157,33 @@
       "last_extraction": "",
       "extraction_count": 0
     },
+    "bedrock": {
+      "name": "Amazon Bedrock",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle.html"
+      ],
+      "extraction_focus": "Locate the 'Legacy and end-of-life (EOL) models' table. Extract ALL rows from this table. For each model, extract: model provider, model name, model ID, available regions, legacy date, EOL date, and public extended access start date. If a field contains a dash or is empty, set it to null. Include all models regardless of provider (Amazon, Anthropic, Meta, Cohere, Mistral, etc.).",
+      "schema_key": "models",
+      "item_properties": {
+        "name": "Model name (e.g., 'Claude 3 Haiku', 'Nova Premier')",
+        "identifier": "Model ID (e.g., 'anthropic.claude-3-haiku-20240307-v1:0')",
+        "provider": "Model provider (e.g., 'Amazon', 'Anthropic', 'Meta')",
+        "regions": "Available AWS regions",
+        "legacy_date": "Date model entered Legacy state",
+        "eol_date": "End-of-Life date",
+        "public_extended_access_date": "Public extended access start date"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "provider",
+        "legacy_date",
+        "eol_date"
+      ],
+      "enabled": true,
+      "last_extraction": "",
+      "extraction_count": 0
+    },
     "msk": {
       "name": "Amazon MSK (Managed Streaming for Apache Kafka)",
       "documentation_urls": [

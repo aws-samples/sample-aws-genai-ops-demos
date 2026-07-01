@@ -18,6 +18,7 @@ Deployed to AgentCore as lambdaruntime_transform.
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -60,6 +61,30 @@ def _convert_floats(obj: Any) -> Any:
 def _extract_function_name(arn: str) -> str:
     parts = arn.split(":")
     return parts[6] if len(parts) >= 7 else arn
+
+
+def _update_progress(table, function_arn: str, done: int, total: int, phase: str, attempt: int) -> None:
+    """Write a progress heartbeat to DynamoDB for the dashboard to poll.
+
+    Stored under `transform_progress` and cleared when the transform reaches a
+    terminal status. Callers throttle how often this is invoked to limit writes.
+    """
+    try:
+        table.update_item(
+            Key={"function_arn": function_arn},
+            UpdateExpression="SET transform_progress = :p",
+            ExpressionAttributeValues={
+                ":p": {
+                    "done": done,
+                    "total": total,
+                    "phase": phase,
+                    "attempt": attempt,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            },
+        )
+    except Exception as e:
+        logger.warning("Failed to write transform progress: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +152,37 @@ def load_context(function_arn: str) -> dict[str, Any]:
 # Step 2: Generate migrated code — Nova 2 Lite via Converse API
 # ---------------------------------------------------------------------------
 
-def generate_migrated_code(context: dict, validation_errors: list[str] | None = None) -> tuple[dict[str, str], str]:
+def _strip_code_fences(text: str) -> str:
+    """Return clean source from a model response that may include markdown fences.
+
+    Nova occasionally ignores the "no code fences" instruction and emits the
+    code either wrapped in a ```python ... ``` block, or — more insidiously —
+    as raw code followed by a stray closing ``` fence and a prose explanation.
+    The latter leaves an invalid ``` line in the middle of the file, which then
+    fails ast.parse validation. We handle both by:
+      1. dropping a leading fence line if present, and
+      2. truncating at the first standalone fence line (and everything after it).
+    """
+    lines = text.strip().split("\n")
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    cleaned = []
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            break  # closing fence + any trailing commentary — discard from here
+        cleaned.append(line)
+    return "\n".join(cleaned).rstrip() + "\n"
+
+
+def generate_migrated_code(context: dict, validation_errors: list[str] | None = None,
+                           table: Any = None, function_arn: str | None = None,
+                           attempt: int = 1) -> tuple[dict[str, str], str]:
     """Generate migrated code file-by-file. One LLM call per file — no parsing needed.
     
     Returns (migrated_files dict, changelog string).
+
+    When `table` and `function_arn` are provided, writes a throttled progress
+    heartbeat after each file so the dashboard can render a live "X/N" counter.
     """
     from botocore.config import Config
     bedrock = boto3.client("bedrock-runtime", region_name=REGION,
@@ -153,8 +205,10 @@ Preserve original logic — only change what's necessary for runtime compatibili
 Add inline comments explaining each change you make."""
 
     migrated_files = {}
+    total_files = len(context["source_files"])
+    last_progress_write = 0.0
 
-    for filename, original_content in context["source_files"].items():
+    for idx, (filename, original_content) in enumerate(context["source_files"].items(), start=1):
         retry_hint = ""
         if validation_errors:
             # Find errors relevant to this file
@@ -185,21 +239,22 @@ Output the complete migrated file content. Nothing else — no markdown fences, 
                     text += block["text"]
 
             if text:
-                # Strip any accidental code fences the model might add despite instructions
-                content = text.strip()
-                if content.startswith("```"):
-                    # Remove opening fence (```python, ```js, ```filename, etc.)
-                    first_newline = content.find("\n")
-                    if first_newline != -1:
-                        content = content[first_newline + 1:]
-                if content.endswith("```"):
-                    content = content[:-3].rstrip()
+                # Strip markdown fences/commentary the model may add despite instructions
+                content = _strip_code_fences(text)
                 migrated_files[filename] = content
                 logger.info("Generated %s: %d chars", filename, len(content))
             else:
                 logger.warning("Empty response for %s", filename)
         except Exception as e:
             logger.error("Failed to generate %s: %s", filename, e)
+
+        # Throttled progress heartbeat for the dashboard (always write on the
+        # final file; otherwise at most once every ~2s to limit DynamoDB writes)
+        if table is not None and function_arn:
+            now_t = time.time()
+            if idx == total_files or (now_t - last_progress_write) >= 2.0:
+                _update_progress(table, function_arn, idx, total_files, "generating", attempt)
+                last_progress_write = now_t
 
     # Generate changelog in a separate call
     changelog = ""
@@ -427,6 +482,8 @@ def handle_transform(payload: dict) -> dict:
         # Step 1: Load context
         logger.info("Step 1: Loading context...")
         context = load_context(function_arn)
+        total_files = len(context["source_files"])
+        _update_progress(table, function_arn, 0, total_files, "generating", 1)
 
         # Step 2+3: Generate and validate with retry loop
         migrated_files = {}
@@ -437,7 +494,8 @@ def handle_transform(payload: dict) -> dict:
 
         for attempt in range(1, MAX_RETRIES + 1):
             logger.info("Step 2: Generating code (attempt %d/%d)...", attempt, MAX_RETRIES)
-            migrated_files, changelog = generate_migrated_code(context, validation_errors)
+            migrated_files, changelog = generate_migrated_code(
+                context, validation_errors, table=table, function_arn=function_arn, attempt=attempt)
 
             if not migrated_files:
                 logger.warning("No files generated on attempt %d", attempt)
@@ -445,6 +503,7 @@ def handle_transform(payload: dict) -> dict:
                 continue
 
             logger.info("Step 3: Validating via Code Interpreter...")
+            _update_progress(table, function_arn, len(migrated_files), total_files, "validating", attempt)
             validation = validate_with_code_interpreter(migrated_files, context["target_runtime"])
 
             if validation.get("valid", False):
@@ -479,10 +538,10 @@ def handle_transform(payload: dict) -> dict:
 
         if not success:
             error_msg = "; ".join(validation.get("errors", ["No files generated"]))
-            update_expr += ", transform_error = :e"
+            update_expr += ", transform_error = :e REMOVE transform_progress"
             expr_values[":e"] = error_msg
         else:
-            update_expr += " REMOVE transform_error"
+            update_expr += " REMOVE transform_error, transform_progress"
 
         table.update_item(
             Key={"function_arn": function_arn},
@@ -508,7 +567,7 @@ def handle_transform(payload: dict) -> dict:
         try:
             table.update_item(
                 Key={"function_arn": function_arn},
-                UpdateExpression="SET migration_status = :s, transform_error = :e, transformed_at = :t",
+                UpdateExpression="SET migration_status = :s, transform_error = :e, transformed_at = :t REMOVE transform_progress",
                 ExpressionAttributeValues={":s": "TRANSFORM_FAILED", ":e": error_msg, ":t": now},
             )
         except Exception as db_err:

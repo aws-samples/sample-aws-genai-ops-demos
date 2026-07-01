@@ -15,6 +15,7 @@ import {
   StatusIndicator,
   Icon,
   ExpandableSection,
+  ProgressBar,
 } from '@cloudscape-design/components';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -46,6 +47,11 @@ function formatBytes(b?: number): string {
   if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / 1048576).toFixed(1)} MB`;
 }
+function formatElapsed(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
 
 export default function FunctionDetail() {
   const { arn } = useParams<{ arn: string }>();
@@ -59,6 +65,40 @@ export default function FunctionDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [analyzeResult, setAnalyzeResult] = useState<Record<string, unknown> | null>(null);
   const [transformResult, setTransformResult] = useState<Record<string, unknown> | null>(null);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [transformProgress, setTransformProgress] = useState<
+    { done?: number; total?: number; phase?: string; attempt?: number } | null
+  >(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  // Elapsed-time counter while a transform is running
+  useEffect(() => {
+    if (actionLoading !== 'transform') { setElapsed(0); return; }
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [actionLoading]);
+
+  // Poll inventory for the transform progress heartbeat while a transform runs.
+  // The blocking invoke still delivers the final result; this only feeds the
+  // live "X/N" counter from the agent's DynamoDB progress writes.
+  useEffect(() => {
+    if (actionLoading !== 'transform') { setTransformProgress(null); return; }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        let result = await readInventory();
+        if (typeof result === 'string') try { result = JSON.parse(result); } catch { /* */ }
+        const typed = result as { functions: FunctionRecord[] } | null;
+        const fn = typed?.functions?.find(f => f.function_arn === decodedArn) as any;
+        if (!cancelled && fn?.transform_progress) setTransformProgress(fn.transform_progress);
+      } catch { /* ignore poll errors — display falls back to elapsed time */ }
+      if (!cancelled) timer = setTimeout(poll, 5000);
+    }
+    timer = setTimeout(poll, 4000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [actionLoading, decodedArn]);
 
   // Load function data from inventory
   useEffect(() => {
@@ -102,7 +142,7 @@ export default function FunctionDetail() {
   }, [decodedArn]);
 
   async function handleAnalyze() {
-    setActionLoading('analyze'); setActionError(null);
+    setActionLoading('analyze'); setActionError(null); setActiveTab('assessment');
     try {
       let r = await invokeAnalyze(decodedArn);
       if (typeof r === 'string') try { r = JSON.parse(r); } catch { /* */ }
@@ -112,7 +152,7 @@ export default function FunctionDetail() {
   }
 
   async function handleTransform() {
-    setActionLoading('transform'); setActionError(null);
+    setActionLoading('transform'); setActionError(null); setActiveTab('transform');
     try {
       let r = await invokeTransform(decodedArn);
       if (typeof r === 'string') try { r = JSON.parse(r); } catch { /* */ }
@@ -283,7 +323,46 @@ export default function FunctionDetail() {
     <SpaceBetween size="l">
       <Box variant="p" color="text-body-secondary">Generates migrated code file-by-file using Nova 2 Lite, validates each Python file through Code Interpreter (ast.parse + import check), and retries up to 3 times on validation failure before storing the migration package in S3.</Box>
       {actionLoading === 'transform' ? (
-        <Box textAlign="center" padding="xxl"><Spinner size="large" /><Box variant="p" padding={{ top: 's' }}>Generating migrated code...</Box></Box>
+        (() => {
+          const done = transformProgress?.done ?? 0;
+          const total = transformProgress?.total ?? 0;
+          const phase = transformProgress?.phase;
+          const attempt = transformProgress?.attempt ?? 1;
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          const phaseLabel =
+            phase === 'validating'
+              ? `Validating migrated code in the Code Interpreter sandbox${attempt > 1 ? ` (attempt ${attempt}/3)` : ''}…`
+              : phase === 'generating'
+                ? `Generating migrated code — file ${done}/${total}${attempt > 1 ? ` (re-generating, attempt ${attempt}/3)` : ''}`
+                : 'Starting transform…';
+          return (
+            <Container header={<Header variant="h3">Transformation in progress</Header>}>
+              <SpaceBetween size="m">
+                <Box><Spinner /> {phaseLabel}</Box>
+                {total > 0 && (
+                  <ProgressBar
+                    value={phase === 'validating' ? 100 : pct}
+                    label="Code generation"
+                    description={
+                      phase === 'validating'
+                        ? 'All files generated — running syntax and import validation'
+                        : `${done} of ${total} source files migrated`
+                    }
+                    additionalInfo={attempt > 1 ? `Retry attempt ${attempt} of 3` : undefined}
+                  />
+                )}
+                <KeyValuePairs columns={2} items={[
+                  { label: 'Elapsed', value: formatElapsed(elapsed) },
+                  { label: 'Files', value: total > 0 ? `${done} / ${total}` : 'Determining…' },
+                ]} />
+                <Alert type="info">
+                  Large functions can take several minutes. The migration runs in the background and results are
+                  saved to S3 and DynamoDB even if this view times out — reopen this function later to see the outcome.
+                </Alert>
+              </SpaceBetween>
+            </Container>
+          );
+        })()
       ) : transformResult ? (
         transformResult.error ? (
           <Alert type="error" header="Transform Failed">{String(transformResult.error)}</Alert>
@@ -374,7 +453,7 @@ export default function FunctionDetail() {
         {functionName.split(':')[0]}
       </Header>
       {actionError && <Alert type="error" dismissible onDismiss={() => setActionError(null)}>{actionError}</Alert>}
-      <Tabs tabs={[
+      <Tabs activeTabId={activeTab} onChange={({ detail }) => setActiveTab(detail.activeTabId)} tabs={[
         { label: 'Overview', id: 'overview', content: overviewTab },
         { label: 'Assessment', id: 'assessment', content: assessmentTab },
         { label: 'Transformation', id: 'transform', content: transformTab },

@@ -1,0 +1,107 @@
+#!/bin/bash
+set -e
+SCENARIO="$1"
+STATE_FILE="/opt/vpn-demo/active"
+BACKUP="/tmp/vpn-demo-backup"
+IPSEC_CONF="/etc/ipsec.d/vpn-demo.conf"
+IPSEC_SECRETS="/etc/ipsec.d/vpn-demo.secrets"
+GOBGP="/usr/local/bin/gobgp"
+
+[ -z "$SCENARIO" ] && echo "Usage: $0 <scenario>" && exit 1
+
+# Check if a scenario is already active
+if [ -f "$STATE_FILE" ]; then
+  ACTIVE=$(cat "$STATE_FILE")
+  echo "WARNING: $ACTIVE is already active."
+  echo "Rollback first: sudo /opt/vpn-demo/rollback $ACTIVE"
+  exit 1
+fi
+
+# Validate scenario name before proceeding
+case "$SCENARIO" in
+  psk-mismatch|dpd-timeout|proposal-mismatch|traffic-selector|tunnel-down|throughput-degradation|bgp-down|bgp-asn-mismatch|bgp-hold-timer|bgp-route-withdraw) ;;
+  *) echo "Unknown scenario: $SCENARIO"; echo "Run 'list' to see available scenarios"; exit 1 ;;
+esac
+
+mkdir -p "$BACKUP"
+cp -f "$IPSEC_CONF" "$BACKUP/" 2>/dev/null || true
+cp -f "$IPSEC_SECRETS" "$BACKUP/" 2>/dev/null || true
+cp -f /etc/gobgp.toml "$BACKUP/" 2>/dev/null || true
+
+# Record active scenario before injection so rollback works even if inject fails mid-way
+echo "$SCENARIO" > "$STATE_FILE"
+
+case "$SCENARIO" in
+  psk-mismatch)
+    sed -i 's/PSK .*/PSK "WRONGKEY_injected"/' "$IPSEC_SECRETS"
+    ipsec secrets
+    ipsec auto --down tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    ipsec auto --up tunnel1 &
+    sleep 10
+    ipsec auto --up tunnel2 &
+    echo "Expected: 'detected a pre-shared key mismatch'"
+    ;;
+  dpd-timeout)
+    iptables -A INPUT -p udp --dport 500 -j DROP
+    iptables -A INPUT -p udp --dport 4500 -j DROP
+    iptables -A OUTPUT -p udp --dport 500 -j DROP
+    iptables -A OUTPUT -p udp --dport 4500 -j DROP
+    echo "Expected: 'DPD timed out after N retransmits'"
+    ;;
+  proposal-mismatch)
+    sed -i 's/ikelifetime=.*/ike=aes128-sha1-modp1536/' "$IPSEC_CONF"
+    ipsec auto --down tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    systemctl restart ipsec
+    echo "Expected: 'No Proposal Match Found by AWS'"
+    ;;
+  traffic-selector)
+    sed -i 's/leftsubnet=0.0.0.0\/0/leftsubnet=192.168.99.0\/24/' "$IPSEC_CONF"
+    ipsec auto --down tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    systemctl restart ipsec
+    echo "Expected: BGP Hold Timer expires (169.254.10.x excluded from traffic selectors)"
+    ;;
+  tunnel-down)
+    ipsec auto --down tunnel1 || true
+    ipsec auto --delete tunnel1 || true
+    ipsec auto --down tunnel2 || true
+    ipsec auto --delete tunnel2 || true
+    echo "Expected: CloudWatch TunnelState = 0"
+    ;;
+  throughput-degradation)
+    for DEV in vti1 vti2; do
+      tc qdisc add dev $DEV root handle 1: prio bands 3 priomap 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+      tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip dport 179 0xffff flowid 1:1
+      tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip sport 179 0xffff flowid 1:1
+      tc qdisc add dev $DEV parent 1:2 handle 20: netem delay 1000ms loss 99%
+    done
+    echo "Expected: throughput alarm fires (BGP preserved)"
+    ;;
+  bgp-down)
+    systemctl stop gobgpd
+    echo "Expected: 'BGP session state has changed from Established to Idle'"
+    ;;
+  bgp-asn-mismatch)
+    systemctl stop gobgpd
+    sed -i 's/as = 65000/as = 65999/' /etc/gobgp.toml
+    systemctl start gobgpd
+    sleep 5
+    $GOBGP global rib add 172.16.0.0/16 origin igp -a ipv4
+    echo "Expected: 'bad OPEN message - remote AS is 65999, expected 65000'"
+    ;;
+  bgp-hold-timer)
+    iptables -A INPUT -p tcp --dport 179 -j DROP
+    iptables -A INPUT -p tcp --sport 179 -j DROP
+    iptables -A OUTPUT -p tcp --dport 179 -j DROP
+    iptables -A OUTPUT -p tcp --sport 179 -j DROP
+    echo "Expected: 'Hold Timer Expired notification'"
+    ;;
+  bgp-route-withdraw)
+    $GOBGP global rib del 172.16.0.0/16 -a ipv4
+    echo "Expected: 'Route status WITHDRAWN'"
+    ;;
+esac
+
+echo "Injected: $SCENARIO"

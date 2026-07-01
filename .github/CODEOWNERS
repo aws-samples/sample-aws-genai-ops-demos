@@ -1,0 +1,3 @@
+# Governance files — require maintainer approval
+/.kiro/          @bquintas @benlec
+/.github/        @bquintas @benlec

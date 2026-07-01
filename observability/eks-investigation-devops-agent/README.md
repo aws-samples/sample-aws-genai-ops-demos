@@ -1,9 +1,9 @@
-# Intelligent EKS Incident Investigation with Amazon DevOps Agent
-*Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes*
+# Intelligent EKS Incident Investigation with AWS DevOps Agent
+*Automatically detect, investigate, and diagnose EKS infrastructure incidents using AWS DevOps Agent — reducing mean time to resolution from hours to minutes*
 
 ## Overview
 
-When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the Amazon DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
+When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the AWS DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
 
 The demo includes a **DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
 
@@ -12,7 +12,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 - **Duration**: ~25 min deployment + ~10 min demo
 - **Difficulty**: Intermediate
 - **Target Audience**: SREs, DevOps Engineers, Platform Engineers
-- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, Amazon Bedrock AgentCore Gateway, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
+- **Key Technologies**: Amazon EKS, AWS DevOps Agent, Amazon Bedrock AgentCore Gateway, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
 - **Estimated Cost**: ~$6.50/day while running — see [Cost Estimate](#cost-estimate)
 
 ## DevOps Agent Features Demonstrated
@@ -27,6 +27,12 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 | **Custom MCP Server Integration** | Agent queries a custom MCP server via AgentCore Gateway to assess business impact from the payment database during incidents |
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/stvxdpzfcr22)
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.drawio.svg)
@@ -34,7 +40,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 The platform has three layers:
 
 - **Application Layer** — CloudFront serves the React portal from S3 and routes API traffic through an NLB to three microservices running on EKS (Merchant Gateway, Payment Processor, Webhook Service), backed by RDS PostgreSQL and SQS for async webhook delivery.
-- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → Amazon DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis. A custom MCP server powered by AgentCore Gateway and Lambda gives the agent read-only access to the payment database, enabling business impact assessment (transaction volumes, failure rates, processing gaps) alongside infrastructure diagnostics.
+- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → AWS DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis. A custom MCP server powered by AgentCore Gateway and Lambda gives the agent read-only access to the payment database, enabling business impact assessment (transaction volumes, failure rates, processing gaps) alongside infrastructure diagnostics.
 - **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (10 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture documentation including network design, security model, and data flows.
@@ -47,6 +53,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 - `zip` utility
 - `jq` utility
 - Git
+- **CDK bootstrap** — the target account + region must be bootstrapped before running the deploy script. If you've never deployed CDK to this account/region pair, run:
+  ```bash
+  npx cdk bootstrap aws://<account-id>/<region>
+  ```
+  Bootstrapping creates the IAM roles, S3 bucket, ECR repo, and SSM parameter that CDK uses to publish assets and assume deploy roles. It's a one-time, idempotent operation per account/region. Without it, the deploy fails on the first stack with `SSM parameter /cdk-bootstrap/hnb659fds/version not found`.
 
 No local Docker or Java required — container images are built in the cloud via AWS CodeBuild.
 
@@ -63,16 +74,25 @@ cd sample-aws-genai-ops-demos/observability/eks-investigation-devops-agent
 
 > **⚠️ Interactive step required during deployment:** The script will pause and ask you to generate a DevOps Agent webhook from the AWS console. Have a browser ready — the script prints the exact console URL to open.
 
-> **DevOps Agent region:** By default, the Agent Space is created in `us-east-1` regardless of your current default region for all the other stacks. To use a different supported region:
-> ```powershell
-> # PowerShell
-> $env:DEVOPS_AGENT_REGION = "eu-west-1"
-> .\deploy-all.ps1
-> ```
+> **Two regions, set them both.** The deploy uses two independent region variables:
+>
+> - `AWS_REGION` — where the CDK stacks (EKS, RDS, CloudFront, etc.) are deployed. If unset, the AWS CLI falls back to `aws configure get region`, which may not be what you want.
+> - `DEVOPS_AGENT_REGION` — where the DevOps Agent Space is created. Defaults to `us-east-1` because `AWS::DevOpsAgent` resources are not available in every region.
+>
+> For a same-region deployment (example: Ireland):
 > ```bash
 > # Bash
+> export AWS_REGION=eu-west-1
+> export AWS_DEFAULT_REGION=eu-west-1
 > export DEVOPS_AGENT_REGION=eu-west-1
 > bash deploy-all.sh
+> ```
+> ```powershell
+> # PowerShell
+> $env:AWS_REGION = "eu-west-1"
+> $env:AWS_DEFAULT_REGION = "eu-west-1"
+> $env:DEVOPS_AGENT_REGION = "eu-west-1"
+> .\deploy-all.ps1
 > ```
 
 ```bash
@@ -223,7 +243,7 @@ DevOps Agent natively reads CloudWatch logs and metrics — it can tell you *wha
 
 This demo bridges that gap with a custom MCP server that gives the agent read-only access to the payment database through AgentCore Gateway. The agent goes from reporting "Payment Processor pods are in CrashLoopBackOff" to reporting "payment processing has been stalled for 12 minutes, 847 transactions are stuck, 3 merchants affected." The first is an ops finding. The second is something you can hand to a VP.
 
-The infrastructure is designed for private connectivity — the Gateway is accessible via a VPC endpoint (PrivateLink), and the Lambda runs in private subnets with a locked-down security group. A private connection (VPC Lattice) is created during deployment for DevOps Agent to reach the Gateway without traversing the public internet. The MCP server is registered with OAuth (Cognito client credentials) for authentication.
+The infrastructure keeps the data path locked down — the Lambda runs in private subnets with a security group that only allows egress to RDS and HTTPS for Secrets Manager. DevOps Agent reaches the AgentCore Gateway over its public HTTPS endpoint, authenticated with OAuth (Cognito client credentials) and encrypted in transit (TLS); the Gateway invokes the Lambda through the managed Lambda target using an IAM role, so the database credentials never leave Secrets Manager.
 
 **Setup**: The MCP server infrastructure is fully automated during deployment (step 10). Tools must be manually enabled in the DevOps Agent Console — open Capabilities → MCP Servers → pay-txn-mcp → select the tools you want the agent to use. The Lab's MCP Tools section has step-by-step instructions.
 
@@ -297,7 +317,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `DevOpsAgentEksMonitoring-{region}` | Observability | CloudWatch log groups, metric filters, alarms, SNS topic |
 | `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook, Secrets Manager |
 | `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab API | API Gateway, Lambda (kubectl), DynamoDB (timers) |
-| `DevOpsAgentEksMcpServer-{region}` | MCP server infra | AgentCore Gateway, Lambda (VPC), Secrets Manager (read-only DB creds), Cognito (OAuth), VPC endpoint |
+| `DevOpsAgentEksMcpServer-{region}` | MCP server infra | AgentCore Gateway, Lambda (VPC), Secrets Manager (read-only DB creds), Cognito (OAuth) |
 
 ## Project Structure
 
@@ -361,7 +381,10 @@ All costs approximate, based on `us-east-1` pricing.
 | CloudFront returns **403** | S3/OAC misconfigured | Re-run deployment |
 | Agent Space not found | CLI too old | Upgrade AWS CLI to >= 2.34.21 |
 | Investigation shows "no AWS account access" | Missing association | Re-run `.\scripts\setup-devops-agent.ps1` |
+| CDK fails with **`SSM parameter /cdk-bootstrap/hnb659fds/version not found`** | Account/region is not CDK-bootstrapped | Run `npx cdk bootstrap aws://<account-id>/<region>` once, then re-run `deploy-all.sh` |
 | CDK bootstrap "S3 bucket already exists" | Broken CDK bootstrap stack | Run `npx cdk bootstrap --force` or delete the orphaned S3 bucket `cdk-hnb659fds-assets-*` and re-bootstrap. See [CDK bootstrap troubleshooting](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-troubleshoot.html) |
+| Deploy targeted the wrong region | `AWS_REGION` unset, so CLI fell back to `aws configure get region` | `export AWS_REGION=<intended-region>` and `export AWS_DEFAULT_REGION=<same>` before running the script |
+| CodeBuild fails in **DOWNLOAD_SOURCE** with `BucketRegionError` (builds fail in ~18s) | The CodeBuild sources S3 bucket (`devops-agent-eks-cfn-templates-<account>`) exists in a different region than this deploy, left over from a previous attempt. CodeBuild cannot pull sources cross-region. | Delete the misplaced bucket and re-run: `aws s3 rm s3://devops-agent-eks-cfn-templates-<account> --recursive --region <old-region>` then `aws s3 rb s3://devops-agent-eks-cfn-templates-<account> --region <old-region>`. The deploy script now detects this upfront. |
 
 ## Recreating the Agent Space
 
