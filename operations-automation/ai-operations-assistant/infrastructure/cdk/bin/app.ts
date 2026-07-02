@@ -170,6 +170,27 @@ curRuntime.addDependency(curInfra);
 const networkRuntime = new NetworkRuntimeStack(app, `GOATNetworkRuntime-${region}`, { env });
 networkRuntime.addDependency(networkInfra);
 
+// ---------------------------------------------------------------------------
+// Attach-by-Import resolution for the Network Agent (Reqs 4.5–4.9)
+//
+// By default (`--mode full`), the orchestrator resolves the Network Agent's
+// runtime ARN via a direct in-app construct reference to `networkRuntime`,
+// deployed in the same `cdk deploy` invocation. When
+// `goatAttachNetworkByImport` is set to the string `"true"`, the orchestrator
+// instead resolves the ARN via `cdk.Fn.importValue('GOATNetworkAgentRuntimeArn')`,
+// the same mechanism `GOATDevOpsIntegrationStack` already uses unconditionally.
+// This lets `OrchRuntimeStack` attach to a Network Agent stack that was
+// deployed independently via `--mode network` or `--mode network-mcp`,
+// without requiring `networkRuntime` to be part of this synthesis's
+// dependency graph.
+//
+// Pass via: npx cdk deploy -c goatAttachNetworkByImport=true
+// ---------------------------------------------------------------------------
+const attachNetworkByImport = app.node.tryGetContext('goatAttachNetworkByImport') === 'true';
+const resolvedNetworkAgentArn = attachNetworkByImport
+  ? cdk.Fn.importValue('GOATNetworkAgentRuntimeArn')
+  : networkRuntime.agentRuntimeArn;
+
 // Orchestration runtime — receives sub-agent ARNs as environment variables.
 // Solution adoption tracking goes ONLY on this stack (Req 15.5 / 10.7).
 const orchRuntime = new OrchRuntimeStack(app, `GOATOrchRuntime-${region}`, {
@@ -181,7 +202,7 @@ const orchRuntime = new OrchRuntimeStack(app, `GOATOrchRuntime-${region}`, {
     support: supportRuntime.agentRuntimeArn,
     ta: taRuntime.agentRuntimeArn,
     cur: curRuntime.agentRuntimeArn,
-    network: networkRuntime.agentRuntimeArn,
+    network: resolvedNetworkAgentArn,
   },
   // Capture_Conversation_Context persistence (Task 36, Reqs 9.20 /
   // 17.9). Surface the Conversations table name into the
@@ -197,7 +218,9 @@ orchRuntime.addDependency(healthRuntime);
 orchRuntime.addDependency(supportRuntime);
 orchRuntime.addDependency(taRuntime);
 orchRuntime.addDependency(curRuntime);
-orchRuntime.addDependency(networkRuntime);
+if (!attachNetworkByImport) {
+  orchRuntime.addDependency(networkRuntime);
+}
 
 // ---------------------------------------------------------------------------
 // Frontend Stack

@@ -756,5 +756,15 @@ export class DemoScenarioTlsFragmentationStack extends cdk.Stack {
       value: tlsEni.attrId,
       description: 'Primary ENI ID of app instance (for Network Agent capture)',
     });
+
+    new cdk.CfnOutput(this, 'TransitGatewayId', {
+      value: this.transitGateway.ref,
+      exportName: 'GOATDemoScenarioCTransitGatewayId',
+    });
+
+    new cdk.CfnOutput(this, 'InspectionVpcId', {
+      value: this.inspectionVpc.ref,
+      exportName: 'GOATDemoScenarioCInspectionVpcId',
+    });
   }
 }

@@ -4,7 +4,7 @@
 # Uses shared/scripts/deploy-cdk.ps1 for each stack in dependency order.
 
 param(
-    [ValidateSet("full", "cost", "health", "support", "trusted-advisor", "cur", "network")]
+    [ValidateSet("full", "cost", "health", "support", "trusted-advisor", "cur", "network", "network-mcp")]
     [string]$DeploymentMode = "full",
 
     [string]$OrchModelId = "",
@@ -50,24 +50,33 @@ $cdkDir = "infrastructure/cdk"
 # Install frontend dependencies and create placeholder dist
 # CDK synthesizes all stacks even when deploying one, so frontend/dist must exist
 # ---------------------------------------------------------------------------
-Write-Host "`nInstalling frontend dependencies..." -ForegroundColor Yellow
-Write-Host "      (Installing React, Vite, Cognito SDK, and Cloudscape components)" -ForegroundColor Gray
-Push-Location frontend
-# Remove stale environment config and build artifacts from prior installs.
-# The correct values are regenerated in section 7 after all stacks are deployed.
-# Without this, a partial redeploy can leave old Cognito/ARN values in the
-# build, causing "User pool client does not exist" errors at sign-in.
-if (Test-Path ".env.production.local") {
-    Remove-Item ".env.production.local" -Force
-    Write-Host "      Removed stale .env.production.local (will regenerate after deploy)" -ForegroundColor DarkGray
+if ($DeploymentMode -ne "network-mcp") {
+    Write-Host "`nInstalling frontend dependencies..." -ForegroundColor Yellow
+    Write-Host "      (Installing React, Vite, Cognito SDK, and Cloudscape components)" -ForegroundColor Gray
+    Push-Location frontend
+    # Remove stale environment config and build artifacts from prior installs.
+    # The correct values are regenerated in section 7 after all stacks are deployed.
+    # Without this, a partial redeploy can leave old Cognito/ARN values in the
+    # build, causing "User pool client does not exist" errors at sign-in.
+    if (Test-Path ".env.production.local") {
+        Remove-Item ".env.production.local" -Force
+        Write-Host "      Removed stale .env.production.local (will regenerate after deploy)" -ForegroundColor DarkGray
+    }
+    if (Test-Path "dist") {
+        Remove-Item "dist" -Recurse -Force
+        Write-Host "      Removed stale dist/ (will rebuild after deploy)" -ForegroundColor DarkGray
+    }
+    npm install
+    Pop-Location
+} else {
+    Write-Host "`nSkipping frontend dependency install (network-mcp mode has no Frontend stack)..." -ForegroundColor DarkGray
 }
-if (Test-Path "dist") {
-    Remove-Item "dist" -Recurse -Force
-    Write-Host "      Removed stale dist/ (will rebuild after deploy)" -ForegroundColor DarkGray
-}
-npm install
-Pop-Location
 
+# Placeholder frontend/dist/index.html must always be created, regardless of
+# deployment mode. CDK synthesizes the entire app -- including FrontendStack's
+# BucketDeployment asset resolution -- for every `cdk deploy` invocation
+# targeting this app, so frontend/dist must exist on disk even in network-mcp
+# mode where the Frontend stack is never actually deployed.
 Write-Host "`nCreating placeholder frontend build..." -ForegroundColor Yellow
 Write-Host "      (Generating temporary HTML file - required for CDK synthesis)" -ForegroundColor Gray
 if (-not (Test-Path "frontend/dist")) {
@@ -90,6 +99,7 @@ switch ($DeploymentMode) {
     "trusted-advisor"  { $deployModules = @("TA") }
     "cur"              { $deployModules = @("CUR") }
     "network"          { $deployModules = @() }
+    "network-mcp"      { $deployModules = @() }
 }
 
 Write-Host "`nModules to deploy: $($deployModules -join ', ')" -ForegroundColor Cyan
@@ -156,16 +166,21 @@ function Deploy-Stack {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Core Stacks (always deployed)
+# 1. Core Stacks (skipped entirely under network-mcp mode: no Auth/Data
+# stack is needed since there is no Frontend and no Cognito sign-in step)
 # ---------------------------------------------------------------------------
 Write-Host "`n--- Core Stacks ---" -ForegroundColor Magenta
 
-Deploy-Stack -StackName "GOATAuth-$region" `
-    -Description "Creating Cognito User Pool, Identity Pool, and app client"
+if ($DeploymentMode -ne "network-mcp") {
+    Deploy-Stack -StackName "GOATAuth-$region" `
+        -Description "Creating Cognito User Pool, Identity Pool, and app client"
 
-Deploy-Stack -StackName "GOATData-$region" `
-    -Description "Creating DynamoDB tables for conversations, knowledge articles, and user preferences" `
-    -SkipBootstrap
+    Deploy-Stack -StackName "GOATData-$region" `
+        -Description "Creating DynamoDB tables for conversations, knowledge articles, and user preferences" `
+        -SkipBootstrap
+} else {
+    Write-Host "      Skipping GOATAuth/GOATData (network-mcp mode has no Auth/Frontend dependency)..." -ForegroundColor DarkGray
+}
 
 # ---------------------------------------------------------------------------
 # 2. Infrastructure Stacks per module (ECR, CodeBuild, S3, IAM)
@@ -191,9 +206,9 @@ foreach ($module in $deployModules) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Network Agent Stacks (full mode or network mode)
+# 4. Network Agent Stacks (full mode, network mode, or network-mcp mode)
 # ---------------------------------------------------------------------------
-if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network" -or $DeploymentMode -eq "network-mcp") {
     Write-Host "`n--- Network Agent Stacks ---" -ForegroundColor Magenta
 
     # Check if GOATSharedDataBucketName export exists; deploy NetworkDataStack if absent
@@ -251,6 +266,19 @@ if ($DeploymentMode -eq "full") {
             Write-Host "  .\deploy-all.ps1" -ForegroundColor Gray
             exit 1
         }
+        if ($cdkOutput -match "No export named GOATNetworkAgentRuntimeArn found") {
+            Write-Host "`nDEPLOYMENT FAILED: Attach-by-import could not find the Network Agent export" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "No stack in this account/region has exported 'GOATNetworkAgentRuntimeArn'." -ForegroundColor Yellow
+            Write-Host "The '-c goatAttachNetworkByImport=true' context flag requires a Network Agent" -ForegroundColor Yellow
+            Write-Host "stack to already be deployed and exporting that value." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Deploy the Network Agent first, then re-run this deployment:" -ForegroundColor Yellow
+            Write-Host "  .\deploy-all.ps1 -DeploymentMode network" -ForegroundColor Gray
+            Write-Host "  # or, for an Auth-free/Frontend-free standalone deployment:" -ForegroundColor Gray
+            Write-Host "  .\deploy-all.ps1 -DeploymentMode network-mcp" -ForegroundColor Gray
+            exit 1
+        }
         Write-Host "Orchestration runtime deployment failed" -ForegroundColor Red
         exit 1
     }
@@ -258,8 +286,9 @@ if ($DeploymentMode -eq "full") {
 
 # ---------------------------------------------------------------------------
 # 5b. DevOps Agent Integration (MCP Server + esbuild bundle)
+# full mode OR network-mcp mode
 # ---------------------------------------------------------------------------
-if ($DeploymentMode -eq "full") {
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network-mcp") {
     Write-Host "`n--- DevOps Agent Integration ---" -ForegroundColor Magenta
 
     $devopsDir = Join-Path $PSScriptRoot "devops-integration"
@@ -302,45 +331,52 @@ if ($DeploymentMode -eq "full") {
 
 # ---------------------------------------------------------------------------
 # 6. Retrieve stack outputs for frontend build
+# Skipped entirely under network-mcp mode: no GOATAuth/GOATData/GOATFrontend
+# stack is deployed, so there is no Cognito configuration or frontend-facing
+# agent runtime ARN to retrieve.
 # ---------------------------------------------------------------------------
-Write-Host "`n--- Retrieving Stack Outputs ---" -ForegroundColor Magenta
+if ($DeploymentMode -ne "network-mcp") {
+    Write-Host "`n--- Retrieving Stack Outputs ---" -ForegroundColor Magenta
 
-$userPoolId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
-$userPoolClientId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
-$identityPoolId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager
+    $userPoolId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
+    $userPoolClientId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
+    $identityPoolId = aws cloudformation describe-stacks --stack-name "GOATAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager
 
-if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolClientId) -or [string]::IsNullOrEmpty($identityPoolId)) {
-    Write-Host "Failed to retrieve Cognito configuration from GOATAuth-$region stack outputs" -ForegroundColor Red
-    exit 1
-}
+    if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolClientId) -or [string]::IsNullOrEmpty($identityPoolId)) {
+        Write-Host "Failed to retrieve Cognito configuration from GOATAuth-$region stack outputs" -ForegroundColor Red
+        exit 1
+    }
 
-# Retrieve orchestration agent ARN (full mode) or first available sub-agent ARN (single module)
-$agentRuntimeArn = ""
-if ($DeploymentMode -eq "full") {
-    $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
-} elseif ($DeploymentMode -eq "network") {
-    # In network mode, use the Network Agent runtime ARN
-    $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    # Retrieve orchestration agent ARN (full mode) or first available sub-agent ARN (single module)
+    $agentRuntimeArn = ""
+    if ($DeploymentMode -eq "full") {
+        $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    } elseif ($DeploymentMode -eq "network") {
+        # In network mode, use the Network Agent runtime ARN
+        $agentRuntimeArn = aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    } else {
+        # In single-module mode, use the deployed module's runtime ARN
+        $moduleStackName = "GOAT$($deployModules[0])Runtime-$region"
+        $agentRuntimeArn = aws cloudformation describe-stacks --stack-name $moduleStackName --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    }
+
+    if ([string]::IsNullOrEmpty($agentRuntimeArn)) {
+        Write-Host "Failed to retrieve Agent Runtime ARN from stack outputs" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "      User Pool ID:        $userPoolId" -ForegroundColor Green
+    Write-Host "      User Pool Client ID:  $userPoolClientId" -ForegroundColor Green
+    Write-Host "      Identity Pool ID:     $identityPoolId" -ForegroundColor Green
+    Write-Host "      Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Green
+    Write-Host "      Region:               $region" -ForegroundColor Green
 } else {
-    # In single-module mode, use the deployed module's runtime ARN
-    $moduleStackName = "GOAT$($deployModules[0])Runtime-$region"
-    $agentRuntimeArn = aws cloudformation describe-stacks --stack-name $moduleStackName --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
+    Write-Host "`nSkipping stack output retrieval for frontend build (network-mcp mode has no Frontend/Auth stack)..." -ForegroundColor DarkGray
 }
-
-if ([string]::IsNullOrEmpty($agentRuntimeArn)) {
-    Write-Host "Failed to retrieve Agent Runtime ARN from stack outputs" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "      User Pool ID:        $userPoolId" -ForegroundColor Green
-Write-Host "      User Pool Client ID:  $userPoolClientId" -ForegroundColor Green
-Write-Host "      Identity Pool ID:     $identityPoolId" -ForegroundColor Green
-Write-Host "      Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Green
-Write-Host "      Region:               $region" -ForegroundColor Green
 
 # Retrieve Network Agent runtime ARN when applicable
 $networkAgentArn = ""
-if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network" -or $DeploymentMode -eq "network-mcp") {
     $networkAgentArn = aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
     if ([string]::IsNullOrEmpty($networkAgentArn)) {
         Write-Host "Failed to retrieve Network Agent Runtime ARN from GOATNetworkRuntime-$region stack outputs" -ForegroundColor Red
@@ -351,34 +387,51 @@ if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
 
 # ---------------------------------------------------------------------------
 # 7. Build frontend with retrieved outputs
+# Skipped entirely under network-mcp mode: there is no Frontend stack to
+# build assets for.
 # ---------------------------------------------------------------------------
-Write-Host "`n--- Building Frontend ---" -ForegroundColor Magenta
-Write-Host "      (Injecting Cognito config and Agent Runtime ARN, building React app)" -ForegroundColor Gray
+if ($DeploymentMode -ne "network-mcp") {
+    Write-Host "`n--- Building Frontend ---" -ForegroundColor Magenta
+    Write-Host "      (Injecting Cognito config and Agent Runtime ARN, building React app)" -ForegroundColor Gray
 
-& .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -IdentityPoolId $identityPoolId -AgentRuntimeArn $agentRuntimeArn -Region $region
+    & .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -IdentityPoolId $identityPoolId -AgentRuntimeArn $agentRuntimeArn -Region $region
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Frontend build failed" -ForegroundColor Red
-    exit 1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Frontend build failed" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "`nSkipping frontend build (network-mcp mode has no Frontend stack)..." -ForegroundColor DarkGray
 }
 
 # ---------------------------------------------------------------------------
 # 8. Deploy Frontend Stack (always last)
+# Skipped entirely under network-mcp mode: no Frontend stack is deployed
+# under this mode.
 # ---------------------------------------------------------------------------
-Write-Host "`n--- Frontend Stack ---" -ForegroundColor Magenta
+if ($DeploymentMode -ne "network-mcp") {
+    Write-Host "`n--- Frontend Stack ---" -ForegroundColor Magenta
 
-Deploy-Stack -StackName "GOATFrontend-$region" `
-    -Description "Deploying React app to S3 + CloudFront with OAC" `
-    -SkipBootstrap
+    Deploy-Stack -StackName "GOATFrontend-$region" `
+        -Description "Deploying React app to S3 + CloudFront with OAC" `
+        -SkipBootstrap
+} else {
+    Write-Host "`nSkipping Frontend Stack deployment (network-mcp mode has no Frontend stack)..." -ForegroundColor DarkGray
+}
 
 # ---------------------------------------------------------------------------
 # 9. Deployment Summary
 # ---------------------------------------------------------------------------
-$websiteUrl = aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
+# Skipped entirely under network-mcp mode: no GOATFrontend stack is deployed
+# in this mode, so there is no Website URL to retrieve.
+$websiteUrl = ""
+if ($DeploymentMode -ne "network-mcp") {
+    $websiteUrl = aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
 
-if ([string]::IsNullOrEmpty($websiteUrl)) {
-    Write-Host "Failed to retrieve Website URL from GOATFrontend-$region stack outputs" -ForegroundColor Red
-    exit 1
+    if ([string]::IsNullOrEmpty($websiteUrl)) {
+        Write-Host "Failed to retrieve Website URL from GOATFrontend-$region stack outputs" -ForegroundColor Red
+        exit 1
+    }
 }
 
 Write-Host ""
@@ -386,47 +439,69 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host "  G.O.A.T. Deployment Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Website URL:          $websiteUrl" -ForegroundColor Cyan
-Write-Host "  Deployment Mode:      $DeploymentMode" -ForegroundColor Cyan
-Write-Host "  Region:               $region" -ForegroundColor Cyan
-Write-Host "  Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Cyan
-Write-Host "  User Pool ID:         $userPoolId" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Deployed Modules: $($deployModules -join ', ')" -ForegroundColor Cyan
-if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
-    Write-Host "  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)" -ForegroundColor Cyan
+if ($DeploymentMode -eq "network-mcp") {
+    # network-mcp has no Website URL / Agent Runtime ARN (Frontend/Orchestrator) /
+    # User Pool ID (Auth) to show -- print the MCP endpoint and Network Agent
+    # runtime ARN as the primary "how to use this" output instead.
+    Write-Host "  Deployment Mode:      $DeploymentMode" -ForegroundColor Cyan
+    Write-Host "  Region:               $region" -ForegroundColor Cyan
     Write-Host "  Network Agent ARN:    $networkAgentArn" -ForegroundColor Cyan
-}
-if ($DeploymentMode -eq "full") {
-    Write-Host "  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)" -ForegroundColor Cyan
-}
-if ($DeploymentMode -eq "full" -and -not [string]::IsNullOrEmpty($mcpEndpointUrl)) {
-    Write-Host "  MCP Endpoint:         $mcpEndpointUrl" -ForegroundColor Cyan
-    Write-Host "  Health Check:         $healthCheckUrl" -ForegroundColor Cyan
-}
-if (-not [string]::IsNullOrEmpty($OrchModelId)) {
-    Write-Host "  Orchestration Model:  $OrchModelId" -ForegroundColor Cyan
-}
-Write-Host ""
-Write-Host "  Next Steps:" -ForegroundColor Yellow
-Write-Host "    1. Create an admin user with full permissions (copy-paste all commands):" -ForegroundColor Gray
-Write-Host ""
-Write-Host "       aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS" -ForegroundColor White
-Write-Host ""
-Write-Host "       aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin --password ""YourSecurePassword123!"" --permanent" -ForegroundColor White
-Write-Host ""
-if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
-    Write-Host "       aws cognito-idp admin-add-user-to-group --user-pool-id $userPoolId --username admin --group-name GOATNetworkCaptureUsers" -ForegroundColor White
+    if (-not [string]::IsNullOrEmpty($mcpEndpointUrl)) {
+        Write-Host "  MCP Endpoint:         $mcpEndpointUrl" -ForegroundColor Cyan
+        Write-Host "  Health Check:         $healthCheckUrl" -ForegroundColor Cyan
+    }
     Write-Host ""
-}
-Write-Host "       (Replace the email and password with your own values)" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "    2. Sign in at the Website URL above with your created admin credentials" -ForegroundColor Gray
-Write-Host "    3. Try a query like: 'What are my top cost optimization opportunities?'" -ForegroundColor Gray
-if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
-    Write-Host "    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)" -ForegroundColor Gray
-}
-if ($DeploymentMode -ne "full") {
-    Write-Host "    5. To add more modules later, re-run with -DeploymentMode full" -ForegroundColor Gray
+    Write-Host "  No Cognito sign-in is required for this mode (Auth_Scope_Boundary) -" -ForegroundColor Yellow
+    Write-Host "  register the MCP Endpoint above with your DevOps Agent to start using" -ForegroundColor Yellow
+    Write-Host "  the six network diagnostic tools." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Next Steps:" -ForegroundColor Yellow
+    Write-Host "    1. Register the MCP Endpoint above with the AWS DevOps Agent" -ForegroundColor Gray
+    Write-Host "    2. Try a query like: 'Run a TCP traceroute from i-xxxx to example.com'" -ForegroundColor Gray
+    Write-Host "    3. To add the chat UI and orchestrator later, re-run with -DeploymentMode full" -ForegroundColor Gray
+} else {
+    Write-Host "  Website URL:          $websiteUrl" -ForegroundColor Cyan
+    Write-Host "  Deployment Mode:      $DeploymentMode" -ForegroundColor Cyan
+    Write-Host "  Region:               $region" -ForegroundColor Cyan
+    Write-Host "  Agent Runtime ARN:    $agentRuntimeArn" -ForegroundColor Cyan
+    Write-Host "  User Pool ID:         $userPoolId" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Deployed Modules: $($deployModules -join ', ')" -ForegroundColor Cyan
+    if ($DeploymentMode -eq "full" -or $DeploymentMode -eq "network") {
+        Write-Host "  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)" -ForegroundColor Cyan
+        Write-Host "  Network Agent ARN:    $networkAgentArn" -ForegroundColor Cyan
+    }
+    if ($DeploymentMode -eq "full") {
+        Write-Host "  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)" -ForegroundColor Cyan
+    }
+    if ($DeploymentMode -eq "full" -and -not [string]::IsNullOrEmpty($mcpEndpointUrl)) {
+        Write-Host "  MCP Endpoint:         $mcpEndpointUrl" -ForegroundColor Cyan
+        Write-Host "  Health Check:         $healthCheckUrl" -ForegroundColor Cyan
+    }
+    if (-not [string]::IsNullOrEmpty($OrchModelId)) {
+        Write-Host "  Orchestration Model:  $OrchModelId" -ForegroundColor Cyan
+    }
+    Write-Host ""
+    Write-Host "  Next Steps:" -ForegroundColor Yellow
+    Write-Host "    1. Create an admin user with full permissions (copy-paste all commands):" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "       aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS" -ForegroundColor White
+    Write-Host ""
+    Write-Host "       aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin --password ""YourSecurePassword123!"" --permanent" -ForegroundColor White
+    Write-Host ""
+    if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
+        Write-Host "       aws cognito-idp admin-add-user-to-group --user-pool-id $userPoolId --username admin --group-name GOATNetworkCaptureUsers" -ForegroundColor White
+        Write-Host ""
+    }
+    Write-Host "       (Replace the email and password with your own values)" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "    2. Sign in at the Website URL above with your created admin credentials" -ForegroundColor Gray
+    Write-Host "    3. Try a query like: 'What are my top cost optimization opportunities?'" -ForegroundColor Gray
+    if ($DeploymentMode -eq "network" -or $DeploymentMode -eq "full") {
+        Write-Host "    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)" -ForegroundColor Gray
+    }
+    if ($DeploymentMode -ne "full") {
+        Write-Host "    5. To add more modules later, re-run with -DeploymentMode full" -ForegroundColor Gray
+    }
 }
 Write-Host ""

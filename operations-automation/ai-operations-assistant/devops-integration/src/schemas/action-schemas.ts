@@ -1,7 +1,7 @@
 /**
  * Action Schema Registry for the GOAT Network Agent ↔ DevOps Agent Integration.
  *
- * Defines JSON Schema (draft-07 compatible) definitions for all 22 Network Agent
+ * Defines JSON Schema (draft-07 compatible) definitions for all 28 Network Agent
  * actions plus the composite `full_diagnostic` action. Each entry includes input/output
  * schemas, category classification, and authorization requirements.
  *
@@ -10,7 +10,7 @@
  * - Tool manifest generation
  * - DevOps Agent action discovery
  *
- * Requirements: 1.1, 1.3, 4.3, 4.7
+ * Requirements: 1.1, 1.3, 4.3, 4.7, 2.1, 2.2, 2.3, 2.4, 2.5
  */
 
 /** JSON Schema type definition (draft-07 compatible with ajv) */
@@ -906,6 +906,397 @@ export const ACTION_SCHEMAS: ActionSchemaRegistry = {
         analysis_duration_ms: { type: "number" },
       },
       required: ["diagnosis", "analyzed_packets"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  // ── Network Diagnostics Actions ─────────────────────────────────────────────
+  // Added by network-diagnostics-integration (Req 2.1-2.5). Input constraints are
+  // derived one-for-one from agents/network-agent/diagnostics_validation.py; output
+  // schemas are derived from the response dict literals built in the corresponding
+  // handlers in agents/network-agent/main.py.
+
+  tcp_traceroute: {
+    input: {
+      type: "object",
+      properties: {
+        instance_id: {
+          type: "string",
+          pattern: "^i-[0-9a-f]{8,17}$",
+          description: "EC2 instance ID to run the traceroute from",
+        },
+        destination_host: {
+          type: "string",
+          minLength: 1,
+          maxLength: 253,
+          description: "Hostname or IP address to trace to",
+        },
+        destination_port: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          default: 443,
+          description: "TCP port to probe (default 443)",
+        },
+        max_hops: {
+          type: "integer",
+          minimum: 1,
+          maximum: 30,
+          default: 30,
+          description: "Maximum TTL hops to probe (default 30)",
+        },
+        probe_timeout: {
+          type: "integer",
+          minimum: 1,
+          maximum: 5,
+          default: 2,
+          description: "Seconds to wait per hop (default 2)",
+        },
+      },
+      required: ["instance_id", "destination_host"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        source_instance_id: { type: "string" },
+        source_ip: { type: "string" },
+        destination_host: { type: "string" },
+        destination_port: { type: "integer" },
+        destination_ip: { type: "string" },
+        destination_reached: { type: "boolean" },
+        destination_status: { type: "string" },
+        total_hops: { type: "integer" },
+        trace_duration_ms: { type: "number" },
+        max_hops: { type: "integer" },
+        probe_timeout: { type: "integer" },
+        hops: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              hop: { type: "integer" },
+              ip: { type: "string" },
+              rtt_ms: { type: "number" },
+            },
+            required: ["hop"],
+          },
+        },
+      },
+      required: ["source_instance_id", "destination_host", "destination_reached", "hops"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  tls_traceroute: {
+    input: {
+      type: "object",
+      properties: {
+        instance_id: {
+          type: "string",
+          pattern: "^i-[0-9a-f]{8,17}$",
+          description: "EC2 instance ID to run the TLS traceroute from",
+        },
+        destination_host: {
+          type: "string",
+          minLength: 1,
+          maxLength: 253,
+          description: "Hostname or IP address to trace to",
+        },
+        destination_port: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          default: 443,
+          description: "TCP port to probe (default 443)",
+        },
+        max_hops: {
+          type: "integer",
+          minimum: 1,
+          maximum: 30,
+          default: 30,
+          description: "Maximum TTL hops to probe (default 30)",
+        },
+        probe_timeout: {
+          type: "integer",
+          minimum: 1,
+          maximum: 5,
+          default: 2,
+          description: "Seconds to wait per hop (default 2)",
+        },
+        sni_override: {
+          type: "string",
+          minLength: 1,
+          maxLength: 253,
+          description: "Optional SNI hostname to send during the TLS handshake instead of destination_host",
+        },
+      },
+      required: ["instance_id", "destination_host"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        source_instance_id: { type: "string" },
+        source_ip: { type: "string" },
+        destination_host: { type: "string" },
+        destination_port: { type: "integer" },
+        destination_reached: { type: "boolean" },
+        destination_status: { type: "string" },
+        total_hops: { type: "integer" },
+        trace_duration_ms: { type: "number" },
+        hops: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              hop: { type: "integer" },
+              ip: { type: "string" },
+              rtt_ms: { type: "number" },
+            },
+            required: ["hop"],
+          },
+        },
+        tls: {
+          type: ["object", "null"],
+          properties: {
+            handshake_success: { type: "boolean" },
+            protocol_version: { type: ["string", "null"] },
+            cipher_suite: { type: ["string", "null"] },
+            certificate_subject: { type: ["string", "null"] },
+            certificate_issuer: { type: ["string", "null"] },
+            certificate_not_after: { type: ["string", "null"] },
+            handshake_time_ms: { type: ["number", "null"] },
+            error_type: { type: ["string", "null"] },
+            error_detail: { type: ["string", "null"] },
+          },
+        },
+        tls_skipped_reason: { type: ["string", "null"], description: "Set when the TLS phase was skipped (e.g. dns_resolution_failed, destination_unreachable)" },
+      },
+      required: ["source_instance_id", "destination_host", "destination_reached", "hops"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  dns_resolve: {
+    input: {
+      type: "object",
+      properties: {
+        instance_id: {
+          type: "string",
+          pattern: "^i-[0-9a-f]{8,17}$",
+          description: "EC2 instance ID to resolve the hostname from",
+        },
+        hostname: {
+          type: "string",
+          minLength: 1,
+          maxLength: 253,
+          description: "Hostname to resolve",
+        },
+        record_type: {
+          type: "string",
+          enum: ["A", "AAAA", "CNAME", "MX", "TXT", "SRV", "PTR"],
+          default: "A",
+          description: "DNS record type to query (default A)",
+        },
+      },
+      required: ["instance_id", "hostname"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        hostname: { type: "string" },
+        record_type: { type: "string" },
+        instance_id: { type: "string" },
+        instance_resolution: {
+          type: "object",
+          properties: {
+            resolver_address: { type: "string" },
+            records: { type: "array", items: { type: "string" } },
+            resolution_time_ms: { type: "number" },
+            error: { type: "string" },
+          },
+          required: ["resolver_address", "records", "resolution_time_ms"],
+        },
+        agent_resolution: {
+          type: "object",
+          properties: {
+            records: { type: "array", items: { type: "string" } },
+            resolution_time_ms: { type: "number" },
+            error: { type: "string" },
+          },
+          required: ["records", "resolution_time_ms"],
+        },
+        split_horizon_detected: { type: "boolean" },
+      },
+      required: ["hostname", "record_type", "instance_id", "instance_resolution", "agent_resolution", "split_horizon_detected"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  db_connectivity_probe: {
+    input: {
+      type: "object",
+      properties: {
+        instance_id: {
+          type: "string",
+          pattern: "^i-[0-9a-f]{8,17}$",
+          description: "EC2 instance ID to run the probe from",
+        },
+        endpoint: {
+          type: "string",
+          minLength: 1,
+          maxLength: 253,
+          description: "Database hostname or IP address",
+        },
+        port: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          description: "Database TCP port",
+        },
+        engine: {
+          type: "string",
+          enum: ["mysql", "postgresql"],
+          description: "Database engine for the protocol-level auth handshake phase (optional — omit to run only the TCP + TLS phases)",
+        },
+      },
+      required: ["instance_id", "endpoint", "port"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        source_instance_id: { type: "string" },
+        source_ip: { type: "string" },
+        endpoint: { type: "string" },
+        port: { type: "integer" },
+        engine: { type: ["string", "null"] },
+        tcp: {
+          type: ["object", "null"],
+          properties: {
+            connected: { type: "boolean" },
+            connect_time_ms: { type: ["number", "null"] },
+            error: { type: ["string", "null"] },
+          },
+        },
+        tls: {
+          type: ["object", "null"],
+          properties: {
+            connected: { type: "boolean" },
+            tls_version: { type: ["string", "null"] },
+            error: { type: ["string", "null"] },
+          },
+        },
+        auth: {
+          type: ["object", "null"],
+          properties: {
+            success: { type: "boolean" },
+            details: { type: "object" },
+            error: { type: ["string", "null"] },
+          },
+        },
+        verdict: {
+          type: "string",
+          enum: ["tcp_failed", "tls_failed", "auth_failed", "all_phases_passed"],
+        },
+      },
+      required: ["source_instance_id", "endpoint", "port", "verdict"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  agentic_reachability_analyze: {
+    input: {
+      type: "object",
+      properties: {
+        source: {
+          type: "string",
+          pattern: "^(i-[0-9a-f]{8,17}|eni-[0-9a-f]{8,17}|igw-[0-9a-f]{8,17}|tgw-attach-[0-9a-f]{17}|tgw-[0-9a-f]{17}|vpce-svc-[0-9a-f]{17}|vpce-[0-9a-f]{8,17}|pcx-[0-9a-f]{8,17}|vgw-[0-9a-f]{8,17})$",
+          description: "Source VPC resource ID only — instance, ENI, gateway, or attachment. IPv4 addresses are rejected as sources.",
+        },
+        destination: {
+          type: "string",
+          pattern: "^(i-[0-9a-f]{8,17}|eni-[0-9a-f]{8,17}|igw-[0-9a-f]{8,17}|tgw-attach-[0-9a-f]{17}|tgw-[0-9a-f]{17}|vpce-svc-[0-9a-f]{17}|vpce-[0-9a-f]{8,17}|pcx-[0-9a-f]{8,17}|vgw-[0-9a-f]{8,17}|([0-9]{1,3}\\.){3}[0-9]{1,3})$",
+          description: "Destination VPC resource ID OR an IPv4 address",
+        },
+        destination_port: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          default: 443,
+          description: "Destination port to analyze (default 443)",
+        },
+        protocol: {
+          type: "string",
+          enum: ["tcp", "udp"],
+          default: "tcp",
+          description: "Protocol to analyze",
+        },
+      },
+      required: ["source", "destination"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        reachable: { type: "boolean" },
+        source: { type: "string" },
+        destination: { type: "string" },
+        destination_port: { type: "integer" },
+        protocol: { type: "string" },
+        path_components: { type: "array", items: { type: "object" } },
+        limitations: { type: "array", items: { type: "object" } },
+        blocking_component: { type: "object" },
+        explanation: { type: "string" },
+        remediation: { type: "string" },
+      },
+      required: ["reachable", "source", "destination"],
+    },
+    category: "analysis",
+    requiresAuth: false,
+  },
+
+  ssm_health_check: {
+    input: {
+      type: "object",
+      properties: {
+        instance_id: {
+          type: "string",
+          pattern: "^i-[0-9a-f]{8,17}$",
+          description: "EC2 instance ID to check SSM agent health for",
+        },
+      },
+      required: ["instance_id"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string" },
+        ssm_managed: { type: "boolean" },
+        agent_version: { type: "string" },
+        ping_status: { type: "string" },
+        last_ping_time: { type: ["string", "null"] },
+        platform_type: { type: "string" },
+        platform_name: { type: "string" },
+        platform_version: { type: "string" },
+        ip_address: { type: "string" },
+        computer_name: { type: "string" },
+        association_status: { type: "string" },
+        diagnostic_hints: {
+          type: "array",
+          items: { type: "string" },
+          description: "Present only when ssm_managed is false",
+        },
+      },
+      required: ["instance_id", "ssm_managed"],
     },
     category: "analysis",
     requiresAuth: false,

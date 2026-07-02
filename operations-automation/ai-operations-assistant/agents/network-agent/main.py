@@ -46,6 +46,23 @@ from validation import (
     validate_stream_id,
     validate_top_n,
 )
+from diagnostics_validation import (
+    validate_instance_id,
+    validate_destination_host,
+    validate_port,
+    validate_max_hops,
+    validate_probe_timeout,
+    validate_reachability_source,
+    validate_reachability_destination,
+    validate_record_type,
+    validate_sni_override,
+    validate_engine,
+    validate_protocol,
+)
+from concurrency import SSMConcurrencyLimiter, ConcurrencyLimitError
+from ssm_executor import execute_ssm_script, SSMExecutionError
+from scripts import DB_CONNECTIVITY_PROBE_MARKER, DNS_RESOLVE_MARKER, TCP_TRACEROUTE_MARKER, TLS_TRACEROUTE_MARKER
+from scripts.tls_traceroute_script import TLS_TRACEROUTE_SCRIPT
 from athena_helper import (
     AthenaConfigurationError,
     AthenaQueryFailedError,
@@ -85,6 +102,8 @@ _ec2_client = None
 _scheduler_client = None
 _sfn_client = None
 _s3_client = None
+_ssm_client = None
+_ssm_client_health = None
 
 
 def _get_ec2_client():
@@ -141,6 +160,43 @@ def _get_s3_client():
     if _s3_client is None:
         _s3_client = boto3.client("s3", region_name=AWS_REGION)
     return _s3_client
+
+
+def _get_ssm_client_for_health():
+    """Return a cached boto3 SSM client for health-check API calls.
+
+    Used by :func:`handle_ssm_health_check` to call
+    ``DescribeInstanceInformation``. Separate from the SSM client in
+    ``ssm_executor.py`` which is used for SendCommand operations.
+    """
+    global _ssm_client_health
+    if _ssm_client_health is None:
+        _ssm_client_health = boto3.client("ssm", region_name=AWS_REGION)
+    return _ssm_client_health
+
+
+def _get_ssm_client():
+    """Return a cached boto3 SSM client for general SSM API calls.
+
+    Used by diagnostic handlers in ``main.py`` that need direct SSM API
+    access (e.g., SendCommand for SSM-based diagnostics). Tests can reset
+    the singleton by setting ``main._ssm_client = None`` between cases.
+    """
+    global _ssm_client
+    if _ssm_client is None:
+        _ssm_client = boto3.client("ssm", region_name=AWS_REGION)
+    return _ssm_client
+
+
+# ---------------------------------------------------------------------------
+# SSM Concurrency Limiter (module-level singleton)
+#
+# Enforces Requirements 8.1 (global limit: 3) and 8.4 (per-instance: 1).
+# Shared by all SSM-based diagnostic handlers (tcp_traceroute,
+# tls_traceroute, dns_resolve, db_connectivity_probe).
+# ---------------------------------------------------------------------------
+
+_ssm_concurrency_limiter = SSMConcurrencyLimiter()
 
 
 # ---------------------------------------------------------------------------
@@ -1113,6 +1169,1462 @@ def _check_opt_in_tag(eni_ids: list) -> None:
                 "permit mirroring."
             )
         raise ValidationError(message, error_category="unauthorized")
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic prerequisites check (SSM-based tools)
+# ---------------------------------------------------------------------------
+
+# Opt-in tag for SSM-based diagnostic actions (different from capture tag).
+DIAGNOSTIC_OPT_IN_TAG_KEY = "goat-network-traceroute-allowed"
+DIAGNOSTIC_OPT_IN_TAG_VALUE = "true"
+
+
+def _check_diagnostic_prerequisites(instance_id: str) -> dict:
+    """Verify an instance is eligible for SSM-based diagnostic execution.
+
+    Performs the following checks (Requirements 4.1-4.5, 7.1, 7.6):
+
+    1. Calls EC2 ``DescribeInstances`` to retrieve instance details and tags.
+    2. If the instance is not found, raises ``ValidationError`` with
+       ``error_category="instance_not_found"``.
+    3. If the instance ``Platform`` field is ``"windows"``, raises
+       ``ValidationError`` with ``error_category="unsupported_os"``.
+    4. If the instance does not carry the tag
+       ``goat-network-traceroute-allowed=true``, raises
+       ``ValidationError`` with ``error_category="unauthorized"``.
+    5. On success, returns a dict with instance metadata.
+
+    Args:
+        instance_id: A validated EC2 instance ID (matching Instance_Id_Format).
+
+    Returns:
+        Dict with keys ``instance_id``, ``private_ip``, and ``platform``
+        (None for Linux instances).
+
+    Raises:
+        ValidationError: When the instance is not found, runs Windows, or
+            lacks the required opt-in tag.
+        ClientError / BotoCoreError: Propagated from EC2 API calls when the
+            API itself fails (throttling, access denied, etc.).
+    """
+    ec2 = _get_ec2_client()
+
+    try:
+        response = ec2.describe_instances(InstanceIds=[instance_id])
+    except ClientError as exc:
+        # InvalidInstanceID.NotFound or InvalidInstanceID.Malformed
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in (
+            "InvalidInstanceID.NotFound",
+            "InvalidInstanceID.Malformed",
+        ):
+            raise ValidationError(
+                f"Instance {instance_id} not found.",
+                error_category="instance_not_found",
+            ) from exc
+        # Other EC2 API errors (throttling, access denied) propagate
+        raise
+    except BotoCoreError:
+        raise
+
+    # Check if any instance was returned
+    reservations = response.get("Reservations", [])
+    instances = []
+    for reservation in reservations:
+        instances.extend(reservation.get("Instances", []))
+
+    if not instances:
+        raise ValidationError(
+            f"Instance {instance_id} not found.",
+            error_category="instance_not_found",
+        )
+
+    instance = instances[0]
+
+    # Check for Windows platform (Req 7.6)
+    platform = instance.get("Platform")  # None for Linux, "windows" for Windows
+    if platform and platform.lower() == "windows":
+        raise ValidationError(
+            f"Instance {instance_id} runs Windows, which is not supported. "
+            "The Windows kernel blocks TCP raw sockets required for "
+            "TTL-based traceroute.",
+            error_category="unsupported_os",
+        )
+
+    # Check for opt-in tag (Req 4.1, 4.2)
+    tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
+    if tags.get(DIAGNOSTIC_OPT_IN_TAG_KEY) != DIAGNOSTIC_OPT_IN_TAG_VALUE:
+        raise ValidationError(
+            f"Instance {instance_id} missing tag "
+            f"{DIAGNOSTIC_OPT_IN_TAG_KEY}={DIAGNOSTIC_OPT_IN_TAG_VALUE}. "
+            "Add this tag to the instance to permit SSM-based diagnostics.",
+            error_category="unauthorized",
+        )
+
+    # Extract private IP address
+    private_ip = instance.get("PrivateIpAddress")
+    if not private_ip:
+        # Fallback: try NetworkInterfaces
+        network_interfaces = instance.get("NetworkInterfaces", [])
+        if network_interfaces:
+            private_ip = network_interfaces[0].get("PrivateIpAddress")
+
+    return {
+        "instance_id": instance_id,
+        "private_ip": private_ip,
+        "platform": None,  # Only Linux instances reach this point
+    }
+
+
+# ---------------------------------------------------------------------------
+# TCP Traceroute script template (placeholder)
+#
+# The full implementation (Task 3.1) replaces this with a bash wrapper
+# + Python traceroute script. For now, this placeholder allows the handler
+# flow to be tested end-to-end.
+# ---------------------------------------------------------------------------
+
+_TCP_TRACEROUTE_SCRIPT_TEMPLATE = """#!/bin/bash
+set -e
+trap 'rm -f /tmp/goat_tcp_traceroute_*.py' EXIT
+
+# Try python3 first, then python
+PYTHON=""
+if command -v python3 &>/dev/null; then
+    PYTHON=python3
+elif command -v python &>/dev/null; then
+    PYTHON=python
+else
+    echo '{TCP_TRACEROUTE_MARKER}'
+    echo '{{"error_type": "python_not_found", "message": "Python 3 is required but not installed on the target instance."}}'
+    exit 0
+fi
+
+cat > /tmp/goat_tcp_traceroute_$$.py << 'GOAT_SCRIPT_EOF'
+import json
+import socket
+import struct
+import sys
+import time
+import select
+
+def run_traceroute(destination_host, destination_port, max_hops, probe_timeout):
+    result = {{
+        "destination_host": destination_host,
+        "destination_port": destination_port,
+        "destination_reached": False,
+        "destination_status": None,
+        "total_hops": 0,
+        "trace_duration_ms": 0,
+        "hops": [],
+        "resolved_destination_ip": None,
+        "error_type": None,
+        "message": None,
+    }}
+
+    # Resolve destination
+    try:
+        dest_ip = socket.gethostbyname(destination_host)
+        result["resolved_destination_ip"] = dest_ip
+    except socket.gaierror as e:
+        result["error_type"] = "dns_resolution_failed"
+        result["message"] = "DNS resolution failed for {{0}}: {{1}}".format(destination_host, str(e))
+        return result
+
+    start_time = time.time()
+
+    try:
+        for ttl in range(1, max_hops + 1):
+            hop = {{"hop": ttl, "ip": "*", "rtt_ms": None, "hostname": None}}
+
+            try:
+                # Create raw socket for receiving ICMP
+                recv_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+                recv_sock.settimeout(probe_timeout)
+
+                # Create TCP socket for sending SYN
+                send_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+                send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 0)
+                send_sock.setsockopt(socket.SOL_IP, socket.IP_TTL, ttl)
+                send_sock.settimeout(probe_timeout)
+
+                # Build TCP SYN packet
+                src_port = 33434 + ttl
+                seq_num = ttl
+
+                # TCP header: src_port, dst_port, seq, ack, offset+flags, window, checksum, urg
+                tcp_header = struct.pack('!HHIIBBHHH',
+                    src_port, destination_port,
+                    seq_num, 0,
+                    (5 << 4), 0x02,  # SYN flag
+                    65535, 0, 0)
+
+                probe_start = time.time()
+                send_sock.sendto(tcp_header, (dest_ip, destination_port))
+
+                # Wait for response
+                ready = select.select([recv_sock], [], [], probe_timeout)
+                if ready[0]:
+                    data, addr = recv_sock.recvfrom(1024)
+                    rtt = (time.time() - probe_start) * 1000
+                    hop["ip"] = addr[0]
+                    hop["rtt_ms"] = round(rtt, 2)
+
+                    # Try reverse DNS
+                    try:
+                        hostname = socket.gethostbyaddr(addr[0])[0]
+                        hop["hostname"] = hostname
+                    except (socket.herror, socket.timeout, OSError):
+                        pass
+
+                    # Check if we reached the destination
+                    if addr[0] == dest_ip:
+                        result["destination_reached"] = True
+                        result["destination_status"] = "syn_ack"
+
+                recv_sock.close()
+                send_sock.close()
+
+            except PermissionError:
+                result["error_type"] = "cap_net_raw_denied"
+                result["message"] = "CAP_NET_RAW capability is required. Raw socket access is not available on this instance."
+                return result
+            except OSError as e:
+                if e.errno == 1:  # EPERM
+                    result["error_type"] = "cap_net_raw_denied"
+                    result["message"] = "CAP_NET_RAW capability is required. Raw socket access is not available on this instance."
+                    return result
+                hop["ip"] = "*"
+                hop["rtt_ms"] = None
+
+            result["hops"].append(hop)
+            result["total_hops"] = ttl
+
+            if result["destination_reached"]:
+                break
+
+    except Exception as e:
+        if "Permission" in str(type(e).__name__) or "EPERM" in str(e):
+            result["error_type"] = "cap_net_raw_denied"
+            result["message"] = "CAP_NET_RAW capability is required. Raw socket access is not available on this instance."
+            return result
+
+    elapsed = (time.time() - start_time) * 1000
+    result["trace_duration_ms"] = round(elapsed, 2)
+    return result
+
+if __name__ == "__main__":
+    import sys
+    destination_host = "{destination_host}"
+    destination_port = {destination_port}
+    max_hops = {max_hops}
+    probe_timeout = {probe_timeout}
+
+    result = run_traceroute(destination_host, destination_port, max_hops, probe_timeout)
+    print("{TCP_TRACEROUTE_MARKER}")
+    print(json.dumps(result))
+GOAT_SCRIPT_EOF
+
+$PYTHON /tmp/goat_tcp_traceroute_$$.py
+"""
+
+
+# ---------------------------------------------------------------------------
+# TCP Traceroute handler (Reqs 1.1-1.14, 6.1, 6.2, 6.5, 6.6, 6.9, 7.3, 7.4)
+# ---------------------------------------------------------------------------
+
+
+def handle_tcp_traceroute(params: dict) -> dict:
+    """Execute a TCP traceroute from a target EC2 instance to a destination.
+
+    Validates input parameters, checks diagnostic prerequisites (instance
+    exists, is Linux, has opt-in tag), acquires a concurrency slot, injects
+    the traceroute script onto the instance via SSM Run Command, and parses
+    the hop-by-hop results.
+
+    Args:
+        params: Dict with keys:
+            ``instance_id`` (required): EC2 instance ID matching
+                Instance_Id_Format.
+            ``destination_host`` (required): Hostname or IP to trace to
+                (1-253 chars).
+            ``destination_port`` (optional): TCP port, default 443.
+            ``max_hops`` (optional): Max TTL hops 1-30, default 30.
+            ``probe_timeout`` (optional): Seconds per hop 1-5, default 2.
+
+    Returns:
+        Response envelope produced by :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ssm:SendCommand"
+
+    # --- Parameter validation (Req 1.14, 5.1-5.7) ---
+    try:
+        instance_id = validate_instance_id(params.get("instance_id"))
+        destination_host = validate_destination_host(params.get("destination_host"))
+
+        # Optional params with defaults (Req 1.7, 1.10, 1.11)
+        raw_port = params.get("destination_port", 443)
+        destination_port = validate_port(raw_port, "destination_port")
+
+        raw_max_hops = params.get("max_hops", 30)
+        max_hops = validate_max_hops(raw_max_hops)
+
+        raw_probe_timeout = params.get("probe_timeout", 2)
+        probe_timeout = validate_probe_timeout(raw_probe_timeout)
+    except ValidationError as exc:
+        return _validation_error_response(
+            "tcp_traceroute", exc, source_api
+        )
+
+    # --- Prerequisite check: instance exists, is Linux, has tag (Reqs 4.1-4.5, 7.6) ---
+    try:
+        instance_info = _check_diagnostic_prerequisites(instance_id)
+    except ValidationError as exc:
+        return _validation_error_response(
+            "tcp_traceroute", exc, "ec2:DescribeInstances"
+        )
+    except (ClientError, BotoCoreError) as exc:
+        return _aws_error_response(
+            "tcp_traceroute", exc, "ec2:DescribeInstances",
+            "ec2:DescribeInstances",
+        )
+
+    # --- Acquire concurrency slot (Req 8.1, 8.4) ---
+    try:
+        _ssm_concurrency_limiter.acquire(instance_id)
+    except ConcurrencyLimitError as exc:
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=f"tcp_traceroute: {exc.message}",
+            source_api=source_api,
+            data_freshness="real-time",
+            error=f"concurrency_limit: {exc.message}",
+            error_category="concurrency_limit",
+        )
+
+    try:
+        # --- Generate script from template (Req 3.1-3.7) ---
+        script_text = _TCP_TRACEROUTE_SCRIPT_TEMPLATE.format(
+            destination_host=destination_host,
+            destination_port=destination_port,
+            max_hops=max_hops,
+            probe_timeout=probe_timeout,
+            TCP_TRACEROUTE_MARKER=TCP_TRACEROUTE_MARKER,
+        )
+
+        # --- Execute via SSM (Req 3.1, 3.2, 3.8-3.14) ---
+        try:
+            result = execute_ssm_script(
+                instance_id=instance_id,
+                script_text=script_text,
+                marker_line=TCP_TRACEROUTE_MARKER,
+            )
+        except SSMExecutionError as exc:
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=f"tcp_traceroute: {exc.message}",
+                source_api=source_api,
+                data_freshness="real-time",
+                error=f"{exc.error_category}: {exc.message}",
+                error_category=exc.error_category,
+            )
+
+        # --- Handle script-level error types (Req 7.3, 7.4, 7.8) ---
+        error_type = result.get("error_type")
+
+        if error_type == "cap_net_raw_denied":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    "tcp_traceroute: Raw socket access (CAP_NET_RAW) is not "
+                    f"available on instance {instance_id}. Fargate and Lambda "
+                    "environments are not supported for SSM-based diagnostics."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "unsupported_compute: CAP_NET_RAW capability is required but "
+                    f"not available on instance {instance_id}."
+                ),
+                error_category="unsupported_compute",
+            )
+
+        if error_type == "python_not_found":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"tcp_traceroute: Python 3 is required but not installed on "
+                    f"instance {instance_id}."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "execution_failed: Python 3 is required but not installed "
+                    f"on instance {instance_id}."
+                ),
+                error_category="execution_failed",
+            )
+
+        if error_type == "dns_resolution_failed":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"tcp_traceroute: DNS resolution failed for "
+                    f"{destination_host}: {result.get('message', 'unknown error')}"
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    f"dns_resolution_failed: {result.get('message', 'DNS resolution failed')}"
+                ),
+                error_category="execution_failed",
+            )
+
+        # --- Format Traceroute_Result (Req 1.2, 1.8) ---
+        hops = result.get("hops", [])
+        destination_reached = result.get("destination_reached", False)
+        total_hops = result.get("total_hops", len(hops))
+        trace_duration_ms = result.get("trace_duration_ms", 0)
+        destination_status = result.get("destination_status")
+        resolved_ip = result.get("resolved_destination_ip")
+
+        traceroute_data = {
+            "source_instance_id": instance_id,
+            "source_ip": instance_info.get("private_ip"),
+            "destination_host": destination_host,
+            "destination_port": destination_port,
+            "destination_ip": resolved_ip,
+            "destination_reached": destination_reached,
+            "destination_status": destination_status,
+            "total_hops": total_hops,
+            "trace_duration_ms": trace_duration_ms,
+            "max_hops": max_hops,
+            "probe_timeout": probe_timeout,
+            "hops": hops,
+        }
+
+        # --- Generate formattedText with hop-by-hop summary (Req 6.6) ---
+        formatted_lines = [
+            f"TCP Traceroute from {instance_id} to {destination_host}:{destination_port}",
+            f"(resolved to {resolved_ip})" if resolved_ip else "",
+            "",
+        ]
+
+        for hop in hops:
+            hop_num = hop.get("hop", "?")
+            ip = hop.get("ip", "*")
+            rtt = hop.get("rtt_ms")
+            hostname = hop.get("hostname")
+
+            if ip == "*":
+                formatted_lines.append(f"  {hop_num:>2}  *  (no response)")
+            else:
+                rtt_str = f"{rtt:.2f} ms" if rtt is not None else "? ms"
+                host_str = f" ({hostname})" if hostname else ""
+                formatted_lines.append(f"  {hop_num:>2}  {ip}{host_str}  {rtt_str}")
+
+        # Final summary line
+        formatted_lines.append("")
+        if destination_reached:
+            status_msg = "port open (SYN-ACK)" if destination_status == "syn_ack" else \
+                         "port closed (RST)" if destination_status == "port_closed" else \
+                         "reached"
+            formatted_lines.append(
+                f"Destination reached in {total_hops} hop(s) — {status_msg}. "
+                f"Total trace time: {trace_duration_ms:.0f} ms."
+            )
+        else:
+            formatted_lines.append(
+                f"Destination NOT reached after {total_hops} hop(s) "
+                f"(max_hops={max_hops}). Total trace time: {trace_duration_ms:.0f} ms."
+            )
+
+        formatted_text = "\n".join(formatted_lines)
+
+        return build_response(
+            success=True,
+            data=traceroute_data,
+            formatted_text=formatted_text,
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    finally:
+        # Always release the concurrency slot (Req 8.3)
+        _ssm_concurrency_limiter.release(instance_id)
+
+
+# ---------------------------------------------------------------------------
+# TLS Traceroute Script Template (placeholder — task 3.2 will replace)
+# ---------------------------------------------------------------------------
+
+# Placeholder script template for TLS traceroute. The real implementation
+# (task 3.2) will provide a self-contained bash+Python script that performs
+# TTL-based TCP traceroute followed by TLS handshake validation.
+_TLS_TRACEROUTE_SCRIPT_TEMPLATE = """#!/bin/bash
+set -e
+TMPDIR=$(mktemp -d /tmp/goat_tls_traceroute_XXXXXX)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# Detect Python interpreter
+PYTHON=""
+if command -v python3 &>/dev/null; then
+    PYTHON=python3
+elif command -v python &>/dev/null; then
+    PYTHON=python
+else
+    echo "{marker}"
+    echo '{{"error": true, "error_type": "python_not_found", "error_message": "No Python interpreter found on this instance."}}'
+    exit 0
+fi
+
+cat > "$TMPDIR/tls_traceroute.py" << 'GOAT_SCRIPT_EOF'
+import json
+import socket
+import struct
+import time
+import sys
+import ssl
+import select
+
+def main():
+    destination_host = "{destination_host}"
+    destination_port = {destination_port}
+    max_hops = {max_hops}
+    probe_timeout = {probe_timeout}
+    sni = "{sni}"
+    marker = "{marker}"
+
+    result = {{
+        "destination_host": destination_host,
+        "destination_port": destination_port,
+        "destination_reached": False,
+        "destination_status": None,
+        "total_hops": 0,
+        "trace_duration_ms": 0,
+        "hops": [],
+        "tls": None,
+        "tls_skipped_reason": None,
+        "dns_resolution_failed": False,
+    }}
+
+    # DNS resolution
+    try:
+        dest_ip = socket.gethostbyname(destination_host)
+    except socket.gaierror as e:
+        result["dns_resolution_failed"] = True
+        result["tls_skipped_reason"] = "dns_resolution_failed"
+        print(marker)
+        print(json.dumps(result))
+        return
+
+    start_time = time.time()
+
+    # Check CAP_NET_RAW
+    try:
+        test_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+        test_sock.close()
+    except PermissionError:
+        result["error"] = True
+        result["error_type"] = "cap_net_raw_denied"
+        result["error_message"] = "CAP_NET_RAW not available. Raw sockets require root."
+        print(marker)
+        print(json.dumps(result))
+        return
+
+    # TTL-based TCP SYN traceroute
+    for ttl in range(1, max_hops + 1):
+        hop = {{"hop": ttl, "ip": "*", "rtt_ms": None, "hostname": None}}
+
+        try:
+            send_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+            recv_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+            tcp_recv_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+
+            send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, ttl)
+            recv_sock.settimeout(probe_timeout)
+            tcp_recv_sock.settimeout(probe_timeout)
+
+            src_port = 33434 + ttl
+            seq_num = ttl
+
+            # Build TCP SYN packet
+            tcp_header = struct.pack('!HHIIBBHHH',
+                src_port, destination_port,
+                seq_num, 0,
+                (5 << 4), 0x02,
+                65535, 0, 0)
+
+            # Checksum
+            pseudo_header = struct.pack('!4s4sBBH',
+                socket.inet_aton(socket.gethostbyname(socket.gethostname())),
+                socket.inet_aton(dest_ip),
+                0, socket.IPPROTO_TCP, len(tcp_header))
+            checksum_data = pseudo_header + tcp_header
+            if len(checksum_data) % 2:
+                checksum_data += b'\\x00'
+            s = 0
+            for i in range(0, len(checksum_data), 2):
+                w = (checksum_data[i] << 8) + checksum_data[i+1]
+                s += w
+            s = (s >> 16) + (s & 0xffff)
+            s += (s >> 16)
+            checksum = ~s & 0xffff
+
+            tcp_header = struct.pack('!HHIIBBHHH',
+                src_port, destination_port,
+                seq_num, 0,
+                (5 << 4), 0x02,
+                65535, checksum, 0)
+
+            send_time = time.time()
+            send_sock.sendto(tcp_header, (dest_ip, 0))
+
+            readable = select.select([recv_sock, tcp_recv_sock], [], [], probe_timeout)[0]
+
+            if readable:
+                for sock in readable:
+                    try:
+                        data, addr = sock.recvfrom(1024)
+                        rtt = (time.time() - send_time) * 1000
+                        resp_ip = addr[0]
+                        hop["ip"] = resp_ip
+                        hop["rtt_ms"] = round(rtt, 2)
+
+                        try:
+                            hostname = socket.gethostbyaddr(resp_ip)[0]
+                            hop["hostname"] = hostname
+                        except (socket.herror, socket.timeout, OSError):
+                            hop["hostname"] = None
+
+                        if resp_ip == dest_ip and sock == tcp_recv_sock:
+                            ip_header_len = (data[0] & 0x0f) * 4
+                            tcp_data = data[ip_header_len:]
+                            if len(tcp_data) >= 14:
+                                flags = tcp_data[13]
+                                if flags & 0x12 == 0x12:
+                                    result["destination_reached"] = True
+                                    result["destination_status"] = "open"
+                                elif flags & 0x04:
+                                    result["destination_reached"] = True
+                                    result["destination_status"] = "port_closed"
+                        break
+                    except socket.timeout:
+                        pass
+        except Exception:
+            pass
+        finally:
+            try:
+                send_sock.close()
+            except Exception:
+                pass
+            try:
+                recv_sock.close()
+            except Exception:
+                pass
+            try:
+                tcp_recv_sock.close()
+            except Exception:
+                pass
+
+        result["hops"].append(hop)
+        result["total_hops"] = ttl
+
+        if result["destination_reached"]:
+            break
+
+    end_time = time.time()
+    result["trace_duration_ms"] = round((end_time - start_time) * 1000, 2)
+
+    # TLS handshake if destination was reached
+    if result["destination_reached"]:
+        try:
+            context = ssl.create_default_context()
+            conn = socket.create_connection((dest_ip, destination_port), timeout=10)
+            tls_start = time.time()
+            wrapped = context.wrap_socket(conn, server_hostname=sni)
+            tls_time = (time.time() - tls_start) * 1000
+
+            cert = wrapped.getpeercert()
+            cipher = wrapped.cipher()
+            version = wrapped.version()
+
+            subject = ""
+            for field in cert.get("subject", ()):
+                for key, value in field:
+                    if key == "commonName":
+                        subject = value
+                        break
+
+            issuer = ""
+            for field in cert.get("issuer", ()):
+                for key, value in field:
+                    if key == "commonName":
+                        issuer = value
+                        break
+
+            not_after = cert.get("notAfter", "")
+
+            result["tls"] = {{
+                "handshake_success": True,
+                "protocol_version": version,
+                "cipher_suite": cipher[0] if cipher else None,
+                "certificate_subject": subject,
+                "certificate_issuer": issuer,
+                "certificate_not_after": not_after,
+                "handshake_time_ms": round(tls_time),
+            }}
+            wrapped.close()
+        except ssl.SSLCertVerificationError as e:
+            result["tls"] = {{
+                "handshake_success": False,
+                "error_type": "certificate_verify_failed",
+                "error_detail": str(e)[:1024],
+            }}
+        except socket.timeout:
+            result["tls"] = {{
+                "handshake_success": False,
+                "error_type": "handshake_timeout",
+                "error_detail": "TLS handshake timed out after 10 seconds",
+            }}
+        except ssl.SSLError as e:
+            result["tls"] = {{
+                "handshake_success": False,
+                "error_type": "protocol_error",
+                "error_detail": str(e)[:1024],
+            }}
+        except ConnectionResetError as e:
+            result["tls"] = {{
+                "handshake_success": False,
+                "error_type": "connection_reset",
+                "error_detail": str(e)[:1024],
+            }}
+        except Exception as e:
+            result["tls"] = {{
+                "handshake_success": False,
+                "error_type": "unknown",
+                "error_detail": str(e)[:1024],
+            }}
+    else:
+        if not result.get("tls_skipped_reason"):
+            result["tls_skipped_reason"] = "destination_unreachable"
+
+    print(marker)
+    print(json.dumps(result))
+
+if __name__ == "__main__":
+    main()
+GOAT_SCRIPT_EOF
+
+$PYTHON "$TMPDIR/tls_traceroute.py"
+"""
+
+
+# ---------------------------------------------------------------------------
+# TLS Traceroute handler (Reqs 2.1-2.9, 6.1, 6.7)
+# ---------------------------------------------------------------------------
+
+
+def handle_tls_traceroute(params: dict) -> dict:
+    """Execute a TLS traceroute from an EC2 instance to a destination.
+
+    Extends the TCP traceroute by additionally performing a TLS handshake
+    validation at the destination after confirming layer-3/layer-4
+    reachability (Requirements 2.1-2.9).
+
+    The handler:
+    1. Validates all input parameters (same as tcp_traceroute + optional
+       ``sni_override``).
+    2. Calls ``_check_diagnostic_prerequisites`` to verify instance
+       eligibility (tag, OS, existence).
+    3. Acquires a concurrency slot via ``SSMConcurrencyLimiter``.
+    4. Generates the TLS traceroute script with parameters injected.
+    5. Executes via ``execute_ssm_script``.
+    6. Processes results: includes TLS data when destination reached,
+       sets ``tls=null`` with skip reason otherwise.
+    7. Formats ``formattedText`` with hop-by-hop summary + TLS section.
+
+    Args:
+        params: Dict with:
+            ``instance_id`` (str, required): EC2 instance ID.
+            ``destination_host`` (str, required): Hostname or IP.
+            ``destination_port`` (int, optional): Port, defaults to 443.
+            ``max_hops`` (int, optional): Max TTL, defaults to 30.
+            ``probe_timeout`` (int, optional): Per-hop timeout, defaults to 2.
+            ``sni_override`` (str, optional): TLS SNI override (1-253 chars).
+
+    Returns:
+        Response envelope via :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ssm:SendCommand"
+
+    # --- Step 1: Validate parameters ---
+    try:
+        instance_id = validate_instance_id(params.get("instance_id"))
+    except ValidationError as exc:
+        return _validation_error_response("tls_traceroute", exc, source_api)
+
+    try:
+        destination_host = validate_destination_host(params.get("destination_host"))
+    except ValidationError as exc:
+        return _validation_error_response("tls_traceroute", exc, source_api)
+
+    # destination_port defaults to 443 (Req 2.6)
+    raw_port = params.get("destination_port")
+    if raw_port is None:
+        destination_port = 443
+    else:
+        try:
+            destination_port = validate_port(raw_port)
+        except ValidationError as exc:
+            return _validation_error_response("tls_traceroute", exc, source_api)
+
+    # max_hops defaults to 30
+    raw_max_hops = params.get("max_hops")
+    if raw_max_hops is None:
+        max_hops = 30
+    else:
+        try:
+            max_hops = validate_max_hops(raw_max_hops)
+        except ValidationError as exc:
+            return _validation_error_response("tls_traceroute", exc, source_api)
+
+    # probe_timeout defaults to 2
+    raw_probe_timeout = params.get("probe_timeout")
+    if raw_probe_timeout is None:
+        probe_timeout = 2
+    else:
+        try:
+            probe_timeout = validate_probe_timeout(raw_probe_timeout)
+        except ValidationError as exc:
+            return _validation_error_response("tls_traceroute", exc, source_api)
+
+    # sni_override is optional (Req 2.7)
+    sni_override = params.get("sni_override")
+    if sni_override is not None:
+        try:
+            sni_override = validate_sni_override(sni_override)
+        except ValidationError as exc:
+            return _validation_error_response("tls_traceroute", exc, source_api)
+
+    # SNI value: use sni_override if provided, else destination_host
+    sni_value = sni_override if sni_override else destination_host
+
+    # --- Step 2: Check diagnostic prerequisites ---
+    try:
+        instance_info = _check_diagnostic_prerequisites(instance_id)
+    except ValidationError as exc:
+        return _validation_error_response("tls_traceroute", exc, source_api)
+    except (ClientError, BotoCoreError) as exc:
+        return _aws_error_response(
+            "tls_traceroute", exc, source_api, "ec2:DescribeInstances"
+        )
+
+    # --- Step 3: Acquire concurrency slot ---
+    try:
+        _ssm_concurrency_limiter.acquire(instance_id)
+    except ConcurrencyLimitError as exc:
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=f"tls_traceroute: {exc.message}",
+            source_api=source_api,
+            data_freshness="real-time",
+            error=f"concurrency_limit: {exc.message}",
+            error_category="concurrency_limit",
+        )
+
+    try:
+        # --- Step 4: Generate script from template ---
+        script_text = TLS_TRACEROUTE_SCRIPT.format(
+            destination_host=destination_host,
+            destination_port=destination_port,
+            max_hops=max_hops,
+            probe_timeout=probe_timeout,
+            sni_override=sni_value,
+        )
+
+        # --- Step 5: Execute via SSM ---
+        try:
+            ssm_result = execute_ssm_script(
+                instance_id=instance_id,
+                script_text=script_text,
+                marker_line=TLS_TRACEROUTE_MARKER,
+            )
+        except SSMExecutionError as exc:
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=f"tls_traceroute: {exc.message}",
+                source_api=exc.source_api,
+                data_freshness="real-time",
+                error=f"{exc.error_category}: {exc.message}",
+                error_category=exc.error_category,
+            )
+
+        # --- Step 6: Process results ---
+        # Handle script-level errors. Check error_type directly rather than
+        # gating on an "error" flag, so classification is consistent with
+        # the other SSM-based handlers regardless of which optional flags
+        # the script includes alongside error_type (Property 7).
+        error_type = ssm_result.get("error_type")
+
+        if error_type == "cap_net_raw_denied":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    "tls_traceroute: Raw socket access (CAP_NET_RAW) is not "
+                    f"available on instance {instance_id}. Fargate and Lambda "
+                    "environments are not supported for SSM-based diagnostics."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "unsupported_compute: CAP_NET_RAW capability is required but "
+                    f"not available on instance {instance_id}."
+                ),
+                error_category="unsupported_compute",
+            )
+
+        if error_type == "python_not_found":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"tls_traceroute: Python 3 is required but not installed on "
+                    f"instance {instance_id}."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "execution_failed: Python 3 is required but not installed "
+                    f"on instance {instance_id}."
+                ),
+                error_category="execution_failed",
+            )
+
+        if ssm_result.get("error"):
+            error_message = ssm_result.get("message") or ssm_result.get(
+                "error_message", "Unknown error"
+            )
+            # Generic error
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=f"tls_traceroute: {error_message}",
+                source_api=source_api,
+                data_freshness="real-time",
+                error=f"execution_failed: {error_message}",
+                error_category="execution_failed",
+            )
+
+        # Build response data from successful script execution
+        hops = ssm_result.get("hops", [])
+        destination_reached = ssm_result.get("destination_reached", False)
+        dns_resolution_failed = ssm_result.get("dns_resolution_failed", False)
+
+        # Determine TLS result and skip reason
+        tls_data = ssm_result.get("tls")
+        tls_skipped_reason = ssm_result.get("tls_skipped_reason")
+
+        if dns_resolution_failed:
+            tls_data = None
+            tls_skipped_reason = "dns_resolution_failed"
+        elif not destination_reached:
+            tls_data = None
+            if not tls_skipped_reason:
+                tls_skipped_reason = "destination_unreachable"
+
+        response_data = {
+            "source_instance_id": instance_id,
+            "source_ip": instance_info.get("private_ip"),
+            "destination_host": destination_host,
+            "destination_port": destination_port,
+            "destination_reached": destination_reached,
+            "destination_status": ssm_result.get("destination_status"),
+            "total_hops": ssm_result.get("total_hops", 0),
+            "trace_duration_ms": ssm_result.get("trace_duration_ms", 0),
+            "hops": hops,
+            "tls": tls_data,
+            "tls_skipped_reason": tls_skipped_reason,
+        }
+
+        # --- Step 7: Format text ---
+        formatted_text = _format_tls_traceroute_text(response_data, sni_value)
+
+        return build_response(
+            success=True,
+            data=response_data,
+            formatted_text=formatted_text,
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    finally:
+        # Always release the concurrency slot
+        _ssm_concurrency_limiter.release(instance_id)
+
+
+def _format_tls_traceroute_text(data: dict, sni: str) -> str:
+    """Format the TLS traceroute result as human-readable text.
+
+    Produces a hop-by-hop summary table followed by a TLS section
+    showing handshake results or skip reason.
+
+    Args:
+        data: The response data dict from handle_tls_traceroute.
+        sni: The SNI value used for the TLS handshake.
+
+    Returns:
+        Formatted text string for the ``formattedText`` field.
+    """
+    lines = []
+    lines.append(
+        f"TLS Traceroute from {data['source_instance_id']} "
+        f"({data.get('source_ip', 'unknown')}) "
+        f"to {data['destination_host']}:{data['destination_port']}"
+    )
+    lines.append("")
+
+    # Hop-by-hop summary
+    hops = data.get("hops", [])
+    for hop in hops:
+        hop_num = hop.get("hop", "?")
+        ip = hop.get("ip", "*")
+        rtt = hop.get("rtt_ms")
+        hostname = hop.get("hostname")
+
+        if ip == "*":
+            lines.append(f"  {hop_num:>2}  *  (no response)")
+        else:
+            rtt_str = f"{rtt:.2f} ms" if rtt is not None else "? ms"
+            host_str = f" ({hostname})" if hostname else ""
+            lines.append(f"  {hop_num:>2}  {ip}{host_str}  {rtt_str}")
+
+    lines.append("")
+
+    # Destination status
+    if data.get("destination_reached"):
+        status = data.get("destination_status", "open")
+        lines.append(
+            f"Destination reached: {data['destination_host']} "
+            f"(port {data['destination_port']}: {status})"
+        )
+    else:
+        lines.append(
+            f"Destination NOT reached within {data.get('total_hops', 0)} hops."
+        )
+
+    lines.append(f"Trace duration: {data.get('trace_duration_ms', 0)} ms")
+    lines.append("")
+
+    # TLS section
+    lines.append("--- TLS Handshake ---")
+    tls = data.get("tls")
+    tls_skipped_reason = data.get("tls_skipped_reason")
+
+    if tls_skipped_reason:
+        lines.append(f"TLS handshake skipped: {tls_skipped_reason}")
+    elif tls is None:
+        lines.append("TLS: not attempted")
+    elif tls.get("handshake_success"):
+        lines.append(f"  Status: SUCCESS")
+        lines.append(f"  SNI: {sni}")
+        lines.append(f"  Protocol: {tls.get('protocol_version', 'unknown')}")
+        lines.append(f"  Cipher: {tls.get('cipher_suite', 'unknown')}")
+        lines.append(f"  Subject: {tls.get('certificate_subject', 'unknown')}")
+        lines.append(f"  Issuer: {tls.get('certificate_issuer', 'unknown')}")
+        lines.append(f"  Expires: {tls.get('certificate_not_after', 'unknown')}")
+        lines.append(f"  Handshake time: {tls.get('handshake_time_ms', '?')} ms")
+    else:
+        lines.append(f"  Status: FAILED")
+        lines.append(f"  SNI: {sni}")
+        lines.append(f"  Error type: {tls.get('error_type', 'unknown')}")
+        error_detail = tls.get("error_detail", "")
+        if error_detail:
+            lines.append(f"  Error detail: {error_detail}")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# DB Connectivity Probe script template placeholder (Task 3.4 not yet done)
+#
+# The actual script will implement three sequential phases: TCP connect,
+# TLS handshake, and protocol-level auth (MySQL/PostgreSQL). For now this
+# placeholder produces structured JSON matching the expected output format.
+# ---------------------------------------------------------------------------
+
+_DB_CONNECTIVITY_PROBE_SCRIPT_TEMPLATE = """#!/bin/bash
+set -e
+trap 'rm -f /tmp/goat_db_probe_*.py' EXIT
+
+PYTHON=""
+if command -v python3 &>/dev/null; then
+    PYTHON="python3"
+elif command -v python &>/dev/null; then
+    PYTHON="python"
+fi
+
+if [ -z "$PYTHON" ]; then
+    echo "{DB_CONNECTIVITY_PROBE_MARKER}"
+    echo '{{"error_type": "python_not_found", "message": "Python 3 is required but not found on this instance."}}'
+    exit 0
+fi
+
+cat > /tmp/goat_db_probe_script.py << 'GOAT_DB_PROBE_EOF'
+import socket
+import ssl
+import struct
+import json
+import time
+import sys
+
+MARKER = "{DB_CONNECTIVITY_PROBE_MARKER}"
+ENDPOINT = "{endpoint}"
+PORT = {port}
+ENGINE = "{engine}"
+
+def tcp_connect(endpoint, port):
+    start = time.time()
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect((endpoint, port))
+        elapsed_ms = int((time.time() - start) * 1000)
+        return sock, {{"connected": True, "connect_time_ms": elapsed_ms, "error": None}}
+    except Exception as e:
+        elapsed_ms = int((time.time() - start) * 1000)
+        return None, {{"connected": False, "connect_time_ms": elapsed_ms, "error": str(e)}}
+
+def tls_handshake(sock, endpoint):
+    try:
+        ctx = ssl.create_default_context()
+        tls_sock = ctx.wrap_socket(sock, server_hostname=endpoint)
+        tls_version = tls_sock.version()
+        return tls_sock, {{"connected": True, "tls_version": tls_version, "error": None}}
+    except Exception as e:
+        return None, {{"connected": False, "tls_version": None, "error": str(e)}}
+
+def auth_probe(tls_sock, engine):
+    if not engine:
+        return None
+    try:
+        if engine == "mysql":
+            # Read MySQL handshake packet
+            data = tls_sock.recv(4096)
+            if data and len(data) > 4:
+                return {{"success": True, "protocol_response": "mysql_handshake_ok", "error": None}}
+            return {{"success": False, "protocol_response": None, "error": "empty response from MySQL"}}
+        elif engine == "postgresql":
+            # Send PostgreSQL SSLRequest then StartupMessage
+            startup = struct.pack("!I", 8) + struct.pack("!I", 196608)
+            tls_sock.sendall(startup)
+            data = tls_sock.recv(4096)
+            if data:
+                return {{"success": True, "protocol_response": "pg_auth_request", "error": None}}
+            return {{"success": False, "protocol_response": None, "error": "empty response from PostgreSQL"}}
+    except Exception as e:
+        return {{"success": False, "protocol_response": None, "error": str(e)}}
+    return None
+
+result = {{"tcp": None, "tls": None, "auth": None}}
+
+sock, tcp_result = tcp_connect(ENDPOINT, PORT)
+result["tcp"] = tcp_result
+
+if tcp_result["connected"] and sock:
+    tls_sock, tls_result = tls_handshake(sock, ENDPOINT)
+    result["tls"] = tls_result
+
+    if tls_result["connected"] and tls_sock and ENGINE:
+        auth_result = auth_probe(tls_sock, ENGINE)
+        result["auth"] = auth_result
+
+    if tls_sock:
+        try:
+            tls_sock.close()
+        except Exception:
+            pass
+    elif sock:
+        try:
+            sock.close()
+        except Exception:
+            pass
+elif sock:
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+print(MARKER)
+print(json.dumps(result))
+GOAT_DB_PROBE_EOF
+
+$PYTHON /tmp/goat_db_probe_script.py
+"""
+
+
+def handle_db_connectivity_probe(params: dict) -> dict:
+    """Execute a database connectivity probe from a target EC2 instance.
+
+    Tests TCP connectivity, TLS handshake, and optional protocol-level
+    authentication from the target instance to a database endpoint.
+    Implements Requirements 11.1-11.13.
+
+    Args:
+        params: Dict with keys:
+            ``instance_id`` (required): EC2 instance ID matching
+                Instance_Id_Format.
+            ``endpoint`` (required): Database hostname or IP (1-253 chars).
+            ``port`` (required): TCP port number (1-65535).
+            ``engine`` (optional): Database engine, one of ``mysql`` or
+                ``postgresql``. If omitted, only TCP + TLS phases run.
+
+    Returns:
+        Response envelope produced by :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ssm:SendCommand"
+
+    # --- Parameter validation (Reqs 11.1, 11.2, 11.12) ---
+    try:
+        instance_id = validate_instance_id(params.get("instance_id"))
+        endpoint = validate_destination_host(params.get("endpoint"))
+        port = validate_port(params.get("port"), "port")
+
+        # Engine is optional — only validate if provided (Req 11.2, 11.3)
+        engine = None
+        raw_engine = params.get("engine")
+        if raw_engine is not None:
+            engine = validate_engine(raw_engine)
+    except ValidationError as exc:
+        return _validation_error_response(
+            "db_connectivity_probe", exc, source_api
+        )
+
+    # --- Prerequisite check: instance exists, is Linux, has tag (Reqs 4.1-4.5, 7.6) ---
+    try:
+        instance_info = _check_diagnostic_prerequisites(instance_id)
+    except ValidationError as exc:
+        return _validation_error_response(
+            "db_connectivity_probe", exc, "ec2:DescribeInstances"
+        )
+    except (ClientError, BotoCoreError) as exc:
+        return _aws_error_response(
+            "db_connectivity_probe", exc, "ec2:DescribeInstances",
+            "ec2:DescribeInstances",
+        )
+
+    # --- Acquire concurrency slot (Req 8.1, 8.4) ---
+    try:
+        _ssm_concurrency_limiter.acquire(instance_id)
+    except ConcurrencyLimitError as exc:
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=f"db_connectivity_probe: {exc.message}",
+            source_api=source_api,
+            data_freshness="real-time",
+            error=f"concurrency_limit: {exc.message}",
+            error_category="concurrency_limit",
+        )
+
+    try:
+        # --- Generate script from template (Req 11.11) ---
+        script_text = _DB_CONNECTIVITY_PROBE_SCRIPT_TEMPLATE.format(
+            endpoint=endpoint,
+            port=port,
+            engine=engine or "",
+            DB_CONNECTIVITY_PROBE_MARKER=DB_CONNECTIVITY_PROBE_MARKER,
+        )
+
+        # --- Execute via SSM (Req 3.1, 3.2, 3.8-3.14) ---
+        try:
+            result = execute_ssm_script(
+                instance_id=instance_id,
+                script_text=script_text,
+                marker_line=DB_CONNECTIVITY_PROBE_MARKER,
+            )
+        except SSMExecutionError as exc:
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=f"db_connectivity_probe: {exc.message}",
+                source_api=source_api,
+                data_freshness="real-time",
+                error=f"{exc.error_category}: {exc.message}",
+                error_category=exc.error_category,
+            )
+
+        # --- Handle script-level error types ---
+        error_type = result.get("error_type")
+
+        if error_type == "cap_net_raw_denied":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    "db_connectivity_probe: Raw socket access (CAP_NET_RAW) is not "
+                    f"available on instance {instance_id}. Fargate and Lambda "
+                    "environments are not supported for SSM-based diagnostics."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "unsupported_compute: CAP_NET_RAW capability is required but "
+                    f"not available on instance {instance_id}."
+                ),
+                error_category="unsupported_compute",
+            )
+
+        if error_type == "python_not_found":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"db_connectivity_probe: Python 3 is required but not "
+                    f"installed on instance {instance_id}."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "execution_failed: Python 3 is required but not installed "
+                    f"on instance {instance_id}."
+                ),
+                error_category="execution_failed",
+            )
+
+        # --- Process phase results (Reqs 11.4-11.10) ---
+        tcp_phase = result.get("tcp")
+        tls_phase = result.get("tls")
+        auth_phase = result.get("auth")
+
+        # Determine overall verdict (Req 11.13)
+        if tcp_phase and not tcp_phase.get("connected"):
+            verdict = "tcp_failed"
+        elif tls_phase and not tls_phase.get("connected"):
+            verdict = "tls_failed"
+        elif auth_phase and not auth_phase.get("success"):
+            verdict = "auth_failed"
+        else:
+            verdict = "all_phases_passed"
+
+        probe_data = {
+            "source_instance_id": instance_id,
+            "source_ip": instance_info.get("private_ip"),
+            "endpoint": endpoint,
+            "port": port,
+            "engine": engine,
+            "tcp": tcp_phase,
+            "tls": tls_phase,
+            "auth": auth_phase,
+            "verdict": verdict,
+        }
+
+        # --- Format formattedText with phase-by-phase summary (Req 11.13) ---
+        formatted_lines = [
+            f"DB Connectivity Probe from {instance_id} to {endpoint}:{port}",
+        ]
+        if engine:
+            formatted_lines.append(f"Engine: {engine}")
+        formatted_lines.append("")
+
+        # TCP phase
+        if tcp_phase:
+            if tcp_phase.get("connected"):
+                connect_time = tcp_phase.get("connect_time_ms", "?")
+                formatted_lines.append(
+                    f"  \u2713 TCP Connect: connected ({connect_time} ms)"
+                )
+            else:
+                tcp_error = tcp_phase.get("error", "unknown")
+                formatted_lines.append(
+                    f"  \u2717 TCP Connect: FAILED — {tcp_error}"
+                )
+
+        # TLS phase
+        if tls_phase:
+            if tls_phase.get("connected"):
+                tls_version = tls_phase.get("tls_version", "unknown")
+                formatted_lines.append(
+                    f"  \u2713 TLS Handshake: connected ({tls_version})"
+                )
+            else:
+                tls_error = tls_phase.get("error", "unknown")
+                formatted_lines.append(
+                    f"  \u2717 TLS Handshake: FAILED — {tls_error}"
+                )
+        elif tcp_phase and not tcp_phase.get("connected"):
+            formatted_lines.append(
+                "  - TLS Handshake: skipped (TCP failed)"
+            )
+
+        # Auth phase
+        if auth_phase:
+            if auth_phase.get("success"):
+                protocol_resp = auth_phase.get("protocol_response", "ok")
+                formatted_lines.append(
+                    f"  \u2713 Auth Handshake: success ({protocol_resp})"
+                )
+            else:
+                auth_error = auth_phase.get("error", "unknown")
+                formatted_lines.append(
+                    f"  \u2717 Auth Handshake: FAILED — {auth_error}"
+                )
+        elif engine and tls_phase and not tls_phase.get("connected"):
+            formatted_lines.append(
+                "  - Auth Handshake: skipped (TLS failed)"
+            )
+        elif engine and tcp_phase and not tcp_phase.get("connected"):
+            formatted_lines.append(
+                "  - Auth Handshake: skipped (TCP failed)"
+            )
+        elif not engine:
+            formatted_lines.append(
+                "  - Auth Handshake: skipped (no engine specified)"
+            )
+
+        # Overall verdict
+        formatted_lines.append("")
+        verdict_display = {
+            "all_phases_passed": "All phases passed",
+            "tcp_failed": "TCP connectivity FAILED",
+            "tls_failed": "TLS handshake FAILED",
+            "auth_failed": "Authentication FAILED",
+        }
+        formatted_lines.append(
+            f"Verdict: {verdict_display.get(verdict, verdict)}"
+        )
+
+        formatted_text = "\n".join(formatted_lines)
+
+        return build_response(
+            success=True,
+            data=probe_data,
+            formatted_text=formatted_text,
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    finally:
+        # Always release the concurrency slot (Req 8.3)
+        _ssm_concurrency_limiter.release(instance_id)
 
 
 def _cleanup_orphaned_mirror_sessions(eni_ids: list) -> int:
@@ -7503,6 +9015,1049 @@ def handle_cleanup_orphaned_sessions(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# DNS Resolve Handler (Task 4.6)
+#
+# Implements Requirements 10.1-10.10: DNS resolution from the target instance
+# via SSM, plus agent-side resolution for split-horizon detection.
+# ---------------------------------------------------------------------------
+
+# Placeholder DNS resolve script template (task 3.3 will provide the real one).
+# For now, this minimal script resolves via Python's socket module and outputs
+# the expected marker + JSON format.
+_DNS_RESOLVE_SCRIPT_TEMPLATE = '''#!/bin/bash
+set -e
+cleanup() {{ rm -f /tmp/goat_dns_resolve_*.py; }}
+trap cleanup EXIT
+
+cat > /tmp/goat_dns_resolve_script.py << 'GOAT_PYTHON_SCRIPT'
+import json
+import socket
+import time
+import sys
+
+hostname = "{hostname}"
+record_type = "{record_type}"
+
+result = {{
+    "resolver_address": "unknown",
+    "records": [],
+    "resolution_time_ms": 0,
+    "error": None,
+}}
+
+try:
+    # Try to detect VPC resolver from /etc/resolv.conf
+    resolver_address = "unknown"
+    try:
+        with open("/etc/resolv.conf", "r") as f:
+            for line in f:
+                if line.strip().startswith("nameserver"):
+                    resolver_address = line.strip().split()[1]
+                    break
+    except Exception:
+        pass
+    result["resolver_address"] = resolver_address
+
+    start = time.time()
+    if record_type == "A":
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+        records = list(set(info[4][0] for info in infos))
+    elif record_type == "AAAA":
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET6, socket.SOCK_STREAM)
+        records = list(set(info[4][0] for info in infos))
+    else:
+        # For non-A/AAAA types, attempt basic resolution and note limitation
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+        records = list(set(info[4][0] for info in infos))
+    elapsed_ms = round((time.time() - start) * 1000, 2)
+    result["records"] = sorted(records)
+    result["resolution_time_ms"] = elapsed_ms
+except socket.gaierror as e:
+    result["error"] = str(e)
+except Exception as e:
+    result["error"] = str(e)
+
+print("{marker}")
+print(json.dumps(result))
+GOAT_PYTHON_SCRIPT
+
+if command -v python3 &>/dev/null; then
+    python3 /tmp/goat_dns_resolve_script.py
+elif command -v python &>/dev/null; then
+    python /tmp/goat_dns_resolve_script.py
+else
+    echo "{marker}"
+    echo '{{"error": "python_not_found", "records": [], "resolver_address": "unknown", "resolution_time_ms": 0}}'
+fi
+'''
+
+
+def handle_dns_resolve(params: dict) -> dict:
+    """Resolve a hostname from a target EC2 instance and compare with agent-side resolution.
+
+    Implements Requirements 10.1-10.10:
+
+    1. Validates ``instance_id`` (required), ``hostname`` (required, 1-253 chars),
+       and ``record_type`` (default ``"A"``, one of A/AAAA/CNAME/MX/TXT/SRV/PTR).
+    2. Calls :func:`_check_diagnostic_prerequisites` to verify instance
+       eligibility (opt-in tag, non-Windows, instance exists).
+    3. Acquires a concurrency slot via :data:`_ssm_concurrency_limiter`.
+    4. Executes the DNS resolve script on the instance via SSM.
+    5. Performs agent-side DNS resolution of the same hostname.
+    6. Compares resolved IP sets — sets ``split_horizon_detected=True``
+       if they differ.
+    7. Formats ``formattedText`` with both resolution results and
+       split-horizon warning if detected.
+
+    Args:
+        params: Dict with keys:
+            ``instance_id`` (str): Required EC2 instance ID.
+            ``hostname`` (str): Required hostname to resolve (1-253 chars).
+            ``record_type`` (str): Optional, defaults to ``"A"``. One of
+                A, AAAA, CNAME, MX, TXT, SRV, PTR.
+
+    Returns:
+        Response envelope produced by :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ssm:SendCommand"
+
+    # --- Step 1: Validate parameters ---
+    try:
+        instance_id = validate_instance_id(params.get("instance_id"))
+    except ValidationError as exc:
+        return _validation_error_response("dns_resolve", exc, source_api)
+
+    try:
+        hostname = validate_destination_host(params.get("hostname"))
+    except ValidationError as exc:
+        return _validation_error_response("dns_resolve", exc, source_api)
+
+    # record_type defaults to "A"
+    raw_record_type = params.get("record_type", "A")
+    try:
+        record_type = validate_record_type(raw_record_type)
+    except ValidationError as exc:
+        return _validation_error_response("dns_resolve", exc, source_api)
+
+    # --- Step 2: Check diagnostic prerequisites ---
+    try:
+        _check_diagnostic_prerequisites(instance_id)
+    except ValidationError as exc:
+        return _validation_error_response("dns_resolve", exc, source_api)
+    except (ClientError, BotoCoreError) as exc:
+        return _aws_error_response(
+            "dns_resolve", exc, source_api, "ec2:DescribeInstances"
+        )
+
+    # --- Step 3: Acquire concurrency slot ---
+    try:
+        _ssm_concurrency_limiter.acquire(instance_id)
+    except ConcurrencyLimitError as exc:
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=f"dns_resolve: {exc.message}",
+            source_api=source_api,
+            data_freshness="real-time",
+            error=f"concurrency_limit: {exc.message}",
+            error_category="concurrency_limit",
+        )
+
+    try:
+        # --- Step 4: Execute DNS resolve script on instance ---
+        script_text = _DNS_RESOLVE_SCRIPT_TEMPLATE.format(
+            hostname=hostname,
+            record_type=record_type,
+            marker=DNS_RESOLVE_MARKER,
+        )
+
+        try:
+            ssm_result = execute_ssm_script(
+                instance_id=instance_id,
+                script_text=script_text,
+                marker_line=DNS_RESOLVE_MARKER,
+            )
+        except SSMExecutionError as exc:
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=f"dns_resolve: {exc.message}",
+                source_api=exc.source_api,
+                data_freshness="real-time",
+                error=f"{exc.error_category}: {exc.message}",
+                error_category=exc.error_category,
+            )
+
+        # Check if the script itself reported an error. Check error_type
+        # directly (rather than the "error" flag) for consistency with the
+        # other SSM-based handlers (Property 7).
+        script_error_type = ssm_result.get("error_type")
+
+        if script_error_type == "cap_net_raw_denied":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    "dns_resolve: Raw socket access (CAP_NET_RAW) is not "
+                    f"available on instance {instance_id}. Fargate and Lambda "
+                    "environments are not supported for SSM-based diagnostics."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error=(
+                    "unsupported_compute: CAP_NET_RAW capability is required but "
+                    f"not available on instance {instance_id}."
+                ),
+                error_category="unsupported_compute",
+            )
+
+        if script_error_type == "python_not_found":
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"dns_resolve: Python is not available on instance {instance_id}."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error="execution_failed: python_not_found",
+                error_category="execution_failed",
+            )
+
+        # --- Step 5: Perform agent-side DNS resolution ---
+        agent_records = []
+        agent_resolution_time_ms = 0
+        agent_error = None
+
+        try:
+            start_time = time.time()
+            infos = socket.getaddrinfo(hostname, None)
+            elapsed = time.time() - start_time
+            agent_resolution_time_ms = round(elapsed * 1000, 2)
+            agent_records = sorted(set(info[4][0] for info in infos))
+        except socket.gaierror as e:
+            agent_error = str(e)
+        except Exception as e:
+            agent_error = str(e)
+
+        # --- Step 6: Compare IP sets for split-horizon detection ---
+        instance_records = ssm_result.get("records", [])
+        instance_error = ssm_result.get("error")
+
+        instance_ips = set(instance_records) if not instance_error else set()
+        agent_ips = set(agent_records) if not agent_error else set()
+
+        # Split-horizon is detected when both sides resolved successfully
+        # but returned different IP sets
+        if instance_error or agent_error:
+            split_horizon_detected = False
+        else:
+            split_horizon_detected = (instance_ips != agent_ips)
+
+        # --- Step 7: Build response ---
+        instance_resolution = {
+            "resolver_address": ssm_result.get("resolver_address", "unknown"),
+            "records": instance_records,
+            "resolution_time_ms": ssm_result.get("resolution_time_ms", 0),
+        }
+        if instance_error:
+            instance_resolution["error"] = instance_error
+
+        agent_resolution = {
+            "records": agent_records,
+            "resolution_time_ms": agent_resolution_time_ms,
+        }
+        if agent_error:
+            agent_resolution["error"] = agent_error
+
+        data = {
+            "hostname": hostname,
+            "record_type": record_type,
+            "instance_id": instance_id,
+            "instance_resolution": instance_resolution,
+            "agent_resolution": agent_resolution,
+            "split_horizon_detected": split_horizon_detected,
+        }
+
+        # Format human-readable text
+        formatted_lines = [
+            f"DNS Resolution for '{hostname}' (record type: {record_type})",
+            "",
+            f"Instance-side resolution (via {instance_resolution['resolver_address']}):",
+        ]
+        if instance_error:
+            formatted_lines.append(f"  Error: {instance_error}")
+        else:
+            formatted_lines.append(
+                f"  Records: {', '.join(instance_records) if instance_records else '(none)'}"
+            )
+            formatted_lines.append(
+                f"  Resolution time: {instance_resolution['resolution_time_ms']} ms"
+            )
+
+        formatted_lines.append("")
+        formatted_lines.append("Agent-side resolution:")
+        if agent_error:
+            formatted_lines.append(f"  Error: {agent_error}")
+        else:
+            formatted_lines.append(
+                f"  Records: {', '.join(agent_records) if agent_records else '(none)'}"
+            )
+            formatted_lines.append(
+                f"  Resolution time: {agent_resolution_time_ms} ms"
+            )
+
+        if split_horizon_detected:
+            formatted_lines.append("")
+            formatted_lines.append(
+                "⚠️  SPLIT-HORIZON DETECTED: Instance and agent resolved "
+                "different IP addresses for the same hostname. This indicates "
+                "split-horizon DNS (e.g., Route 53 private hosted zone, "
+                "on-premises DNS forwarder, or VPC DHCP option set with "
+                "custom DNS servers)."
+            )
+
+        formatted_text = "\n".join(formatted_lines)
+
+        return build_response(
+            success=True,
+            data=data,
+            formatted_text=formatted_text,
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    finally:
+        _ssm_concurrency_limiter.release(instance_id)
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Agentic Reachability Analyzer handler (Reqs 9.1-9.39)
+# ---------------------------------------------------------------------------
+
+
+def _detect_limitations(path_components: list) -> list:
+    """Detect platform limitations from path components (Reqs 9.37, 9.38).
+
+    Scans path_components for Transit Gateway Connect attachments and
+    Gateway Load Balancer endpoints and produces limitation entries for each.
+
+    Returns:
+        A list of limitation dicts, each with keys 'component_type',
+        'resource_id', and 'description'.
+    """
+    limitations = []
+    for component in path_components:
+        comp_type = component.get("component_type", "")
+        resource_id = component.get("resource_id", "")
+
+        # Req 9.37: Transit Gateway Connect attachment limitation
+        if comp_type == "transit_gateway_connect" or "tgw-attach" in resource_id:
+            # Check if it's a Connect attachment specifically
+            if comp_type == "transit_gateway_connect" or (
+                component.get("attachment_type") == "connect"
+            ):
+                limitations.append({
+                    "component_type": "transit_gateway_connect",
+                    "resource_id": resource_id,
+                    "description": (
+                        "Reachability Analyzer only analyzes connectivity up to the "
+                        "Transit Gateway Connect attachment and cannot verify the GRE "
+                        "tunnel or BGP session established over the Connect peer. "
+                        "Use ec2:DescribeTransitGatewayConnectPeers to check Connect "
+                        "peer state and BGP configuration."
+                    ),
+                })
+
+        # Req 9.38: Gateway Load Balancer endpoint limitation
+        if comp_type == "gateway_load_balancer_endpoint" or (
+            comp_type == "vpc_endpoint" and component.get("endpoint_type") == "GatewayLoadBalancer"
+        ):
+            limitations.append({
+                "component_type": "gateway_load_balancer_endpoint",
+                "resource_id": resource_id,
+                "description": (
+                    "Reachability Analyzer does not include the Gateway Load Balancer "
+                    "or its targets in the path analysis. Perform a separate reachability "
+                    "analysis between the GWLB and its targets, and check "
+                    "elasticloadbalancingv2:DescribeTargetHealth for target registration "
+                    "and health status."
+                ),
+            })
+
+    return limitations
+
+
+def _build_path_components(analysis_result: dict) -> list:
+    """Extract path components from a DescribeNetworkInsightsAnalyses response.
+
+    Transforms the raw AWS API ``ForwardPathComponents`` (or
+    ``ReturnPathComponents``) into a simpler list of dicts used by the
+    response envelope.
+    """
+    forward_path = analysis_result.get("ForwardPathComponents", [])
+    components = []
+    for comp in forward_path:
+        entry = {
+            "sequence_number": comp.get("SequenceNumber", 0),
+            "component_type": _map_component_type(comp.get("Component", {}).get("Id", "")),
+            "resource_id": comp.get("Component", {}).get("Id", ""),
+            "resource_arn": comp.get("Component", {}).get("Arn", ""),
+        }
+        # Add AZ if available
+        if comp.get("AvailabilityZone"):
+            entry["availability_zone"] = comp["AvailabilityZone"]
+
+        # Add evaluation result from InboundHeader/OutboundHeader
+        acl_rule = comp.get("AclRule")
+        if acl_rule:
+            entry["evaluation_result"] = "denied" if not acl_rule.get("RuleAction", "allow") == "allow" else "allowed"
+            entry["rule_number"] = acl_rule.get("RuleNumber")
+
+        security_group_rule = comp.get("SecurityGroupRule")
+        if security_group_rule:
+            entry["evaluation_result"] = "allowed"
+            entry["security_group_id"] = security_group_rule.get("SecurityGroupId")
+
+        route_table_route = comp.get("RouteTableRoute")
+        if route_table_route:
+            entry["route_destination"] = route_table_route.get("DestinationCidr", "")
+            entry["route_target"] = route_table_route.get("NatGatewayId") or route_table_route.get("GatewayId") or route_table_route.get("TransitGatewayId") or ""
+
+        # Detect specific component attributes for limitations detection
+        if "tgw-attach" in entry["resource_id"]:
+            # Try to detect if it's a connect attachment
+            attachment_type = comp.get("Component", {}).get("Name", "")
+            if "connect" in attachment_type.lower():
+                entry["attachment_type"] = "connect"
+
+        if entry["component_type"] == "vpc_endpoint":
+            endpoint_id = entry["resource_id"]
+            if "vpce-" in endpoint_id:
+                # Mark endpoint type if we can detect GWLB
+                additional_details = comp.get("AdditionalDetails", [])
+                for detail in additional_details:
+                    if detail.get("Component", {}).get("Id", "").startswith("gwlbe-"):
+                        entry["endpoint_type"] = "GatewayLoadBalancer"
+
+        components.append(entry)
+    return components
+
+
+def _map_component_type(resource_id: str) -> str:
+    """Map a resource ID to a human-readable component type string."""
+    if resource_id.startswith("i-"):
+        return "instance"
+    elif resource_id.startswith("eni-"):
+        return "network_interface"
+    elif resource_id.startswith("igw-"):
+        return "internet_gateway"
+    elif resource_id.startswith("tgw-attach-"):
+        return "transit_gateway_attachment"
+    elif resource_id.startswith("tgw-"):
+        return "transit_gateway"
+    elif resource_id.startswith("vpce-svc-"):
+        return "vpc_endpoint_service"
+    elif resource_id.startswith("vpce-"):
+        return "vpc_endpoint"
+    elif resource_id.startswith("pcx-"):
+        return "vpc_peering_connection"
+    elif resource_id.startswith("vgw-"):
+        return "vpn_gateway"
+    elif resource_id.startswith("nat-"):
+        return "nat_gateway"
+    elif resource_id.startswith("rtb-"):
+        return "route_table"
+    elif resource_id.startswith("acl-"):
+        return "network_acl"
+    elif resource_id.startswith("sg-"):
+        return "security_group"
+    elif resource_id.startswith("gwlbe-"):
+        return "gateway_load_balancer_endpoint"
+    else:
+        return "unknown"
+
+
+def handle_agentic_reachability_analyze(params: dict) -> dict:
+    """Analyze network path reachability between two VPC resources.
+
+    Implements Requirements 9.1-9.39:
+
+    1. Validates params: source (VPC resource ID only, rejects IPv4),
+       destination (VPC resource ID OR IPv4), destination_port (default 443),
+       protocol (default tcp, accepts tcp/udp).
+    2. Creates a Network Insights Path via CreateNetworkInsightsPath.
+    3. Starts analysis via StartNetworkInsightsAnalysis.
+    4. Polls DescribeNetworkInsightsAnalyses every 5s, max 120s.
+    5. Builds path_components and detects limitations (TGW Connect, GWLB).
+    6. For reachable paths: returns path_components + limitations.
+    7. For blocked paths: returns blocking_component + explanation +
+       remediation + limitations.
+    8. Best-effort cleanup of the Network Insights Path.
+
+    This action does NOT require an opt-in tag (Req 9.13) and does NOT
+    use SSM concurrency slots.
+
+    Args:
+        params: Dict with keys:
+            ``source`` (str): Required VPC resource ID.
+            ``destination`` (str): Required VPC resource ID or IPv4.
+            ``destination_port`` (int): Optional, default 443.
+            ``protocol`` (str): Optional, default "tcp".
+
+    Returns:
+        Response envelope produced by :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ec2:CreateNetworkInsightsPath"
+    path_id = None
+
+    # --- Step 1: Validate parameters (Reqs 9.8, 9.9, 9.33, 9.34) ---
+    try:
+        source = validate_reachability_source(params.get("source"))
+    except ValidationError as exc:
+        return _validation_error_response("agentic_reachability_analyze", exc, source_api)
+
+    try:
+        destination = validate_reachability_destination(params.get("destination"))
+    except ValidationError as exc:
+        return _validation_error_response("agentic_reachability_analyze", exc, source_api)
+
+    # Destination port defaults to 443 (Req 9.10)
+    port_raw = params.get("destination_port", 443)
+    try:
+        destination_port = validate_port(port_raw, "destination_port")
+    except ValidationError as exc:
+        return _validation_error_response("agentic_reachability_analyze", exc, source_api)
+
+    # Protocol defaults to tcp (Req 9.11)
+    protocol_raw = params.get("protocol", "tcp")
+    try:
+        protocol = validate_protocol(protocol_raw)
+    except ValidationError as exc:
+        return _validation_error_response("agentic_reachability_analyze", exc, source_api)
+
+    ec2 = _get_ec2_client()
+
+    try:
+        # --- Step 2: Create Network Insights Path (Req 9.1) ---
+        create_params = {
+            "Source": source,
+            "Destination": destination,
+            "Protocol": protocol,
+        }
+        # Only include port for TCP (some protocols don't require it)
+        if protocol == "tcp":
+            create_params["DestinationPort"] = destination_port
+        elif protocol == "udp":
+            create_params["DestinationPort"] = destination_port
+
+        try:
+            create_response = ec2.create_network_insights_path(**create_params)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "")
+            error_message = exc.response.get("Error", {}).get("Message", "")
+
+            # Req 9.35: Cross-region error
+            if "cross-region" in error_message.lower() or "different region" in error_message.lower():
+                return build_response(
+                    success=False,
+                    data={},
+                    formatted_text=(
+                        "agentic_reachability_analyze: Source and destination must be "
+                        "in the same AWS region."
+                    ),
+                    source_api=source_api,
+                    data_freshness="real-time",
+                    error=(
+                        f"invalid_parameter: Source and destination must be in the "
+                        f"same region. AWS error: {error_message[:200]}"
+                    ),
+                    error_category="invalid_parameter",
+                )
+            # Other CreateNetworkInsightsPath errors
+            return _aws_error_response(
+                "agentic_reachability_analyze", exc, source_api,
+                "ec2:CreateNetworkInsightsPath",
+            )
+
+        path_id = create_response["NetworkInsightsPath"]["NetworkInsightsPathId"]
+        source_api = "ec2:StartNetworkInsightsAnalysis"
+
+        # --- Step 3: Start analysis (Req 9.2) ---
+        try:
+            start_response = ec2.start_network_insights_analysis(
+                NetworkInsightsPathId=path_id,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            return _aws_error_response(
+                "agentic_reachability_analyze", exc, source_api,
+                "ec2:StartNetworkInsightsAnalysis",
+            )
+
+        analysis_id = start_response["NetworkInsightsAnalysis"]["NetworkInsightsAnalysisId"]
+        source_api = "ec2:DescribeNetworkInsightsAnalyses"
+
+        # --- Step 4: Poll for completion (Req 9.3) ---
+        max_wait = 120  # seconds
+        poll_interval = 5  # seconds
+        elapsed = 0
+        analysis_result = None
+
+        while elapsed < max_wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            try:
+                describe_response = ec2.describe_network_insights_analyses(
+                    NetworkInsightsAnalysisIds=[analysis_id],
+                )
+            except (ClientError, BotoCoreError) as exc:
+                return _aws_error_response(
+                    "agentic_reachability_analyze", exc, source_api,
+                    "ec2:DescribeNetworkInsightsAnalyses",
+                )
+
+            analyses = describe_response.get("NetworkInsightsAnalyses", [])
+            if not analyses:
+                continue
+
+            analysis = analyses[0]
+            status = analysis.get("Status", "")
+
+            if status == "succeeded":
+                analysis_result = analysis
+                break
+            elif status == "failed":
+                # Req 9.6: Analysis failed
+                status_message = analysis.get("StatusMessage", "Unknown reason")
+                return build_response(
+                    success=False,
+                    data={},
+                    formatted_text=(
+                        f"agentic_reachability_analyze: Analysis failed. "
+                        f"Reason: {status_message}"
+                    ),
+                    source_api=source_api,
+                    data_freshness="real-time",
+                    error=f"analysis_failed: {status_message}",
+                    error_category="analysis_failed",
+                )
+
+        if analysis_result is None:
+            # Req 9.7: Timeout
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    "agentic_reachability_analyze: Analysis did not complete "
+                    "within 120 seconds."
+                ),
+                source_api=source_api,
+                data_freshness="real-time",
+                error="analysis_timeout: Analysis did not complete within 120 seconds.",
+                error_category="analysis_timeout",
+            )
+
+        # --- Step 5: Build response from analysis results ---
+        reachable = analysis_result.get("NetworkPathFound", False)
+        path_components = _build_path_components(analysis_result)
+        limitations = _detect_limitations(path_components)
+
+        if reachable:
+            # Req 9.4: Reachable path
+            data = {
+                "reachable": True,
+                "source": source,
+                "destination": destination,
+                "destination_port": destination_port,
+                "protocol": protocol,
+                "path_components": path_components,
+                "limitations": limitations,
+            }
+
+            formatted_lines = [
+                f"Reachability Analysis: {source} → {destination}:{destination_port}/{protocol}",
+                "",
+                "✅ PATH IS REACHABLE",
+                "",
+                f"Path traverses {len(path_components)} components:",
+            ]
+            for comp in path_components:
+                formatted_lines.append(
+                    f"  {comp.get('sequence_number', '?')}. "
+                    f"{comp.get('component_type', 'unknown')} "
+                    f"({comp.get('resource_id', 'unknown')})"
+                )
+            if limitations:
+                formatted_lines.append("")
+                formatted_lines.append("⚠️  Platform Limitations:")
+                for lim in limitations:
+                    formatted_lines.append(f"  - {lim['component_type']}: {lim['description']}")
+
+            return build_response(
+                success=True,
+                data=data,
+                formatted_text="\n".join(formatted_lines),
+                source_api=source_api,
+                data_freshness="real-time",
+            )
+        else:
+            # Req 9.5: Not reachable path
+            # Extract blocking information from Explanations
+            explanations = analysis_result.get("Explanations", [])
+            blocking_component = {}
+            explanation_text = "Traffic is blocked along the path."
+            remediation_text = "Review the blocking component's configuration."
+
+            if explanations:
+                first_explanation = explanations[0]
+                component_info = first_explanation.get("Component", {})
+
+                # Extract rule information from explanation
+                rule_info = None
+                if first_explanation.get("SecurityGroup"):
+                    sg_info = first_explanation["SecurityGroup"]
+                    rule_info = f"SecurityGroup {sg_info.get('Id', '')}"
+                elif first_explanation.get("Acl"):
+                    acl_info = first_explanation["Acl"]
+                    rule_info = f"NACL {acl_info.get('Id', '')}"
+                elif first_explanation.get("AclRule"):
+                    acl_rule = first_explanation["AclRule"]
+                    rule_info = f"NACL rule {acl_rule.get('RuleNumber', '')}"
+                elif first_explanation.get("RouteTable"):
+                    rt_info = first_explanation["RouteTable"]
+                    rule_info = f"RouteTable {rt_info.get('Id', '')}"
+                elif first_explanation.get("SecurityGroupRule"):
+                    sg_rule = first_explanation["SecurityGroupRule"]
+                    rule_info = f"SG rule {sg_rule.get('SecurityGroupRuleId', '')}"
+
+                blocking_component = {
+                    "component_type": _map_component_type(component_info.get("Id", "")),
+                    "resource_id": component_info.get("Id", ""),
+                    "resource_arn": component_info.get("Arn", ""),
+                    "rule": rule_info,
+                }
+
+                # Build explanation from the API response
+                explanation_text = first_explanation.get("ExplanationMessage",
+                    first_explanation.get("Direction", ""))
+                if not explanation_text:
+                    explanation_text = f"Traffic is blocked at {blocking_component.get('resource_id', 'unknown component')}."
+
+                # Build remediation suggestion
+                comp_type = blocking_component.get("component_type", "")
+                resource_id = blocking_component.get("resource_id", "")
+                if comp_type == "security_group":
+                    remediation_text = (
+                        f"Add an inbound rule to security group {resource_id} "
+                        f"allowing {protocol.upper()} traffic on port {destination_port}."
+                    )
+                elif comp_type == "network_acl":
+                    remediation_text = (
+                        f"Review NACL {resource_id} rules and add an allow entry "
+                        f"for {protocol.upper()} port {destination_port}."
+                    )
+                elif comp_type == "route_table":
+                    remediation_text = (
+                        f"Add a route to route table {resource_id} for the "
+                        f"destination network."
+                    )
+                else:
+                    remediation_text = (
+                        f"Review the configuration of {comp_type} {resource_id} "
+                        f"to allow {protocol.upper()} traffic on port {destination_port}."
+                    )
+
+            data = {
+                "reachable": False,
+                "source": source,
+                "destination": destination,
+                "destination_port": destination_port,
+                "protocol": protocol,
+                "blocking_component": blocking_component,
+                "explanation": explanation_text,
+                "remediation": remediation_text,
+                "limitations": limitations,
+            }
+
+            formatted_lines = [
+                f"Reachability Analysis: {source} → {destination}:{destination_port}/{protocol}",
+                "",
+                "❌ PATH IS NOT REACHABLE",
+                "",
+                f"Blocking Component: {blocking_component.get('component_type', 'unknown')} "
+                f"({blocking_component.get('resource_id', 'unknown')})",
+                "",
+                f"Explanation: {explanation_text}",
+                "",
+                f"Remediation: {remediation_text}",
+            ]
+            if limitations:
+                formatted_lines.append("")
+                formatted_lines.append("⚠️  Platform Limitations:")
+                for lim in limitations:
+                    formatted_lines.append(f"  - {lim['component_type']}: {lim['description']}")
+
+            return build_response(
+                success=True,
+                data=data,
+                formatted_text="\n".join(formatted_lines),
+                source_api=source_api,
+                data_freshness="real-time",
+            )
+
+    finally:
+        # Req 9.12: Best-effort cleanup of the Network Insights Path
+        if path_id is not None:
+            try:
+                ec2.delete_network_insights_path(
+                    NetworkInsightsPathId=path_id,
+                )
+            except Exception:
+                logger.warning(
+                    f"Best-effort cleanup failed for Network Insights Path {path_id}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# SSM Health Check handler (Reqs 12.1-12.9)
+# ---------------------------------------------------------------------------
+
+
+def handle_ssm_health_check(params: dict) -> dict:
+    """Check SSM agent health for an EC2 instance without running commands.
+
+    Implements Requirements 12.1-12.9:
+
+    1. Validates ``instance_id`` (required, matching Instance_Id_Format).
+    2. Calls SSM ``DescribeInstanceInformation`` with instance filter.
+    3. If the instance is found in SSM: returns all 9 health fields with
+       ``ssm_managed=true``.
+    4. If not found in SSM: calls EC2 ``DescribeInstances`` to verify
+       the instance exists.
+    5. If the instance exists in EC2 but is not SSM-managed: returns
+       ``ssm_managed=false`` with ``diagnostic_hints``.
+    6. If the instance does not exist anywhere: returns
+       ``instance_not_found`` error.
+
+    This action does NOT require an opt-in tag (Req 12.5) and does NOT
+    count toward the SSM concurrency limit (Req 12.6).
+
+    Args:
+        params: Dict with key:
+            ``instance_id`` (str): Required EC2 instance ID.
+
+    Returns:
+        Response envelope produced by :func:`build_response`.
+    """
+    if not isinstance(params, dict):
+        params = {}
+
+    source_api = "ssm:DescribeInstanceInformation"
+
+    # --- Step 1: Validate instance_id (Req 12.7) ---
+    try:
+        instance_id = validate_instance_id(params.get("instance_id"))
+    except ValidationError as exc:
+        return _validation_error_response("ssm_health_check", exc, source_api)
+
+    # --- Step 2: Call SSM DescribeInstanceInformation (Req 12.1) ---
+    ssm = _get_ssm_client_for_health()
+
+    try:
+        ssm_response = ssm.describe_instance_information(
+            Filters=[
+                {
+                    "Key": "InstanceIds",
+                    "Values": [instance_id],
+                }
+            ]
+        )
+    except (ClientError, BotoCoreError) as exc:
+        return _aws_error_response(
+            "ssm_health_check", exc, source_api,
+            "ssm:DescribeInstanceInformation",
+        )
+
+    instance_info_list = ssm_response.get("InstanceInformationList", [])
+
+    # --- Step 3: Instance found in SSM (Req 12.2) ---
+    if instance_info_list:
+        info = instance_info_list[0]
+
+        # Extract all 9 required fields
+        agent_version = info.get("AgentVersion", "unknown")
+        ping_status = info.get("PingStatus", "unknown")
+        last_ping_time = info.get("LastPingDateTime")
+        platform_type = info.get("PlatformType", "unknown")
+        platform_name = info.get("PlatformName", "unknown")
+        platform_version = info.get("PlatformVersion", "unknown")
+        ip_address = info.get("IPAddress", "unknown")
+        computer_name = info.get("ComputerName", "unknown")
+        association_status = info.get("AssociationStatus", "unknown")
+
+        # Convert last_ping_time to ISO 8601 string if it's a datetime
+        if last_ping_time is not None:
+            if hasattr(last_ping_time, "isoformat"):
+                last_ping_time_str = last_ping_time.isoformat()
+            else:
+                last_ping_time_str = str(last_ping_time)
+        else:
+            last_ping_time_str = None
+
+        data = {
+            "instance_id": instance_id,
+            "ssm_managed": True,
+            "agent_version": agent_version,
+            "ping_status": ping_status,
+            "last_ping_time": last_ping_time_str,
+            "platform_type": platform_type,
+            "platform_name": platform_name,
+            "platform_version": platform_version,
+            "ip_address": ip_address,
+            "computer_name": computer_name,
+            "association_status": association_status,
+        }
+
+        # Format formattedText based on ping_status (Reqs 12.8, 12.9)
+        if ping_status == "Online":
+            readiness = "✅ HEALTHY — SSM agent is online and ready"
+            status_detail = (
+                "This instance is fully operational for SSM-based diagnostic tools."
+            )
+        else:
+            readiness = (
+                f"⚠️  WARNING — SSM agent registered but status is '{ping_status}'"
+            )
+            status_detail = (
+                f"The SSM agent was last responsive at {last_ping_time_str or 'unknown'}. "
+                "SSM-based diagnostic commands may fail until the agent reconnects."
+            )
+
+        formatted_lines = [
+            f"SSM Health Check for {instance_id}",
+            "",
+            readiness,
+            "",
+            f"  Agent Version:      {agent_version}",
+            f"  Ping Status:        {ping_status}",
+            f"  Last Ping Time:     {last_ping_time_str or 'N/A'}",
+            f"  Platform:           {platform_name} {platform_version} ({platform_type})",
+            f"  IP Address:         {ip_address}",
+            f"  Computer Name:      {computer_name}",
+            f"  Association Status: {association_status}",
+            "",
+            status_detail,
+        ]
+
+        return build_response(
+            success=True,
+            data=data,
+            formatted_text="\n".join(formatted_lines),
+            source_api=source_api,
+            data_freshness="real-time",
+        )
+
+    # --- Step 4: Not found in SSM — verify instance exists via EC2 (Req 12.3) ---
+    ec2 = _get_ec2_client()
+
+    try:
+        ec2_response = ec2.describe_instances(InstanceIds=[instance_id])
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in (
+            "InvalidInstanceID.NotFound",
+            "InvalidInstanceID.Malformed",
+        ):
+            # Step 6: Instance does not exist (Req 12.4)
+            return build_response(
+                success=False,
+                data={},
+                formatted_text=(
+                    f"ssm_health_check: Instance {instance_id} does not exist."
+                ),
+                source_api="ec2:DescribeInstances",
+                data_freshness="real-time",
+                error=f"instance_not_found: Instance {instance_id} does not exist.",
+                error_category="instance_not_found",
+            )
+        return _aws_error_response(
+            "ssm_health_check", exc, "ec2:DescribeInstances",
+            "ec2:DescribeInstances",
+        )
+    except BotoCoreError as exc:
+        return _aws_error_response(
+            "ssm_health_check", exc, "ec2:DescribeInstances",
+            "ec2:DescribeInstances",
+        )
+
+    # Check if instance was actually returned
+    reservations = ec2_response.get("Reservations", [])
+    instances = []
+    for reservation in reservations:
+        instances.extend(reservation.get("Instances", []))
+
+    if not instances:
+        # Step 6: Instance does not exist (Req 12.4)
+        return build_response(
+            success=False,
+            data={},
+            formatted_text=(
+                f"ssm_health_check: Instance {instance_id} does not exist."
+            ),
+            source_api="ec2:DescribeInstances",
+            data_freshness="real-time",
+            error=f"instance_not_found: Instance {instance_id} does not exist.",
+            error_category="instance_not_found",
+        )
+
+    # --- Step 5: Instance exists but not SSM-managed (Req 12.3) ---
+    diagnostic_hints = [
+        "Ensure SSM agent is installed and running",
+        "Verify instance IAM role includes AmazonSSMManagedInstanceCore policy",
+        "Check VPC endpoints or internet connectivity for SSM API access",
+        "Verify the instance is in a running state",
+    ]
+
+    data = {
+        "instance_id": instance_id,
+        "ssm_managed": False,
+        "diagnostic_hints": diagnostic_hints,
+    }
+
+    formatted_lines = [
+        f"SSM Health Check for {instance_id}",
+        "",
+        "❌ NOT SSM-MANAGED — Instance exists but is not registered with SSM",
+        "",
+        "The instance was found in EC2 but does not appear in SSM "
+        "DescribeInstanceInformation. SSM-based diagnostic tools cannot "
+        "run on this instance until the issue is resolved.",
+        "",
+        "Diagnostic hints:",
+    ]
+    for hint in diagnostic_hints:
+        formatted_lines.append(f"  • {hint}")
+
+    return build_response(
+        success=True,
+        data=data,
+        formatted_text="\n".join(formatted_lines),
+        source_api=source_api,
+        data_freshness="real-time",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Action dispatch table (Req 1.2)
 #
 # Maps each action string from the design document to its handler function
@@ -7539,6 +10094,14 @@ ACTIONS = {
     "diagnose_tcp_stream": handle_diagnose_tcp_stream,
     # Maintenance
     "cleanup_orphaned_sessions": handle_cleanup_orphaned_sessions,
+    # Network Diagnostics - SSM-based
+    "tcp_traceroute": handle_tcp_traceroute,
+    "tls_traceroute": handle_tls_traceroute,
+    "dns_resolve": handle_dns_resolve,
+    "db_connectivity_probe": handle_db_connectivity_probe,
+    # Network Diagnostics - API-only
+    "agentic_reachability_analyze": handle_agentic_reachability_analyze,
+    "ssm_health_check": handle_ssm_health_check,
 }
 
 

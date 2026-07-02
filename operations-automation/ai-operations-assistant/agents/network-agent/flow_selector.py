@@ -125,7 +125,11 @@ _RESOLUTION_ORDER: Tuple[str, ...] = (
 # Same alphabet as ``validate_stream_id`` in :mod:`validation`.
 import re  # noqa: E402 — kept module-level so the regex compiles once.
 
-_STREAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Anchored with ``\Z`` rather than ``$`` — Python's ``$`` matches just
+# before a trailing newline as well as the true end of string, which
+# would let e.g. "abc\n" incorrectly pass (see validation.py for the
+# same fix and rationale).
+_STREAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
 # All fields the Flow_Selector may carry (per Req 19.1 / glossary).
 _FLOW_SELECTOR_FIELDS = frozenset(
@@ -1020,10 +1024,10 @@ def query_matched_streams(
         "bitwise_and(from_base(replace(tcp_flags, '0x', ''), 16), 18) = 2"
         ") "
         "SELECT m.tcp_stream AS stream_id, "
-        "COALESCE(s.initiator_ip, MIN(m.src_ip)) AS client_ip, "
-        "COALESCE(s.initiator_port, CAST(MIN(m.src_port) AS INTEGER)) AS client_port, "
-        "COALESCE(s.responder_ip, MIN(m.dst_ip)) AS server_ip, "
-        "COALESCE(s.responder_port, CAST(MIN(m.dst_port) AS INTEGER)) AS server_port, "
+        "COALESCE(s.initiator_ip, MIN_BY(m.src_ip, m.frame_time)) AS client_ip, "
+        "COALESCE(s.initiator_port, CAST(MIN_BY(m.src_port, m.frame_time) AS INTEGER)) AS client_port, "
+        "COALESCE(s.responder_ip, MIN_BY(m.dst_ip, m.frame_time)) AS server_ip, "
+        "COALESCE(s.responder_port, CAST(MIN_BY(m.dst_port, m.frame_time) AS INTEGER)) AS server_port, "
         "COUNT(*) AS packet_count "
         "FROM matched m "
         "LEFT JOIN syn_packets s ON m.tcp_stream = s.tcp_stream AND s.rn = 1 "

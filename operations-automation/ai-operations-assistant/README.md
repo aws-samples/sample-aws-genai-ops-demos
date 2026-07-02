@@ -658,7 +658,7 @@ operations-automation/ai-operations-assistant/
 ├── devops-integration/                # DevOps Agent MCP Integration
 │   ├── src/                           # MCP handler, agent-proxy, schemas
 │   │   ├── lambda/                    # Lambda handlers (mcp-handler, tools-call-adapter)
-│   │   ├── schemas/                   # Action schemas + MCP descriptions (21 tools)
+│   │   ├── schemas/                   # Action schemas + MCP descriptions (21 tools — packet capture/pcap analysis only)
 │   │   ├── constructs/                # AgentIntegrationTemplate CDK construct
 │   │   └── types/                     # TypeScript interfaces
 │   ├── infrastructure/cdk/            # Separate CDK app for DevOps Agent stack
@@ -800,6 +800,27 @@ Filters compose freely — supply any combination to narrow results. The action 
 | `get_rtt_distribution` | Computes min/p50/p95/max RTT and sample count per stream |
 | `get_request_response_latency` | Measures time-to-first-byte and full response time for request/response pairs |
 | `diagnose_tcp_stream` | Produces a comprehensive TCP Stream Health Report combining all analysis actions |
+
+### Network Diagnostics Actions
+
+The Network Agent also exposes six network diagnostics actions that go beyond packet capture — active connectivity testing (traceroute, DNS, database probes) and static configuration analysis (VPC Reachability Analyzer, SSM health checks). These are registered in the Network Agent's action dispatch table and can be invoked directly (e.g. via the AgentCore SDK's `InvokeAgentRuntime`), but **are not yet exposed** through the GOAT chat frontend's `query_network_pcap` tool or the DevOps Agent MCP `tools/list` — both currently list only the 21 packet-capture/pcap-analysis actions above.
+
+| Action | Execution | Purpose |
+|--------|-----------|---------|
+| `ssm_health_check` | API-only | Verifies whether an EC2 instance's SSM agent is healthy and reachable — a pre-flight check before running the SSM-based tools below |
+| `agentic_reachability_analyze` | API-only | Runs a VPC Reachability Analyzer path analysis between a source (VPC resource ID) and destination (VPC resource ID or IPv4 address); reports the reachable path or the specific blocking component (security group, NACL, route table, etc.) with remediation guidance |
+| `tcp_traceroute` | SSM-based | Runs a TTL-based TCP SYN traceroute from the target instance to a destination host/port, showing hop-by-hop latency and where packets are dropped |
+| `tls_traceroute` | SSM-based | Same as `tcp_traceroute` plus a TLS handshake against the destination, reporting protocol version, cipher suite, and certificate details |
+| `dns_resolve` | SSM-based | Resolves a hostname from the target instance and compares it against agent-side resolution to detect split-horizon DNS |
+| `db_connectivity_probe` | SSM-based | Tests TCP connect → TLS handshake → protocol-level auth (MySQL/PostgreSQL) against a database endpoint in sequence, isolating which layer is failing |
+
+**SSM-based tools** (`tcp_traceroute`, `tls_traceroute`, `dns_resolve`, `db_connectivity_probe`) inject a zero-dependency Python script (stdlib only, Python 3.6+ compatible) onto the target instance via `ssm:SendCommand`. They require:
+- The target instance must have the SSM agent installed and running (verify with `ssm_health_check` first)
+- The target instance must carry the tag `goat-network-traceroute-allowed=true` (separate from the packet-capture opt-in tag `goat-network-capture-allowed`)
+- The target instance must be Linux — Windows instances are rejected
+- A concurrency limit of 3 global in-flight SSM commands and 1 per-instance applies across all four SSM-based tools
+
+**API-only tools** (`agentic_reachability_analyze`, `ssm_health_check`) call AWS APIs directly from the Network Agent container — no on-instance execution, no opt-in tag required.
 
 ### Bucket Strategy
 

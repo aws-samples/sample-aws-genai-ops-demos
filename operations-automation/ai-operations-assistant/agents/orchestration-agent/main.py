@@ -2049,6 +2049,13 @@ NETWORK_AGENT_ACTIONS = (
     "get_rtt_distribution",
     "get_request_response_latency",
     "diagnose_tcp_stream",
+    # Network Diagnostics
+    "tcp_traceroute",
+    "tls_traceroute",
+    "dns_resolve",
+    "db_connectivity_probe",
+    "agentic_reachability_analyze",
+    "ssm_health_check",
     # Maintenance
     "cleanup_orphaned_sessions",
 )
@@ -2427,6 +2434,12 @@ def query_network_pcap(action: str, params: dict = None) -> str:
       get_conversation_stats, reconstruct_tcp_handshake, classify_tcp_resets,
       detect_out_of_order_packets, detect_zero_window, analyze_tcp_options,
       get_rtt_distribution, get_request_response_latency, diagnose_tcp_stream
+    - Network diagnostics: tcp_traceroute, tls_traceroute, dns_resolve (params: instance_id,
+      destination_host/hostname, plus tool-specific optional params — see tool_descriptions.py
+      for full parameter tables), db_connectivity_probe (params: instance_id, endpoint, port,
+      engine [optional]), agentic_reachability_analyze (params: source [VPC resource ID],
+      destination [VPC resource ID or IPv4], destination_port, protocol — API-only, no SSM),
+      ssm_health_check (params: instance_id — API-only, no SSM, no opt-in tag required)
 
     Reads NETWORK_AGENT_ARN from environment. Invocation timeout is 60 seconds.
 

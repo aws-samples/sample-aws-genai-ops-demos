@@ -5,7 +5,7 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet("all", "account-health", "cloudwatch-incident", "connectivity")]
+    [ValidateSet("all", "account-health", "cloudwatch-incident", "connectivity", "network-troubleshooting")]
     [string]$Scenario
 )
 

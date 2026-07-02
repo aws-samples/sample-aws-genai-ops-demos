@@ -69,17 +69,25 @@ class ValidationError(Exception):
 
 # Capture_Id_Format (glossary in requirements.md): a non-empty string of
 # 1 to 128 characters drawn from the character set [A-Za-z0-9_-].
-_CAPTURE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+#
+# Anchored with ``\Z`` (absolute end of string) rather than ``$``
+# because Python's ``$`` matches immediately before a trailing
+# newline as well as at the true end of the string. That would let
+# a string like ``"0\n"`` — which contains a character (``\n``)
+# outside the allowed class — incorrectly pass the check.
+_CAPTURE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}\Z")
 
 # Stream identifier (Reqs 5.21, 19.4): same character class as
-# Capture_Id_Format but capped at 64 characters.
-_STREAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Capture_Id_Format but capped at 64 characters. Same ``\Z`` anchoring
+# rationale as above.
+_STREAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
 # EC2 ENI identifier — AWS standard format: ``eni-`` followed by 8 to 17
 # lowercase hex characters. The 8-character form is the legacy short
 # identifier; AWS now issues 17-character identifiers by default but
-# both remain valid in account responses.
-_ENI_ID_PATTERN = re.compile(r"^eni-[0-9a-f]{8,17}$")
+# both remain valid in account responses. Anchored with ``\Z`` for the
+# same reason as the patterns above.
+_ENI_ID_PATTERN = re.compile(r"^eni-[0-9a-f]{8,17}\Z")
 
 # Hard cap on the number of ENIs a single Capture_Session may mirror
 # (Capture_Eni_Limit, Req 4.3).

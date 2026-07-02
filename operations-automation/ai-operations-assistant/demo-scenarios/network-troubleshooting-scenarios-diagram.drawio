@@ -1,0 +1,221 @@
+﻿<mxfile host="app.diagrams.net" modified="2026-07-02" agent="Kiro" version="21.0.0" type="device">
+    <diagram name="G.O.A.T. Demo Scenarios G-L - Network Troubleshooting Diagnostics" id="goat-scenarios-gl">
+        <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1400" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <!-- Title -->
+                <mxCell id="title" value="G.O.A.T. Demo Scenarios Gâ€“L â€” Network Troubleshooting Diagnostics" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="10" width="1000" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" value="Shared GOAT VPC (10.99.0.0/16) â€” 3 EC2 instances, 6 scenarios, reusing Scenario C Transit Gateway + Network Firewall" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="45" width="1200" height="30" as="geometry"/>
+                </mxCell>
+                <!-- AWS Cloud -->
+                <mxCell id="aws-cloud" value="AWS Cloud" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#AAB7B8;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="80" width="1760" height="1300" as="geometry"/>
+                </mxCell>
+                <!-- Shared GOAT VPC -->
+                <mxCell id="goat-vpc" value="Shared GOAT VPC (GOATNetworkAgentVpcId)&#10;10.99.0.0/16" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc;strokeColor=#8C4FFF;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#AAB7B8;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="110" width="1720" height="1250" as="geometry"/>
+                </mxCell>
+                <!-- ============ SHARED EC2 INSTANCES (exactly 3) ============ -->
+                <mxCell id="shared-instances-group" value="Shared EC2 Instances (3 total across all scenarios)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF9800;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="150" width="600" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="svc-alpha" value="svc-alpha&#10;(t3.micro)&#10;Opt-in tag: âœ“" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="svc-alpha-uses" value="Used by: H (source), K (app tier)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="245" width="180" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="app-tier-01" value="app-tier-01&#10;(t3.micro)&#10;No opt-in tag" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="app-tier-01-uses" value="Used by: G (target)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="270" y="245" width="130" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-a-host" value="subnet-a-host&#10;(t3.micro)&#10;SSM profile, no opt-in" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-a-host-uses" value="Used by: L (target)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="460" y="245" width="130" height="15" as="geometry"/>
+                </mxCell>
+                <!-- ============ REUSED FROM SCENARIO C ============ -->
+                <mxCell id="reused-group" value="Reused from Scenario C (unchanged)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9C27B0;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="150" width="350" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="tgw-reused" value="Transit Gateway&#10;(GOATDemoScenarioC&#10;TransitGatewayId)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.transit_gateway;" parent="1" vertex="1">
+                    <mxGeometry x="730" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="nfw-reused" value="Network Firewall&#10;(GOATDemoScenarioC&#10;InspectionVpcId)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.network_firewall;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <!-- ============ SCENARIO G ============ -->
+                <mxCell id="scenario-g" value="Scenario G: Inter-Tier Connectivity (agentic_reachability_analyze)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#4CAF50;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="310" width="520" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-a" value="subnet-a" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="340" width="160" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-b" value="subnet-b" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="340" width="160" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="nacl-g" value="NACL&#10;Rule 50: DENY port 5432&#10;Rule 100: ALLOW all TCP&#10;Rule 110: ALLOW all TCP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="405" width="155" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-g" value="âœ— blocked" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#b85450;dashed=1;fontColor=#b85450;fontSize=9;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="205" y="390" as="sourcePoint"/>
+                        <mxPoint x="280" y="390" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <!-- ============ SCENARIO H ============ -->
+                <mxCell id="scenario-h" value="Scenario H: External Unreachable (tcp_traceroute)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="520" width="520" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-c" value="subnet-c (svc-alpha)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="550" width="200" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="rt-h" value="Route Table:&#10;198.51.100.42/32 â†’ blackhole&#10;0.0.0.0/0 â†’ TGW (NAT)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="560" width="180" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="target-ip-h" value="198.51.100.42&#10;(external target)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="640" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-h-blackhole" value="/32 blackhole" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#b85450;dashed=1;fontColor=#b85450;fontSize=9;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="240" y="590" as="sourcePoint"/>
+                        <mxPoint x="310" y="590" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <!-- ============ SCENARIO I ============ -->
+                <mxCell id="scenario-i" value="Scenario I: TLS Mismatch (tls_traceroute)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FF9800;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="310" width="540" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-d" value="subnet-d" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="340" width="200" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="alb-i" value="svc-beta-alb&#10;(Internal ALB)&#10;:443 HTTPS" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.elastic_load_balancing;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="365" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="acm-i" value="ACM Certificate:&#10;*.internal.corp.example.com&#10;&#10;Client SNI:&#10;api.prod.example.com&#10;&#10;â†’ DOMAIN MISMATCH" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="345" width="180" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-i-mismatch" value="TLS handshake" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#FF9800;fontColor=#000000;fontSize=9;labelBackgroundColor=none;" parent="1" source="alb-i" target="acm-i" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <!-- ============ SCENARIO J ============ -->
+                <mxCell id="scenario-j" value="Scenario J: DNS Split-Horizon (dns_resolve)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#3F51B5;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="520" width="540" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-e" value="subnet-e" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="550" width="200" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="resolver-j" value="Route 53 Resolver&#10;Outbound Endpoint" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.route_53;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="570" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="forwarder-j" value="Conditional Forwarder&#10;10.99.1.100:53&#10;&#10;Returns: STALE IP&#10;(differs from VPC resolver)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="555" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-j-forward" value="db.internal.corp.example.com" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3F51B5;fontColor=#000000;fontSize=9;labelBackgroundColor=none;" parent="1" source="resolver-j" target="forwarder-j" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <!-- ============ SCENARIO K ============ -->
+                <mxCell id="scenario-k" value="Scenario K: DB Connection Timeout (db_connectivity_probe)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#E91E63;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="730" width="520" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="rds-k" value="svc-data-01&#10;RDS MySQL&#10;(db.t3.micro)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.rds;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="780" width="50" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="nacl-k" value="NACL on RDS subnet:&#10;Ephemeral ports 1024-65535&#10;OUTBOUND DENY&#10;&#10;(return traffic blocked)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="775" width="180" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-k-app" value="svc-alpha â†’ port 3306" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#4CAF50;fontColor=#000000;fontSize=9;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="100" y="860" as="sourcePoint"/>
+                        <mxPoint x="100" y="830" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arrow-k-blocked" value="âœ— return blocked" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#b85450;dashed=1;fontColor=#b85450;fontSize=9;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="150" y="810" as="sourcePoint"/>
+                        <mxPoint x="280" y="810" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="sg-k-note" value="SG: allows app-tier CIDR âœ“&#10;(misleading â€” looks healthy)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#666666;fontStyle=2;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="850" width="200" height="25" as="geometry"/>
+                </mxCell>
+                <!-- ============ SCENARIO L ============ -->
+                <mxCell id="scenario-l" value="Scenario L: SSM Unreachable (ssm_health_check)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFEBE9;strokeColor=#795548;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="730" width="540" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-f" value="subnet-f (subnet-a-host)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="770" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="iam-l" value="IAM Profile: âœ“&#10;AmazonSSMManagedInstanceCore" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;fontColor=#4CAF50;fontStyle=0;" parent="1" vertex="1">
+                    <mxGeometry x="650" y="830" width="190" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="nacl-l" value="NACL on subnet-f:&#10;Rule 80: DENY TCP 443 EGRESS&#10;&#10;(blocks HTTPS to SSM endpoints)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;fontColor=#000000;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="900" y="775" width="200" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="ssm-vpce-l" value="SSM VPC&#10;Endpoints" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="940" y="870" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-l-blocked" value="âœ— HTTPS blocked" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#b85450;dashed=1;fontColor=#b85450;fontSize=9;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="810" y="820" as="sourcePoint"/>
+                        <mxPoint x="900" y="820" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <!-- ============ LEGEND ============ -->
+                <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="1200" y="150" width="340" height="240" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="Legend" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="1320" y="155" width="80" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-block" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" parent="1" vertex="1">
+                    <mxGeometry x="1220" y="190" width="30" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-block-text" value="Misconfiguration (root cause)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="1260" y="190" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-ec2" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
+                    <mxGeometry x="1220" y="220" width="30" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-ec2-text" value="EC2 Instance (shared, 3 total)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="1260" y="225" width="220" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-reused" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9C27B0;" parent="1" vertex="1">
+                    <mxGeometry x="1220" y="260" width="30" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-reused-text" value="Reused from Scenario C (TGW, NFW)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="1260" y="260" width="250" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-arrow-blocked" value="" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#b85450;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1220" y="300" as="sourcePoint"/>
+                        <mxPoint x="1250" y="300" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-arrow-blocked-text" value="Blocked path (misconfiguration)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="1260" y="290" width="230" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-scenarios" value="Scenarios: G=Reachability, H=Traceroute&#10;I=TLS, J=DNS, K=DB Probe, L=SSM" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="1220" y="320" width="280" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-cost" value="Total new monthly cost: ~$229&#10;(mostly Resolver endpoint at ~$180)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#666666;fontStyle=2;" parent="1" vertex="1">
+                    <mxGeometry x="1220" y="355" width="280" height="25" as="geometry"/>
+                </mxCell>
+                <!-- ============ DIAGNOSTIC TOOL MAPPING ============ -->
+                <mxCell id="tool-map-group" value="Diagnostic Tool â†’ Scenario Mapping" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;fontSize=11;fontStyle=1;fontColor=#000000;arcSize=6;" parent="1" vertex="1">
+                    <mxGeometry x="1200" y="420" width="340" height="280" as="geometry"/>
+                </mxCell>
+                <mxCell id="tool-map-content" value="G: agentic_reachability_analyze&#10;   â†’ buried NACL deny rule&#10;&#10;H: tcp_traceroute&#10;   â†’ /32 blackhole overlapping NAT route&#10;&#10;I: tls_traceroute&#10;   â†’ ACM cert domain â‰  client SNI&#10;&#10;J: dns_resolve&#10;   â†’ Resolver forwards to stale IP&#10;&#10;K: db_connectivity_probe&#10;   â†’ ephemeral-port NACL deny (return traffic)&#10;&#10;L: ssm_health_check&#10;   â†’ NACL blocks 443 to SSM VPC endpoints" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#333333;spacingLeft=5;spacingTop=5;" parent="1" vertex="1">
+                    <mxGeometry x="1210" y="445" width="320" height="240" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

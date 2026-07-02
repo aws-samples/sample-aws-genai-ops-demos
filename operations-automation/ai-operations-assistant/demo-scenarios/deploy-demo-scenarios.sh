@@ -5,7 +5,7 @@
 # Uses the separate demo-scenarios-app.ts CDK entry point.
 #
 # Usage:
-#   ./deploy-demo-scenarios.sh --scenario <all|account-health|cloudwatch-incident|connectivity>
+#   ./deploy-demo-scenarios.sh --scenario <all|account-health|cloudwatch-incident|connectivity|network-troubleshooting>
 #
 # NOTE: Make this script executable with: chmod +x deploy-demo-scenarios.sh
 
@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "\033[0;31mUnknown option: $1\033[0m"
-            echo "Usage: $0 --scenario <all|account-health|cloudwatch-incident|connectivity>"
+            echo "Usage: $0 --scenario <all|account-health|cloudwatch-incident|connectivity|network-troubleshooting>"
             exit 1
             ;;
     esac
@@ -39,17 +39,17 @@ if [ -z "$SCENARIO" ]; then
     echo ""
     echo "Usage: $0 --scenario <value>"
     echo ""
-    echo "Valid values: all, account-health, cloudwatch-incident, connectivity"
+    echo "Valid values: all, account-health, cloudwatch-incident, connectivity, network-troubleshooting"
     exit 1
 fi
 
 case "$SCENARIO" in
-    all|account-health|cloudwatch-incident|connectivity)
+    all|account-health|cloudwatch-incident|connectivity|network-troubleshooting)
         ;;
     *)
         echo -e "\033[0;31mERROR: Invalid scenario '$SCENARIO'\033[0m"
         echo ""
-        echo "Valid values: all, account-health, cloudwatch-incident, connectivity"
+        echo "Valid values: all, account-health, cloudwatch-incident, connectivity, network-troubleshooting"
         exit 1
         ;;
 esac

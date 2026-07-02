@@ -32,7 +32,8 @@ G.O.A.T. uses a **hybrid multi-agent architecture** where a single orchestration
 │      ││      ││      ││      ││      ││  ENI Inventory               │
 │ CE   ││ PHD  ││ Supp ││  TA  ││Athena││  Capture Lifecycle           │
 │ COH  ││ API  ││ API  ││ API  ││ CUR  ││  Pcap Query (20 actions)     │
-│ API  ││      ││      ││      ││      ││  VPC Traffic Mirroring       │
+│ API  ││      ││      ││      ││      ││  Network Diagnostics (6)     │
+│      ││      ││      ││      ││      ││  VPC Traffic Mirroring       │
 └──────┘└──────┘└──────┘└──────┘└──────┘└──────────────────────────────┘
 ```
 
@@ -71,7 +72,7 @@ Each sub-agent follows the same pattern:
 | Support | AWS Support | `describe_cases`, `describe_communications`, `search_cases` |
 | Trusted Advisor | Trusted Advisor v2 | `list_checks`, `list_recommendations` |
 | CUR | Athena (Cost and Usage Report) | `query_cur_data`, `get_resource_costs`, `analyze_usage_patterns` |
-| Network | EC2, DynamoDB, Athena, S3, EventBridge Scheduler, Step Functions | 21 actions exposed via MCP (see below) |
+| Network | EC2, SSM, DynamoDB, Athena, S3, EventBridge Scheduler, Step Functions | 27 actions total — 21 packet capture/analysis actions exposed via MCP, plus 6 network diagnostics actions (direct-invoke only, see below) |
 
 ### Network Agent — Extended Architecture
 
@@ -100,20 +101,30 @@ The Network Agent is the most complex sub-agent, providing on-demand VPC packet 
 │  │             │  │              │  │ diagnose_tcp_stream        │ │
 │  └─────────────┘  └──────┬───────┘  └────────────┬───────────────┘ │
 │                           │                       │                  │
-└───────────────────────────┼───────────────────────┼──────────────────┘
+│  ┌─────────────────────────────────────────────────────────────────┐│
+│  │  Network Diagnostics (6) — direct-invoke only, not yet in       ││
+│  │  MCP tools/list or the orchestration agent's NETWORK_AGENT_ACTIONS ││
+│  │                                                                  ││
+│  │  SSM-based (opt-in tag required)  │  API-only (no tag required) ││
+│  │  tcp_traceroute                   │  agentic_reachability_analyze││
+│  │  tls_traceroute                   │  ssm_health_check            ││
+│  │  dns_resolve                      │                              ││
+│  │  db_connectivity_probe            │                              ││
+│  └────────────────────────┬──────────────────────────┬─────────────┘│
+└───────────────────────────┼───────────────────────┼─────────────────┘
                             │                       │
                             ▼                       ▼
-┌───────────────────────────────────┐  ┌───────────────────────────────┐
-│   Capture Infrastructure          │  │   Query Infrastructure        │
-│                                   │  │                               │
-│   Traffic Mirror Sessions (EC2)   │  │   Athena (pcap_logs table)    │
-│   NLB → Collector Instance        │  │   Glue Database/Table         │
-│   VXLAN splitter (scapy)          │  │   S3 (Parquet data)           │
-│   S3 uploader (inotifywait)       │  │                               │
-│   Step Functions (transform)      │  │                               │
-│   DynamoDB (state + VNI lookup)   │  │                               │
-│   EventBridge Scheduler (auto-stop)│  │                               │
-└───────────────────────────────────┘  └───────────────────────────────┘
+┌───────────────────────────────────┐  ┌───────────────────────────────┐  ┌────────────────────────────┐
+│   Capture Infrastructure          │  │   Query Infrastructure        │  │  Diagnostics Infrastructure│
+│                                   │  │                               │  │                            │
+│   Traffic Mirror Sessions (EC2)   │  │   Athena (pcap_logs table)    │  │  SSM Run Command (scripts)│
+│   NLB → Collector Instance        │  │   Glue Database/Table         │  │  VPC Reachability Analyzer │
+│   VXLAN splitter (scapy)          │  │   S3 (Parquet data)           │  │  SSM DescribeInstanceInfo  │
+│   S3 uploader (inotifywait)       │  │                               │  │  Concurrency limiter       │
+│   Step Functions (transform)      │  │                               │  │  (3 global, 1 per-instance)│
+│   DynamoDB (state + VNI lookup)   │  │                               │  │                            │
+│   EventBridge Scheduler (auto-stop)│  │                               │  │                            │
+└───────────────────────────────────┘  └───────────────────────────────┘  └────────────────────────────┘
 ```
 
 **Capture data flow:**
@@ -124,6 +135,20 @@ The Network Agent is the most complex sub-agent, providing on-demand VPC packet 
 5. `transform_capture` → Step Functions → tshark converts pcap → Parquet → S3 `parquet/`
 6. Glue partition registered → Athena queryable
 7. Pcap Query Actions run SQL against `pcap_logs` with automatic `capture_id` predicate injection
+
+**Network diagnostics data flow (SSM-based tools — `tcp_traceroute`, `tls_traceroute`, `dns_resolve`, `db_connectivity_probe`):**
+1. Handler validates params and checks the `goat-network-traceroute-allowed=true` opt-in tag via `ec2:DescribeInstances` (Windows instances are rejected)
+2. Concurrency limiter reserves a slot (max 3 global, 1 per-instance)
+3. A zero-dependency Python script (stdlib only, Python 3.6+ compatible) is generated from a template and sent via `ssm:SendCommand`
+4. Script runs in `/tmp` with an `EXIT` trap for cleanup, writes a marker line + JSON result to stdout
+5. `ssm_executor.py` polls `ssm:GetCommandInvocation` (every 2s, up to 65 polls) and parses the JSON after the marker
+6. Concurrency slot released; result returned in the standard `build_response()` envelope
+
+**Network diagnostics data flow (API-only tools):**
+- `agentic_reachability_analyze`: creates a Network Insights Path, starts and polls an analysis (every 5s, up to 120s), reports `path_components` (reachable) or a `blocking_component` + remediation (blocked), plus a `limitations` array for known Reachability Analyzer gaps (TGW Connect, GWLB endpoints); best-effort deletes the path afterward
+- `ssm_health_check`: queries `ssm:DescribeInstanceInformation`; falls back to `ec2:DescribeInstances` to distinguish "not SSM-managed" from "instance doesn't exist"
+
+**Note:** The 6 diagnostics actions are registered in the Network Agent's `ACTIONS` dispatch table and can be invoked directly (e.g., via the AgentCore SDK's `InvokeAgentRuntime`), but are **not yet wired into** the GOAT orchestration agent's `query_network_pcap` tool allowlist or the DevOps Agent MCP `tools/list` schema — both currently expose only the original 21 packet-capture/pcap-analysis actions.
 
 ### DevOps Agent Integration (MCP)
 

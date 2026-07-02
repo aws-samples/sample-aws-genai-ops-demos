@@ -65,10 +65,10 @@ fi
 
 # Validate deployment mode
 case "$DEPLOYMENT_MODE" in
-    full|cost|health|support|trusted-advisor|cur|network) ;;
+    full|cost|health|support|trusted-advisor|cur|network|network-mcp) ;;
     *)
         echo -e "\033[0;31mInvalid deployment mode: $DEPLOYMENT_MODE\033[0m"
-        echo "Valid modes: full, cost, health, support, trusted-advisor, cur, network"
+        echo "Valid modes: full, cost, health, support, trusted-advisor, cur, network, network-mcp"
         exit 1
         ;;
 esac
@@ -97,22 +97,31 @@ region="$AWS_REGION"
 # Install frontend dependencies and create placeholder dist
 # CDK synthesizes all stacks even when deploying one, so frontend/dist must exist
 # ---------------------------------------------------------------------------
-echo -e "\n\033[0;33mInstalling frontend dependencies...\033[0m"
-echo -e "\033[0;90m      (Installing React, Vite, Cognito SDK, and Cloudscape components)\033[0m"
-pushd frontend > /dev/null
-# Remove stale environment config and build artifacts from prior installs.
-# The correct values are regenerated in section 7 after all stacks are deployed.
-if [ -f ".env.production.local" ]; then
-    rm -f ".env.production.local"
-    echo -e "\033[0;90m      Removed stale .env.production.local (will regenerate after deploy)\033[0m"
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    echo -e "\n\033[0;33mInstalling frontend dependencies...\033[0m"
+    echo -e "\033[0;90m      (Installing React, Vite, Cognito SDK, and Cloudscape components)\033[0m"
+    pushd frontend > /dev/null
+    # Remove stale environment config and build artifacts from prior installs.
+    # The correct values are regenerated in section 7 after all stacks are deployed.
+    if [ -f ".env.production.local" ]; then
+        rm -f ".env.production.local"
+        echo -e "\033[0;90m      Removed stale .env.production.local (will regenerate after deploy)\033[0m"
+    fi
+    if [ -d "dist" ]; then
+        rm -rf "dist"
+        echo -e "\033[0;90m      Removed stale dist/ (will rebuild after deploy)\033[0m"
+    fi
+    npm install
+    popd > /dev/null
+else
+    echo -e "\n\033[0;90mSkipping frontend dependency install (network-mcp mode has no Frontend stack)...\033[0m"
 fi
-if [ -d "dist" ]; then
-    rm -rf "dist"
-    echo -e "\033[0;90m      Removed stale dist/ (will rebuild after deploy)\033[0m"
-fi
-npm install
-popd > /dev/null
 
+# Placeholder frontend/dist/index.html must always be created, regardless of
+# deployment mode. CDK synthesizes the entire app -- including FrontendStack's
+# BucketDeployment asset resolution -- for every `cdk deploy` invocation
+# targeting this app, so frontend/dist must exist on disk even in network-mcp
+# mode where the Frontend stack is never actually deployed.
 echo -e "\n\033[0;33mCreating placeholder frontend build...\033[0m"
 echo -e "\033[0;90m      (Generating temporary HTML file - required for CDK synthesis)\033[0m"
 if [ ! -d "frontend/dist" ]; then
@@ -135,6 +144,7 @@ case "$DEPLOYMENT_MODE" in
     trusted-advisor)  DEPLOY_MODULES=("TA") ;;
     cur)              DEPLOY_MODULES=("CUR") ;;
     network)          DEPLOY_MODULES=() ;;
+    network-mcp)      DEPLOY_MODULES=() ;;
 esac
 
 echo -e "\n\033[0;36mModules to deploy: ${DEPLOY_MODULES[*]}\033[0m"
@@ -207,17 +217,22 @@ deploy_stack() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Core Stacks (always deployed)
+# 1. Core Stacks (skipped entirely under network-mcp mode: no Auth/Data
+# stack is needed since there is no Frontend and no Cognito sign-in step)
 # ---------------------------------------------------------------------------
 echo -e "\n\033[0;35m--- Core Stacks ---\033[0m"
 
-deploy_stack "GOATAuth-$region" \
-    "Creating Cognito User Pool, Identity Pool, and app client" \
-    "false"
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    deploy_stack "GOATAuth-$region" \
+        "Creating Cognito User Pool, Identity Pool, and app client" \
+        "false"
 
-deploy_stack "GOATData-$region" \
-    "Creating DynamoDB tables for conversations, knowledge articles, and user preferences" \
-    "true"
+    deploy_stack "GOATData-$region" \
+        "Creating DynamoDB tables for conversations, knowledge articles, and user preferences" \
+        "true"
+else
+    echo -e "\033[0;90m      Skipping GOATAuth/GOATData (network-mcp mode has no Auth/Frontend dependency)...\033[0m"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Infrastructure Stacks per module (ECR, CodeBuild, S3, IAM)
@@ -243,9 +258,9 @@ for module in "${DEPLOY_MODULES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Network Agent Stacks (full mode or network mode)
+# 4. Network Agent Stacks (full mode, network mode, or network-mcp mode)
 # ---------------------------------------------------------------------------
-if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "network-mcp" ]; then
     echo -e "\n\033[0;35m--- Network Agent Stacks ---\033[0m"
 
     # Check if GOATSharedDataBucketName export exists; deploy NetworkDataStack if absent
@@ -305,6 +320,19 @@ if [ "$DEPLOYMENT_MODE" = "full" ]; then
             echo -e "\033[0;90m  ./deploy-all.sh\033[0m"
             exit 1
         fi
+        if echo "$cdk_output" | grep -q "No export named GOATNetworkAgentRuntimeArn found"; then
+            echo -e "\n\033[0;31mDEPLOYMENT FAILED: Attach-by-import could not find the Network Agent export\033[0m"
+            echo ""
+            echo -e "\033[0;33mNo stack in this account/region has exported 'GOATNetworkAgentRuntimeArn'.\033[0m"
+            echo -e "\033[0;33mThe '-c goatAttachNetworkByImport=true' context flag requires a Network Agent\033[0m"
+            echo -e "\033[0;33mstack to already be deployed and exporting that value.\033[0m"
+            echo ""
+            echo -e "\033[0;33mDeploy the Network Agent first, then re-run this deployment:\033[0m"
+            echo -e "\033[0;90m  ./deploy-all.sh --mode network\033[0m"
+            echo -e "\033[0;90m  # or, for an Auth-free/Frontend-free standalone deployment:\033[0m"
+            echo -e "\033[0;90m  ./deploy-all.sh --mode network-mcp\033[0m"
+            exit 1
+        fi
         echo -e "\033[0;31mOrchestration runtime deployment failed\033[0m"
         exit 1
     fi
@@ -312,8 +340,9 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5b. DevOps Agent Integration (MCP Server + esbuild bundle)
+# full mode OR network-mcp mode
 # ---------------------------------------------------------------------------
-if [ "$DEPLOYMENT_MODE" = "full" ]; then
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network-mcp" ]; then
     echo -e "\n\033[0;35m--- DevOps Agent Integration ---\033[0m"
 
     devops_dir="$SCRIPT_DIR/devops-integration"
@@ -350,51 +379,58 @@ fi
 
 # ---------------------------------------------------------------------------
 # 6. Retrieve stack outputs for frontend build
+# Skipped entirely under network-mcp mode: no GOATAuth/GOATData/GOATFrontend
+# stack is deployed, so there is no Cognito configuration or frontend-facing
+# agent runtime ARN to retrieve.
 # ---------------------------------------------------------------------------
-echo -e "\n\033[0;35m--- Retrieving Stack Outputs ---\033[0m"
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    echo -e "\n\033[0;35m--- Retrieving Stack Outputs ---\033[0m"
 
-user_pool_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
-    --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
-user_pool_client_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
-    --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
-identity_pool_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
-    --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager)
+    user_pool_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
+    user_pool_client_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
+    identity_pool_id=$(aws cloudformation describe-stacks --stack-name "GOATAuth-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager)
 
-if [ -z "$user_pool_id" ] || [ -z "$user_pool_client_id" ] || [ -z "$identity_pool_id" ]; then
-    echo -e "\033[0;31mFailed to retrieve Cognito configuration from GOATAuth-$region stack outputs\033[0m"
-    exit 1
-fi
+    if [ -z "$user_pool_id" ] || [ -z "$user_pool_client_id" ] || [ -z "$identity_pool_id" ]; then
+        echo -e "\033[0;31mFailed to retrieve Cognito configuration from GOATAuth-$region stack outputs\033[0m"
+        exit 1
+    fi
 
-# Retrieve orchestration agent ARN (full mode) or first available sub-agent ARN (single module)
-agent_runtime_arn=""
-if [ "$DEPLOYMENT_MODE" = "full" ]; then
-    agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" \
-        --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
-elif [ "$DEPLOYMENT_MODE" = "network" ]; then
-    # In network mode, use the Network Agent runtime ARN
-    agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" \
-        --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    # Retrieve orchestration agent ARN (full mode) or first available sub-agent ARN (single module)
+    agent_runtime_arn=""
+    if [ "$DEPLOYMENT_MODE" = "full" ]; then
+        agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATOrchRuntime-$region" \
+            --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    elif [ "$DEPLOYMENT_MODE" = "network" ]; then
+        # In network mode, use the Network Agent runtime ARN
+        agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" \
+            --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    else
+        # In single-module mode, use the deployed module's runtime ARN
+        module_stack_name="GOAT${DEPLOY_MODULES[0]}Runtime-$region"
+        agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "$module_stack_name" \
+            --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    fi
+
+    if [ -z "$agent_runtime_arn" ]; then
+        echo -e "\033[0;31mFailed to retrieve Agent Runtime ARN from stack outputs\033[0m"
+        exit 1
+    fi
+
+    echo -e "\033[0;32m      User Pool ID:        $user_pool_id\033[0m"
+    echo -e "\033[0;32m      User Pool Client ID:  $user_pool_client_id\033[0m"
+    echo -e "\033[0;32m      Identity Pool ID:     $identity_pool_id\033[0m"
+    echo -e "\033[0;32m      Agent Runtime ARN:    $agent_runtime_arn\033[0m"
+    echo -e "\033[0;32m      Region:               $region\033[0m"
 else
-    # In single-module mode, use the deployed module's runtime ARN
-    module_stack_name="GOAT${DEPLOY_MODULES[0]}Runtime-$region"
-    agent_runtime_arn=$(aws cloudformation describe-stacks --stack-name "$module_stack_name" \
-        --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
+    echo -e "\n\033[0;90mSkipping stack output retrieval for frontend build (network-mcp mode has no Frontend/Auth stack)...\033[0m"
 fi
-
-if [ -z "$agent_runtime_arn" ]; then
-    echo -e "\033[0;31mFailed to retrieve Agent Runtime ARN from stack outputs\033[0m"
-    exit 1
-fi
-
-echo -e "\033[0;32m      User Pool ID:        $user_pool_id\033[0m"
-echo -e "\033[0;32m      User Pool Client ID:  $user_pool_client_id\033[0m"
-echo -e "\033[0;32m      Identity Pool ID:     $identity_pool_id\033[0m"
-echo -e "\033[0;32m      Agent Runtime ARN:    $agent_runtime_arn\033[0m"
-echo -e "\033[0;32m      Region:               $region\033[0m"
 
 # Retrieve Network Agent runtime ARN when applicable
 network_agent_arn=""
-if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "network-mcp" ]; then
     network_agent_arn=$(aws cloudformation describe-stacks --stack-name "GOATNetworkRuntime-$region" \
         --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
     if [ -z "$network_agent_arn" ]; then
@@ -406,40 +442,57 @@ fi
 
 # ---------------------------------------------------------------------------
 # 7. Build frontend with retrieved outputs
+# Skipped entirely under network-mcp mode: there is no Frontend stack to
+# build assets for.
 # ---------------------------------------------------------------------------
-echo -e "\n\033[0;35m--- Building Frontend ---\033[0m"
-echo -e "\033[0;90m      (Injecting Cognito config and Agent Runtime ARN, building React app)\033[0m"
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    echo -e "\n\033[0;35m--- Building Frontend ---\033[0m"
+    echo -e "\033[0;90m      (Injecting Cognito config and Agent Runtime ARN, building React app)\033[0m"
 
-./scripts/build-frontend.sh \
-    --user-pool-id "$user_pool_id" \
-    --user-pool-client-id "$user_pool_client_id" \
-    --identity-pool-id "$identity_pool_id" \
-    --agent-runtime-arn "$agent_runtime_arn" \
-    --region "$region"
+    ./scripts/build-frontend.sh \
+        --user-pool-id "$user_pool_id" \
+        --user-pool-client-id "$user_pool_client_id" \
+        --identity-pool-id "$identity_pool_id" \
+        --agent-runtime-arn "$agent_runtime_arn" \
+        --region "$region"
 
-if [ $? -ne 0 ]; then
-    echo -e "\033[0;31mFrontend build failed\033[0m"
-    exit 1
+    if [ $? -ne 0 ]; then
+        echo -e "\033[0;31mFrontend build failed\033[0m"
+        exit 1
+    fi
+else
+    echo -e "\n\033[0;90mSkipping frontend build (network-mcp mode has no Frontend stack)...\033[0m"
 fi
 
 # ---------------------------------------------------------------------------
 # 8. Deploy Frontend Stack (always last)
+# Skipped entirely under network-mcp mode: no Frontend stack is deployed
+# under this mode.
 # ---------------------------------------------------------------------------
-echo -e "\n\033[0;35m--- Frontend Stack ---\033[0m"
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    echo -e "\n\033[0;35m--- Frontend Stack ---\033[0m"
 
-deploy_stack "GOATFrontend-$region" \
-    "Deploying React app to S3 + CloudFront with OAC" \
-    "true"
+    deploy_stack "GOATFrontend-$region" \
+        "Deploying React app to S3 + CloudFront with OAC" \
+        "true"
+else
+    echo -e "\n\033[0;90mSkipping Frontend Stack deployment (network-mcp mode has no Frontend stack)...\033[0m"
+fi
 
 # ---------------------------------------------------------------------------
 # 9. Deployment Summary
 # ---------------------------------------------------------------------------
-website_url=$(aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" \
-    --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
+# Skipped entirely under network-mcp mode: no GOATFrontend stack is deployed
+# in this mode, so there is no Website URL to retrieve.
+website_url=""
+if [ "$DEPLOYMENT_MODE" != "network-mcp" ]; then
+    website_url=$(aws cloudformation describe-stacks --stack-name "GOATFrontend-$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
 
-if [ -z "$website_url" ]; then
-    echo -e "\033[0;31mFailed to retrieve Website URL from GOATFrontend-$region stack outputs\033[0m"
-    exit 1
+    if [ -z "$website_url" ]; then
+        echo -e "\033[0;31mFailed to retrieve Website URL from GOATFrontend-$region stack outputs\033[0m"
+        exit 1
+    fi
 fi
 
 echo ""
@@ -447,46 +500,68 @@ echo -e "\033[0;32m========================================\033[0m"
 echo -e "\033[0;32m  G.O.A.T. Deployment Complete!\033[0m"
 echo -e "\033[0;32m========================================\033[0m"
 echo ""
-echo -e "\033[0;36m  Website URL:          $website_url\033[0m"
-echo -e "\033[0;36m  Deployment Mode:      $DEPLOYMENT_MODE\033[0m"
-echo -e "\033[0;36m  Region:               $region\033[0m"
-echo -e "\033[0;36m  Agent Runtime ARN:    $agent_runtime_arn\033[0m"
-echo -e "\033[0;36m  User Pool ID:         $user_pool_id\033[0m"
-echo ""
-echo -e "\033[0;36m  Deployed Modules: ${DEPLOY_MODULES[*]}\033[0m"
-if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
-    echo -e "\033[0;36m  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)\033[0m"
+if [ "$DEPLOYMENT_MODE" = "network-mcp" ]; then
+    # network-mcp has no Website URL / Agent Runtime ARN (Frontend/Orchestrator) /
+    # User Pool ID (Auth) to show -- print the MCP endpoint and Network Agent
+    # runtime ARN as the primary "how to use this" output instead.
+    echo -e "\033[0;36m  Deployment Mode:      $DEPLOYMENT_MODE\033[0m"
+    echo -e "\033[0;36m  Region:               $region\033[0m"
     echo -e "\033[0;36m  Network Agent ARN:    $network_agent_arn\033[0m"
-fi
-if [ "$DEPLOYMENT_MODE" = "full" ]; then
-    echo -e "\033[0;36m  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)\033[0m"
-fi
-if [ "$DEPLOYMENT_MODE" = "full" ] && [ -n "$mcp_endpoint_url" ]; then
-    echo -e "\033[0;36m  MCP Endpoint:         $mcp_endpoint_url\033[0m"
-    echo -e "\033[0;36m  Health Check:         $health_check_url\033[0m"
-fi
-if [ -n "$ORCH_MODEL_ID" ]; then
-    echo -e "\033[0;36m  Orchestration Model:  $ORCH_MODEL_ID\033[0m"
-fi
-echo ""
-echo -e "\033[0;33m  Next Steps:\033[0m"
-echo -e "\033[0;90m    1. Create an admin user with full permissions (copy-paste all commands):\033[0m"
-echo ""
-echo -e "\033[0;37m       aws cognito-idp admin-create-user --user-pool-id $user_pool_id --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS\033[0m"
-echo ""
-echo -e "\033[0;37m       aws cognito-idp admin-set-user-password --user-pool-id $user_pool_id --username admin --password \"YourSecurePassword123!\" --permanent\033[0m"
-echo ""
-if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
-    echo -e "\033[0;37m       aws cognito-idp admin-add-user-to-group --user-pool-id $user_pool_id --username admin --group-name GOATNetworkCaptureUsers\033[0m"
+    if [ -n "$mcp_endpoint_url" ]; then
+        echo -e "\033[0;36m  MCP Endpoint:         $mcp_endpoint_url\033[0m"
+        echo -e "\033[0;36m  Health Check:         $health_check_url\033[0m"
+    fi
     echo ""
-fi
-echo -e "\033[0;90m       (Replace the email and password with your own values)\033[0m"
-echo -e "\033[0;90m    2. Sign in at the Website URL above with your created admin credentials\033[0m"
-echo -e "\033[0;90m    3. Try a query like: 'What are my top cost optimization opportunities?'\033[0m"
-if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
-    echo -e "\033[0;90m    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)\033[0m"
-fi
-if [ "$DEPLOYMENT_MODE" != "full" ]; then
-    echo -e "\033[0;90m    5. To add more modules later, re-run with --mode full\033[0m"
+    echo -e "\033[0;33m  No Cognito sign-in is required for this mode (Auth_Scope_Boundary) -\033[0m"
+    echo -e "\033[0;33m  register the MCP Endpoint above with your DevOps Agent to start using\033[0m"
+    echo -e "\033[0;33m  the six network diagnostic tools.\033[0m"
+    echo ""
+    echo -e "\033[0;33m  Next Steps:\033[0m"
+    echo -e "\033[0;90m    1. Register the MCP Endpoint above with the AWS DevOps Agent\033[0m"
+    echo -e "\033[0;90m    2. Try a query like: 'Run a TCP traceroute from i-xxxx to example.com'\033[0m"
+    echo -e "\033[0;90m    3. To add the chat UI and orchestrator later, re-run with --mode full\033[0m"
+else
+    echo -e "\033[0;36m  Website URL:          $website_url\033[0m"
+    echo -e "\033[0;36m  Deployment Mode:      $DEPLOYMENT_MODE\033[0m"
+    echo -e "\033[0;36m  Region:               $region\033[0m"
+    echo -e "\033[0;36m  Agent Runtime ARN:    $agent_runtime_arn\033[0m"
+    echo -e "\033[0;36m  User Pool ID:         $user_pool_id\033[0m"
+    echo ""
+    echo -e "\033[0;36m  Deployed Modules: ${DEPLOY_MODULES[*]}\033[0m"
+    if [ "$DEPLOYMENT_MODE" = "full" ] || [ "$DEPLOYMENT_MODE" = "network" ]; then
+        echo -e "\033[0;36m  Network Agent:        Deployed (BedrockAgentCoreApp + Nova Lite)\033[0m"
+        echo -e "\033[0;36m  Network Agent ARN:    $network_agent_arn\033[0m"
+    fi
+    if [ "$DEPLOYMENT_MODE" = "full" ]; then
+        echo -e "\033[0;36m  Orchestration Agent:  Deployed (Strands Agent SDK + Nova Pro)\033[0m"
+    fi
+    if [ "$DEPLOYMENT_MODE" = "full" ] && [ -n "$mcp_endpoint_url" ]; then
+        echo -e "\033[0;36m  MCP Endpoint:         $mcp_endpoint_url\033[0m"
+        echo -e "\033[0;36m  Health Check:         $health_check_url\033[0m"
+    fi
+    if [ -n "$ORCH_MODEL_ID" ]; then
+        echo -e "\033[0;36m  Orchestration Model:  $ORCH_MODEL_ID\033[0m"
+    fi
+    echo ""
+    echo -e "\033[0;33m  Next Steps:\033[0m"
+    echo -e "\033[0;90m    1. Create an admin user with full permissions (copy-paste all commands):\033[0m"
+    echo ""
+    echo -e "\033[0;37m       aws cognito-idp admin-create-user --user-pool-id $user_pool_id --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS\033[0m"
+    echo ""
+    echo -e "\033[0;37m       aws cognito-idp admin-set-user-password --user-pool-id $user_pool_id --username admin --password \"YourSecurePassword123!\" --permanent\033[0m"
+    echo ""
+    if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
+        echo -e "\033[0;37m       aws cognito-idp admin-add-user-to-group --user-pool-id $user_pool_id --username admin --group-name GOATNetworkCaptureUsers\033[0m"
+        echo ""
+    fi
+    echo -e "\033[0;90m       (Replace the email and password with your own values)\033[0m"
+    echo -e "\033[0;90m    2. Sign in at the Website URL above with your created admin credentials\033[0m"
+    echo -e "\033[0;90m    3. Try a query like: 'What are my top cost optimization opportunities?'\033[0m"
+    if [ "$DEPLOYMENT_MODE" = "network" ] || [ "$DEPLOYMENT_MODE" = "full" ]; then
+        echo -e "\033[0;90m    4. For packet captures: 'Start a capture on eni-xxx' (requires GOATNetworkCaptureUsers group)\033[0m"
+    fi
+    if [ "$DEPLOYMENT_MODE" != "full" ]; then
+        echo -e "\033[0;90m    5. To add more modules later, re-run with --mode full\033[0m"
+    fi
 fi
 echo ""

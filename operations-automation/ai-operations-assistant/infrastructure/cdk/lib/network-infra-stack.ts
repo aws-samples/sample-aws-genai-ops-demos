@@ -2876,6 +2876,85 @@ export class NetworkInfraStack extends BaseInfraStack {
       }),
     );
 
+    // ---- SSM Run Command for the four SSM-based Diagnostic_Actions --------
+    //
+    // tcp_traceroute, tls_traceroute, dns_resolve, and db_connectivity_probe
+    // all inject a script onto the target instance via ssm:SendCommand using
+    // the AWS-RunShellScript document, then poll ssm:GetCommandInvocation for
+    // output (see ssm_executor.py from the goat-network-diagnostics spec).
+    // Per AWS's documented resource-level permission model for SendCommand,
+    // both the document ARN and the instance ARN must be listed as resources
+    // (IAM authorizes the call if EITHER resource matches -- this is not an
+    // AND of two separate grants, it is the single call's two referenced
+    // resource types). The instance side is scoped to the deploying
+    // account/region with a wildcard instance ID because the actual target
+    // is determined by the caller's runtime instance_id parameter and
+    // cannot be known at CDK synth time.
+    this.agentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'NetworkAgentSsmDiagnostics',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ssm:SendCommand',
+          'ssm:GetCommandInvocation',
+        ],
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:document/AWS-RunShellScript`,
+          `arn:${cdk.Aws.PARTITION}:ec2:${this.region}:${this.account}:instance/*`,
+        ],
+      }),
+    );
+
+    // ---- SSM instance-registration lookup for ssm_health_check + the ------
+    // ---- opt-in tag / Windows-platform prerequisite check ------------------
+    //
+    // ssm:DescribeInstanceInformation does not support resource-level
+    // scoping (like the EC2 Describe* APIs above) -- AWS rejects any
+    // resource other than "*" for this action. The shared prerequisite
+    // check (_check_diagnostic_prerequisites) reuses the EC2
+    // ec2:DescribeInstances permission already granted by the
+    // NetworkAgentEc2DescribeReadOnly statement above; no duplicate
+    // DescribeInstances statement is added here (Req 3.4).
+    this.agentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'NetworkAgentSsmHealthCheck',
+        effect: iam.Effect.ALLOW,
+        actions: ['ssm:DescribeInstanceInformation'],
+        // ssm:DescribeInstanceInformation does not support resource-level permissions.
+        resources: ['*'],
+      }),
+    );
+
+    // ---- VPC Reachability Analyzer for agentic_reachability_analyze -------
+    //
+    // CreateNetworkInsightsPath / StartNetworkInsightsAnalysis mint a new
+    // path_id / analysis_id per invocation (created and best-effort deleted
+    // within the same handler call) -- the ID does not exist at CDK synth
+    // time and cannot be pre-scoped to a resource ARN. Per Req 3.8, this
+    // statement uses resources: ["*"] with this comment explaining that
+    // Reachability Analyzer's path/analysis lifecycle actions do not
+    // support resource-level permissions, matching the existing repository
+    // pattern already used above for EC2 Describe* APIs
+    // (NetworkAgentEc2DescribeReadOnly).
+    this.agentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'NetworkAgentReachabilityAnalyzer',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ec2:CreateNetworkInsightsPath',
+          'ec2:StartNetworkInsightsAnalysis',
+          'ec2:DescribeNetworkInsightsAnalyses',
+          'ec2:DescribeNetworkInsightsPaths',
+          'ec2:DeleteNetworkInsightsPath',
+          'ec2:DeleteNetworkInsightsAnalysis',
+        ],
+        // Reachability Analyzer path/analysis create+delete APIs do not
+        // support resource-level permissions for path/analysis IDs, which
+        // are minted per-invocation and unknown at CDK synth time.
+        resources: ['*'],
+      }),
+    );
+
     // ---- VPC DNS resolution for active_dns_lookup (Req 19.14) -------------
     //
     // The `active_dns_lookup` strategy of Hostname_Resolution_Strategy
