@@ -233,7 +233,7 @@ EOF
             aws lambda update-function-configuration \
                 --function-name "$TRIGGER_LAMBDA" \
                 --environment "Variables=$TRIGGER_ENV" \
-                --no-cli-pager >/dev/null 2>&1
+                --no-cli-pager >/dev/null 2>&1 || true
             echo "  Updated trigger Lambda (webhook URL)."
         fi
 
@@ -241,13 +241,15 @@ EOF
         SIM_ENV=$(aws lambda get-function-configuration \
             --function-name "$SIMULATOR_LAMBDA" \
             --query 'Environment.Variables' \
-            --output json --no-cli-pager 2>/dev/null)
-        SIM_ENV=$(echo "$SIM_ENV" | jq --arg sid "$AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $sid')
-        aws lambda update-function-configuration \
-            --function-name "$SIMULATOR_LAMBDA" \
-            --environment "Variables=$SIM_ENV" \
-            --no-cli-pager >/dev/null 2>&1
-        echo "  Updated simulator Lambda (space ID)."
+            --output json --no-cli-pager 2>/dev/null || echo "{}")
+        if [ "$SIM_ENV" != "{}" ] && [ -n "$SIM_ENV" ]; then
+            SIM_ENV=$(echo "$SIM_ENV" | jq --arg sid "$AGENT_SPACE_ID" '.DEVOPS_AGENT_SPACE_ID = $sid')
+            aws lambda update-function-configuration \
+                --function-name "$SIMULATOR_LAMBDA" \
+                --environment "Variables=$SIM_ENV" \
+                --no-cli-pager >/dev/null 2>&1 || true
+            echo "  Updated simulator Lambda (space ID)."
+        fi
 
         echo "  All resources updated. No CDK redeploy needed."
     else

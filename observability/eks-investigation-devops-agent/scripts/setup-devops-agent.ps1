@@ -230,33 +230,39 @@ if ($LASTEXITCODE -eq 0) {
         Write-Host "  Updated Secrets Manager secret."
     }
 
-    # Update trigger Lambda env vars (webhook URL)
+    # Update trigger Lambda env vars (webhook URL) — non-fatal on failure
     if ($env:DEVOPS_AGENT_WEBHOOK_URL) {
-        $triggerEnv = aws lambda get-function-configuration `
+        $triggerEnvJson = aws lambda get-function-configuration `
             --function-name $TriggerLambda `
             --query 'Environment.Variables' `
-            --output json --no-cli-pager 2>$null | ConvertFrom-Json
-        $triggerEnv.WEBHOOK_URL = $env:DEVOPS_AGENT_WEBHOOK_URL
-        $envJson = $triggerEnv | ConvertTo-Json -Compress
-        aws lambda update-function-configuration `
-            --function-name $TriggerLambda `
-            --environment "Variables=$envJson" `
-            --no-cli-pager 2>$null | Out-Null
-        Write-Host "  Updated trigger Lambda (webhook URL)."
+            --output json --no-cli-pager 2>$null
+        if ($triggerEnvJson) {
+            $triggerEnv = $triggerEnvJson | ConvertFrom-Json
+            $triggerEnv.WEBHOOK_URL = $env:DEVOPS_AGENT_WEBHOOK_URL
+            $envJson = $triggerEnv | ConvertTo-Json -Compress
+            aws lambda update-function-configuration `
+                --function-name $TriggerLambda `
+                --environment "Variables=$envJson" `
+                --no-cli-pager 2>$null | Out-Null
+            Write-Host "  Updated trigger Lambda (webhook URL)."
+        }
     }
 
-    # Update simulator Lambda env vars (space ID)
-    $simEnv = aws lambda get-function-configuration `
+    # Update simulator Lambda env vars (space ID) — non-fatal on failure
+    $simEnvJson = aws lambda get-function-configuration `
         --function-name $SimulatorLambda `
         --query 'Environment.Variables' `
-        --output json --no-cli-pager 2>$null | ConvertFrom-Json
-    $simEnv.DEVOPS_AGENT_SPACE_ID = $AgentSpaceId
-    $simEnvJson = $simEnv | ConvertTo-Json -Compress
-    aws lambda update-function-configuration `
-        --function-name $SimulatorLambda `
-        --environment "Variables=$simEnvJson" `
-        --no-cli-pager 2>$null | Out-Null
-    Write-Host "  Updated simulator Lambda (space ID)."
+        --output json --no-cli-pager 2>$null
+    if ($simEnvJson) {
+        $simEnv = $simEnvJson | ConvertFrom-Json
+        $simEnv.DEVOPS_AGENT_SPACE_ID = $AgentSpaceId
+        $simEnvUpdateJson = $simEnv | ConvertTo-Json -Compress
+        aws lambda update-function-configuration `
+            --function-name $SimulatorLambda `
+            --environment "Variables=$simEnvUpdateJson" `
+            --no-cli-pager 2>$null | Out-Null
+        Write-Host "  Updated simulator Lambda (space ID)."
+    }
 
     Write-Host "  All resources updated. No CDK redeploy needed." -ForegroundColor Green
 } else {

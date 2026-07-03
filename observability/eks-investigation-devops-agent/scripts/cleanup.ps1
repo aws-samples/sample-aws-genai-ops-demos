@@ -41,7 +41,7 @@ if ($confirm -ne "y" -and $confirm -ne "Y") {
 }
 
 Write-Host ""
-Write-Host "[1/14] Installing CDK dependencies..." -ForegroundColor Cyan
+Write-Host "[1/15] Installing CDK dependencies..." -ForegroundColor Cyan
 if (Test-Path "cdk") {
     Write-Host "  Running npm install in cdk/..."
     Push-Location cdk
@@ -53,7 +53,7 @@ if (Test-Path "cdk") {
 }
 
 Write-Host ""
-Write-Host "[2/14] Cleaning up CodeBuild source bundles..." -ForegroundColor Cyan
+Write-Host "[2/15] Cleaning up CodeBuild source bundles..." -ForegroundColor Cyan
 $CFN_BUCKET = "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
 $cfnBucketExists = aws s3api head-bucket --bucket $CFN_BUCKET 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -65,7 +65,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[3/14] Emptying and deleting S3 buckets..." -ForegroundColor Cyan
+Write-Host "[3/15] Emptying and deleting S3 buckets..." -ForegroundColor Cyan
 $BUCKETS = @(
     "${PROJECT_NAME}-${ENVIRONMENT}-merchant-portal-${ACCOUNT_ID}",
     "${PROJECT_NAME}-cfn-templates-${ACCOUNT_ID}"
@@ -111,11 +111,12 @@ foreach ($bucket in $BUCKETS) {
 }
 
 Write-Host ""
-Write-Host "[4/14] Deleting ECR images..." -ForegroundColor Cyan
+Write-Host "[4/15] Deleting ECR images..." -ForegroundColor Cyan
 $REPOS = @(
     "${PROJECT_NAME}/merchant-gateway",
     "${PROJECT_NAME}/payment-processor",
     "${PROJECT_NAME}/webhook-service",
+    "${PROJECT_NAME}/mcp-server",
     "${PROJECT_NAME}-${ENVIRONMENT}/merchant-gateway",
     "${PROJECT_NAME}-${ENVIRONMENT}/payment-processor",
     "${PROJECT_NAME}-${ENVIRONMENT}/webhook-service"
@@ -133,7 +134,7 @@ foreach ($repo in $REPOS) {
 }
 
 Write-Host ""
-Write-Host "[5/14] Disabling RDS deletion protection..." -ForegroundColor Cyan
+Write-Host "[5/15] Disabling RDS deletion protection..." -ForegroundColor Cyan
 $DB_INSTANCE = "${PROJECT_NAME}-${ENVIRONMENT}-postgres"
 $dbExists = aws rds describe-db-instances --db-instance-identifier $DB_INSTANCE 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -148,7 +149,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[6/14] Cleaning up Kubernetes resources before stack deletion..." -ForegroundColor Cyan
+Write-Host "[6/15] Cleaning up Kubernetes resources before stack deletion..." -ForegroundColor Cyan
 $EKS_CLUSTER = "${PROJECT_NAME}-${ENVIRONMENT}-cluster"
 $clusterExists = aws eks describe-cluster --name $EKS_CLUSTER 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -180,7 +181,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[7/14] Cleaning up orphaned VPC endpoints..." -ForegroundColor Cyan
+Write-Host "[7/15] Cleaning up orphaned VPC endpoints..." -ForegroundColor Cyan
 $VPC_ID = aws ec2 describe-vpcs --filters "Name=tag:Project,Values=${PROJECT_NAME}" --query "Vpcs[0].VpcId" --output text 2>$null
 # Fallback: query the NetworkStack CloudFormation output if tag lookup fails
 if (-not $VPC_ID -or $VPC_ID -eq "None") {
@@ -227,7 +228,7 @@ if ($VPC_ID -and $VPC_ID -ne "None") {
 }
 
 Write-Host ""
-Write-Host "[8/14] Cleaning up orphaned load balancers, target groups, and security groups..." -ForegroundColor Cyan
+Write-Host "[8/15] Cleaning up orphaned load balancers, target groups, and security groups..." -ForegroundColor Cyan
 if ($VPC_ID -and $VPC_ID -ne "None") {
     # Delete load balancers in the VPC
     $LB_ARNS = aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" --output text 2>$null
@@ -262,7 +263,7 @@ if ($VPC_ID -and $VPC_ID -ne "None") {
 }
 
 Write-Host ""
-Write-Host "[9/14] Destroying CloudFormation stacks (reverse dependency order)..." -ForegroundColor Cyan
+Write-Host "[9/15] Destroying CloudFormation stacks (reverse dependency order)..." -ForegroundColor Cyan
 # CDK's --all flag cannot delete the conditional DevOpsAgent stack (it is not
 # in the synth output when the webhook URL context is absent).  We therefore
 # delete stacks directly via CloudFormation in explicit reverse-dependency
@@ -281,6 +282,7 @@ $STACK_DELETE_ORDER = @(
     "DevOpsAgentEksDevOpsAgent-${REGION}",
     "DevOpsAgentEksFrontend-${REGION}",
     "DevOpsAgentEksFailureSimulatorApi-${REGION}",
+    "DevOpsAgentEksMcpServer-${REGION}",
     "DevOpsAgentEksMonitoring-${REGION}",
     "DevOpsAgentEksPipeline-${REGION}",
     "DevOpsAgentEksAuth-${REGION}",
@@ -317,7 +319,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[10/14] Cleaning up remaining S3 buckets (if any survived stack deletion)..." -ForegroundColor Cyan
+Write-Host "[10/15] Cleaning up remaining S3 buckets (if any survived stack deletion)..." -ForegroundColor Cyan
 foreach ($bucket in $BUCKETS) {
     $bucketStillExists = aws s3api head-bucket --bucket $bucket 2>$null
     if ($LASTEXITCODE -eq 0) {
@@ -329,7 +331,7 @@ foreach ($bucket in $BUCKETS) {
 }
 
 Write-Host ""
-Write-Host "[11/14] Cleaning up any orphaned stacks in DELETE_FAILED state..." -ForegroundColor Cyan
+Write-Host "[11/15] Cleaning up any orphaned stacks in DELETE_FAILED state..." -ForegroundColor Cyan
 $allFailedStacks = @()
 # Check for both legacy CloudFormation and CDK stack name patterns
 foreach ($pattern in @($PROJECT_NAME, "DevOpsAgentEks")) {
@@ -364,7 +366,7 @@ if ($allFailedStacks.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "[12/14] Deleting Secrets Manager secret..." -ForegroundColor Cyan
+Write-Host "[12/15] Deleting Secrets Manager secret..." -ForegroundColor Cyan
 $SECRET_NAME = "${PROJECT_NAME}-${ENVIRONMENT}-rds-credentials"
 $secretExists = aws secretsmanager describe-secret --secret-id $SECRET_NAME 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -382,9 +384,17 @@ if ($LASTEXITCODE -eq 0) {
     aws secretsmanager delete-secret --secret-id $WEBHOOK_SECRET_NAME --force-delete-without-recovery 2>$null
     Write-Host "  ✓ Webhook secret deleted" -ForegroundColor Green
 }
+# Clean up MCP server read-only DB credentials secret
+$MCP_SECRET_NAME = "${PROJECT_NAME}-${ENVIRONMENT}-mcp-readonly-credentials"
+$mcpSecretExists = aws secretsmanager describe-secret --secret-id $MCP_SECRET_NAME 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  Deleting $MCP_SECRET_NAME (force, no recovery window)..."
+    aws secretsmanager delete-secret --secret-id $MCP_SECRET_NAME --force-delete-without-recovery 2>$null
+    Write-Host "  ✓ MCP secret deleted" -ForegroundColor Green
+}
 
 Write-Host ""
-Write-Host "[13/14] Cleaning up CloudWatch log groups and kubeconfig..." -ForegroundColor Cyan
+Write-Host "[13/15] Cleaning up CloudWatch log groups and kubeconfig..." -ForegroundColor Cyan
 # Delete EKS, Lambda, and CodeBuild log groups created outside CloudFormation
 $LOG_GROUPS = aws logs describe-log-groups `
     --log-group-name-prefix "/aws/eks/${PROJECT_NAME}" `
@@ -428,7 +438,96 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ""
-Write-Host "[14/14] Cleaning up DevOps Agent resources..." -ForegroundColor Cyan
+Write-Host "[14/15] Cleaning up AgentCore Gateway MCP server..." -ForegroundColor Cyan
+$DEVOPS_AGENT_REGION = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
+
+# Disassociate MCP services from ALL agent spaces, then deregister
+Write-Host "  Disassociating MCP services from agent spaces..."
+$spacesJson = aws devops-agent list-agent-spaces --region $DEVOPS_AGENT_REGION --output json --no-cli-pager 2>$null
+if ($spacesJson) {
+    foreach ($space in (($spacesJson | ConvertFrom-Json).agentSpaces)) {
+        $assocJson = aws devops-agent list-associations --agent-space-id $space.agentSpaceId --region $DEVOPS_AGENT_REGION --output json --no-cli-pager 2>$null
+        if ($assocJson) {
+            foreach ($assoc in (($assocJson | ConvertFrom-Json).associations)) {
+                if ($assoc.configuration.mcpserver) {
+                    aws devops-agent disassociate-service --agent-space-id $space.agentSpaceId --association-id $assoc.associationId --region $DEVOPS_AGENT_REGION --no-cli-pager 2>$null | Out-Null
+                }
+            }
+        }
+    }
+}
+
+# Deregister all MCP services matching our project
+$servicesJson = aws devops-agent list-services --region $DEVOPS_AGENT_REGION --output json --no-cli-pager 2>$null
+if ($servicesJson) {
+    foreach ($svc in (($servicesJson | ConvertFrom-Json).services)) {
+        aws devops-agent deregister-service --service-id $svc.serviceId --region $DEVOPS_AGENT_REGION --no-cli-pager 2>$null | Out-Null
+    }
+}
+Write-Host "  ✓ MCP services deregistered" -ForegroundColor Green
+
+# Delete private connections
+$CONN_NAMES = @("mcp-gw-conn", "mcp-gateway-conn", "mcp-paytxninsights", "mcp-test-conn")
+foreach ($connName in $CONN_NAMES) {
+    $connExists = aws devops-agent describe-private-connection --name $connName --region $DEVOPS_AGENT_REGION --query "status" --output text --no-cli-pager 2>$null
+    if ($connExists -and $connExists -ne "None") {
+        Write-Host "  Deleting private connection '$connName' (status: $connExists)..."
+        aws devops-agent delete-private-connection --name $connName --region $DEVOPS_AGENT_REGION --no-cli-pager 2>$null | Out-Null
+    }
+}
+Write-Host "  Waiting for private connections to fully delete..."
+foreach ($connName in $CONN_NAMES) {
+    for ($i = 1; $i -le 36; $i++) {  # up to 6 minutes
+        $status = aws devops-agent describe-private-connection --name $connName --region $DEVOPS_AGENT_REGION --query "status" --output text --no-cli-pager 2>$null
+        if (-not $status -or $status -eq "None") { break }
+        if ($i -eq 1) { Write-Host "  Waiting for '$connName' ($status)..." }
+        Start-Sleep -Seconds 10
+    }
+}
+Write-Host "  ✓ Private connections deleted" -ForegroundColor Green
+
+# Delete orphaned AgentCore runtimes from test deployments
+$runtimesJson = aws bedrock-agentcore-control list-agent-runtimes --region $REGION --output json --no-cli-pager 2>$null
+if ($runtimesJson) {
+    foreach ($rt in (($runtimesJson | ConvertFrom-Json).agentRuntimes)) {
+        if ($rt.agentRuntimeName -match "paytxn") {
+            Write-Host "  Deleting AgentCore runtime $($rt.agentRuntimeId)..."
+            aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id $rt.agentRuntimeId --region $REGION --no-cli-pager 2>$null | Out-Null
+        }
+    }
+}
+
+# Wait for private connection ENIs to release (they block VPC/subnet deletion)
+Write-Host "  Waiting for private connection ENIs to release (up to 5 minutes)..."
+Start-Sleep -Seconds 60
+for ($i = 1; $i -le 24; $i++) {
+    $remaining = aws devops-agent describe-private-connection --name mcp-gw-conn --region $DEVOPS_AGENT_REGION --query status --output text --no-cli-pager 2>$null
+    if (-not $remaining -or $remaining -eq "None") {
+        Write-Host "  ✓ Private connections fully deleted" -ForegroundColor Green
+        break
+    }
+    if ($i -eq 24) {
+        Write-Host "  WARNING: Private connections may still have ENIs. VPC deletion might fail." -ForegroundColor Yellow
+    }
+    Start-Sleep -Seconds 10
+}
+
+# Clean up orphaned Cognito user pools (created by AgentCore Gateway CDK construct)
+Write-Host "  Cleaning up orphaned Cognito user pools..."
+$poolsJson = aws cognito-idp list-user-pools --max-results 20 --region $REGION --output json --no-cli-pager 2>$null
+if ($poolsJson) {
+    foreach ($pool in (($poolsJson | ConvertFrom-Json).UserPools | Where-Object { $_.Name -match "mcp" })) {
+        $domain = aws cognito-idp describe-user-pool --user-pool-id $pool.Id --region $REGION --query "UserPool.Domain" --output text --no-cli-pager 2>$null
+        if ($domain -and $domain -ne "None") {
+            aws cognito-idp delete-user-pool-domain --domain $domain --user-pool-id $pool.Id --region $REGION --no-cli-pager 2>$null | Out-Null
+        }
+        aws cognito-idp delete-user-pool --user-pool-id $pool.Id --region $REGION --no-cli-pager 2>$null | Out-Null
+        Write-Host "  Deleted Cognito pool $($pool.Id)"
+    }
+}
+
+Write-Host ""
+Write-Host "[15/15] Cleaning up DevOps Agent resources..." -ForegroundColor Cyan
 $DEVOPS_AGENT_REGION = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
 
 # Delete only the Agent Space matching our project name (not all spaces in the account)

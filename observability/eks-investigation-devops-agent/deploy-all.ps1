@@ -12,6 +12,7 @@
 #   7. Wait for pods and NLB
 #   8. Update CloudFront with NLB API origin via CDK
 #   9. Build and deploy frontend
+#  10. Deploy MCP server to AgentCore Runtime
 # =============================================================================
 
 param(
@@ -112,7 +113,7 @@ if ($LASTEXITCODE -ne 0) {
 # =============================================================================
 # STEP 1: Install CDK dependencies and create S3 bucket for CodeBuild sources
 # =============================================================================
-Write-Host "[1/9] Installing CDK dependencies and preparing S3 bucket..." -ForegroundColor Cyan
+Write-Host "[1/10] Installing CDK dependencies and preparing S3 bucket..." -ForegroundColor Cyan
 $BUCKET_NAME = "$ProjectName-cfn-templates-$AWS_ACCOUNT_ID"
 aws s3 mb "s3://$BUCKET_NAME" --region $AWS_REGION 2>$null
 
@@ -164,13 +165,17 @@ if ($BucketLocation -ne $AWS_REGION) {
 }
 
 Push-Location cdk; npm install; Pop-Location
+
+# Install Python dependencies for MCP Lambda (vendored, pure Python)
+pip3 install pg8000 --target cdk/lambda/mcp-transaction-insights/ --quiet --no-compile 2>$null
+
 Write-Host "  done."
 Write-Host ""
 
 # =============================================================================
 # STEP 2: Deploy CDK stacks (initial, no API endpoint yet)
 # =============================================================================
-Write-Host "[2/9] Deploying CDK stacks (this takes ~15 minutes)..." -ForegroundColor Cyan
+Write-Host "[2/10] Deploying CDK stacks (this takes ~15 minutes)..." -ForegroundColor Cyan
 
 Push-Location cdk
 $cdkArgs = @(
@@ -195,7 +200,7 @@ Write-Host ""
 # =============================================================================
 # STEP 3: Configure kubectl for EKS
 # =============================================================================
-Write-Host "[3/9] Configuring kubectl..." -ForegroundColor Cyan
+Write-Host "[3/10] Configuring kubectl..." -ForegroundColor Cyan
 aws eks update-kubeconfig `
     --name "$ProjectName-$Environment-cluster" `
     --region $AWS_REGION
@@ -305,7 +310,7 @@ Write-Host ""
 # =============================================================================
 # STEP 4: Build and push container images via CodeBuild
 # =============================================================================
-Write-Host "[4/9] Building and pushing container images via CodeBuild..." -ForegroundColor Cyan
+Write-Host "[4/10] Building and pushing container images via CodeBuild..." -ForegroundColor Cyan
 
 $IMAGE_TAG = $Environment
 $Services = @("merchant-gateway", "payment-processor", "webhook-service")
@@ -503,7 +508,7 @@ Write-Host ""
 # =============================================================================
 # STEP 5: Apply Kubernetes manifests (with dynamic substitution)
 # =============================================================================
-Write-Host "[5/9] Applying Kubernetes manifests..." -ForegroundColor Cyan
+Write-Host "[5/10] Applying Kubernetes manifests..." -ForegroundColor Cyan
 
 # Create namespace
 kubectl create namespace payment-demo --dry-run=client -o yaml | kubectl apply -f -
@@ -615,7 +620,7 @@ Write-Host ""
 # =============================================================================
 # STEP 6: Create Cognito user & run DB migrations (BEFORE pod wait)
 # =============================================================================
-Write-Host "[6/9] Creating Cognito user and running database migrations..." -ForegroundColor Cyan
+Write-Host "[6/10] Creating Cognito user and running database migrations..." -ForegroundColor Cyan
 
 # --- 7a: Create Cognito demo user FIRST so we can capture its sub UUID ---
 $USER_POOL_ID = aws cloudformation describe-stacks `
@@ -714,6 +719,21 @@ if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
 # Clean up any previous seed job
 kubectl delete job db-seed-job -n payment-demo --ignore-not-found 2>$null
 
+# Retrieve MCP read-only DB password from Secrets Manager (created by McpServerStack)
+# NOTE: This password is passed to the seed job as an env var to create the PostgreSQL
+# user. The seed job is short-lived and deleted after completion. The MCP server itself
+# retrieves credentials from Secrets Manager at runtime (never via env vars).
+$MCP_DB_PASSWORD = ""
+$mcpSecretJson = aws secretsmanager get-secret-value `
+    --secret-id "$ProjectName-$Environment-mcp-readonly-credentials" `
+    --query SecretString --output text --region $AWS_REGION --no-cli-pager 2>$null
+if ($mcpSecretJson) {
+    $MCP_DB_PASSWORD = ($mcpSecretJson | ConvertFrom-Json).password
+    Write-Host "  MCP read-only DB password retrieved."
+} else {
+    Write-Host "  WARNING: Could not retrieve MCP secret. The mcp_readonly DB user will not be created." -ForegroundColor Yellow
+}
+
 Write-Host "  Creating DB seed job..."
 $seedJobYaml = @"
 apiVersion: batch/v1
@@ -750,6 +770,8 @@ spec:
                 secretKeyRef:
                   name: db-credentials
                   key: DB_NAME
+            - name: MCP_DB_PASSWORD
+              value: "$MCP_DB_PASSWORD"
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -839,7 +861,22 @@ spec:
                   EXECUTE FUNCTION update_updated_at_column();
 
               -- ============================================================
-              -- 003: Create webhook_deliveries table
+              -- 003: Create transaction_events table (state transition log)
+              -- ============================================================
+              CREATE TABLE IF NOT EXISTS transaction_events (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                  status VARCHAR(20) NOT NULL,
+                  occurred_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                  CONSTRAINT valid_event_status CHECK (status IN ('CREATED', 'PENDING', 'AUTHORIZED', 'CAPTURED', 'REFUNDED', 'CANCELED', 'CANCELLED', 'FAILED'))
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_txn_events_txn_id ON transaction_events(transaction_id, occurred_at);
+              CREATE INDEX IF NOT EXISTS idx_txn_events_status_time ON transaction_events(status, occurred_at);
+              CREATE INDEX IF NOT EXISTS idx_txn_events_occurred_at ON transaction_events(occurred_at);
+
+              -- ============================================================
+              -- 004: Create webhook_deliveries table
               -- ============================================================
               CREATE TABLE IF NOT EXISTS webhook_deliveries (
                   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -916,6 +953,29 @@ spec:
               ('d2222222-2222-2222-2222-222222222222', 'a4444444-4444-4444-4444-444444444444', '$MERCHANT_ID', 'payment.authorized', '{\"event\": \"payment.authorized\", \"transaction_id\": \"a4444444-4444-4444-4444-444444444444\", \"amount\": 199.99, \"currency\": \"EUR\"}'::jsonb, 'PENDING', 0, NULL, NOW() + INTERVAL '5 minutes', NOW() - INTERVAL '30 minutes')
               ON CONFLICT (id) DO NOTHING;
               "
+
+              # Phase 2a: Create read-only user for MCP server
+              # (uses the container's MCP_DB_PASSWORD env var — escaped so PowerShell does not expand)
+              if [ -n "`$MCP_DB_PASSWORD" ]; then
+                psql -c "
+                DO `$`$
+                BEGIN
+                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'mcp_readonly') THEN
+                    CREATE ROLE mcp_readonly WITH LOGIN PASSWORD '`$MCP_DB_PASSWORD';
+                  ELSE
+                    ALTER ROLE mcp_readonly WITH PASSWORD '`$MCP_DB_PASSWORD';
+                  END IF;
+                END
+                `$`$;
+                GRANT CONNECT ON DATABASE paymentdb TO mcp_readonly;
+                GRANT USAGE ON SCHEMA public TO mcp_readonly;
+                GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_readonly;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_readonly;
+                "
+                echo "  Read-only MCP user created/updated."
+              else
+                echo "  WARNING: MCP_DB_PASSWORD not set — skipping read-only user creation."
+              fi
 "@
 
 $seedJobYaml | kubectl apply -f -
@@ -923,17 +983,31 @@ $seedJobYaml | kubectl apply -f -
 Write-Host "  Waiting for DB seed job to complete (up to 120s)..."
 kubectl wait --for=condition=complete job/db-seed-job -n payment-demo --timeout=120s 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERROR: DB seed job failed. Pod logs:" -ForegroundColor Red
+    # Check if this is a re-deploy with an existing database.
+    # If the pod is Pending (no nodes yet) the seed job is a no-op on re-deploys
+    # where the database already has data — don't block the deploy.
+    Write-Host "  WARNING: DB seed job did not complete within 120s." -ForegroundColor Yellow
+    Write-Host "  Pod logs:"
     kubectl logs job/db-seed-job -n payment-demo 2>$null
-    exit 1
+    $POD_PHASE = kubectl get pods -l job-name=db-seed-job -n payment-demo -o jsonpath='{.items[0].status.phase}' 2>$null
+    if (-not $POD_PHASE) { $POD_PHASE = "Unknown" }
+    if ($POD_PHASE -eq "Pending") {
+        Write-Host "  Seed job pod is Pending (likely no nodes available yet)."
+        Write-Host "  If this is a re-deploy, the database already has data - continuing."
+        Write-Host "  Otherwise, re-run: .\deploy-all.ps1 (after nodes are ready)"
+        kubectl delete job db-seed-job -n payment-demo --ignore-not-found 2>$null | Out-Null
+    } else {
+        Write-Host "  Seed job failed. Check pod logs above." -ForegroundColor Red
+        exit 1
+    }
 }
-Write-Host "  Database migrations and seed data applied successfully."
+Write-Host "  Database migrations and seed data applied (or already present)."
 
 
 # =============================================================================
 # STEP 7: Wait for pods and NLB
 # =============================================================================
-Write-Host "[7/9] Waiting for pods to be ready..." -ForegroundColor Cyan
+Write-Host "[7/10] Waiting for pods to be ready..." -ForegroundColor Cyan
 foreach ($deploy in @("merchant-gateway", "payment-processor", "webhook-service")) {
     Write-Host "  Waiting for $deploy..."
     kubectl rollout status deployment/$deploy -n payment-demo --timeout=300s 2>$null
@@ -959,7 +1033,7 @@ Write-Host ""
 # =============================================================================
 # STEP 8: Update CloudFront with NLB API origin via CDK
 # =============================================================================
-Write-Host "[8/9] Updating CloudFront with API origin..." -ForegroundColor Cyan
+Write-Host "[8/10] Updating CloudFront with API origin..." -ForegroundColor Cyan
 if ($NLB_HOSTNAME) {
     # Failure Simulator API is wired to CloudFront via cross-stack reference (no extra context needed)
     Push-Location cdk
@@ -990,7 +1064,7 @@ Write-Host ""
 # =============================================================================
 # STEP 9: Build and deploy frontend
 # =============================================================================
-Write-Host "[9/9] Building and deploying frontend..." -ForegroundColor Cyan
+Write-Host "[9/10] Building and deploying frontend..." -ForegroundColor Cyan
 
 $CLIENT_ID = aws cloudformation describe-stacks `
     --stack-name "DevOpsAgentEksAuth-$AWS_REGION" `
@@ -1047,6 +1121,18 @@ aws cloudfront create-invalidation `
     --distribution-id $DISTRIBUTION_ID `
     --paths "/*" | Out-Null
 Write-Host "  Frontend deployed."
+Write-Host ""
+
+# =============================================================================
+# STEP 10: Deploy MCP server to AgentCore Runtime
+# =============================================================================
+Write-Host "[10/10] Deploying Payment Transaction Insights MCP server..." -ForegroundColor Cyan
+. "$PSScriptRoot/scripts/deploy-mcp-server.ps1"
+try {
+    Deploy-McpServer -ProjectName $ProjectName -Environment $Environment | Out-Null
+} catch {
+    Write-Host "  WARNING: MCP server deployment encountered an error: $_" -ForegroundColor Yellow
+}
 Write-Host ""
 
 # =============================================================================
