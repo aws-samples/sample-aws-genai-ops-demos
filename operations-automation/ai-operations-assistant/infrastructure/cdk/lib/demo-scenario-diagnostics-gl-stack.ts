@@ -148,7 +148,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   /** Scenario K DB subnet 1 (10.99.37.0/24, AZ-0) */
   public readonly scenarioKDbSubnet1: ec2.CfnSubnet;
 
-  /** Scenario K DB subnet 2 (10.99.38.0/24, AZ-1) — required for multi-AZ DB subnet group */
+  /** Scenario K DB subnet 2 (10.99.40.0/24, AZ-1) — required for multi-AZ DB subnet group */
   public readonly scenarioKDbSubnet2: ec2.CfnSubnet;
 
   /** Scenario K DB subnet group for svc-data-01 */
@@ -962,6 +962,227 @@ def handler(event, context):
     });
 
     // =========================================================================
+    // Scenario K — db_connectivity_probe + agentic_reachability_analyze
+    //
+    // Database connectivity failure: an RDS MySQL instance (svc-data-01) in
+    // a DB subnet group with a NACL that DENIES ephemeral return ports
+    // (1024-65535) on EGRESS at rule 50 — evaluated before the broader
+    // allow rules at 100 and 900. The security group on the RDS instance
+    // correctly allows inbound 3306 from the VPC CIDR, so SG-only analysis
+    // would show the path as healthy. Only the NACL egress deny blocks the
+    // TCP handshake completion (SYN-ACK on an ephemeral port cannot leave
+    // the DB subnet).
+    //
+    // The app-tier instance (svc-alpha from Scenario H) acts as the client
+    // attempting to connect to the RDS instance.
+    // See demo-scenarios/RESOURCE_REUSE.md for the full reuse mapping.
+    // =========================================================================
+
+    // -----------------------------------------------------------------------
+    // Scenario K — DB Subnets (two AZs required for DB subnet group)
+    // -----------------------------------------------------------------------
+    this.scenarioKDbSubnet1 = new ec2.CfnSubnet(this, 'ScenarioKDbSubnet1', {
+      vpcId: sharedVpcId,
+      cidrBlock: '10.99.37.0/24',
+      availabilityZone: cdk.Fn.select(0, cdk.Fn.getAzs('')),
+      mapPublicIpOnLaunch: false,
+      tags: [
+        { key: 'Name', value: 'db-subnet-1' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    this.scenarioKDbSubnet2 = new ec2.CfnSubnet(this, 'ScenarioKDbSubnet2', {
+      vpcId: sharedVpcId,
+      cidrBlock: '10.99.40.0/24',
+      availabilityZone: cdk.Fn.select(1, cdk.Fn.getAzs('')),
+      mapPublicIpOnLaunch: false,
+      tags: [
+        { key: 'Name', value: 'db-subnet-2' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — DB Subnet Group
+    // -----------------------------------------------------------------------
+    this.scenarioKDbSubnetGroup = new rds.CfnDBSubnetGroup(this, 'ScenarioKDbSubnetGroup', {
+      dbSubnetGroupDescription: 'Subnet group for svc-data-01 (Scenario K)',
+      subnetIds: [
+        this.scenarioKDbSubnet1.attrSubnetId,
+        this.scenarioKDbSubnet2.attrSubnetId,
+      ],
+      tags: [
+        { key: 'Name', value: 'svc-data-01-subnet-group' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — Security group for svc-data-01 (RDS)
+    //
+    // Allows inbound MySQL (3306) from the VPC CIDR — this is intentional:
+    // the SG looks healthy and would pass a security-group-only review.
+    // The actual misconfiguration is at the NACL level (egress deny on
+    // ephemeral ports blocks the TCP handshake return).
+    // -----------------------------------------------------------------------
+    const scenarioKDbSg = new ec2.CfnSecurityGroup(this, 'ScenarioKDbSg', {
+      groupDescription: 'Security group for svc-data-01 RDS instance',
+      vpcId: sharedVpcId,
+      securityGroupIngress: [
+        {
+          ipProtocol: 'tcp',
+          fromPort: 3306,
+          toPort: 3306,
+          cidrIp: '10.99.0.0/16',
+        },
+      ],
+      securityGroupEgress: [
+        {
+          ipProtocol: '-1',
+          cidrIp: '0.0.0.0/0',
+        },
+      ],
+      tags: [
+        { key: 'Name', value: 'svc-data-01-sg' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — RDS MySQL instance (svc-data-01)
+    //
+    // Single-AZ, no public access, db.t4g.micro (minimal demo resource).
+    // The instance is reachable from a VPC/SG perspective, but the NACL
+    // on its subnet blocks the TCP handshake return via ephemeral ports.
+    // -----------------------------------------------------------------------
+    this.scenarioKRdsInstance = new rds.CfnDBInstance(this, 'ScenarioKRdsInstance', {
+      dbInstanceIdentifier: 'svc-data-01',
+      dbInstanceClass: 'db.t4g.micro',
+      engine: 'mysql',
+      masterUsername: 'admin',
+      masterUserPassword: 'GoatDemoK2026!',
+      allocatedStorage: '20',
+      storageType: 'gp2',
+      dbSubnetGroupName: this.scenarioKDbSubnetGroup.ref,
+      vpcSecurityGroups: [scenarioKDbSg.attrGroupId],
+      publiclyAccessible: false,
+      multiAz: false,
+      tags: [
+        { key: 'Name', value: 'svc-data-01' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+    this.scenarioKRdsInstance.cfnOptions.deletionPolicy = cdk.CfnDeletionPolicy.DELETE;
+
+    // -----------------------------------------------------------------------
+    // Scenario K — NACL with ephemeral-port egress DENY (the misconfiguration)
+    //
+    // Rule evaluation order (egress):
+    //   Rule 50 (DENY, TCP 1024-65535, egress) — blocks ephemeral return
+    //     ports, preventing TCP handshake completion (SYN-ACK from RDS)
+    //   Rule 100 (ALLOW, all TCP, egress) — broader allow, but rule 50
+    //     takes precedence for ports 1024-65535 due to lower rule number
+    //   Rule 900 (ALLOW, all, egress) — catch-all, never reached for
+    //     ephemeral ports because rule 50 already matched
+    //
+    // Ingress is permissive (rule 100: allow all TCP) so the scenario
+    // focuses purely on the egress block preventing response traffic.
+    // -----------------------------------------------------------------------
+    this.scenarioKNacl = new ec2.CfnNetworkAcl(this, 'ScenarioKNacl', {
+      vpcId: sharedVpcId,
+      tags: [
+        { key: 'Name', value: 'db-subnet-nacl' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    // Rule 50 — DENY TCP ephemeral ports (1024-65535) EGRESS.
+    // THIS IS THE MISCONFIGURATION: blocks RDS from sending SYN-ACK and
+    // query responses back to clients on their ephemeral source ports.
+    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry50Egress', {
+      networkAclId: this.scenarioKNacl.attrId,
+      ruleNumber: 50,
+      protocol: 6, // TCP
+      ruleAction: 'deny',
+      egress: true,
+      cidrBlock: '0.0.0.0/0',
+      portRange: { from: 1024, to: 65535 },
+    });
+
+    // Rule 100 — ALLOW all TCP INGRESS (looks healthy).
+    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry100Ingress', {
+      networkAclId: this.scenarioKNacl.attrId,
+      ruleNumber: 100,
+      protocol: 6, // TCP
+      ruleAction: 'allow',
+      egress: false,
+      cidrBlock: '10.99.0.0/16',
+      portRange: { from: 1, to: 65535 },
+    });
+
+    // Rule 100 — ALLOW all TCP EGRESS (broader allow, but rule 50 takes
+    // precedence for ephemeral ports because NACL evaluates lowest first).
+    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry100Egress', {
+      networkAclId: this.scenarioKNacl.attrId,
+      ruleNumber: 100,
+      protocol: 6, // TCP
+      ruleAction: 'allow',
+      egress: true,
+      cidrBlock: '10.99.0.0/16',
+      portRange: { from: 1, to: 65535 },
+    });
+
+    // Rule 900 — ALLOW ALL EGRESS (catch-all, never reached for
+    // ephemeral ports 1024-65535 because rule 50 already denied them).
+    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry900Egress', {
+      networkAclId: this.scenarioKNacl.attrId,
+      ruleNumber: 900,
+      protocol: -1,
+      ruleAction: 'allow',
+      egress: true,
+      cidrBlock: '0.0.0.0/0',
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — NACL subnet associations (both DB subnets)
+    // -----------------------------------------------------------------------
+    new ec2.CfnSubnetNetworkAclAssociation(this, 'ScenarioKNaclAssocSubnet1', {
+      subnetId: this.scenarioKDbSubnet1.attrSubnetId,
+      networkAclId: this.scenarioKNacl.attrId,
+    });
+
+    new ec2.CfnSubnetNetworkAclAssociation(this, 'ScenarioKNaclAssocSubnet2', {
+      subnetId: this.scenarioKDbSubnet2.attrSubnetId,
+      networkAclId: this.scenarioKNacl.attrId,
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — Stack outputs
+    // -----------------------------------------------------------------------
+    new cdk.CfnOutput(this, 'ScenarioKRdsEndpoint', {
+      value: this.scenarioKRdsInstance.attrEndpointAddress,
+      description: 'Scenario K svc-data-01 RDS endpoint address',
+    });
+
+    new cdk.CfnOutput(this, 'ScenarioKRdsInstanceId', {
+      value: this.scenarioKRdsInstance.ref,
+      description: 'Scenario K svc-data-01 RDS instance ID',
+    });
+
+    // =========================================================================
     // Scenario L — ssm_health_check
     //
     // SSM-unreachable instance: an EC2 instance with the correct IAM
@@ -983,7 +1204,7 @@ def handler(event, context):
     // -----------------------------------------------------------------------
     this.scenarioLSubnetF = new ec2.CfnSubnet(this, 'ScenarioLSubnetF', {
       vpcId: sharedVpcId,
-      cidrBlock: '10.99.38.0/24',
+      cidrBlock: '10.99.39.0/24',
       availabilityZone: az,
       mapPublicIpOnLaunch: false,
       tags: [

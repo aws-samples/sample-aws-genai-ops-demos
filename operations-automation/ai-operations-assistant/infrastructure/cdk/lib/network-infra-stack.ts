@@ -2920,6 +2920,22 @@ export class NetworkInfraStack extends BaseInfraStack {
       }),
     );
 
+    // Tiros service permissions — VPC Reachability Analyzer uses the Tiros
+    // service internally to evaluate network paths. Without these permissions,
+    // CreateNetworkInsightsPath / StartNetworkInsightsAnalysis succeed but
+    // the analysis fails with an AccessDenied on tiros:CreateQuery.
+    this.agentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'NetworkAgentTirosReachability',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'tiros:CreateQuery',
+          'tiros:GetQueryAnswer',
+        ],
+        resources: ['*'],
+      }),
+    );
+
     // ---- SSM instance-registration lookup for ssm_health_check + the ------
     // ---- opt-in tag / Windows-platform prerequisite check ------------------
     //
