@@ -56,6 +56,7 @@ function findHeaderValue(
   headers: Record<string, string | undefined>,
   targetHeader: string
 ): string | undefined {
+  if (!headers) return undefined;
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === targetHeader) {
       const value = headers[key];

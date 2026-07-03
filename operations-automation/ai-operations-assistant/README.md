@@ -557,6 +557,25 @@ For detailed architecture, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 - The BuildWaiterFunction Lambda polls CodeBuild — check its CloudWatch logs
 - If a stack is stuck, check CloudFormation events in the AWS Console
 
+**AgentCore runtime deletion timeout (DELETE_FAILED / NotStabilized)**
+- When destroying stacks, `AWS::BedrockAgentCore::Runtime` resources frequently timeout with:
+  ```
+  Resource handler returned message: "Request timed out while deleting
+  AWS::BedrockAgentCore::Runtime" (HandlerErrorCode: NotStabilized)
+  ```
+- **This is expected behavior.** The AgentCore service processes runtime deletion asynchronously, but CloudFormation's resource handler has a ~5 minute stabilization timeout. If the service-side cleanup takes longer (common with runtimes that had active sessions), CFN reports `NotStabilized` and puts the stack in `DELETE_FAILED`.
+- **The runtime IS deleted on the service side** — it will not appear in `aws bedrock-agent-runtime list-agent-runtimes` after this occurs. The `DELETE_FAILED` state is a CFN tracking issue, not an actual resource leak.
+- **Workaround (automated in `reinstall-goat.ps1` and `redeploy-network-mcp.ps1`):**
+  1. Detect `DELETE_FAILED` state on the stack
+  2. Re-issue `aws cloudformation delete-stack --stack-name <name> --retain-resources AgentRuntime`
+  3. The stack deletes successfully (skipping the already-deleted runtime)
+  4. No manual cleanup is required — the runtime is gone
+- If you encounter this during a manual `cdk destroy`, run:
+  ```powershell
+  aws cloudformation delete-stack --stack-name GOATOrchRuntime-us-east-1 --retain-resources AgentRuntime
+  aws cloudformation wait stack-delete-complete --stack-name GOATOrchRuntime-us-east-1
+  ```
+
 ### Runtime Issues
 
 **"User pool client does not exist" error on sign-in**

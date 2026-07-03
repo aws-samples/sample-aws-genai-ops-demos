@@ -1,14 +1,16 @@
-﻿import * as cdk from 'aws-cdk-lib';
-import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as cdk from 'aws-cdk-lib';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as route53resolver from 'aws-cdk-lib/aws-route53resolver';
 import { Construct } from 'constructs';
 
 /**
- * Props for the network troubleshooting diagnostics demo scenario stack (Scenarios Gâ€“L).
+ * Props for the network troubleshooting diagnostics demo scenario stack (Scenarios G–L).
  *
  * Every prop is optional. Shared resources are resolved either via a direct
  * reference (used by tests and same-app cross-stack wiring) or via a
@@ -31,7 +33,7 @@ export interface DemoScenarioDiagnosticsGLStackProps extends cdk.StackProps {
 }
 
 /**
- * G.O.A.T. Demo Scenarios Gâ€“L â€” Network Troubleshooting Diagnostics Stack
+ * G.O.A.T. Demo Scenarios G–L — Network Troubleshooting Diagnostics Stack
  *
  * Provisions the misconfiguration scaffolding for six network troubleshooting demo
  * scenarios (baseline vs. tools-assisted diagnosis), maximizing reuse of
@@ -49,17 +51,17 @@ export interface DemoScenarioDiagnosticsGLStackProps extends cdk.StackProps {
  * scenario's misconfiguration.
  *
  * This is currently a skeleton: it resolves the shared VPC and validates
- * inputs. Per-scenario resources (Scenarios Gâ€“L) are added by subsequent
+ * inputs. Per-scenario resources (Scenarios G–L) are added by subsequent
  * tasks.
  */
 export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
-  /** Shared VPC ID â€” resolved from sharedVpc prop or imported via goatVpcExportName. */
+  /** Shared VPC ID — resolved from sharedVpc prop or imported via goatVpcExportName. */
   public readonly sharedVpcId: string;
 
-  /** Shared Transit Gateway ID â€” resolved from sharedTransitGatewayId prop or imported via goatTgwExportName, if provided. */
+  /** Shared Transit Gateway ID — resolved from sharedTransitGatewayId prop or imported via goatTgwExportName, if provided. */
   public readonly sharedTransitGatewayId?: string;
 
-  /** Shared Network Firewall inspection VPC ID â€” resolved from sharedFirewallEndpointId prop or imported via goatFirewallEndpointExportName, if provided. */
+  /** Shared Network Firewall inspection VPC ID — resolved from sharedFirewallEndpointId prop or imported via goatFirewallEndpointExportName, if provided. */
   public readonly sharedFirewallEndpointId?: string;
 
   // -----------------------------------------------------------------------
@@ -69,7 +71,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   /** Scenario G subnet-a (10.99.30.0/24) */
   public readonly scenarioGSubnetA: ec2.CfnSubnet;
 
-  /** Scenario G subnet-b (10.99.31.0/24) â€” hosts app-tier-01 */
+  /** Scenario G subnet-b (10.99.31.0/24) — hosts app-tier-01 */
   public readonly scenarioGSubnetB: ec2.CfnSubnet;
 
   /** Scenario G NACL associated with subnet-b, carrying the buried deny rule */
@@ -82,23 +84,26 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   // Scenario I references (tls_traceroute)
   // -----------------------------------------------------------------------
 
-  /** Scenario I subnet-d (10.99.33.0/24) â€” hosts the internal ALB */
+  /** Scenario I subnet-d (10.99.33.0/24) — hosts the internal ALB */
   public readonly scenarioISubnetD: ec2.CfnSubnet;
 
-  /** Scenario I second subnet for ALB (10.99.34.0/24) â€” ALBs require â‰¥2 AZs */
+  /** Scenario I second subnet for ALB (10.99.34.0/24) — ALBs require ≥2 AZs */
   public readonly scenarioISubnetE: ec2.CfnSubnet;
 
   /** Scenario I internal ALB (svc-beta-alb) with mismatched certificate */
   public readonly scenarioIAlb: elbv2.CfnLoadBalancer;
 
   /** Scenario I ACM certificate covering a domain different from the demo SNI */
-  public readonly scenarioICertificate: acm.CfnCertificate;
+  public readonly scenarioICertificate: cdk.CustomResource;
+
+  /** Scenario I ACM certificate ARN (self-signed, imported into ACM) */
+  public readonly scenarioICertArn: string;
 
   // -----------------------------------------------------------------------
   // Scenario H references (tcp_traceroute + agentic_reachability_analyze)
   // -----------------------------------------------------------------------
 
-  /** Scenario H subnet-c (10.99.32.0/24) â€” hosts svc-alpha */
+  /** Scenario H subnet-c (10.99.32.0/24) — hosts svc-alpha */
   public readonly scenarioHSubnetC: ec2.CfnSubnet;
 
   /** Scenario H svc-alpha EC2 instance (traceroute source, shared with Scenario K) */
@@ -111,13 +116,13 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   // Scenario L references (ssm_health_check)
   // -----------------------------------------------------------------------
 
-  /** Scenario L subnet-f (10.99.35.0/24) â€” hosts subnet-a-host */
+  /** Scenario L subnet-f (10.99.35.0/24) — hosts subnet-a-host */
   public readonly scenarioLSubnetF: ec2.CfnSubnet;
 
   /** Scenario L subnet-a-host EC2 instance (SSM-unreachable due to NACL blocking 443 outbound) */
   public readonly scenarioLSubnetAHostInstance: ec2.CfnInstance;
 
-  /** Scenario L NACL blocking HTTPS (443) outbound â€” isolates the instance from SSM VPC endpoints */
+  /** Scenario L NACL blocking HTTPS (443) outbound — isolates the instance from SSM VPC endpoints */
   public readonly scenarioLNacl: ec2.CfnNetworkAcl;
 
   // -----------------------------------------------------------------------
@@ -143,7 +148,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   /** Scenario K DB subnet 1 (10.99.37.0/24, AZ-0) */
   public readonly scenarioKDbSubnet1: ec2.CfnSubnet;
 
-  /** Scenario K DB subnet 2 (10.99.38.0/24, AZ-1) â€” required for multi-AZ DB subnet group */
+  /** Scenario K DB subnet 2 (10.99.38.0/24, AZ-1) — required for multi-AZ DB subnet group */
   public readonly scenarioKDbSubnet2: ec2.CfnSubnet;
 
   /** Scenario K DB subnet group for svc-data-01 */
@@ -164,7 +169,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     cdk.Tags.of(this).add('auto-delete', 'no');
 
     // -----------------------------------------------------------------------
-    // Shared VPC â€” Use sharedVpc prop, or import from CloudFormation export.
+    // Shared VPC — Use sharedVpc prop, or import from CloudFormation export.
     // The VPC must be the GOAT network infra VPC so all six scenarios sit
     // in the same shared topology (Req 6.1).
     // -----------------------------------------------------------------------
@@ -181,7 +186,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     this.sharedVpcId = sharedVpcId;
 
     // -----------------------------------------------------------------------
-    // Shared Transit Gateway â€” Reused by Scenario H's blackhole route.
+    // Shared Transit Gateway — Reused by Scenario H's blackhole route.
     // Resolved from a direct reference (tests) or the Scenario C export
     // added in task 7.1 (GOATDemoScenarioCTransitGatewayId).
     // -----------------------------------------------------------------------
@@ -192,7 +197,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     }
 
     // -----------------------------------------------------------------------
-    // Shared Network Firewall inspection VPC â€” Reused by Scenario I's TLS
+    // Shared Network Firewall inspection VPC — Reused by Scenario I's TLS
     // inspection path. Resolved from a direct reference (tests) or the
     // Scenario C export added in task 7.1 (GOATDemoScenarioCInspectionVpcId).
     // -----------------------------------------------------------------------
@@ -207,18 +212,18 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     const az = cdk.Fn.select(0, cdk.Fn.getAzs(''));
 
     // =========================================================================
-    // Scenario G â€” agentic_reachability_analyze
+    // Scenario G — agentic_reachability_analyze
     //
     // Inter-tier connectivity failure: two EC2 instances in different
     // subnets of the shared VPC, with a NACL deny rule for a specific port
     // buried at a non-obvious rule number among broader allow rules. A
     // manual security-group review alone shows the port as allowed, since
-    // the security groups are permissive â€” only the NACL blocks it.
+    // the security groups are permissive — only the NACL blocks it.
     // See demo-scenarios/RESOURCE_REUSE.md for the full reuse mapping.
     // =========================================================================
 
     // -----------------------------------------------------------------------
-    // Scenario G â€” Subnets (subnet-a, subnet-b)
+    // Scenario G — Subnets (subnet-a, subnet-b)
     // -----------------------------------------------------------------------
     this.scenarioGSubnetA = new ec2.CfnSubnet(this, 'ScenarioGSubnetA', {
       vpcId: sharedVpcId,
@@ -247,7 +252,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario G â€” Security group (permissive â€” the SG alone shows the
+    // Scenario G — Security group (permissive — the SG alone shows the
     // port as reachable; only the NACL below actually blocks it)
     // -----------------------------------------------------------------------
     const scenarioGSecurityGroup = new ec2.CfnSecurityGroup(this, 'ScenarioGAppTierSg', {
@@ -276,10 +281,10 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario G â€” NACL for subnet-b with a deny rule buried among broader
+    // Scenario G — NACL for subnet-b with a deny rule buried among broader
     // allow rules. Rule 50 (deny, port 5432) is evaluated before rules 100,
     // 110, and 900 (broad allows) because NACL rules are evaluated in
-    // ascending rule-number order and the first match wins â€” so the low
+    // ascending rule-number order and the first match wins — so the low
     // numbered deny silently overrides the broad allows that follow it.
     // -----------------------------------------------------------------------
     this.scenarioGNacl = new ec2.CfnNetworkAcl(this, 'ScenarioGNacl', {
@@ -292,7 +297,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       ],
     });
 
-    // Rule 50 â€” narrow deny on the demo target port, evaluated first.
+    // Rule 50 — narrow deny on the demo target port, evaluated first.
     new ec2.CfnNetworkAclEntry(this, 'ScenarioGNaclEntry50', {
       networkAclId: this.scenarioGNacl.attrId,
       ruleNumber: 50,
@@ -303,7 +308,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       portRange: { from: 5432, to: 5432 },
     });
 
-    // Rule 100 â€” broad allow, TCP high port range.
+    // Rule 100 — broad allow, TCP high port range.
     new ec2.CfnNetworkAclEntry(this, 'ScenarioGNaclEntry100', {
       networkAclId: this.scenarioGNacl.attrId,
       ruleNumber: 100,
@@ -314,7 +319,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       portRange: { from: 1024, to: 65535 },
     });
 
-    // Rule 110 â€” broad allow, common application ports.
+    // Rule 110 — broad allow, common application ports.
     new ec2.CfnNetworkAclEntry(this, 'ScenarioGNaclEntry110', {
       networkAclId: this.scenarioGNacl.attrId,
       ruleNumber: 110,
@@ -325,7 +330,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       portRange: { from: 1, to: 1023 },
     });
 
-    // Rule 900 â€” catch-all allow for the rest of the VPC CIDR.
+    // Rule 900 — catch-all allow for the rest of the VPC CIDR.
     new ec2.CfnNetworkAclEntry(this, 'ScenarioGNaclEntry900', {
       networkAclId: this.scenarioGNacl.attrId,
       ruleNumber: 900,
@@ -335,7 +340,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       cidrBlock: '10.99.0.0/16',
     });
 
-    // Default-allow egress so outbound (and return) traffic is unaffected â€”
+    // Default-allow egress so outbound (and return) traffic is unaffected —
     // the misconfiguration is inbound-only, matching a real-world scenario
     // where only inbound access review would need the diagnostic tool.
     new ec2.CfnNetworkAclEntry(this, 'ScenarioGNaclEntry900Egress', {
@@ -353,7 +358,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario G â€” app-tier-01 EC2 instance (inter-tier reachability
+    // Scenario G — app-tier-01 EC2 instance (inter-tier reachability
     // target), placed in subnet-b behind the buried-deny NACL.
     // -----------------------------------------------------------------------
     this.scenarioGAppTierInstance = new ec2.CfnInstance(this, 'ScenarioGAppTierInstance', {
@@ -370,7 +375,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario G â€” Stack outputs
+    // Scenario G — Stack outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'ScenarioGSubnetAId', {
       value: this.scenarioGSubnetA.attrSubnetId,
@@ -388,7 +393,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // =========================================================================
-    // Scenario H â€” tcp_traceroute (corroborated by agentic_reachability_analyze)
+    // Scenario H — tcp_traceroute (corroborated by agentic_reachability_analyze)
     //
     // External-endpoint-unreachable failure: an EC2 instance in a private
     // subnet with a NAT gateway present at the VPC level, but the subnet's
@@ -403,7 +408,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     // =========================================================================
 
     // -----------------------------------------------------------------------
-    // Scenario H â€” Subnet (subnet-c)
+    // Scenario H — Subnet (subnet-c)
     // -----------------------------------------------------------------------
     this.scenarioHSubnetC = new ec2.CfnSubnet(this, 'ScenarioHSubnetC', {
       vpcId: sharedVpcId,
@@ -419,11 +424,11 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario H â€” Route table with /32 blackhole
+    // Scenario H — Route table with /32 blackhole
     //
     // The route table has two routes:
-    //   1. 0.0.0.0/0 â†’ Transit Gateway (appears to provide outbound via TGW/NAT)
-    //   2. 198.51.100.42/32 â†’ blackhole (silently drops traffic to this IP)
+    //   1. 0.0.0.0/0 → Transit Gateway (appears to provide outbound via TGW/NAT)
+    //   2. 198.51.100.42/32 → blackhole (silently drops traffic to this IP)
     //
     // Because longest-prefix-match wins, any traffic to 198.51.100.42 hits
     // the /32 blackhole before considering the /0 default route. The TGW
@@ -445,7 +450,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       routeTableId: this.scenarioHRouteTable.ref,
     });
 
-    // Default route via Transit Gateway â€” makes the table look like it has
+    // Default route via Transit Gateway — makes the table look like it has
     // a valid outbound path. The TGW ID is imported from Scenario C's export.
     const tgwId = this.sharedTransitGatewayId ??
       cdk.Fn.importValue(props?.goatTgwExportName ?? 'GOATDemoScenarioCTransitGatewayId');
@@ -456,19 +461,20 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       transitGatewayId: tgwId,
     });
 
-    // /32 blackhole â€” the actual misconfiguration. Uses RFC 5737 TEST-NET-2
+    // /32 blackhole — the actual misconfiguration. Uses RFC 5737 TEST-NET-2
     // address (198.51.100.42) as the demo target IP. This route silently
     // drops traffic because longest-prefix-match evaluates it before /0.
     new ec2.CfnRoute(this, 'ScenarioHBlackholeRoute', {
       routeTableId: this.scenarioHRouteTable.ref,
       destinationCidrBlock: '198.51.100.42/32',
-      // No target â€” a route with no gateway/instance/endpoint is a blackhole
-      // in CloudFormation. CFN treats a route with no target attributes as
-      // blackhole status.
+      // Route to TGW with no matching TGW route table entry for this /32.
+      // Traffic is effectively blackholed at the TGW level (no matching route = drop).
+      // CloudFormation requires at least one target property.
+      transitGatewayId: tgwId,
     });
 
     // -----------------------------------------------------------------------
-    // Scenario H â€” Security group for svc-alpha (permissive egress so the
+    // Scenario H — Security group for svc-alpha (permissive egress so the
     // blackhole is the only thing preventing connectivity)
     // -----------------------------------------------------------------------
     const scenarioHSecurityGroup = new ec2.CfnSecurityGroup(this, 'ScenarioHSvcAlphaSg', {
@@ -497,7 +503,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario H â€” svc-alpha EC2 instance
+    // Scenario H — svc-alpha EC2 instance
     //
     // This instance is shared between:
     //   - Scenario H: source for tcp_traceroute
@@ -521,7 +527,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario H â€” Stack outputs
+    // Scenario H — Stack outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'ScenarioHSubnetCId', {
       value: this.scenarioHSubnetC.attrSubnetId,
@@ -539,13 +545,13 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // =========================================================================
-    // Scenario I â€” tls_traceroute
+    // Scenario I — tls_traceroute
     //
     // TLS handshake failure: an internal Application Load Balancer serving
     // HTTPS with a valid ACM certificate that covers a different domain
     // (*.internal.corp.example.com) than the SNI the demo client sends
     // (api.service.example.com). DescribeLoadBalancers and
-    // DescribeListenerCertificates alone do not reveal the domain mismatch â€”
+    // DescribeListenerCertificates alone do not reveal the domain mismatch —
     // only tls_traceroute's active handshake probe surfaces the SNI failure.
     //
     // Reuses the Network Firewall inspection VPC from Scenario C for the
@@ -565,7 +571,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     const azSecondary = cdk.Fn.select(1, cdk.Fn.getAzs(''));
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” Subnets (subnet-d, subnet-e) for the internal ALB
+    // Scenario I — Subnets (subnet-d, subnet-e) for the internal ALB
     // -----------------------------------------------------------------------
     this.scenarioISubnetD = new ec2.CfnSubnet(this, 'ScenarioISubnetD', {
       vpcId: sharedVpcId,
@@ -594,7 +600,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” Security group for the internal ALB
+    // Scenario I — Security group for the internal ALB
     // -----------------------------------------------------------------------
     const scenarioIAlbSg = new ec2.CfnSecurityGroup(this, 'ScenarioIAlbSg', {
       groupDescription: 'Security group for svc-beta-alb',
@@ -622,28 +628,105 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” ACM Certificate covering *.internal.corp.example.com
+    // Scenario I — Self-signed ACM Certificate covering *.internal.corp.example.com
     //
     // The demo client will attempt a TLS handshake with SNI
     // api.service.example.com, which does NOT match this certificate's
-    // domain. DNS validation will remain PENDING_VALIDATION in a demo
-    // environment (the domain is not real), but the certificate resource
-    // is sufficient for configuring the ALB listener â€” the misconfiguration
-    // is the domain mismatch, not the validation state.
+    // domain. We use a Lambda-backed Custom Resource to generate a
+    // self-signed certificate and import it into ACM so the certificate
+    // is actually valid (not stuck in PENDING_VALIDATION).
+    // The misconfiguration is the domain mismatch, not the validation state.
     // -----------------------------------------------------------------------
-    this.scenarioICertificate = new acm.CfnCertificate(this, 'ScenarioICert', {
-      domainName: '*.internal.corp.example.com',
-      validationMethod: 'DNS',
-      tags: [
-        { key: 'Name', value: 'svc-beta-cert' },
-        { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'network-troubleshooting' },
-        { key: 'auto-delete', value: 'no' },
-      ],
+
+    // Lambda function that generates a self-signed cert and imports it into ACM.
+    // Uses Python 3.12 runtime because the Node.js 20 Lambda runtime has a
+    // symbol conflict with the bundled openssl binary (OPENSSL_1.1.1 not found).
+    // Python Lambda runs on Amazon Linux 2023 with a working openssl.
+    const scenarioICertLambda = new lambda.Function(this, 'ScenarioICertLambdaFn', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'index.handler',
+      timeout: cdk.Duration.minutes(2),
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      code: lambda.Code.fromInline(`
+import subprocess
+import tempfile
+import os
+import boto3
+
+def handler(event, context):
+    acm = boto3.client('acm')
+    request_type = event['RequestType']
+    physical_id = event.get('PhysicalResourceId', '')
+
+    if request_type == 'Delete':
+        if physical_id and physical_id.startswith('arn:aws:acm:'):
+            try:
+                acm.delete_certificate(CertificateArn=physical_id)
+            except Exception as e:
+                print(f'Delete cert failed (may already be deleted): {e}')
+        return {'PhysicalResourceId': physical_id or 'none'}
+
+    # Generate self-signed cert using openssl (works in Python Lambda runtime)
+    domain = '*.internal.corp.example.com'
+    with tempfile.TemporaryDirectory() as tmpdir:
+        key_file = os.path.join(tmpdir, 'key.pem')
+        cert_file = os.path.join(tmpdir, 'cert.pem')
+
+        subprocess.run([
+            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+            '-keyout', key_file, '-out', cert_file,
+            '-days', '3650', '-nodes',
+            '-subj', f'/CN={domain}',
+            '-addext', f'subjectAltName=DNS:{domain}'
+        ], check=True, capture_output=True)
+
+        with open(cert_file, 'r') as f:
+            cert_pem = f.read()
+        with open(key_file, 'r') as f:
+            key_pem = f.read()
+
+    response = acm.import_certificate(
+        Certificate=cert_pem.encode(),
+        PrivateKey=key_pem.encode()
+    )
+    cert_arn = response['CertificateArn']
+
+    return {'PhysicalResourceId': cert_arn, 'Data': {'CertificateArn': cert_arn}}
+`),
     });
 
+    // Grant the Lambda permissions to import and delete certificates in ACM
+    scenarioICertLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['acm:ImportCertificate', 'acm:DeleteCertificate'],
+      resources: ['*'],
+    }));
+
+    // Custom Resource provider backed by the Lambda
+    const scenarioICertProvider = new cr.Provider(this, 'ScenarioICertProvider', {
+      onEventHandler: scenarioICertLambda,
+      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // Custom Resource that triggers the Lambda to create the self-signed cert
+    this.scenarioICertificate = new cdk.CustomResource(this, 'ScenarioICert', {
+      serviceToken: scenarioICertProvider.serviceToken,
+      properties: {
+        // Change this value to force re-creation if needed
+        Domain: '*.internal.corp.example.com',
+      },
+    });
+
+    // Extract the certificate ARN from the custom resource output
+    this.scenarioICertArn = this.scenarioICertificate.getAttString('CertificateArn');
+
+    // Tag the custom resource for demo identification
+    cdk.Tags.of(this.scenarioICertificate).add('Name', 'svc-beta-cert');
+    cdk.Tags.of(this.scenarioICertificate).add('goat-demo', 'true');
+    cdk.Tags.of(this.scenarioICertificate).add('goat-scenario', 'network-troubleshooting');
+    cdk.Tags.of(this.scenarioICertificate).add('auto-delete', 'no');
+
     // -----------------------------------------------------------------------
-    // Scenario I â€” Internal Application Load Balancer (svc-beta-alb)
+    // Scenario I — Internal Application Load Balancer (svc-beta-alb)
     // -----------------------------------------------------------------------
     this.scenarioIAlb = new elbv2.CfnLoadBalancer(this, 'ScenarioIAlb', {
       name: 'svc-beta-alb',
@@ -663,7 +746,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” Target group (required for the HTTPS listener)
+    // Scenario I — Target group (required for the HTTPS listener)
     // -----------------------------------------------------------------------
     const scenarioITargetGroup = new elbv2.CfnTargetGroup(this, 'ScenarioITargetGroup', {
       name: 'svc-beta-tg',
@@ -682,7 +765,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” HTTPS Listener with the mismatched certificate
+    // Scenario I — HTTPS Listener with the mismatched certificate
     //
     // The listener binds the ALB to port 443 using the ACM certificate
     // that covers *.internal.corp.example.com. Clients connecting with
@@ -693,7 +776,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       loadBalancerArn: this.scenarioIAlb.ref,
       port: 443,
       protocol: 'HTTPS',
-      certificates: [{ certificateArn: this.scenarioICertificate.ref }],
+      certificates: [{ certificateArn: this.scenarioICertArn }],
       defaultActions: [
         {
           type: 'forward',
@@ -703,7 +786,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario I â€” Stack outputs
+    // Scenario I — Stack outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'ScenarioIAlbDnsName', {
       value: this.scenarioIAlb.attrDnsName,
@@ -716,12 +799,12 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'ScenarioICertArn', {
-      value: this.scenarioICertificate.ref,
+      value: this.scenarioICertArn,
       description: 'Scenario I certificate ARN',
     });
 
     // =========================================================================
-    // Scenario J â€” dns_resolve
+    // Scenario J — dns_resolve
     //
     // DNS split-horizon failure: a Route 53 Resolver outbound endpoint and
     // a resolver rule that forwards queries for a specific internal domain
@@ -740,8 +823,8 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     // =========================================================================
 
     // -----------------------------------------------------------------------
-    // Scenario J â€” Two subnets in different AZs (required by Route 53
-    // Resolver outbound endpoints, which need â‰¥2 IP addresses in â‰¥2 AZs)
+    // Scenario J — Two subnets in different AZs (required by Route 53
+    // Resolver outbound endpoints, which need ≥2 IP addresses in ≥2 AZs)
     // -----------------------------------------------------------------------
     const az2 = cdk.Fn.select(1, cdk.Fn.getAzs(''));
 
@@ -772,7 +855,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario J â€” Security group for the Resolver outbound endpoint
+    // Scenario J — Security group for the Resolver outbound endpoint
     // (allows DNS traffic on UDP/TCP 53 outbound to the forwarder target)
     // -----------------------------------------------------------------------
     const scenarioJResolverSg = new ec2.CfnSecurityGroup(this, 'ScenarioJResolverSg', {
@@ -807,10 +890,10 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario J â€” Route 53 Resolver outbound endpoint
+    // Scenario J — Route 53 Resolver outbound endpoint
     //
     // The outbound endpoint provides the egress path for forwarded DNS
-    // queries. It requires â‰¥2 IP addresses in different AZs.
+    // queries. It requires ≥2 IP addresses in different AZs.
     // -----------------------------------------------------------------------
     this.scenarioJResolverOutbound = new route53resolver.CfnResolverEndpoint(this, 'ScenarioJResolverOutbound', {
       direction: 'OUTBOUND',
@@ -828,7 +911,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario J â€” Resolver forwarding rule
+    // Scenario J — Resolver forwarding rule
     //
     // Forwards queries for db.internal.corp.example.com to a conditional
     // forwarder at 10.99.1.100 (a plausible on-premises DNS server IP
@@ -861,7 +944,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario J â€” Stack outputs
+    // Scenario J — Stack outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'ScenarioJResolverEndpointId', {
       value: this.scenarioJResolverOutbound.attrResolverEndpointId,
@@ -879,13 +962,13 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // =========================================================================
-    // Scenario L â€” ssm_health_check
+    // Scenario L — ssm_health_check
     //
     // SSM-unreachable instance: an EC2 instance with the correct IAM
     // instance profile (AmazonSSMManagedInstanceCore) but a restrictive
     // NACL on its subnet blocking HTTPS (port 443) outbound. Since SSM
     // Agent communicates with regional SSM VPC endpoints over HTTPS, the
-    // NACL isolation prevents the instance from registering with SSM â€” but
+    // NACL isolation prevents the instance from registering with SSM — but
     // DescribeVpcEndpoints alone cannot reveal the NACL-level block because
     // the endpoints exist and the security group allows 443.
     //
@@ -896,7 +979,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     // =========================================================================
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” Subnet (subnet-f)
+    // Scenario L — Subnet (subnet-f)
     // -----------------------------------------------------------------------
     this.scenarioLSubnetF = new ec2.CfnSubnet(this, 'ScenarioLSubnetF', {
       vpcId: sharedVpcId,
@@ -912,9 +995,9 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” IAM instance profile with AmazonSSMManagedInstanceCore
+    // Scenario L — IAM instance profile with AmazonSSMManagedInstanceCore
     //
-    // The instance profile is correct â€” the misconfiguration is at the
+    // The instance profile is correct — the misconfiguration is at the
     // network layer (NACL), not the IAM layer. This makes the scenario
     // realistic: IAM checks pass, VPC endpoint checks pass, but the
     // instance still cannot reach SSM because of the subnet-level NACL.
@@ -943,7 +1026,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” Security group (permissive â€” allows HTTPS outbound, so
+    // Scenario L — Security group (permissive — allows HTTPS outbound, so
     // the SG alone looks healthy; only the NACL actually blocks 443)
     // -----------------------------------------------------------------------
     const scenarioLSecurityGroup = new ec2.CfnSecurityGroup(this, 'ScenarioLHostSg', {
@@ -972,12 +1055,12 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” NACL blocking HTTPS (443) outbound
+    // Scenario L — NACL blocking HTTPS (443) outbound
     //
     // Rule evaluation order:
-    //   Rule 80 (deny, TCP 443, egress, 0.0.0.0/0) â€” blocks HTTPS out
-    //   Rule 100 (allow, all TCP, egress, VPC CIDR) â€” normal VPC traffic
-    //   Rule 900 (allow, all, egress, 0.0.0.0/0) â€” catch-all
+    //   Rule 80 (deny, TCP 443, egress, 0.0.0.0/0) — blocks HTTPS out
+    //   Rule 100 (allow, all TCP, egress, VPC CIDR) — normal VPC traffic
+    //   Rule 900 (allow, all, egress, 0.0.0.0/0) — catch-all
     //
     // The deny at rule 80 fires before the broader allows because NACL
     // rules are evaluated lowest-number-first. Port 443 outbound to any
@@ -998,7 +1081,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       ],
     });
 
-    // Rule 80 â€” deny HTTPS (443) outbound to all destinations.
+    // Rule 80 — deny HTTPS (443) outbound to all destinations.
     // This is the misconfiguration: SSM Agent requires 443 outbound to
     // reach regional SSM VPC endpoints (or the public SSM endpoint).
     new ec2.CfnNetworkAclEntry(this, 'ScenarioLNaclEntry80Egress', {
@@ -1011,7 +1094,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       portRange: { from: 443, to: 443 },
     });
 
-    // Rule 100 â€” allow all TCP egress to VPC CIDR (normal inter-subnet).
+    // Rule 100 — allow all TCP egress to VPC CIDR (normal inter-subnet).
     new ec2.CfnNetworkAclEntry(this, 'ScenarioLNaclEntry100Egress', {
       networkAclId: this.scenarioLNacl.attrId,
       ruleNumber: 100,
@@ -1022,7 +1105,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       portRange: { from: 1, to: 65535 },
     });
 
-    // Rule 900 â€” catch-all allow egress (evaluated after rule 80 deny).
+    // Rule 900 — catch-all allow egress (evaluated after rule 80 deny).
     new ec2.CfnNetworkAclEntry(this, 'ScenarioLNaclEntry900Egress', {
       networkAclId: this.scenarioLNacl.attrId,
       ruleNumber: 900,
@@ -1048,10 +1131,10 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” subnet-a-host EC2 instance
+    // Scenario L — subnet-a-host EC2 instance
     //
     // Correct IAM instance profile (AmazonSSMManagedInstanceCore) but NO
-    // goat-network-traceroute-allowed tag â€” this is for ssm_health_check,
+    // goat-network-traceroute-allowed tag — this is for ssm_health_check,
     // not for traceroute/connectivity probe actions.
     // -----------------------------------------------------------------------
     this.scenarioLSubnetAHostInstance = new ec2.CfnInstance(this, 'ScenarioLSubnetAHostInstance', {
@@ -1069,7 +1152,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // Scenario L â€” Stack outputs
+    // Scenario L — Stack outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'ScenarioLSubnetFId', {
       value: this.scenarioLSubnetF.attrSubnetId,

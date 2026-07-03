@@ -402,7 +402,7 @@ const TRAFFIC_MIRROR_FILTER_NAME = 'goat-network-default-filter';
  * essential because Traffic Mirror sessions require source ENI and
  * target ENI to reside in the same VPC. Subnet allocation:
  *   - Collector:       10.99.0.0/24 (AZ a)
- *   - Demo Scenario A: 10.99.1.0/24, 10.99.2.0/24
+ *   - Demo Scenario A: 10.99.50.0/24, 10.99.51.0/24
  *   - TLS Scenario:    10.99.10.0/24, 10.99.11.0/24, 10.99.12.0/24
  */
 const NETWORK_AGENT_VPC_CIDR = '10.99.0.0/16';
@@ -2580,6 +2580,7 @@ export class NetworkInfraStack extends BaseInfraStack {
           'ec2:DescribeTrafficMirrorFilters',
           'ec2:DescribeVpcs',
           'ec2:DescribeSubnets',
+          'ec2:DescribeInternetGateways',
         ],
         // EC2 Describe* APIs do not support resource-level permissions.
         resources: ['*'],
@@ -2896,12 +2897,26 @@ export class NetworkInfraStack extends BaseInfraStack {
         effect: iam.Effect.ALLOW,
         actions: [
           'ssm:SendCommand',
-          'ssm:GetCommandInvocation',
         ],
         resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}::document/AWS-RunShellScript`,
           `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:document/AWS-RunShellScript`,
           `arn:${cdk.Aws.PARTITION}:ec2:${this.region}:${this.account}:instance/*`,
         ],
+      }),
+    );
+
+    // GetCommandInvocation does not support resource-level permissions —
+    // it requires the command-invocation resource which is created at runtime
+    // and cannot be pre-scoped. Use resources: ["*"].
+    this.agentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'NetworkAgentSsmGetInvocation',
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'ssm:GetCommandInvocation',
+        ],
+        resources: ['*'],
       }),
     );
 

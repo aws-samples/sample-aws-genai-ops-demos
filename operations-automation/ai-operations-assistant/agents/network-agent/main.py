@@ -18,6 +18,7 @@ built by the validated flow_selector pipeline. Not raw user SQL.
 """
 # nosec B608 — see Security note in module docstring
 
+import ipaddress
 import json
 import logging
 import os
@@ -9484,6 +9485,41 @@ def _map_component_type(resource_id: str) -> str:
         return "unknown"
 
 
+def _is_public_ipv4(value: str) -> bool:
+    """Check if value is a public (non-RFC1918, non-link-local) IPv4 address."""
+    try:
+        addr = ipaddress.IPv4Address(value)
+        return not addr.is_private
+    except ValueError:
+        return False
+
+
+def _get_vpc_id_from_source(ec2_client, source: str) -> str | None:
+    """Resolve VPC ID from a source resource ID (instance, ENI, etc.)."""
+    if source.startswith("i-"):
+        resp = ec2_client.describe_instances(InstanceIds=[source])
+        reservations = resp.get("Reservations", [])
+        if reservations and reservations[0].get("Instances"):
+            return reservations[0]["Instances"][0].get("VpcId")
+    elif source.startswith("eni-"):
+        resp = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[source])
+        enis = resp.get("NetworkInterfaces", [])
+        if enis:
+            return enis[0].get("VpcId")
+    return None
+
+
+def _get_igw_for_vpc(ec2_client, vpc_id: str) -> str | None:
+    """Find the Internet Gateway attached to a VPC."""
+    resp = ec2_client.describe_internet_gateways(
+        Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+    )
+    igws = resp.get("InternetGateways", [])
+    if igws:
+        return igws[0]["InternetGatewayId"]
+    return None
+
+
 def handle_agentic_reachability_analyze(params: dict) -> dict:
     """Analyze network path reachability between two VPC resources.
 
@@ -9548,17 +9584,67 @@ def handle_agentic_reachability_analyze(params: dict) -> dict:
     ec2 = _get_ec2_client()
 
     try:
+        # Detect public IP destination and resolve IGW as proxy destination
+        use_igw_proxy = False
+        igw_id = None
+        if _is_public_ipv4(destination):
+            vpc_id = _get_vpc_id_from_source(ec2, source)
+            if not vpc_id:
+                return build_response(
+                    success=False,
+                    data={},
+                    formatted_text=(
+                        "agentic_reachability_analyze: Cannot determine VPC ID from source "
+                        f"'{source}'. Provide a valid instance ID or ENI ID as the source."
+                    ),
+                    source_api=source_api,
+                    data_freshness="real-time",
+                    error=(
+                        f"validation_error: Cannot determine VPC ID from source '{source}'."
+                    ),
+                    error_category="validation_error",
+                )
+            igw_id = _get_igw_for_vpc(ec2, vpc_id)
+            if not igw_id:
+                return build_response(
+                    success=False,
+                    data={},
+                    formatted_text=(
+                        f"agentic_reachability_analyze: No Internet Gateway found attached to "
+                        f"VPC '{vpc_id}'. Cannot analyze path to public IP '{destination}' "
+                        f"without an IGW."
+                    ),
+                    source_api=source_api,
+                    data_freshness="real-time",
+                    error=(
+                        f"no_igw: No Internet Gateway attached to VPC '{vpc_id}'."
+                    ),
+                    error_category="no_igw",
+                )
+            use_igw_proxy = True
+
         # --- Step 2: Create Network Insights Path (Req 9.1) ---
         create_params = {
             "Source": source,
-            "Destination": destination,
             "Protocol": protocol,
         }
-        # Only include port for TCP (some protocols don't require it)
-        if protocol == "tcp":
-            create_params["DestinationPort"] = destination_port
-        elif protocol == "udp":
-            create_params["DestinationPort"] = destination_port
+
+        if use_igw_proxy:
+            # For public IPs: use IGW as destination + filter
+            create_params["Destination"] = igw_id
+            create_params["FilterAtDestination"] = {
+                "DestinationAddress": destination,
+            }
+            if protocol in ("tcp", "udp"):
+                create_params["FilterAtDestination"]["DestinationPortRange"] = {
+                    "FromPort": destination_port,
+                    "ToPort": destination_port,
+                }
+        else:
+            # For VPC resources: use directly as destination
+            create_params["Destination"] = destination
+            if protocol in ("tcp", "udp"):
+                create_params["DestinationPort"] = destination_port
 
         try:
             create_response = ec2.create_network_insights_path(**create_params)
@@ -9683,14 +9769,21 @@ def handle_agentic_reachability_analyze(params: dict) -> dict:
                 "path_components": path_components,
                 "limitations": limitations,
             }
+            if use_igw_proxy:
+                data["analyzed_via_igw"] = True
+                data["igw_id"] = igw_id
 
             formatted_lines = [
                 f"Reachability Analysis: {source} → {destination}:{destination_port}/{protocol}",
+            ]
+            if use_igw_proxy:
+                formatted_lines.append(f"  (analyzed via Internet Gateway {igw_id})")
+            formatted_lines.extend([
                 "",
                 "✅ PATH IS REACHABLE",
                 "",
                 f"Path traverses {len(path_components)} components:",
-            ]
+            ])
             for comp in path_components:
                 formatted_lines.append(
                     f"  {comp.get('sequence_number', '?')}. "
@@ -9788,9 +9881,16 @@ def handle_agentic_reachability_analyze(params: dict) -> dict:
                 "remediation": remediation_text,
                 "limitations": limitations,
             }
+            if use_igw_proxy:
+                data["analyzed_via_igw"] = True
+                data["igw_id"] = igw_id
 
             formatted_lines = [
                 f"Reachability Analysis: {source} → {destination}:{destination_port}/{protocol}",
+            ]
+            if use_igw_proxy:
+                formatted_lines.append(f"  (analyzed via Internet Gateway {igw_id})")
+            formatted_lines.extend([
                 "",
                 "❌ PATH IS NOT REACHABLE",
                 "",
@@ -9800,7 +9900,7 @@ def handle_agentic_reachability_analyze(params: dict) -> dict:
                 f"Explanation: {explanation_text}",
                 "",
                 f"Remediation: {remediation_text}",
-            ]
+            ])
             if limitations:
                 formatted_lines.append("")
                 formatted_lines.append("⚠️  Platform Limitations:")

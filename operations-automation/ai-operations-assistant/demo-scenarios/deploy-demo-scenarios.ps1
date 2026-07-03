@@ -134,6 +134,8 @@ switch ($Scenario) {
             -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
             -ServiceCode "service-network-firewall" `
             -CategoryCode "general-guidance"
+        $stackGL = "GOATDemoScenariosGL-$region"
+        Invoke-CdkDeploy $stackGL
     }
     "account-health" {
         Invoke-CdkDeploy $stackA
@@ -149,6 +151,10 @@ switch ($Scenario) {
             -Body "Our instance in goat-demo-vpc is failing to establish HTTPS connections to ECR (endpoint: ecr.$region.amazonaws.com on port 443). The connexion is going through the TGW and the NFW in goat-demo-security-vpc but it is dropped. This case was created by the G.O.A.T. demo provisioning scripts for demonstration purposes." `
             -ServiceCode "service-network-firewall" `
             -CategoryCode "general-guidance"
+    }
+    "network-troubleshooting" {
+        $stackGL = "GOATDemoScenariosGL-$region"
+        Invoke-CdkDeploy $stackGL
     }
 }
 

@@ -54,7 +54,7 @@ export class DemoScenarioAccountHealthStack extends cdk.Stack {
 
     const subnet1 = new ec2.CfnSubnet(this, 'Subnet1', {
       vpcId: vpcId,
-      cidrBlock: '10.99.1.0/24',
+      cidrBlock: '10.99.50.0/24',
       availabilityZone: az1,
       mapPublicIpOnLaunch: false,
       tags: [
@@ -67,7 +67,7 @@ export class DemoScenarioAccountHealthStack extends cdk.Stack {
 
     const subnet2 = new ec2.CfnSubnet(this, 'Subnet2', {
       vpcId: vpcId,
-      cidrBlock: '10.99.2.0/24',
+      cidrBlock: '10.99.51.0/24',
       availabilityZone: az2,
       mapPublicIpOnLaunch: false,
       tags: [

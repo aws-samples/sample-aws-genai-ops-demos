@@ -4,6 +4,7 @@ import * as cdk from 'aws-cdk-lib';
 import { getRegion } from '../../../../../shared/utils/aws-utils';
 import { DemoScenarioAccountHealthStack } from '../lib/demo-scenario-account-health-stack';
 import { DemoScenarioTlsFragmentationStack } from '../lib/demo-scenario-tls-fragmentation-stack';
+import { DemoScenarioDiagnosticsGLStack } from '../lib/demo-scenario-diagnostics-gl-stack';
 
 // ---------------------------------------------------------------------------
 // Region detection via shared utilities
@@ -34,6 +35,18 @@ new DemoScenarioTlsFragmentationStack(app, `GOATDemoScenarioC-${region}`, {
   env,
   goatVpcExportName: 'GOATNetworkAgentVpcId',
   description: 'G.O.A.T. Demo Scenario C - Network connectivity investigation topology',
+});
+
+// ---------------------------------------------------------------------------
+// Scenarios G–L: Network Troubleshooting (diagnostics tools evaluation)
+// Reuses the shared GOAT VPC and imports TGW/NFW from Scenario C.
+// ---------------------------------------------------------------------------
+new DemoScenarioDiagnosticsGLStack(app, `GOATDemoScenariosGL-${region}`, {
+  env,
+  goatVpcExportName: 'GOATNetworkAgentVpcId',
+  goatTgwExportName: 'GOATDemoScenarioCTransitGatewayId',
+  goatFirewallEndpointExportName: 'GOATDemoScenarioCInspectionVpcId',
+  description: 'G.O.A.T. Demo Scenarios G-L - Network troubleshooting diagnostics tools',
 });
 
 // ---------------------------------------------------------------------------
