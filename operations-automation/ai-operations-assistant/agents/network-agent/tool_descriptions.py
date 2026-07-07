@@ -52,19 +52,29 @@ wrong IP:
 
 ### Step 5: Database-Specific Connectivity
 WHEN the user is troubleshooting application-to-database connectivity:
-- Use `db_connectivity_probe` to test TCP → TLS → protocol auth in sequence.
-- Isolates whether the issue is network-level, TLS-level, or auth-level.
+- Use `db_connectivity_probe` for comprehensive multi-layer diagnosis.
+- Performs 6 diagnostic layers: DNS, instance state, network checks, connection
+  test, connection pool status, and parameter group analysis.
+- Identifies whether the issue is DNS, instance state, network-level, TLS-level,
+  authentication, connection pool exhaustion, or parameter misconfiguration.
+- ALWAYS use this tool when the user reports database connectivity problems,
+  regardless of whether the suspected cause is network-level or application-level.
 
 ### Sequencing Rules
 1. `ssm_health_check` → always first if SSM tools will be needed
 2. `agentic_reachability_analyze` → use for static config analysis
 3. `tcp_traceroute` / `tls_traceroute` → use for runtime verification
 4. `dns_resolve` → use when DNS symptoms are reported
-5. `db_connectivity_probe` → use for database-specific issues
+5. `db_connectivity_probe` → use for ALL database connectivity issues (network
+   AND application-layer, including connection pool exhaustion)
 
 ### When to Combine Tools
 - "App can't connect to database" → ssm_health_check → db_connectivity_probe
   → if TCP fails: agentic_reachability_analyze
+- "Too many connections" / pool exhaustion → ssm_health_check →
+  db_connectivity_probe (will detect pool saturation and recommend remediation)
+- "RDS rejecting new connections" → ssm_health_check → db_connectivity_probe
+  (checks instance state, pool status, and parameter group)
 - "Intermittent timeouts to external endpoint" → ssm_health_check →
   tcp_traceroute → if path looks clear: dns_resolve
 - "TLS errors connecting to internal service" → ssm_health_check →
@@ -858,20 +868,95 @@ DB_CONNECTIVITY_PROBE_DESCRIPTION = """
 ## Tool: db_connectivity_probe
 
 ### Purpose
-Test TCP connectivity, TLS handshake, and protocol-level authentication from an
-EC2 instance to a database endpoint. Isolates whether the issue is network-level,
-TLS-level, or authentication-level WITHOUT installing any database client tools.
+Comprehensive RDS troubleshooting diagnostic that performs multi-layer diagnosis
+of database connectivity problems. Goes far beyond simple TCP/TLS checks to
+diagnose network-level issues, connection pool exhaustion, authentication failures,
+DNS resolution problems, parameter group misconfigurations, and instance state
+issues. Returns a structured diagnostic report with categorized findings, enabling
+correlation across multiple diagnosis layers to identify the root cause.
 
 ### When to Use
-- When the user reports "application can't connect to the database".
-- To determine WHICH layer is failing: network, TLS, or authentication.
+- When the user reports "application can't connect to the database" — regardless
+  of whether the suspected cause is network-level or application-level.
+- When connection pool exhaustion is suspected (e.g., "Too many connections"
+  errors, MySQL error 1040, intermittent connection failures under load).
+- When an RDS instance is rejecting new connections but appears healthy in the
+  console.
+- To determine WHICH layer is failing: DNS, instance state, network, connection
+  pool, authentication, or parameter group misconfiguration.
 - After confirming network path is clear (via RA or traceroute) but app still fails.
 - To test connectivity to RDS, Aurora, or any MySQL/PostgreSQL-compatible endpoint.
+- When the user asks to "diagnose connection pool issues" or "investigate why
+  my RDS instance is rejecting connections".
 
 ### When NOT to Use
-- For general network path issues (use `tcp_traceroute` first).
+- For general network path issues not involving a database (use `tcp_traceroute`).
 - For non-database services (use `tcp_traceroute` or `tls_traceroute`).
-- When the database endpoint hostname can't be resolved (use `dns_resolve` first).
+- When you only need DNS resolution (use `dns_resolve` for standalone DNS checks).
+
+### Diagnostic Layers (6-Phase Analysis)
+
+The tool performs these diagnostic phases sequentially:
+
+| Phase | Layer                  | What It Checks                                          |
+|-------|------------------------|---------------------------------------------------------|
+| 1     | DNS Resolution         | Resolves endpoint hostname, reports IPs or failure      |
+| 2     | Instance State         | DescribeDBInstances — checks RDS status (available,     |
+|       |                        | stopped, storage-full, modifying, rebooting)            |
+| 3     | Network Checks         | Security group rules, NACL rules, route table           |
+|       |                        | verification for source → RDS path                      |
+| 4     | Connection Test        | TCP connect → TLS handshake → protocol auth (sequential)|
+| 5     | Connection Pool Status | SHOW STATUS LIKE 'Threads_connected', SHOW GLOBAL      |
+|       |                        | VARIABLES LIKE 'max_connections', pool utilization %    |
+| 6     | Parameter Group        | DescribeDBParameters — flags abnormally low             |
+|       |                        | max_connections (< 50 for production instances)         |
+
+Each phase runs independently. A failure in one phase does NOT prevent subsequent
+phases from executing — the tool degrades gracefully and reports what it could
+determine.
+
+### Error Categorization Decision Tree
+
+Use this decision tree to quickly identify the root cause category from the
+tool's output or from error messages the user reports:
+
+```
+Error 1040 OR "Too many connections"
+  └─→ ROOT CAUSE: Connection pool exhaustion
+      • Check connection_pool_status in report
+      • Look for Threads_connected ≈ max_connections
+      • Remediation: increase max_connections, add RDS Proxy, reduce client concurrency
+
+Timeout errors (connect_timeout, read_timeout)
+  └─→ ROOT CAUSE: Network layer issue
+      • Check network_checks in report
+      • Follow up with agentic_reachability_analyze to find blocking rule
+      • Remediation: fix SG/NACL/route table rules
+
+"Connection refused" (errno 111, ECONNREFUSED)
+  └─→ ROOT CAUSE: Instance not accepting connections
+      • Check instance_state in report
+      • Instance may be stopped, rebooting, or storage-full
+      • Remediation: start instance, wait for reboot, resolve storage
+
+"Access denied" (MySQL 1045, PostgreSQL 28P01)
+  └─→ ROOT CAUSE: Authentication failure
+      • Check connection_test.auth in report
+      • Credentials may be wrong, user may not exist, or host not allowed
+      • Remediation: verify credentials, check mysql.user / pg_hba.conf
+
+DNS resolution failure (NXDOMAIN, SERVFAIL)
+  └─→ ROOT CAUSE: DNS misconfiguration
+      • Check dns_resolution in report
+      • Endpoint hostname may be wrong or DNS unreachable
+      • Remediation: verify endpoint spelling, check VPC DNS settings
+
+Instance not in "available" state
+  └─→ ROOT CAUSE: RDS instance state issue
+      • Check instance_state in report
+      • May be modifying, backing-up, storage-optimization, etc.
+      • Remediation: wait for state transition or resolve underlying issue
+```
 
 ### Parameter Schema
 | Parameter   | Type   | Required | Constraints                    | Default |
@@ -900,7 +985,7 @@ TLS-level, or authentication-level WITHOUT installing any database client tools.
   "action": "db_connectivity_probe",
   "params": {
     "instance_id": "i-0abc123def456789a",
-    "endpoint": "10.0.3.50",
+    "endpoint": "svc-data-01.comvupvqkrj2.us-east-1.rds.amazonaws.com",
     "port": 3306,
     "engine": "mysql"
   }
@@ -912,59 +997,157 @@ TLS-level, or authentication-level WITHOUT installing any database client tools.
   "action": "db_connectivity_probe",
   "params": {
     "instance_id": "i-0abc123def456789a",
-    "endpoint": "redis.internal.example.com",
-    "port": 6379
+    "endpoint": "10.0.3.50",
+    "port": 3306,
+    "engine": "mysql"
   }
 }
 ```
 
 ### Response Interpretation
 
-The probe tests three sequential phases. Each phase only runs if the previous
-phase succeeded:
+The diagnostic report contains six sections. Interpret each independently:
 
-**Phase 1: TCP Connect**
-- `tcp.connected=true` + `connection_time_ms`: port is open, network path clear.
-- `tcp.connected=false` + `tcp_error`: network-level block. Use
-  `agentic_reachability_analyze` to find the blocking rule.
+**dns_resolution** (Phase 1):
+- `status: pass` + `resolved_ips`: hostname resolves correctly.
+- `status: fail`: DNS cannot resolve the endpoint. Check VPC DNS settings,
+  DHCP option sets, or endpoint spelling.
 
-**Phase 2: TLS Handshake** (runs only if TCP succeeds)
-- `tls.connected=true` + `tls_version`: TLS negotiation successful.
-- `tls.connected=false` + `tls_error`: certificate or protocol issue.
+**instance_state** (Phase 2):
+- `status: pass` + `db_instance_status: available`: RDS instance is healthy.
+- `status: fail` + status not "available": instance is stopped, rebooting,
+  storage-full, or in maintenance. Wait or resolve the underlying issue.
+- `status: skipped`: could not call DescribeDBInstances (permissions issue).
 
-**Phase 3: Protocol Auth** (runs only if TLS succeeds AND engine specified)
-- For MySQL: checks if server sends valid handshake packet.
-- For PostgreSQL: checks if server responds to StartupMessage.
-- Success means the database protocol is responding correctly.
+**network_checks** (Phase 3):
+- `status: pass`: security group, NACL, and route table all allow traffic.
+- `status: fail`: identifies which component blocks traffic (SG rule, NACL
+  entry, or missing route). Use `agentic_reachability_analyze` for details.
+- `status: skipped`: could not evaluate network config (permissions).
+
+**connection_test** (Phase 4):
+- `tcp.connected=true`: port is open, network path clear.
+- `tcp.connected=false`: network-level block or instance not listening.
+- `tls.connected=true`: TLS negotiation successful.
+- `auth.success=true`: database protocol responds correctly.
+
+**connection_pool_status** (Phase 5) — Pool Health Assessment:
+
+| Status      | Condition                            | Meaning                              |
+|-------------|--------------------------------------|--------------------------------------|
+| `healthy`   | utilization < 90%                    | Pool has capacity, no action needed  |
+| `warning`   | 90% ≤ utilization < 100%            | Pool nearing capacity, monitor       |
+| `exhausted` | utilization ≥ 100% OR error 1040    | Pool full, new connections rejected  |
+| `unknown`   | Could not query pool metrics         | Connection failed before pool check  |
+
+- `threads_connected`: current active connections to the database.
+- `max_connections`: configured maximum from parameter group.
+- `utilization_percent`: (threads_connected / max_connections) × 100.
+
+**parameter_group_findings** (Phase 6):
+- `status: ok`: no parameter issues detected.
+- `status: warning` + `flagged_parameters`: identifies abnormally low settings.
+  - `max_connections < 50` is flagged as abnormally low for production instances.
+- `status: skipped`: could not retrieve parameter group info.
+
+### Connection Pool Exhaustion — Detailed Interpretation
+
+When `connection_pool_status.status` is `exhausted` or `warning`:
+
+**Indicators of pool exhaustion:**
+- `threads_connected` equals or exceeds `max_connections`
+- Connection test fails with error 1040 ("Too many connections")
+- `utilization_percent` ≥ 90%
+- `parameter_group_findings` flags abnormally low `max_connections`
+
+**Common causes:**
+- Application connection pool size exceeds database `max_connections`
+- Long-running queries holding connections open
+- Connection leaks (connections not returned to pool)
+- Deliberately restrictive parameter group (e.g., `max_connections=5`)
+- Multiple application instances each opening their own pool
+
+### Remediation Guidance — Connection Pool Exhaustion
+
+When the tool identifies pool exhaustion as the root cause, present these
+remediation options to the user (in priority order):
+
+1. **Increase `max_connections` in the RDS parameter group**
+   - Modify the custom parameter group to raise the limit.
+   - Consider the instance class memory constraints (each connection consumes
+     ~10-20 MB RAM depending on workload).
+   - Apply changes: static parameters require reboot; dynamic ones apply
+     immediately.
+
+2. **Implement connection pooling with RDS Proxy**
+   - RDS Proxy multiplexes application connections over fewer database connections.
+   - Reduces connection overhead and handles connection reuse automatically.
+   - Particularly effective for Lambda-based workloads with bursty connections.
+
+3. **Reduce client-side concurrency**
+   - Lower the application's connection pool max size.
+   - Implement connection timeout and retry logic.
+   - Add circuit breakers to prevent cascade failures during pool saturation.
+
+4. **Identify and fix connection leaks**
+   - Query `SHOW PROCESSLIST` to identify idle connections held too long.
+   - Review application code for connections not properly closed/returned.
+   - Set `wait_timeout` and `interactive_timeout` to reclaim idle connections.
 
 ### Conversational Prompts
 
 Before invoking:
 - "What's the database endpoint? (RDS hostname or IP address)"
 - "What port? (MySQL default is 3306, PostgreSQL default is 5432)"
-- "Is it MySQL or PostgreSQL? (I can skip the auth check if you're unsure)"
+- "Is it MySQL or PostgreSQL?"
 - "Which instance is the application connecting FROM?"
+- "Are you seeing 'Too many connections' errors?" (suggests pool exhaustion)
 
-After results:
-- If TCP fails: "The instance can't even reach the database port. This is a
-  network issue — a security group, NACL, or route table is blocking. Want me
-  to run a reachability analysis to find the blocking rule?"
-- If TLS fails: "TCP connection works but TLS handshake failed: [error]. The
+After results — by root cause:
+
+- **Pool exhaustion**: "The database connection pool is exhausted —
+  [threads_connected] of [max_connections] connections are in use
+  ([utilization]%). New connections are being rejected with error 1040. The
+  parameter group has `max_connections` set to [value], which is abnormally low.
+  I recommend: (1) increasing `max_connections` in the parameter group,
+  (2) implementing RDS Proxy for connection pooling, or (3) reducing client
+  concurrency. Want me to help with any of these?"
+
+- **Network block**: "The instance can't reach the database port. This is a
+  network issue — a security group, NACL, or route table is blocking traffic.
+  Want me to run a reachability analysis to find the blocking rule?"
+
+- **TLS failure**: "TCP connection works but TLS handshake failed: [error]. The
   database might require a specific CA certificate or TLS version."
-- If auth fails: "Network and TLS are fine but the database protocol handshake
-  failed. This suggests a configuration issue on the database side (max
-  connections, authentication method, pg_hba.conf)."
-- If all pass: "Full connectivity verified: TCP, TLS, and protocol handshake
-  all succeeded. The issue might be application-level (credentials, permissions,
-  connection pooling)."
+
+- **Authentication failure**: "Network and TLS are fine but authentication
+  failed. Check that the credentials are correct and the user has permissions
+  to connect from this host."
+
+- **Instance state issue**: "The RDS instance is currently in '[state]' status.
+  It's not accepting connections until it returns to 'available'. [Explain what
+  the state means and expected recovery time.]"
+
+- **All phases pass**: "Full connectivity verified across all 6 diagnostic
+  layers: DNS, instance state, network, connection, pool status, and parameter
+  group. The issue might be application-level (specific query errors, schema
+  permissions, connection string configuration)."
 
 ### Prerequisites
 Same as `tcp_traceroute` (SSM agent, opt-in tag, Linux, concurrency limit).
 
 ### Notes
-- No database client libraries needed — uses raw socket protocol packets.
-- The auth phase does NOT attempt actual authentication with credentials.
-- It only verifies the database server responds with a valid protocol message.
+- The tool name remains `db_connectivity_probe` for backward compatibility with
+  existing agent integrations and MCP tool calls.
+- No new mandatory parameters — all enhanced functionality is additive.
+- No database client libraries needed — uses raw socket protocol packets for
+  connection test; uses boto3 (available on EC2) for AWS API calls.
+- Each diagnostic phase runs independently with graceful degradation — if boto3
+  calls fail due to permissions, those phases report "skipped" rather than
+  failing the entire probe.
+- When invoked against an endpoint with no connection pool issues, the tool
+  still reports network-level findings correctly and does not error due to the
+  absence of pool problems.
 """
 
 # ---------------------------------------------------------------------------

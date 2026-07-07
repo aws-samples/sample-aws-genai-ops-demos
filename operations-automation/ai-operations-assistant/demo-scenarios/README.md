@@ -565,51 +565,61 @@ Same as Scenario G â€” deployed with the `network-troubleshooting` scenario
 
 ---
 
-## Scenario K: Database Connection Timeout (`db_connectivity_probe`)
+## Scenario K: Connection Pool Exhaustion (`db_connectivity_probe`)
 
-Provisions an RDS instance whose security group correctly allows the app-tier CIDR, but whose subnet NACL blocks ephemeral return ports (1024â€“65535 outbound deny). The `svc-alpha` EC2 instance from Scenario H is reused as the app-tier client.
+Provisions an RDS MySQL instance configured with a restrictive `max_connections=5` parameter group, paired with a Lambda function that maintains 6 persistent connections to saturate the connection pool. The `svc-alpha` EC2 instance from Scenario H is reused as the app-tier client. Network connectivity is fully open — the failure occurs at the application layer when new connection attempts are rejected with MySQL error 1040 ("Too many connections").
 
 ### What Gets Created
 
 | Resource | Type | Purpose |
 |----------|------|---------|
-| `svc-data-01` | RDS db.t3.micro (MySQL) | Database instance in the shared GOAT VPC |
+| `svc-data-01` | RDS db.t4g.micro (MySQL 8.0) | Database instance with restrictive parameter group |
+| Custom Parameter Group | RDS DB Parameter Group (`max_connections=5`) | Deliberately low connection limit to trigger pool exhaustion |
+| Pool Saturator Lambda | Lambda (Python 3.12, 128MB, 300s timeout) | Maintains 6 persistent MySQL connections to saturate the pool |
+| EventBridge Rule | Scheduled rule (every 5 minutes) | Keeps the Lambda warm and connections alive |
+| IAM Role | Lambda execution role | VPC access and RDS connectivity permissions |
+| Security Group | Lambda security group | Allows outbound to RDS on port 3306 |
 | DB subnet group | Subnet group | Spans subnets for RDS placement |
-| NACL | Network ACL on the RDS subnet | Ephemeral-port (1024â€“65535) outbound deny rule |
 | `svc-alpha` (reused) | EC2 t3.micro from Scenario H | App-tier client for the database probe |
 
 All resources are tagged with `goat-demo=true` and `goat-scenario=network-troubleshooting-k`.
 
 ### Expected Agent Correlations
 
-When asked about database connectivity failures, the agent uses `db_connectivity_probe` from `svc-alpha` to the RDS endpoint. The probe reports a connection timeout â€” TCP SYN reaches the database but the response packets are dropped by the NACL ephemeral-port deny. The corroborating `agentic_reachability_analyze` confirms the NACL as the blocking component.
+When asked about database connectivity failures, the enhanced `db_connectivity_probe` performs multi-layer diagnosis from `svc-alpha` to the RDS endpoint:
+
+- **Network checks pass** — Security groups and route tables correctly allow traffic on port 3306
+- **Connection pool exhaustion detected** — `Threads_connected=6` vs `max_connections=5` (120% utilization)
+- **Parameter group flagged** — `max_connections=5` identified as abnormally low (threshold < 50)
+- **Remediation provided** — Increase `max_connections` in the parameter group, implement connection pooling (e.g., RDS Proxy), or reduce client concurrency
 
 ### Setup Instructions
 
-Same as Scenario G â€” deployed with the `network-troubleshooting` scenario parameter.
+Same as Scenario G — deployed with the `network-troubleshooting` scenario parameter.
 
 ### Suggested Demo Queries
 
 | Query | What It Demonstrates |
 |-------|---------------------|
-| **"Probe database connectivity from i-xxx to svc-data-01.xxxxxx.rds.amazonaws.com on port 3306"** | `db_connectivity_probe` reveals connection timeout |
-| "Why can't our app server connect to the MySQL database?" | Agent correlates probe failure with NACL analysis |
-| "The security group allows port 3306 from the app tier but connections still time out" | Cross-layer diagnosis (SG allows, NACL blocks return traffic) |
+| **"Use the rds troubleshooting tool to investigate why my application can't connect to the database"** | Full multi-layer `db_connectivity_probe` diagnosis with pool exhaustion detection |
+| "Why is my RDS instance rejecting new connections?" | Agent identifies pool saturation as root cause |
+| "Diagnose connection pool issues on svc-data-01" | Direct pool status check revealing `Threads_connected` ≥ `max_connections` |
 
 ### Two-Phase Evaluation
 
 | Phase | Method | Expected Outcome |
 |-------|--------|-----------------|
-| **(a) Baseline** | Agent uses only `DescribeDBInstances`, `DescribeSecurityGroups`, `DescribeNetworkAcls` | Agent sees the SG correctly allows port 3306 from the app-tier CIDR. NACL rules are listed but the subtle ephemeral-port outbound deny (which blocks return traffic) requires careful analysis of TCP return path semantics |
-| **(b) Tools-Assisted** | Agent invokes `db_connectivity_probe` from `svc-alpha` to the RDS endpoint on port 3306 | Probe performs an actual TCP connection attempt and reports timeout, proving the path is broken at the network layer. Combined with `agentic_reachability_analyze`, the NACL ephemeral-port deny is identified as the root cause |
+| **(a) Baseline** | Agent uses only `DescribeDBInstances`, `DescribeSecurityGroups`, `DescribeNetworkAcls` | Agent sees a healthy RDS instance in "available" state with correct security group rules allowing port 3306. Network path appears fully functional — no obvious blocking component |
+| **(b) Tools-Assisted** | Agent invokes `db_connectivity_probe` from `svc-alpha` to the RDS endpoint on port 3306 | Probe performs comprehensive diagnosis: network checks pass, but connection test fails with MySQL error 1040 ("Too many connections"). Pool status shows `Threads_connected=6` / `max_connections=5` (exhausted). Parameter group analysis flags `max_connections=5` as abnormally low. Remediation steps recommend increasing `max_connections`, using RDS Proxy, or reducing client concurrency |
 
 ### Cost Note
 
 | Resource | Approximate Cost |
 |----------|-----------------|
-| 1x RDS db.t3.micro (MySQL) | ~$0.017/hr (~$12/month) |
+| 1x RDS db.t4g.micro (MySQL) | ~$0.016/hr (~$12/month) |
+| Pool Saturator Lambda (128MB, invoked every 5min) | ~$0.01/month |
 | `svc-alpha` (shared with Scenario H) | No additional cost |
-| Subnets, NACLs | No additional cost |
+| EventBridge rule, IAM role, security group | No additional cost |
 
 ---
 
@@ -667,7 +677,7 @@ Same as Scenario G â€” deployed with the `network-troubleshooting` scenario
 | H | 1x EC2 t3.micro (shared with K) | ~$7 |
 | I | 1x Internal ALB | ~$16 |
 | J | Route 53 Resolver endpoint (2 ENIs) | ~$180 |
-| K | 1x RDS db.t3.micro | ~$12 |
+| K | 1x RDS db.t4g.micro + Pool Saturator Lambda | ~$12 |
 | L | 1x EC2 t3.micro | ~$7 |
 | **Total (new resources only)** | | **~$229/month** |
 

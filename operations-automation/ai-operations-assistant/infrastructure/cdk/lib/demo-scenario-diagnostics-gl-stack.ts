@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as events from 'aws-cdk-lib/aws-events';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -157,8 +158,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
   /** Scenario K svc-data-01 RDS instance (MySQL, db.t4g.micro) */
   public readonly scenarioKRdsInstance: rds.CfnDBInstance;
 
-  /** Scenario K NACL with ephemeral-port (1024-65535) outbound deny on the DB subnets */
-  public readonly scenarioKNacl: ec2.CfnNetworkAcl;
+
 
   constructor(scope: Construct, id: string, props?: DemoScenarioDiagnosticsGLStackProps) {
     super(scope, id, props);
@@ -1061,8 +1061,14 @@ def handler(event, context):
     // Scenario K — RDS MySQL instance (svc-data-01)
     //
     // Single-AZ, no public access, db.t4g.micro (minimal demo resource).
-    // The instance is reachable from a VPC/SG perspective, but the NACL
-    // on its subnet blocks the TCP handshake return via ephemeral ports.
+    // Uses the DEFAULT parameter group (no custom max_connections override).
+    // The default max_connections for db.t4g.micro is ~85 (formula-based).
+    //
+    // The pool-saturator Lambda holds 90+ connections, exhausting the pool.
+    // This makes the issue INVISIBLE from the AWS API — DescribeDBParameters
+    // shows normal defaults, so the DevOps Agent cannot diagnose the problem
+    // without using the db_connectivity_probe tool (which runs SHOW STATUS
+    // from inside the VPC to discover Threads_connected >= max_connections).
     // -----------------------------------------------------------------------
     this.scenarioKRdsInstance = new rds.CfnDBInstance(this, 'ScenarioKRdsInstance', {
       dbInstanceIdentifier: 'svc-data-01',
@@ -1073,100 +1079,242 @@ def handler(event, context):
       allocatedStorage: '20',
       storageType: 'gp2',
       dbSubnetGroupName: this.scenarioKDbSubnetGroup.ref,
+      // No custom parameter group — uses RDS default (max_connections ~85)
       vpcSecurityGroups: [scenarioKDbSg.attrGroupId],
       publiclyAccessible: false,
       multiAz: false,
       tags: [
         { key: 'Name', value: 'svc-data-01' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'network-troubleshooting' },
+        { key: 'goat-scenario', value: 'network-troubleshooting-k' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
     this.scenarioKRdsInstance.cfnOptions.deletionPolicy = cdk.CfnDeletionPolicy.DELETE;
 
     // -----------------------------------------------------------------------
-    // Scenario K — NACL with ephemeral-port egress DENY (the misconfiguration)
+    // Scenario K — NACL REMOVED (connection pool exhaustion scenario)
     //
-    // Rule evaluation order (egress):
-    //   Rule 50 (DENY, TCP 1024-65535, egress) — blocks ephemeral return
-    //     ports, preventing TCP handshake completion (SYN-ACK from RDS)
-    //   Rule 100 (ALLOW, all TCP, egress) — broader allow, but rule 50
-    //     takes precedence for ports 1024-65535 due to lower rule number
-    //   Rule 900 (ALLOW, all, egress) — catch-all, never reached for
-    //     ephemeral ports because rule 50 already matched
-    //
-    // Ingress is permissive (rule 100: allow all TCP) so the scenario
-    // focuses purely on the egress block preventing response traffic.
+    // The previous NACL-based misconfiguration (ephemeral-port egress deny)
+    // has been removed. The DB subnets now revert to the VPC's default NACL
+    // which allows all traffic. This ensures the network path from svc-alpha
+    // to svc-data-01 is fully open — the failure now occurs at the
+    // application layer (connection pool full) rather than network layer.
     // -----------------------------------------------------------------------
-    this.scenarioKNacl = new ec2.CfnNetworkAcl(this, 'ScenarioKNacl', {
-      vpcId: sharedVpcId,
+
+    // -----------------------------------------------------------------------
+    // Scenario K — Pool Saturator Lambda (connection pool exhaustion client)
+    //
+    // A Lambda function that maintains 90 persistent MySQL connections to
+    // svc-data-01, saturating the default max_connections (~85 for
+    // db.t4g.micro). Triggered every 5 minutes via EventBridge.
+    //
+    // KEY DESIGN: No custom parameter group is used — the RDS instance has
+    // normal default settings. The agent CANNOT detect this issue from AWS
+    // APIs alone (DescribeDBParameters shows normal values). Only the
+    // db_connectivity_probe tool can diagnose it by running SHOW STATUS
+    // from inside the VPC and discovering Threads_connected >= max_connections.
+    // -----------------------------------------------------------------------
+
+    // IAM role for the Pool Saturator Lambda — VPC access + CloudWatch Logs
+    const scenarioKPoolSaturatorRole = new iam.CfnRole(this, 'ScenarioKPoolSaturatorRole', {
+      assumeRolePolicyDocument: {
+        Version: '2012-10-17',
+        Statement: [{
+          Effect: 'Allow',
+          Principal: { Service: 'lambda.amazonaws.com' },
+          Action: 'sts:AssumeRole',
+        }],
+      },
+      managedPolicyArns: [
+        `arn:${cdk.Aws.PARTITION}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole`,
+      ],
+      policies: [
+        {
+          policyName: 'CloudWatchLogsAccess',
+          policyDocument: {
+            Version: '2012-10-17',
+            Statement: [{
+              Effect: 'Allow',
+              Action: [
+                'logs:CreateLogGroup',
+                'logs:CreateLogStream',
+                'logs:PutLogEvents',
+              ],
+              Resource: `arn:${cdk.Aws.PARTITION}:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*`,
+            }],
+          },
+        },
+      ],
       tags: [
-        { key: 'Name', value: 'db-subnet-nacl' },
+        { key: 'Name', value: 'svc-data-sync-role' },
         { key: 'goat-demo', value: 'true' },
-        { key: 'goat-scenario', value: 'network-troubleshooting' },
         { key: 'auto-delete', value: 'no' },
       ],
     });
 
-    // Rule 50 — DENY TCP ephemeral ports (1024-65535) EGRESS.
-    // THIS IS THE MISCONFIGURATION: blocks RDS from sending SYN-ACK and
-    // query responses back to clients on their ephemeral source ports.
-    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry50Egress', {
-      networkAclId: this.scenarioKNacl.attrId,
-      ruleNumber: 50,
-      protocol: 6, // TCP
-      ruleAction: 'deny',
-      egress: true,
-      cidrBlock: '0.0.0.0/0',
-      portRange: { from: 1024, to: 65535 },
+    // Security group for the Pool Saturator Lambda — allows egress on 3306 to RDS
+    const scenarioKPoolSaturatorSg = new ec2.CfnSecurityGroup(this, 'ScenarioKPoolSaturatorSg', {
+      groupDescription: 'Security group for svc-data-sync-worker Lambda',
+      vpcId: sharedVpcId,
+      securityGroupEgress: [
+        {
+          ipProtocol: 'tcp',
+          fromPort: 3306,
+          toPort: 3306,
+          destinationSecurityGroupId: scenarioKDbSg.attrGroupId,
+        },
+      ],
+      tags: [
+        { key: 'Name', value: 'svc-data-sync-sg' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'auto-delete', value: 'no' },
+      ],
     });
 
-    // Rule 100 — ALLOW all TCP INGRESS (looks healthy).
-    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry100Ingress', {
-      networkAclId: this.scenarioKNacl.attrId,
-      ruleNumber: 100,
-      protocol: 6, // TCP
-      ruleAction: 'allow',
-      egress: false,
-      cidrBlock: '10.99.0.0/16',
-      portRange: { from: 1, to: 65535 },
+    // Pool Saturator Lambda function — Python 3.12, placeholder code
+    // (actual handler logic is added in task 1.4)
+    const scenarioKPoolSaturator = new lambda.CfnFunction(this, 'ScenarioKPoolSaturator', {
+      functionName: 'svc-data-sync-worker',
+      runtime: 'python3.12',
+      handler: 'index.handler',
+      memorySize: 128,
+      timeout: 300,
+      reservedConcurrentExecutions: 1,
+      role: scenarioKPoolSaturatorRole.attrArn,
+      vpcConfig: {
+        subnetIds: [this.scenarioHSubnetC.attrSubnetId],
+        securityGroupIds: [scenarioKPoolSaturatorSg.attrGroupId],
+      },
+      environment: {
+        variables: {
+          DB_ENDPOINT: this.scenarioKRdsInstance.attrEndpointAddress,
+          DB_USERNAME: 'admin',
+          DB_PASSWORD: 'GoatDemoK2026!',
+          TARGET_CONNECTIONS: '90',
+        },
+      },
+      code: {
+        zipFile: [
+          'import os, socket, struct, time, json, logging',
+          '',
+          'logger = logging.getLogger()',
+          'logger.setLevel(logging.INFO)',
+          'connections = []',
+          '',
+          'def handler(event, context):',
+          '    endpoint = os.environ.get("DB_ENDPOINT", "")',
+          '    username = os.environ.get("DB_USERNAME", "admin")',
+          '    password = os.environ.get("DB_PASSWORD", "")',
+          '    port = int(os.environ.get("DB_PORT", "3306"))',
+          '    target = int(os.environ.get("TARGET_CONNECTIONS", "90"))',
+          '',
+          '    # Clean dead connections',
+          '    alive = []',
+          '    for s in connections:',
+          '        try:',
+          '            s.sendall(b"\\x01\\x00\\x00\\x00\\x0e")',
+          '            alive.append(s)',
+          '        except:',
+          '            try: s.close()',
+          '            except: pass',
+          '    connections[:] = alive',
+          '',
+          '    # Open new connections until target reached',
+          '    opened = 0',
+          '    while len(connections) < target:',
+          '        try:',
+          '            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)',
+          '            s.settimeout(5)',
+          '            s.connect((endpoint, port))',
+          '            # Read MySQL handshake',
+          '            hdr = b""',
+          '            while len(hdr) < 4: hdr += s.recv(4 - len(hdr))',
+          '            plen = struct.unpack("<I", hdr[:3] + b"\\x00")[0]',
+          '            payload = b""',
+          '            while len(payload) < plen: payload += s.recv(plen - len(payload))',
+          '            if payload[0] == 0xFF:',
+          '                logger.info(f"Max retries at {len(connections)} conns (error packet)")',
+          '                s.close()',
+          '                break',
+          '            # Send auth response (native password)',
+          '            # Extract salt from handshake',
+          '            null1 = payload.find(b"\\x00", 1)',
+          '            salt1 = payload[null1+5:null1+13]',
+          '            rest = payload[null1+13+1:]  # skip filler',
+          '            # capabilities, charset, etc - skip to salt2',
+          '            salt2 = rest[12:12+12] if len(rest) > 24 else b""',
+          '            salt = salt1 + salt2',
+          '            # Build HandshakeResponse41 with mysql_native_password',
+          '            import hashlib',
+          '            pwd_hash = hashlib.sha1(password.encode()).digest()',
+          '            pwd_hash2 = hashlib.sha1(pwd_hash).digest()',
+          '            xor_input = hashlib.sha1(salt + pwd_hash2).digest()',
+          '            auth_resp = bytes(a ^ b for a, b in zip(pwd_hash, xor_input))',
+          '            # Build packet',
+          '            cap = 0x000FA68D',
+          '            pkt = struct.pack("<IIB", cap, 16777216, 33)',
+          '            pkt += b"\\x00" * 23',
+          '            pkt += username.encode() + b"\\x00"',
+          '            pkt += bytes([len(auth_resp)]) + auth_resp',
+          '            pkt += b"\\x00"  # no db',
+          '            pkt_hdr = struct.pack("<I", len(pkt))[:3] + b"\\x01"',
+          '            s.sendall(pkt_hdr + pkt)',
+          '            # Read response',
+          '            rhdr = b""',
+          '            while len(rhdr) < 4: rhdr += s.recv(4 - len(rhdr))',
+          '            rlen = struct.unpack("<I", rhdr[:3] + b"\\x00")[0]',
+          '            rbody = b""',
+          '            while len(rbody) < rlen: rbody += s.recv(rlen - len(rbody))',
+          '            if rbody[0] == 0x00:  # OK packet',
+          '                connections.append(s)',
+          '                opened += 1',
+          '            elif rbody[0] == 0xFF:  # Error',
+          '                ecode = struct.unpack("<H", rbody[1:3])[0]',
+          '                if ecode == 1040:',
+          '                    logger.info(f"Connection limit reached at {len(connections)} conns")',
+          '                    s.close()',
+          '                    break',
+          '                logger.warning(f"Auth error {ecode}")',
+          '                s.close()',
+          '                break',
+          '            else:',
+          '                connections.append(s)',
+          '                opened += 1',
+          '        except Exception as e:',
+          '            logger.error(f"Connection failed: {e}")',
+          '            break',
+          '',
+          '    result = {"active": len(connections), "target": target, "opened": opened, "status": "ok"}',
+          '    logger.info(f"DataSyncWorker: {result}")',
+          '    return result',
+        ].join('\n'),
+      },
+      tags: [
+        { key: 'Name', value: 'svc-data-sync-worker' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'auto-delete', value: 'no' },
+      ],
     });
 
-    // Rule 100 — ALLOW all TCP EGRESS (broader allow, but rule 50 takes
-    // precedence for ephemeral ports because NACL evaluates lowest first).
-    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry100Egress', {
-      networkAclId: this.scenarioKNacl.attrId,
-      ruleNumber: 100,
-      protocol: 6, // TCP
-      ruleAction: 'allow',
-      egress: true,
-      cidrBlock: '10.99.0.0/16',
-      portRange: { from: 1, to: 65535 },
+    // EventBridge rule — trigger Pool Saturator every 5 minutes to maintain saturation
+    const scenarioKSaturatorSchedule = new events.CfnRule(this, 'ScenarioKSaturatorSchedule', {
+      name: 'svc-data-sync-schedule',
+      description: 'Scheduled data sync worker execution',
+      scheduleExpression: 'rate(5 minutes)',
+      state: 'ENABLED',
+      targets: [{
+        arn: scenarioKPoolSaturator.attrArn,
+        id: 'DataSyncTarget',
+      }],
     });
 
-    // Rule 900 — ALLOW ALL EGRESS (catch-all, never reached for
-    // ephemeral ports 1024-65535 because rule 50 already denied them).
-    new ec2.CfnNetworkAclEntry(this, 'ScenarioKNaclEntry900Egress', {
-      networkAclId: this.scenarioKNacl.attrId,
-      ruleNumber: 900,
-      protocol: -1,
-      ruleAction: 'allow',
-      egress: true,
-      cidrBlock: '0.0.0.0/0',
-    });
-
-    // -----------------------------------------------------------------------
-    // Scenario K — NACL subnet associations (both DB subnets)
-    // -----------------------------------------------------------------------
-    new ec2.CfnSubnetNetworkAclAssociation(this, 'ScenarioKNaclAssocSubnet1', {
-      subnetId: this.scenarioKDbSubnet1.attrSubnetId,
-      networkAclId: this.scenarioKNacl.attrId,
-    });
-
-    new ec2.CfnSubnetNetworkAclAssociation(this, 'ScenarioKNaclAssocSubnet2', {
-      subnetId: this.scenarioKDbSubnet2.attrSubnetId,
-      networkAclId: this.scenarioKNacl.attrId,
+    // Permission for EventBridge to invoke the Pool Saturator Lambda
+    new lambda.CfnPermission(this, 'ScenarioKSaturatorPermission', {
+      action: 'lambda:InvokeFunction',
+      functionName: scenarioKPoolSaturator.ref,
+      principal: 'events.amazonaws.com',
+      sourceArn: scenarioKSaturatorSchedule.attrArn,
     });
 
     // -----------------------------------------------------------------------

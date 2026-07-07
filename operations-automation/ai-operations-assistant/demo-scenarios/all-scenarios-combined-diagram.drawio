@@ -442,23 +442,23 @@
         </mxCell>
 
         <!-- ============================================================ -->
-        <!-- SCENARIO K — DB Timeout                                      -->
+        <!-- SCENARIO K — Connection Pool Exhaustion                       -->
         <!-- ============================================================ -->
         <mxCell id="panel-k" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C62828;strokeWidth=2;arcSize=8;verticalAlign=top;" vertex="1" parent="1">
           <mxGeometry x="1200" y="990" width="1160" height="320" as="geometry" />
         </mxCell>
-        <mxCell id="panel-k-title" value="Scenario K — DB Timeout (NACL Egress Block)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=14;fontStyle=1;fontColor=#C62828;" vertex="1" parent="1">
-          <mxGeometry x="1215" y="998" width="340" height="26" as="geometry" />
+        <mxCell id="panel-k-title" value="Scenario K — Connection Pool Exhaustion" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=14;fontStyle=1;fontColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="1215" y="998" width="320" height="26" as="geometry" />
         </mxCell>
         <mxCell id="panel-k-tool" value="🔧 Tool: db_connectivity_probe" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=11;fontStyle=2;fontColor=#555555;" vertex="1" parent="1">
           <mxGeometry x="1215" y="1024" width="190" height="20" as="geometry" />
         </mxCell>
-        <mxCell id="panel-k-misconfig" value="⚠ Misconfiguration: NACL Rule 50 DENY egress 1024-65535 (blocks SYN-ACK return)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=11;fontStyle=1;fontColor=#D32F2F;" vertex="1" parent="1">
-          <mxGeometry x="1215" y="1044" width="490" height="20" as="geometry" />
+        <mxCell id="panel-k-misconfig" value="⚠ Misconfiguration: Parameter Group max_connections=5 (pool saturated by Lambda client)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=11;fontStyle=1;fontColor=#D32F2F;" vertex="1" parent="1">
+          <mxGeometry x="1215" y="1044" width="520" height="20" as="geometry" />
         </mxCell>
 
         <!-- Scenario K Resources -->
-        <mxCell id="k-src" value="svc-alpha" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;fontSize=9;" vertex="1" parent="1">
+        <mxCell id="k-src" value="svc-alpha&#10;(7th conn attempt)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;fontSize=9;" vertex="1" parent="1">
           <mxGeometry x="1250" y="1110" width="40" height="40" as="geometry" />
         </mxCell>
 
@@ -467,27 +467,39 @@
           <mxGeometry x="1550" y="1110" width="40" height="40" as="geometry" />
         </mxCell>
 
-        <!-- SG (healthy) -->
-        <mxCell id="k-sg" value="Security Group (✓ Healthy)&#10;Inbound: Allow 3306 from 10.99.0.0/16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=9;fontColor=#1B5E20;align=center;" vertex="1" parent="1">
-          <mxGeometry x="1430" y="1070" width="220" height="35" as="geometry" />
+        <!-- Parameter Group annotation -->
+        <mxCell id="k-param-group" value="Custom Parameter Group&#10;max_connections = 5" style="shape=note;whiteSpace=wrap;html=1;size=14;verticalAlign=top;align=left;fillColor=#FFF9C4;strokeColor=#F9A825;fontSize=9;fontColor=#E65100;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="1070" width="180" height="40" as="geometry" />
         </mxCell>
 
-        <!-- NACL Egress (broken) -->
-        <mxCell id="k-nacl" value="NACL Egress Rules:&#10;Rule 50: DENY 1024-65535 ← blocks SYN-ACK&#10;Rule 100: ALLOW ALL" style="shape=note;whiteSpace=wrap;html=1;size=14;verticalAlign=top;align=left;fillColor=#FFCDD2;strokeColor=#D32F2F;fontSize=9;fontColor=#B71C1C;" vertex="1" parent="1">
-          <mxGeometry x="1750" y="1090" width="250" height="60" as="geometry" />
+        <!-- Pool Saturator Lambda -->
+        <mxCell id="k-lambda" value="pool-saturator&#10;(Lambda)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="1190" width="40" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Pool Status indicator -->
+        <mxCell id="k-pool-status" value="🔴 Pool Status: 6/5 connections&#10;(EXHAUSTED — Error 1040)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#D32F2F;fontSize=9;fontColor=#B71C1C;align=center;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1750" y="1100" width="230" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Connection count annotation -->
+        <mxCell id="k-conn-count" value="6 persistent connections&#10;(saturates max_connections=5)" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#1565C0;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1430" y="1215" width="180" height="30" as="geometry" />
         </mxCell>
 
         <!-- Scenario K Connections -->
-        <mxCell id="k-conn1" value="SYN →" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;strokeWidth=2;fontSize=9;fontColor=#1565C0;labelBackgroundColor=none;" edge="1" source="k-src" target="k-rds" parent="1">
+        <!-- svc-alpha failed connection to RDS -->
+        <mxCell id="k-conn1" value="✗ Error 1040&#10;Too many connections" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#D32F2F;strokeWidth=2;dashed=1;dashPattern=8 4;fontSize=9;fontColor=#D32F2F;fontStyle=1;labelBackgroundColor=none;" edge="1" source="k-src" target="k-rds" parent="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="k-conn2" value="✗ SYN-ACK blocked&#10;(ephemeral port denied)" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#D32F2F;strokeWidth=2;dashed=1;dashPattern=8 4;fontSize=9;fontColor=#D32F2F;fontStyle=1;labelBackgroundColor=none;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="k-rds" target="k-nacl" parent="1">
+        <!-- Lambda saturating connections to RDS -->
+        <mxCell id="k-conn2" value="6 active conns ✓" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2E7D32;strokeWidth=2;fontSize=9;fontColor=#2E7D32;labelBackgroundColor=none;" edge="1" source="k-lambda" target="k-rds" parent="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
         <!-- Scenario K Result -->
-        <mxCell id="k-result" value="Expected Result:&#10;db_connectivity_probe shows TCP SYN sent but no SYN-ACK received.&#10;SG looks fine; NACL egress Rule 50 blocks return traffic on ephemeral ports." style="text;html=1;align=left;verticalAlign=top;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;whiteSpace=wrap;" vertex="1" parent="1">
-          <mxGeometry x="1215" y="1210" width="450" height="50" as="geometry" />
+        <mxCell id="k-result" value="Expected Result:&#10;db_connectivity_probe detects pool exhaustion (Threads_connected=6, max_connections=5).&#10;Identifies restrictive parameter group. Recommends increasing max_connections or using RDS Proxy." style="text;html=1;align=left;verticalAlign=top;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="1215" y="1250" width="520" height="50" as="geometry" />
         </mxCell>
 
         <!-- ============================================================ -->
@@ -614,8 +626,8 @@
         <mxCell id="legend-tool-4" value="dns_resolve → Scenario J (DNS Split-Horizon)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;" vertex="1" parent="1">
           <mxGeometry x="1560" y="1465" width="280" height="20" as="geometry" />
         </mxCell>
-        <mxCell id="legend-tool-5" value="db_connectivity_probe → Scenario K (DB Timeout)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;" vertex="1" parent="1">
-          <mxGeometry x="1560" y="1485" width="300" height="20" as="geometry" />
+        <mxCell id="legend-tool-5" value="db_connectivity_probe → Scenario K (Connection Pool Exhaustion)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;" vertex="1" parent="1">
+          <mxGeometry x="1560" y="1485" width="360" height="20" as="geometry" />
         </mxCell>
         <mxCell id="legend-tool-6" value="ssm_health_check → Scenario L (SSM Unreachable)" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#37474F;" vertex="1" parent="1">
           <mxGeometry x="1560" y="1505" width="310" height="20" as="geometry" />
