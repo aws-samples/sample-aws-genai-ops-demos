@@ -1,0 +1,41 @@
+{
+  "page": {
+    "id": "abc123",
+    "name": "Datadog Status",
+    "url": "https://status.datadoghq.com"
+  },
+  "scheduled_maintenances": [
+    {
+      "id": "maint001",
+      "name": "Scheduled database migration - US1 region",
+      "status": "in_progress",
+      "impact": "maintenance",
+      "created_at": "2026-07-01T10:00:00.000Z",
+      "updated_at": "2026-07-06T08:00:00.000Z",
+      "scheduled_for": "2026-07-06T06:00:00.000Z",
+      "scheduled_until": "2026-07-06T10:00:00.000Z",
+      "shortlink": "https://stspg.io/maint001",
+      "components": [
+        {
+          "id": "comp_db",
+          "name": "Database Infrastructure - US1",
+          "status": "under_maintenance"
+        }
+      ],
+      "incident_updates": [
+        {
+          "id": "mupd1",
+          "status": "in_progress",
+          "body": "Maintenance is currently in progress. Some queries may experience elevated latency.",
+          "created_at": "2026-07-06T06:05:00.000Z"
+        },
+        {
+          "id": "mupd2",
+          "status": "scheduled",
+          "body": "This maintenance has been scheduled.",
+          "created_at": "2026-07-01T10:00:00.000Z"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# =============================================================================
+# terraform.tfvars.example - SaaS Status MCP Server
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# deploy-all-terraform.ps1 generates terraform.tfvars automatically.
+
+# -- Required -----------------------------------------------------------------
+
+# Region where the AgentCore Runtime will be deployed.
+runtime_region = "eu-west-3"
+
+# Your AWS account ID (12-digit number).
+account_id = "123456789012"
+
+# -- Optional -----------------------------------------------------------------
+
+# Name shown in the DevOps Agent console (default: saas-status-mcp).
+# service_name = "saas-status-mcp"
+
+# CloudWatch log retention in days (default: 14).
+# log_retention_days = 14
+
+# Seconds between provider registry refreshes from S3 (default: 60).
+# providers_poll_interval = 60
+
+# -- DevOps Agent registration ------------------------------------------------
+# Paste your Agent Space ARN to register the MCP server automatically.
+# Open the DevOps Agent console and from your space click Actions > Copy ARN.
+# Leave empty (or commented out) to skip registration.
+#
+# agent_space_arn = "arn:aws:aidevops:eu-west-1:123456789012:agentspace/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

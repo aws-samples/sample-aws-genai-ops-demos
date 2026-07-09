@@ -1,0 +1,52 @@
+{
+  "page": {
+    "id": "abc123",
+    "name": "MongoDB Atlas Status",
+    "url": "https://status.cloud.mongodb.com"
+  },
+  "incidents": [
+    {
+      "id": "7g5qmxgkc2y4",
+      "name": "Impaired Cluster Operations – AWS me-central-1 and AWS me-south-1",
+      "status": "monitoring",
+      "impact": "major",
+      "created_at": "2026-03-01T13:48:14.360Z",
+      "updated_at": "2026-06-03T15:46:56.709Z",
+      "started_at": "2026-03-01T13:48:14.360Z",
+      "resolved_at": null,
+      "shortlink": "https://stspg.io/mg7m971rdhw8",
+      "components": [
+        {
+          "id": "comp1",
+          "name": "Cloud Services - AWS me-central-1",
+          "status": "degraded_performance"
+        },
+        {
+          "id": "comp2",
+          "name": "Cloud Services - AWS me-south-1",
+          "status": "degraded_performance"
+        }
+      ],
+      "incident_updates": [
+        {
+          "id": "upd1",
+          "status": "monitoring",
+          "body": "We are continuing to monitor cluster operations in these regions.",
+          "created_at": "2026-06-03T15:46:56.709Z"
+        },
+        {
+          "id": "upd2",
+          "status": "identified",
+          "body": "The issue has been identified and a fix is being implemented.",
+          "created_at": "2026-03-01T14:30:00.000Z"
+        },
+        {
+          "id": "upd3",
+          "status": "investigating",
+          "body": "We are investigating reports of impaired cluster operations.",
+          "created_at": "2026-03-01T13:48:14.360Z"
+        }
+      ]
+    }
+  ]
+}
