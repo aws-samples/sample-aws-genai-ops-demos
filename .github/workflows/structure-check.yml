@@ -16,8 +16,12 @@ jobs:
         id: detect
         run: |
           DEMOS=$(git diff --name-only origin/main...HEAD | grep -oP '^[^/]+/[^/]+' | sort -u | grep -v '^\.' | grep -v '^shared' | grep -v '^docs' || true)
-          echo "demos=$DEMOS" >> $GITHUB_OUTPUT
           echo "Modified demos: $DEMOS"
+          # Use delimiter syntax for multi-line output values
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "demos<<$EOF" >> $GITHUB_OUTPUT
+          echo "$DEMOS" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
 
       - name: Check demo structure
         run: |
