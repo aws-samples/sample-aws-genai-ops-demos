@@ -3,9 +3,6 @@ name: Governance Guard
 on:
   pull_request_target:
     branches: [main]
-    paths:
-      - '.kiro/**'
-      - '.github/**'
 
 permissions:
   pull-requests: write
@@ -18,7 +15,7 @@ jobs:
       # No checkout — we only use the GitHub API to inspect the PR file list.
       # This is safe with pull_request_target because no fork code is executed.
 
-      - name: Check for governance file changes
+      - name: Inspect PR and apply labels
         uses: actions/github-script@v7
         with:
           script: |
@@ -28,6 +25,7 @@ jobs:
               pull_number: context.payload.pull_request.number,
             });
 
+            // --- Governance file changes ---
             const governanceFiles = files.filter(f =>
               f.filename.startsWith('.kiro/') ||
               f.filename.startsWith('.github/')
@@ -36,7 +34,6 @@ jobs:
             if (governanceFiles.length > 0) {
               const fileList = governanceFiles.map(f => `- \`${f.filename}\` (${f.status})`).join('\n');
 
-              // Add label (best-effort)
               try {
                 await github.rest.issues.addLabels({
                   owner: context.repo.owner,
@@ -45,18 +42,53 @@ jobs:
                   labels: ['governance-change']
                 });
               } catch (e) {
-                core.warning(`Could not add label: ${e.message}`);
+                core.warning(`Could not add governance label: ${e.message}`);
               }
 
-              // Post comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body: `## ⚠️ Governance File Changes Detected\n\nThis PR modifies governance files that control project standards and CI/CD:\n\n${fileList}\n\n**These changes require maintainer approval.** Please ensure changes are intentional and reviewed by a repo owner.`
-              });
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body: `## ⚠️ Governance File Changes Detected\n\nThis PR modifies governance files that control project standards and CI/CD:\n\n${fileList}\n\n**These changes require maintainer approval.** Please ensure changes are intentional and reviewed by a repo owner.`
+                });
+              } catch (e) {
+                core.warning(`Could not post governance comment: ${e.message}`);
+              }
 
               core.warning('Governance files modified — maintainer review required');
-            } else {
-              core.info('No governance files modified');
+            }
+
+            // --- Deploy-exempt marker ---
+            const noDeployFiles = files.filter(f =>
+              f.filename.endsWith('/.no-deploy') && f.status === 'added'
+            );
+
+            if (noDeployFiles.length > 0) {
+              const demoList = noDeployFiles.map(f => {
+                const demo = f.filename.replace('/.no-deploy', '');
+                return `- \`${demo}\``;
+              }).join('\n');
+
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  labels: ['deploy-exempt']
+                });
+              } catch (e) {
+                core.warning(`Could not add deploy-exempt label: ${e.message}`);
+              }
+
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body: `## ℹ️ Deploy-Exempt Demos\n\nThe following demos use a \`.no-deploy\` marker (no deployment scripts required):\n\n${demoList}\n\nPlease verify the exemption is appropriate during review.`
+                });
+              } catch (e) {
+                core.warning(`Could not post deploy-exempt comment: ${e.message}`);
+              }
             }
