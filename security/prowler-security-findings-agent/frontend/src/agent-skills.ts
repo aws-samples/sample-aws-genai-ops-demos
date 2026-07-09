@@ -1,7 +1,7 @@
 /**
  * Curated DevOps Agent Skills that make this demo more opinionated.
  *
- * Amazon DevOps Agent does not (yet) expose a public API for creating Skills
+ * AWS DevOps Agent does not (yet) expose a public API for creating Skills
  * programmatically, so we can't seed them at deploy time. Each skill is a
  * ready-to-paste payload that matches the fields of the Agent's "Create skill"
  * form: Name, Description, Agent Type, and Instructions. The dashboard ships

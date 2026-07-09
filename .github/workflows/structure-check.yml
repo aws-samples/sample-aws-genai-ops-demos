@@ -16,12 +16,17 @@ jobs:
         id: detect
         run: |
           DEMOS=$(git diff --name-only origin/main...HEAD | grep -oP '^[^/]+/[^/]+' | sort -u | grep -v '^\.' | grep -v '^shared' | grep -v '^docs' || true)
-          echo "demos=$DEMOS" >> $GITHUB_OUTPUT
           echo "Modified demos: $DEMOS"
+          # Use delimiter syntax for multi-line output values
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "demos<<$EOF" >> $GITHUB_OUTPUT
+          echo "$DEMOS" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
 
       - name: Check demo structure
         run: |
           EXIT_CODE=0
+          HAS_EXEMPT=""
           DEMOS="${{ steps.detect.outputs.demos }}"
 
           if [ -z "$DEMOS" ]; then
@@ -57,19 +62,25 @@ jobs:
               echo "✅ ARCHITECTURE.md exists"
             fi
 
-            # Check deploy scripts
-            if ! ls "$DEMO"/*.ps1 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.ps1 1>/dev/null 2>&1; then
-              echo "❌ Missing PowerShell deployment script (.ps1)"
-              EXIT_CODE=1
+            # Check deploy scripts (skip if .no-deploy marker exists)
+            if [ -f "$DEMO/.no-deploy" ]; then
+              echo "ℹ️  .no-deploy marker found — deployment scripts not required"
+              echo "   Reason: $(cat "$DEMO/.no-deploy")"
+              HAS_EXEMPT="true"
             else
-              echo "✅ PowerShell script exists"
-            fi
+              if ! ls "$DEMO"/*.ps1 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.ps1 1>/dev/null 2>&1; then
+                echo "❌ Missing PowerShell deployment script (.ps1)"
+                EXIT_CODE=1
+              else
+                echo "✅ PowerShell script exists"
+              fi
 
-            if ! ls "$DEMO"/*.sh 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.sh 1>/dev/null 2>&1; then
-              echo "❌ Missing Bash deployment script (.sh)"
-              EXIT_CODE=1
-            else
-              echo "✅ Bash script exists"
+              if ! ls "$DEMO"/*.sh 1>/dev/null 2>&1 && ! ls "$DEMO"/scripts/*.sh 1>/dev/null 2>&1; then
+                echo "❌ Missing Bash deployment script (.sh)"
+                EXIT_CODE=1
+              else
+                echo "✅ Bash script exists"
+              fi
             fi
 
             # Check for solution adoption tracking in CDK app file
@@ -103,3 +114,43 @@ jobs:
           done
 
           exit $EXIT_CODE
+
+      - name: Label deploy-exempt PRs
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if any demo used .no-deploy by looking at the step output
+            const output = `${{ steps.detect.outputs.demos }}`;
+            const fs = require('fs');
+            const demos = output.trim().split('\n').filter(Boolean);
+            const exemptDemos = [];
+            for (const demo of demos) {
+              try {
+                fs.accessSync(`${demo}/.no-deploy`);
+                exemptDemos.push(demo);
+              } catch {}
+            }
+            if (exemptDemos.length > 0) {
+              const demoList = exemptDemos.map(d => `- \`${d}\``).join('\n');
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['deploy-exempt']
+                });
+              } catch (e) {
+                core.warning(`Could not add label: ${e.message}`);
+              }
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `## ℹ️ Deploy-Exempt Demos\n\nThe following demos use a \`.no-deploy\` marker (no deployment scripts required):\n\n${demoList}\n\nPlease verify the exemption is appropriate during review.`
+                });
+              } catch (e) {
+                core.warning(`Could not post comment: ${e.message}`);
+              }
+            }

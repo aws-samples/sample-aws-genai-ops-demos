@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Pre-Write Conformity Check",
+      "description": "Verify file changes follow project standards before writing",
+      "trigger": "PreToolUse",
+      "matcher": "^(fs_write|fs_append|str_replace|delete_file|code)$",
+      "action": {
+        "type": "agent",
+        "prompt": "Before making this change, check it against the standards in .kiro/steering/contributor-guide.md (naming, file location, shared utilities, CDK requirement, no hardcoded regions) and .kiro/steering/solution-adoption-tracking.md (tracking in app file). If the change would violate a standard, flag it and suggest the compliant approach."
+      },
+      "enabled": true
+    }
+  ]
+}

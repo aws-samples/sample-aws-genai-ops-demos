@@ -1,9 +1,9 @@
-# Intelligent EKS Incident Investigation with Amazon DevOps Agent
-*Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes*
+# Intelligent EKS Incident Investigation with AWS DevOps Agent
+*Automatically detect, investigate, and diagnose EKS infrastructure incidents using AWS DevOps Agent — reducing mean time to resolution from hours to minutes*
 
 ## Overview
 
-When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the Amazon DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
+When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the AWS DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
 
 The demo includes a **DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
 
@@ -12,7 +12,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 - **Duration**: ~25 min deployment + ~10 min demo
 - **Difficulty**: Intermediate
 - **Target Audience**: SREs, DevOps Engineers, Platform Engineers
-- **Key Technologies**: Amazon EKS, Amazon DevOps Agent, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
+- **Key Technologies**: Amazon EKS, AWS DevOps Agent, CloudWatch, RDS PostgreSQL, Cognito, CloudFront, AWS CDK (TypeScript), Kiro Power (AWS MCP Server)
 - **Estimated Cost**: ~$6.50/day while running — see [Cost Estimate](#cost-estimate)
 
 ## DevOps Agent Features Demonstrated
@@ -26,6 +26,12 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/stvxdpzfcr22)
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.drawio.svg)
@@ -33,7 +39,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 The platform has three layers:
 
 - **Application Layer** — CloudFront serves the React portal from S3 and routes API traffic through an NLB to three microservices running on EKS (Merchant Gateway, Payment Processor, Webhook Service), backed by RDS PostgreSQL and SQS for async webhook delivery.
-- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → Amazon DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis.
+- **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → AWS DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis.
 - **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (9 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture documentation including network design, security model, and data flows.

@@ -122,7 +122,7 @@
         </mxCell>
 
         <!-- External systems outside AWS Cloud -->
-        <mxCell id="devops-agent" value="Amazon DevOps Agent&#xa;(AWS-managed service)&#xa;incoming webhook + outgoing REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
+        <mxCell id="devops-agent" value="AWS DevOps Agent&#xa;(AWS-managed service)&#xa;incoming webhook + outgoing REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
           <mxGeometry x="1300" y="660" width="240" height="80" as="geometry" />
         </mxCell>
         <mxCell id="security-hub" value="AWS Security Hub&#xa;(same account)&#xa;receives ASFF via -S flag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">

@@ -57,7 +57,7 @@ const devOpsAgentStack = new DevOpsAgentStack(app, `ProwlerSecurityDevOpsAgent-$
   devOpsAgentSpaceId,
   remediationsBucketName: dataStack.remediationsBucket.bucketName,
   costEventsTableName: dataStack.costEventsTable.tableName,
-  description: 'Prowler Security Findings: SNS + Lambda bridge to Amazon DevOps Agent webhook',
+  description: 'Prowler Security Findings: SNS + Lambda bridge to AWS DevOps Agent webhook',
 });
 devOpsAgentStack.addDependency(dataStack);
 

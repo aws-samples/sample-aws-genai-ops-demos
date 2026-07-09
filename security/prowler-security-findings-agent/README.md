@@ -1,5 +1,5 @@
 # AI-Assisted Security Triage for AWS: Prowler, Bedrock and DevOps Agent
-*Continuous security scanning of your AWS account with [Prowler](https://github.com/prowler-cloud/prowler), AI-generated remediation playbooks via Amazon Bedrock (Nova Lite 2), and automated incident response through Amazon DevOps Agent — all surfaced in a React dashboard.*
+*Continuous security scanning of your AWS account with [Prowler](https://github.com/prowler-cloud/prowler), AI-generated remediation playbooks via Amazon Bedrock (Nova Lite 2), and automated incident response through AWS DevOps Agent — all surfaced in a React dashboard.*
 
 ## Overview
 
@@ -8,7 +8,7 @@ Most AWS security posture tooling stops at "here's a list of 5,000 findings, goo
 1. **Scan** — a scheduled (and on-demand) [Prowler](https://github.com/prowler-cloud/prowler) ECS Fargate task runs against your AWS account, emitting OCSF JSON and ASFF findings to S3 and Security Hub.
 2. **Ingest** — an S3 event fires a Lambda that upserts every finding into DynamoDB and triages by severity.
 3. **Contextualize (on demand)** — from the dashboard, one click on a finding calls **Amazon Nova Lite 2** via the Bedrock Converse API and produces a status-aware markdown playbook (Impact / Root cause / Remediation steps with CLI + CDK snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
-4. **Dispatch (on demand)** — one click publishes the finding to SNS. A HMAC-SHA256-signing Lambda forwards it to your [Amazon DevOps Agent](https://aws.amazon.com/devops-agent/) webhook with the Bedrock playbook embedded, so the agent starts its investigation with a remediation proposal in hand. Flip the `autoInvestigate` CDK context to `true` to fan out automatically on every CRITICAL/HIGH finding instead.
+4. **Dispatch (on demand)** — one click publishes the finding to SNS. A HMAC-SHA256-signing Lambda forwards it to your [AWS DevOps Agent](https://aws.amazon.com/devops-agent/) webhook with the Bedrock playbook embedded, so the agent starts its investigation with a remediation proposal in hand. Flip the `autoInvestigate` CDK context to `true` to fan out automatically on every CRITICAL/HIGH finding instead.
 5. **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + Cognito) lets you browse findings, read the AI playbook, stream the agent's investigation journal in real time, trigger scans on-demand, bulk-dispatch or bulk-generate insights for groups of findings, and suppress false positives with a reason stored in DynamoDB.
 
 In addition, the dashboard ships a **⌘K command palette**, URL-synced filters, keyboard shortcuts, a dedicated **Investigations page** listing every DevOps Agent task dispatched from the demo, and copy-paste-ready **seeded DevOps Agent Skills** (AWS Security Remediator + Compliance Framework Translator) that line up 1:1 with the agent's Create skill form (Name, Description, Agent Type, Instructions). A **CloudWatch dashboard** is auto-provisioned as part of the deploy to surface Lambda / Bedrock / DynamoDB / Fargate health in one pane.
@@ -18,8 +18,14 @@ In addition, the dashboard ships a **⌘K command palette**, URL-synced filters,
 - **Duration**: ~8 min deployment (CDK + one CodeBuild to build the Prowler image) + ~3-10 min for the first scan
 - **Difficulty**: Intermediate
 - **Target Audience**: Security Engineers, Cloud SecOps, DevOps Engineers, SREs
-- **Key Technologies**: Prowler, Amazon DevOps Agent, Amazon Bedrock (Nova Lite 2), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
+- **Key Technologies**: Prowler, AWS DevOps Agent, Amazon Bedrock (Nova Lite 2), Amazon ECS Fargate, AWS Lambda, Amazon Cognito, CloudFront, AWS CDK (TypeScript)
 - **Estimated Cost**: ~$1/day idle, ~$0.50 per on-demand scan + Bedrock usage per finding you click "Generate AI Insights" on (see [Cost](#cost))
+
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/demo/lxqexdsy2lyi)
 
 ## Architecture
 
@@ -30,7 +36,7 @@ Five stages, all inside the customer AWS account:
 - **Scan** — an ECS Fargate Prowler task runs on a schedule or on demand, writing OCSF JSON findings to S3 and ASFF findings to Security Hub (via the `-S` flag).
 - **Ingest** — an S3 ObjectCreated event triggers the `ingest-findings` Lambda, which parses OCSF and upserts every finding into DynamoDB, indexed by severity and status for fast dashboard queries.
 - **Contextualize** — on demand from the dashboard, the `remediation-context` Lambda calls Amazon Bedrock Nova Lite 2 via the Converse API and produces a status-aware markdown playbook (Impact, Root cause, Remediation steps with bash and CDK v2 snippets for FAIL; hardening or review playbooks for PASS / MANUAL).
-- **Dispatch** — clicking _Investigate_ publishes the finding to SNS, which triggers an HMAC-SHA256-signing Lambda that POSTs the incident (with the Bedrock playbook embedded) to the Amazon DevOps Agent webhook. The dashboard then polls the agent's backlog tasks and journal records back through SigV4 so you can watch the investigation in real time.
+- **Dispatch** — clicking _Investigate_ publishes the finding to SNS, which triggers an HMAC-SHA256-signing Lambda that POSTs the incident (with the Bedrock playbook embedded) to the AWS DevOps Agent webhook. The dashboard then polls the agent's backlog tasks and journal records back through SigV4 so you can watch the investigation in real time.
 - **Explore** — a React/Cloudscape dashboard (CloudFront + S3 + OAC) authenticates via Cognito User Pool + Identity Pool and calls an IAM-authenticated Lambda Function URL over SigV4. Six pages: Dashboard, Findings, Finding Detail, Compliance, Cost, Investigations. Scan history is enumerated from S3 `raw-reports/{scan_id}/` prefixes (the authoritative audit trail — the DynamoDB table is overwritten each scan).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture, including the VPC design, IAM roles, the cost-events subsystem, and the full bi-directional DevOps Agent integration.
@@ -46,7 +52,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture
   npx cdk bootstrap aws://<account-id>/<region>
   ```
 - **Bedrock model access** — enable **Amazon Nova Lite 2** in your region via the Bedrock console (Model access > Manage model access). The demo defaults to the global inference profile `global.amazon.nova-2-lite-v1:0`, which routes to the closest supported region automatically; the base model must be enabled in the regions the profile covers (the console lets you enable them in one click).
-- **Amazon DevOps Agent** is available in `us-east-1`, `us-west-2`, and `eu-west-1`. If your infrastructure region is different, set `DEVOPS_AGENT_REGION` before deploying.
+- **AWS DevOps Agent** is available in `us-east-1`, `us-west-2`, and `eu-west-1`. If your infrastructure region is different, set `DEVOPS_AGENT_REGION` before deploying.
 
 ## Quick Start
 
@@ -241,7 +247,7 @@ Destroys all 8 stacks in reverse dependency order and (after confirmation) delet
 
 ### Why direct Converse (Nova Lite 2) instead of AgentCore Runtimes?
 
-The [`ai-lambda-runtime-migration`](../../operations-automation/ai-lambda-runtime-migration/) demo is the canonical example of multi-step AgentCore Runtimes. Here, the "agent" loop is already provided by Amazon DevOps Agent itself — Bedrock's role is a single contextualization step per finding. A Converse API call with a constrained system prompt is the cheaper, lower-latency option.
+The [`ai-lambda-runtime-migration`](../../operations-automation/ai-lambda-runtime-migration/) demo is the canonical example of multi-step AgentCore Runtimes. Here, the "agent" loop is already provided by AWS DevOps Agent itself — Bedrock's role is a single contextualization step per finding. A Converse API call with a constrained system prompt is the cheaper, lower-latency option.
 
 ### Why a Lambda Function URL (not API Gateway)?
 

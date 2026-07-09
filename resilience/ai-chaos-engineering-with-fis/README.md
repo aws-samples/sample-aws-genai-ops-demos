@@ -22,6 +22,12 @@ This MCP server transforms natural language descriptions into validated AWS Faul
 - **AWS CLI 2.31.13+** and **AWS Credentials** with FIS permissions
 - **Kiro IDE** (if using as Kiro Power)
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/wr7vhiejt3em)
+
 ## Installation
 
 ### Using `uvx`

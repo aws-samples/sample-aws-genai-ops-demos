@@ -109,6 +109,21 @@ sample-genai-ops-demos/
 5. Solution adoption tracking in CDK app file
 6. `.gitignore` including `cdk.out*`
 
+### Deploy Script Exemption (`.no-deploy`)
+
+Demos that are local tools with no AWS infrastructure to deploy may opt out of deployment scripts by placing a `.no-deploy` file at the demo root. The file must contain a one-line explanation of why scripts aren't needed.
+
+**Valid use cases:**
+- MCP servers installed via `uvx` or `pip`
+- Local CLI tools that don't deploy AWS resources
+- Kiro Powers with no cloud infrastructure
+
+**Not valid for:**
+- Demos that deploy CDK/CloudFormation resources (these always need scripts)
+- Demos with AWS infrastructure of any kind
+
+The CI workflow will flag PRs using `.no-deploy` with a `deploy-exempt` label for maintainer review. All other required files (README, ARCHITECTURE, tracking) still apply.
+
 ---
 
 ## Implementation Patterns
