@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as crypto from 'crypto';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
@@ -512,11 +513,109 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
     // Tagged with goat-network-traceroute-allowed=true for SSM-based
     // diagnostic action opt-in (Traceroute_Opt_In_Tag).
     // -----------------------------------------------------------------------
-    this.scenarioHSvcAlphaInstance = new ec2.CfnInstance(this, 'ScenarioHSvcAlphaInstance', {
+    // UserData script: install a systemd service that periodically attempts
+    // MySQL connections to svc-data-01. When the pool is saturated by the
+    // svc-data-sync-worker Lambda, these attempts fail with error 1040,
+    // simulating a real application experiencing connection pool exhaustion.
+    // This generates realistic "application can't connect" symptoms that the
+    // db_connectivity_probe tool is designed to diagnose.
+    const svcAlphaUserDataScript = [
+      '#!/bin/bash',
+      'set -x',
+      '',
+      '# Write the MySQL connection attempt script',
+      'cat > /usr/local/bin/svc-data-client.sh <<\'EOF\'',
+      '#!/bin/bash',
+      'ENDPOINT="svc-data-01.comvupvqkrj2.us-east-1.rds.amazonaws.com"',
+      'PORT=3306',
+      'SERVICE="order-processing-api"',
+      'LOG=/var/log/svc-data-client.log',
+      'while true; do',
+      '  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")',
+      '  RESULT=$(python3 -c "',
+      'import socket, struct, sys',
+      'try:',
+      '    s = socket.socket()',
+      '    s.settimeout(5)',
+      '    s.connect((\"\'$ENDPOINT\'\", \'$PORT\'))',
+      '    hdr = b\"\"',
+      '    while len(hdr) < 4: hdr += s.recv(4 - len(hdr))',
+      '    plen = struct.unpack(\"<I\", hdr[:3] + b\"\\x00\")[0]',
+      '    payload = b\"\"',
+      '    while len(payload) < plen: payload += s.recv(plen - len(payload))',
+      '    if payload[0] == 0xFF:',
+      '        ecode = struct.unpack(\"<H\", payload[1:3])[0]',
+      '        msg_start = 4',
+      '        if len(payload) > 4 and payload[3:4] == b\"#\":",
+      '            msg_start = 9',
+      '        errmsg = payload[msg_start:].decode(\"ascii\", errors=\"replace\")',
+      '        print(f\"CONNECTION_FAILED|error_code={ecode}|message={errmsg}\")',
+      '    else:',
+      '        null = payload.find(b\"\\x00\", 1)',
+      '        ver = payload[1:null].decode(\"ascii\", \"replace\") if null > 0 else \"unknown\"',
+      '        print(f\"CONNECTION_OK|server_version={ver}\")',
+      '    s.close()',
+      'except socket.timeout:',
+      '    print(\"CONNECTION_FAILED|error_code=timeout|message=Connection timed out after 5s\")',
+      'except ConnectionRefusedError:',
+      '    print(\"CONNECTION_FAILED|error_code=refused|message=Connection refused by remote host\")',
+      'except Exception as e:',
+      '    print(f\"CONNECTION_FAILED|error_code=exception|message={e}\")',
+      '" 2>&1)',
+      '  STATUS=$(echo "$RESULT" | cut -d"|" -f1)',
+      '  if [ "$STATUS" = "CONNECTION_FAILED" ]; then',
+      '    echo "$TIMESTAMP [ERROR] $SERVICE: MySQL connection to $ENDPOINT:$PORT failed - $RESULT" >> $LOG',
+      '  else',
+      '    echo "$TIMESTAMP [INFO]  $SERVICE: MySQL connection to $ENDPOINT:$PORT successful - $RESULT" >> $LOG',
+      '  fi',
+      '  # Keep log under 1MB',
+      '  if [ $(wc -c < $LOG 2>/dev/null || echo 0) -gt 1000000 ]; then',
+      '    tail -200 $LOG > $LOG.tmp && mv $LOG.tmp $LOG',
+      '  fi',
+      '  sleep 30',
+      'done',
+      'EOF',
+      'chmod +x /usr/local/bin/svc-data-client.sh',
+      '',
+      '# Create the systemd service',
+      'cat > /etc/systemd/system/svc-data-client.service <<\'EOF\'',
+      '[Unit]',
+      'Description=svc-data-01 connection health monitor',
+      'After=network-online.target',
+      'Wants=network-online.target',
+      '',
+      '[Service]',
+      'Type=simple',
+      'ExecStart=/usr/local/bin/svc-data-client.sh',
+      'Restart=always',
+      'RestartSec=10',
+      '',
+      '[Install]',
+      'WantedBy=multi-user.target',
+      'EOF',
+      '',
+      '# Enable and start the service',
+      'systemctl daemon-reload',
+      'systemctl enable svc-data-client.service',
+      'systemctl start svc-data-client.service',
+    ].join('\n');
+
+    const svcAlphaUserData = cdk.Fn.base64(svcAlphaUserDataScript);
+
+    // Hash the UserData so changes force instance replacement (cloud-init
+    // only runs on first boot for CfnInstance).
+    const svcAlphaUDHash = crypto
+      .createHash('sha256')
+      .update(svcAlphaUserDataScript)
+      .digest('hex')
+      .slice(0, 8);
+
+    this.scenarioHSvcAlphaInstance = new ec2.CfnInstance(this, `ScenarioHSvcAlphaInstance${svcAlphaUDHash}`, {
       instanceType: 't3.micro',
       imageId: ec2.MachineImage.latestAmazonLinux2023().getImage(this).imageId,
       subnetId: this.scenarioHSubnetC.attrSubnetId,
       securityGroupIds: [scenarioHSecurityGroup.attrGroupId],
+      userData: svcAlphaUserData,
       tags: [
         { key: 'Name', value: 'svc-alpha' },
         { key: 'goat-network-traceroute-allowed', value: 'true' },
@@ -1301,7 +1400,7 @@ def handler(event, context):
     const scenarioKSaturatorSchedule = new events.CfnRule(this, 'ScenarioKSaturatorSchedule', {
       name: 'svc-data-sync-schedule',
       description: 'Scheduled data sync worker execution',
-      scheduleExpression: 'rate(5 minutes)',
+      scheduleExpression: 'rate(1 minute)',
       state: 'ENABLED',
       targets: [{
         arn: scenarioKPoolSaturator.attrArn,

@@ -1,0 +1,146 @@
+<mxfile host="65bd71144e">
+    <diagram name="G.O.A.T. DevOps Agent + MCP Architecture" id="goat-devops-mcp-arch">
+        <mxGraphModel dx="1421" dy="775" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="Network Diagnostics — DevOps Agent + MCP Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+                    <mxGeometry x="130" y="20" width="1000" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#3F51B5;strokeWidth=2;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="70" width="280" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-title" value="AWS DevOps Agent" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#3F51B5;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="80" width="200" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-icon" value="DevOps Agent" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.general_AWS_Management_Console;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="115" width="60" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-desc" value="Natural language queries&#10;• Investigates AWS resources&#10;• Calls MCP tools for deep diagnosis&#10;• Returns structured findings" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="185" width="250" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF9800;strokeWidth=2;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="300" width="280" height="280" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp-title" value="MCP Server (SigV4)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="308" width="200" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp-apigw" value="API Gateway" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="345" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp-lambda" value="MCP Handler&#10;(Lambda)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+                    <mxGeometry x="155" y="345" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp-ssm" value="SSM&#10;RunShellScript" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.systems_manager;" parent="1" vertex="1">
+                    <mxGeometry x="245" y="345" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="tools-list" value="20 MCP Tools:&#10;━━━━━━━━━━━━━━━━━━&#10;• tcp_traceroute&#10;• tls_traceroute&#10;• dns_resolve&#10;• db_connectivity_probe&#10;• agentic_reachability_analyze&#10;• ssm_health_check&#10;• start/stop/query_capture&#10;• + 11 packet analysis tools" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#333333;fontStyle=0;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="420" width="250" height="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-agent-mcp" value="tool invocation" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#FF9800;fontSize=9;fontColor=#E65100;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="180" y="270" as="sourcePoint"/>
+                        <mxPoint x="180" y="300" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="aws-cloud" value="AWS Cloud (us-east-1)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#AAB7B8;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="360" y="70" width="850" height="750" as="geometry"/>
+                </mxCell>
+                <mxCell id="goat-vpc" value="GOAT VPC (10.99.0.0/16)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc;strokeColor=#8C4FFF;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#AAB7B8;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="100" width="760" height="690" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-app" value="App Subnet (10.99.32.0/24)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="140" width="320" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="svc-alpha" value="svc-alpha&#10;(t3.micro)&#10;SSM ✓ | Opt-in ✓" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
+                    <mxGeometry x="440" y="185" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="app-log" value="/var/log/svc-data-client.log&#10;[ERROR] order-processing-api:&#10;MySQL connection failed -&#10;error_code=1040" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#D32F2F;fontSize=8;fontColor=#B71C1C;align=left;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="520" y="180" width="190" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="subnet-db" value="DB Subnet (10.99.37.0/24)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=10;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#00A4A6;fillColor=#E6F6F7;verticalAlign=top;align=left;spacingLeft=25;fontColor=#147EBA;dashed=0;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="360" width="320" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="rds" value="svc-data-01&#10;RDS MySQL 8.4&#10;(db.t4g.micro)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.rds;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="410" width="55" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="pool-status" value="🔴 Connection Pool: EXHAUSTED&#10;Threads_connected: 90&#10;max_connections: ~82 (default)&#10;Utilization: 110%" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#D32F2F;fontSize=8;fontColor=#B71C1C;align=left;spacingLeft=5;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="430" y="490" width="210" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="saturator" value="svc-data-sync-worker&#10;(Lambda)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=9;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="600" width="45" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="saturator-label" value="Holds 90 persistent connections&#10;(saturates the pool)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=8;fontColor=#666666;fontStyle=2;" parent="1" vertex="1">
+                    <mxGeometry x="465" y="610" width="180" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-sat-rds" value="90 conns ✓" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#2E7D32;fontSize=8;fontColor=#2E7D32;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="432" y="600" as="sourcePoint"/>
+                        <mxPoint x="540" y="470" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arrow-app-rds" value="✗ Error 1040&#10;Too many connections" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#D32F2F;dashed=1;dashPattern=8 4;fontSize=9;fontColor=#D32F2F;fontStyle=1;labelBackgroundColor=none;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="467" y="245" as="sourcePoint"/>
+                        <mxPoint x="540" y="410" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="scenarios-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#9E9E9E;strokeWidth=1;arcSize=6;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="790" y="140" width="340" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="scenarios-title" value="Other Demo Scenarios (same VPC)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="830" y="150" width="260" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-g" value="G: Reachability Analyzer&lt;br&gt;    Asymetric trafic troubleshooting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#4CAF50;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="180" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-h" value="H: mtr / tcp traceroute&amp;nbsp;&lt;br&gt;Jitter/latency issue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="225" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-i" value="I: TLS Traceroute&#10;    ACM cert domain ≠ client SNI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FF9800;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="270" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-j" value="J: DNS Resolve&#10;    Resolver forwards to stale IP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#3F51B5;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="315" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-k" value="K: DB Connectivity Probe ← THIS SCENARIO&#10;    Connection pool exhaustion (Error 1040)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#E91E63;fontSize=9;fontStyle=1;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="360" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-l" value="L: SSM Health Check&#10;    NACL blocks 443 to SSM VPC endpoints" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFEBE9;strokeColor=#795548;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="405" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="sc-c" value="C: TLS Fragmentation (Packet Capture)&#10;    ML-KEM oversized ClientHello via TGW+NFW" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9C27B0;fontSize=9;align=left;spacingLeft=8;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="450" width="300" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="shared-infra" value="Shared Infrastructure:&#10;• Transit Gateway&#10;• Network Firewall&#10;• Traffic Mirror (NLB + Collector)&#10;• S3 + DynamoDB (pcap storage)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="500" width="300" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-mcp-alpha" value="SSM RunShellScript&#10;(runs probe FROM instance)" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3F51B5;fontSize=9;fontColor=#3F51B5;labelBackgroundColor=none;entryX=0;entryY=0.5;" parent="1" edge="1">
+                    <mxGeometry x="0.2" y="15" relative="1" as="geometry">
+                        <mxPoint x="320" y="400" as="sourcePoint"/>
+                        <mxPoint x="440" y="210" as="targetPoint"/>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#BDBDBD;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="790" y="590" width="340" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="How It Works (Demo Flow)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="870" y="597" width="180" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-flow" value="1. User asks DevOps Agent: &quot;Why can't my app connect to DB?&quot;&#10;2. Agent checks AWS APIs → instance healthy, SG open, params normal&#10;3. Agent can't determine root cause from APIs alone&#10;4. Agent invokes db_connectivity_probe via MCP&#10;5. MCP runs diagnostic script ON svc-alpha via SSM&#10;6. Script attempts MySQL connection → gets Error 1040&#10;7. Script queries SHOW STATUS → Threads_connected=90/82&#10;8. Tool returns: &quot;Pool exhausted, recommend RDS Proxy&quot;&#10;9. Agent presents diagnosis + remediation to user" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=9;fontColor=#000000;spacingLeft=5;" parent="1" vertex="1">
+                    <mxGeometry x="800" y="622" width="320" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="eventbridge" value="EventBridge&#10;(every 1 min)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=8;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="700" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow-eb-lambda" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#666666;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="430" y="700" as="sourcePoint"/>
+                        <mxPoint x="430" y="650" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
