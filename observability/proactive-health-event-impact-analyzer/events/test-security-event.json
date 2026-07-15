@@ -1,0 +1,40 @@
+{
+  "version": "0",
+  "id": "a1b2c3d4-5678-90ab-cdef-111222333444",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T01:00:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:iam::123456789012:role/Admin"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:global::event/IAM/AWS_IAM_OPERATIONAL_NOTIFICATION/AWS_IAM_OPERATIONAL_NOTIFICATION_20260526",
+    "service": "IAM",
+    "eventTypeCode": "AWS_IAM_OPERATIONAL_NOTIFICATION",
+    "eventTypeCategory": "accountNotification",
+    "region": "global",
+    "startTime": "2026-05-26T01:00:00Z",
+    "lastUpdatedTime": "2026-05-26T01:00:00Z",
+    "statusCode": "open",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "We have identified an IAM role in your account with overly permissive policies that may pose a security risk. The role 'Admin' has AdministratorAccess policy attached and is assumable by any principal in the account without MFA requirement. This configuration exposes your account to privilege escalation risks. We recommend reviewing and restricting the trust policy, enabling MFA for role assumption, and applying least-privilege permissions."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:iam::123456789012:role/Admin",
+        "tags": {
+          "Name": "Admin",
+          "Environment": "production",
+          "Team": "platform"
+        },
+        "status": "IMPAIRED"
+      }
+    ]
+  }
+}

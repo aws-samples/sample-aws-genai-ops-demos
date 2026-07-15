@@ -1,0 +1,43 @@
+{
+  "version": "0",
+  "id": "aabb1122-3344-5566-7788-99aabbccddee",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T03:00:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:states:eu-west-1:123456789012:stateMachine:health-event-impact-analyzer"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-west-1::event/STATES/AWS_STEPFUNCTIONS_STANDARD_WORKFLOW_DEPRECATION/AWS_SFN_DEPRECATION_20260526",
+    "service": "STATES",
+    "eventTypeCode": "AWS_STEPFUNCTIONS_STANDARD_WORKFLOW_DEPRECATION",
+    "eventTypeCategory": "scheduledChange",
+    "region": "eu-west-1",
+    "startTime": "2026-08-01T00:00:00Z",
+    "endTime": "2026-08-01T00:00:00Z",
+    "lastUpdatedTime": "2026-05-26T03:00:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "CRITICAL DEPRECATION NOTICE: AWS Step Functions Standard Workflows will be permanently discontinued on August 1, 2026. All Standard Workflow state machines will be DELETED and will no longer execute after this date. Your account has 1 Standard Workflow state machine in eu-west-1 that will be affected: 'health-event-impact-analyzer'. This state machine currently orchestrates a critical operational pipeline including Lambda invocations, DynamoDB operations, and external webhook integrations. After August 1, all in-flight executions will be terminated and the state machine definition will be permanently removed. You MUST migrate to Express Workflows or an alternative orchestration service before the deadline. There is NO grace period and NO automatic migration path. Failure to migrate will result in complete loss of the orchestration pipeline and all dependent automation."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:states:eu-west-1:123456789012:stateMachine:health-event-impact-analyzer",
+        "tags": {
+          "Name": "health-event-impact-analyzer",
+          "Environment": "production",
+          "Team": "platform",
+          "Criticality": "HIGH",
+          "aws:cloudformation:stack-name": "HealthEventAnalyzerStack-eu-west-1"
+        },
+        "status": "PENDING"
+      }
+    ]
+  }
+}

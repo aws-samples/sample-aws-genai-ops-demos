@@ -1,0 +1,41 @@
+{
+  "version": "0",
+  "id": "f9e8d7c6-5432-10ab-cdef-aabbccddeeff",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T02:00:00Z",
+  "region": "eu-central-1",
+  "resources": [
+    "arn:aws:lambda:eu-central-1:123456789012:function:HealthEventAnalyzerStack--InvestigationNotifierE3A-r1z7022xrrgz"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-central-1::event/LAMBDA/AWS_LAMBDA_OPERATIONAL_ISSUE/AWS_LAMBDA_OPERATIONAL_ISSUE_20260526_02",
+    "service": "LAMBDA",
+    "eventTypeCode": "AWS_LAMBDA_OPERATIONAL_ISSUE",
+    "eventTypeCategory": "issue",
+    "region": "eu-central-1",
+    "startTime": "2026-05-26T01:45:00Z",
+    "lastUpdatedTime": "2026-05-26T02:00:00Z",
+    "statusCode": "open",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "We are investigating elevated Lambda function invocation errors and throttling in the eu-central-1 region. Affected functions may experience increased error rates, timeouts, and throttled invocations. Functions with reserved concurrency may be less impacted. We are actively working to resolve this issue."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:lambda:eu-central-1:123456789012:function:HealthEventAnalyzerStack--InvestigationNotifierE3A-r1z7022xrrgz",
+        "tags": {
+          "Name": "health-event-notifier",
+          "Environment": "production",
+          "Team": "platform",
+          "aws:cloudformation:stack-name": "HealthEventAnalyzerStack-eu-central-1"
+        },
+        "status": "IMPAIRED"
+      }
+    ]
+  }
+}

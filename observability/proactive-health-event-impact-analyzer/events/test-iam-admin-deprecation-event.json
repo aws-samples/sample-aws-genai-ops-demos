@@ -1,0 +1,43 @@
+{
+  "version": "0",
+  "id": "ff001122-aabb-ccdd-eeff-998877665544",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T03:00:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:iam::123456789012:role/Admin"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:global::event/IAM/AWS_IAM_ADMIN_ROLE_DEPRECATION/AWS_IAM_ADMIN_ROLE_DEPRECATION_20260526",
+    "service": "IAM",
+    "eventTypeCode": "AWS_IAM_ADMIN_ROLE_DEPRECATION",
+    "eventTypeCategory": "scheduledChange",
+    "region": "global",
+    "startTime": "2026-06-15T00:00:00Z",
+    "endTime": "2026-06-15T00:00:00Z",
+    "lastUpdatedTime": "2026-05-26T03:00:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "CRITICAL SECURITY ENFORCEMENT: As part of AWS Zero Trust initiative, all IAM roles with names starting with 'Admin' will be AUTOMATICALLY DELETED on June 15, 2026. This enforcement applies to all AWS accounts globally. Your account 123456789012 has 1 role matching this pattern: 'Admin'. This role currently has AdministratorAccess policy attached and is actively used for account management operations. After deletion, all sessions using this role will be immediately terminated and no new sessions can be established. Any automation, CI/CD pipelines, or human operators relying on this role will lose access. You must rename the role or create a replacement with a non-Admin prefix before the enforcement date. There is NO rollback mechanism after deletion."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:iam::123456789012:role/Admin",
+        "tags": {
+          "Name": "Admin",
+          "Environment": "production",
+          "Team": "platform",
+          "Criticality": "CRITICAL",
+          "ManagedBy": "Isengard"
+        },
+        "status": "PENDING_DELETION"
+      }
+    ]
+  }
+}

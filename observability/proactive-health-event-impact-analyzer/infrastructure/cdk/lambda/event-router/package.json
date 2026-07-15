@@ -1,0 +1,17 @@
+{
+  "name": "event-router",
+  "version": "1.0.0",
+  "description": "Routes AWS Health events to the investigation workflow",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js --external:@aws-sdk/*"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sfn": "^3.600.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.140",
+    "esbuild": "^0.21.0",
+    "typescript": "~5.4.5"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "version": "0",
+  "id": "test-7bf73129-1428-4cd3-a780-95db273d1602",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-25T15:00:00Z",
+  "region": "us-east-1",
+  "resources": ["i-0test123456789ab"],
+  "detail": {
+    "eventArn": "arn:aws:health:us-east-1::event/EC2/AWS_EC2_SCHEDULED_MAINTENANCE/TEST_20260525",
+    "service": "EC2",
+    "eventTypeCode": "AWS_EC2_SCHEDULED_MAINTENANCE",
+    "eventTypeCategory": "scheduledChange",
+    "region": "us-east-1",
+    "availabilityZone": "us-east-1a",
+    "startTime": "2026-05-27T02:00:00Z",
+    "endTime": "2026-05-27T06:00:00Z",
+    "lastUpdatedTime": "2026-05-25T15:00:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "TEST EVENT: Scheduled maintenance for EC2 instances in us-east-1a. Instances will be stopped and restarted during the maintenance window."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "i-0test123456789ab",
+        "tags": {
+          "Name": "test-service",
+          "Environment": "production",
+          "Team": "platform"
+        },
+        "status": "PENDING"
+      }
+    ]
+  }
+}
