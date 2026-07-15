@@ -23,6 +23,13 @@
 
 > ⏱️ **Processing Time**: Typically 30–90 seconds depending on the volume of CloudTrail events and the number of attached policies.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/brpmds4zbh4c)
+
+
 ## Example Output
 
 After running the generator, you'll find these files in `output/`:
