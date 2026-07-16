@@ -56,10 +56,7 @@ if agent_space_id and agent_space_region and runtime_arn:
         app,
         f"SaasStatusMcpRegistrationStack-{agent_space_region}",
         env={"region": agent_space_region},
-        description=(
-            "DevOps Agent registration for the SaaS Status MCP server "
-            "(uksb-do9bhieqqh)(tag:saas-status-mcp,observability)"
-        ),
+        description="DevOps Agent registration for the SaaS Status MCP server",
     )
 
 app.synth()
