@@ -2280,8 +2280,100 @@ def check_pool_status(endpoint, port):
 
 
 def _check_pool_status_socket(endpoint, port):
-    """Fallback pool status check using raw socket when pymysql is unavailable."""
+    """Fallback pool status check using raw MySQL protocol when pymysql is unavailable.
+
+    Implements MySQL native password authentication and COM_QUERY to retrieve
+    Threads_connected and max_connections without requiring pymysql.
+    Uses the admin credentials configured for the RDS instance.
+    """
     import struct
+    import hashlib
+
+    MYSQL_USER = "admin"
+    MYSQL_PASS = "GoatDemoK2026!"
+
+    def _read_packet(sock):
+        """Read a single MySQL packet (header + payload)."""
+        header = b""
+        while len(header) < 4:
+            chunk = sock.recv(4 - len(header))
+            if not chunk:
+                raise ConnectionError("Connection closed while reading packet header")
+            header += chunk
+        payload_length = struct.unpack("<I", header[:3] + b"\\x00")[0]
+        seq_id = header[3]
+        payload = b""
+        while len(payload) < payload_length:
+            chunk = sock.recv(payload_length - len(payload))
+            if not chunk:
+                raise ConnectionError("Connection closed while reading packet payload")
+            payload += chunk
+        return seq_id, payload
+
+    def _send_packet(sock, seq_id, payload):
+        """Send a MySQL packet with the given sequence ID."""
+        length = struct.pack("<I", len(payload))[:3]
+        header = length + struct.pack("B", seq_id)
+        sock.sendall(header + payload)
+
+    def _mysql_native_password(password, salt):
+        """Compute mysql_native_password auth response.
+
+        SHA1(password) XOR SHA1(salt + SHA1(SHA1(password)))
+        """
+        if not password:
+            return b""
+        password_bytes = password.encode("utf-8")
+        hash1 = hashlib.sha1(password_bytes).digest()
+        hash2 = hashlib.sha1(hash1).digest()
+        hash3 = hashlib.sha1(salt + hash2).digest()
+        return bytes(a ^ b for a, b in zip(hash1, hash3))
+
+    def _parse_resultset(sock):
+        """Read a simple COM_QUERY result set and return rows as list of tuples."""
+        # First packet: column count
+        seq_id, payload = _read_packet(sock)
+        if payload[0] == 0xFF:
+            # Error packet
+            return None
+        col_count = payload[0]
+
+        # Column definition packets
+        for _ in range(col_count):
+            _read_packet(sock)
+
+        # EOF packet (marker between column defs and rows) - for non-deprecate_eof
+        seq_id, payload = _read_packet(sock)
+
+        # Row packets until EOF
+        rows = []
+        while True:
+            seq_id, payload = _read_packet(sock)
+            # EOF packet: first byte 0xFE and length <= 5
+            if payload[0] == 0xFE and len(payload) <= 5:
+                break
+            # Error packet
+            if payload[0] == 0xFF:
+                break
+            # Parse length-encoded strings from row
+            offset = 0
+            row = []
+            for _ in range(col_count):
+                if offset >= len(payload):
+                    row.append(None)
+                    continue
+                if payload[offset] == 0xFB:
+                    row.append(None)
+                    offset += 1
+                else:
+                    # Length-encoded integer (simplified for small values)
+                    str_len = payload[offset]
+                    offset += 1
+                    val = payload[offset:offset + str_len].decode("utf-8", errors="replace")
+                    row.append(val)
+                    offset += str_len
+            rows.append(tuple(row))
+        return rows
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2290,51 +2382,34 @@ def _check_pool_status_socket(endpoint, port):
     except socket.timeout:
         return {{
             "status": "unknown",
-            "error": "Connection timed out \u2014 likely network issue",
+            "error": "Connection timed out - likely network issue",
         }}
     except Exception as e:
         error_msg = str(e)
         if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
             return {{
                 "status": "unknown",
-                "error": "Connection timed out \u2014 likely network issue",
+                "error": "Connection timed out - likely network issue",
             }}
         return {{
             "status": "unknown",
             "error": "Socket connection failed: {{}}".format(error_msg[:256]),
         }}
 
-    # Read MySQL initial handshake or error packet
     try:
         sock.settimeout(5)
-        header = b""
-        while len(header) < 4:
-            chunk = sock.recv(4 - len(header))
-            if not chunk:
-                break
-            header += chunk
 
-        if len(header) < 4:
-            sock.close()
-            return {{"status": "unknown", "error": "Incomplete MySQL packet header"}}
-
-        payload_length = struct.unpack("<I", header[:3] + b"\x00")[0]
-
-        payload = b""
-        while len(payload) < payload_length:
-            chunk = sock.recv(payload_length - len(payload))
-            if not chunk:
-                break
-            payload += chunk
-
-        sock.close()
+        # --- Read Initial Handshake (sequence 0) ---
+        seq_id, payload = _read_packet(sock)
 
         if not payload:
-            return {{"status": "unknown", "error": "Empty MySQL packet payload"}}
+            sock.close()
+            return {{"status": "unknown", "error": "Empty MySQL handshake payload"}}
 
         # Check if error packet (first byte = 0xFF)
         if payload[0] == 0xFF and len(payload) >= 3:
             error_code = struct.unpack("<H", payload[1:3])[0]
+            sock.close()
             if error_code == 1040:
                 return {{
                     "status": "exhausted",
@@ -2345,11 +2420,187 @@ def _check_pool_status_socket(endpoint, port):
                 "error": "MySQL error {{}} during handshake".format(error_code),
             }}
 
-        # Server sent handshake - cannot query without full auth
-        return {{
-            "status": "unknown",
-            "error": "pymysql not available; cannot query pool metrics (connection succeeded at TCP level)",
-        }}
+        # Parse handshake packet (protocol version 10)
+        offset = 0
+        protocol_version = payload[offset]
+        offset += 1
+
+        # Server version (null-terminated)
+        null_pos = payload.find(b"\\x00", offset)
+        if null_pos == -1:
+            sock.close()
+            return {{"status": "unknown", "error": "Malformed MySQL handshake"}}
+        offset = null_pos + 1
+
+        # Connection ID (4 bytes)
+        offset += 4
+
+        # Auth plugin data part 1 (8 bytes)
+        auth_data_1 = payload[offset:offset + 8]
+        offset += 8
+
+        # Filler (1 byte)
+        offset += 1
+
+        # Capability flags lower 2 bytes
+        cap_lower = struct.unpack("<H", payload[offset:offset + 2])[0]
+        offset += 2
+
+        # Character set (1 byte)
+        offset += 1
+
+        # Status flags (2 bytes)
+        offset += 2
+
+        # Capability flags upper 2 bytes
+        cap_upper = struct.unpack("<H", payload[offset:offset + 2])[0]
+        offset += 2
+
+        server_capabilities = cap_lower | (cap_upper << 16)
+
+        # Length of auth plugin data (1 byte) or 0
+        auth_data_len = payload[offset] if offset < len(payload) else 0
+        offset += 1
+
+        # Reserved (10 bytes)
+        offset += 10
+
+        # Auth plugin data part 2 (if CLIENT_SECURE_CONNECTION)
+        auth_data_2 = b""
+        if server_capabilities & 0x8000:  # CLIENT_SECURE_CONNECTION
+            part2_len = max(13, auth_data_len - 8) if auth_data_len > 0 else 13
+            auth_data_2 = payload[offset:offset + part2_len]
+            offset += part2_len
+            # Strip trailing null
+            if auth_data_2 and auth_data_2[-1:] == b"\\x00":
+                auth_data_2 = auth_data_2[:-1]
+
+        salt = auth_data_1 + auth_data_2
+
+        # --- Send Handshake Response (sequence 1) ---
+        # Compute auth response using mysql_native_password
+        auth_response = _mysql_native_password(MYSQL_PASS, salt)
+
+        # Build HandshakeResponse41
+        # Client capabilities: basic flags for query execution
+        client_cap = (
+            0x00000001 |  # CLIENT_LONG_PASSWORD
+            0x00000200 |  # CLIENT_PROTOCOL_41
+            0x00008000 |  # CLIENT_SECURE_CONNECTION
+            0x00080000 |  # CLIENT_PLUGIN_AUTH
+            0x00000008 |  # CLIENT_NO_SCHEMA (don't require USE db before queries)
+            0x00200000    # CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+        )
+
+        # Build the packet
+        resp_payload = struct.pack("<I", client_cap)       # 4 bytes: capabilities
+        resp_payload += struct.pack("<I", 16 * 1024 * 1024)  # 4 bytes: max packet size
+        resp_payload += struct.pack("B", 33)               # 1 byte: charset (utf8)
+        resp_payload += b"\\x00" * 23                       # 23 bytes: reserved
+        resp_payload += MYSQL_USER.encode("utf-8") + b"\\x00"  # username (null-terminated)
+        resp_payload += struct.pack("B", len(auth_response)) + auth_response  # auth response
+        resp_payload += b"mysql_native_password\\x00"        # auth plugin name
+
+        _send_packet(sock, 1, resp_payload)
+
+        # --- Read Auth Result (sequence 2) ---
+        seq_id, auth_result_payload = _read_packet(sock)
+
+        if auth_result_payload[0] == 0xFF:
+            # Auth failed
+            error_code = struct.unpack("<H", auth_result_payload[1:3])[0]
+            sock.close()
+            if error_code == 1040:
+                return {{
+                    "status": "exhausted",
+                    "error": "Too many connections (error 1040)",
+                }}
+            return {{
+                "status": "unknown",
+                "error": "MySQL auth failed (error {{}}): cannot query pool metrics".format(error_code),
+            }}
+
+        if auth_result_payload[0] not in (0x00, 0xFE):
+            # Unexpected response (not OK and not AuthSwitchRequest)
+            sock.close()
+            return {{
+                "status": "unknown",
+                "error": "Unexpected auth response byte: 0x{{:02x}}".format(auth_result_payload[0]),
+            }}
+
+        # Handle AuthSwitchRequest (0xFE) — server wants different auth plugin
+        if auth_result_payload[0] == 0xFE:
+            # Parse new plugin name and salt
+            plugin_end = auth_result_payload.find(b"\\x00", 1)
+            if plugin_end == -1:
+                sock.close()
+                return {{"status": "unknown", "error": "Malformed AuthSwitchRequest"}}
+            new_plugin = auth_result_payload[1:plugin_end].decode("utf-8")
+            new_salt = auth_result_payload[plugin_end + 1:]
+            if new_salt and new_salt[-1:] == b"\\x00":
+                new_salt = new_salt[:-1]
+
+            if new_plugin == "mysql_native_password":
+                new_auth_response = _mysql_native_password(MYSQL_PASS, new_salt)
+                _send_packet(sock, seq_id + 1, new_auth_response)
+                seq_id, auth_result_payload = _read_packet(sock)
+                if auth_result_payload[0] == 0xFF:
+                    error_code = struct.unpack("<H", auth_result_payload[1:3])[0]
+                    sock.close()
+                    if error_code == 1040:
+                        return {{"status": "exhausted", "error": "Too many connections (error 1040)"}}
+                    return {{"status": "unknown", "error": "Auth failed after switch (error {{}})".format(error_code)}}
+                if auth_result_payload[0] != 0x00:
+                    sock.close()
+                    return {{"status": "unknown", "error": "Auth switch failed with unexpected response"}}
+            else:
+                sock.close()
+                return {{"status": "unknown", "error": "Unsupported auth plugin: {{}}".format(new_plugin)}}
+
+        # --- Auth succeeded! Query pool metrics ---
+
+        # Query 1: SHOW GLOBAL STATUS LIKE 'Threads_connected'
+        query1 = b"SHOW GLOBAL STATUS LIKE 'Threads_connected'"
+        _send_packet(sock, 0, b"\\x03" + query1)  # COM_QUERY = 0x03
+        rows1 = _parse_resultset(sock)
+
+        threads_connected = 0
+        if rows1:
+            for row in rows1:
+                if row and len(row) >= 2 and row[0] and "threads_connected" in row[0].lower():
+                    try:
+                        threads_connected = int(row[1])
+                    except (ValueError, TypeError):
+                        pass
+
+        # Query 2: SHOW GLOBAL VARIABLES LIKE 'max_connections'
+        query2 = b"SHOW GLOBAL VARIABLES LIKE 'max_connections'"
+        _send_packet(sock, 0, b"\\x03" + query2)  # COM_QUERY = 0x03
+        rows2 = _parse_resultset(sock)
+
+        max_connections = 0
+        if rows2:
+            for row in rows2:
+                if row and len(row) >= 2 and row[0] and "max_connections" in row[0].lower():
+                    try:
+                        max_connections = int(row[1])
+                    except (ValueError, TypeError):
+                        pass
+
+        # Send COM_QUIT and close
+        try:
+            _send_packet(sock, 0, b"\\x01")  # COM_QUIT
+        except Exception:
+            pass
+        sock.close()
+
+        if max_connections <= 0:
+            return {{
+                "status": "unknown",
+                "error": "Could not retrieve max_connections from server",
+            }}
+
+        return detect_pool_exhaustion(threads_connected, max_connections)
 
     except socket.timeout:
         try:
@@ -2358,7 +2609,7 @@ def _check_pool_status_socket(endpoint, port):
             pass
         return {{
             "status": "unknown",
-            "error": "Connection timed out reading MySQL handshake",
+            "error": "Connection timed out during pool status check",
         }}
     except Exception as e:
         try:
@@ -2367,7 +2618,7 @@ def _check_pool_status_socket(endpoint, port):
             pass
         return {{
             "status": "unknown",
-            "error": "Error reading MySQL handshake: {{}}".format(str(e)[:256]),
+            "error": "Error during pool status check: {{}}".format(str(e)[:256]),
         }}
 
 

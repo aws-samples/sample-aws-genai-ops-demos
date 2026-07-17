@@ -63,6 +63,7 @@ from diagnostics_validation import (
 from concurrency import SSMConcurrencyLimiter, ConcurrencyLimitError
 from ssm_executor import execute_ssm_script, SSMExecutionError
 from scripts import DB_CONNECTIVITY_PROBE_MARKER, DNS_RESOLVE_MARKER, TCP_TRACEROUTE_MARKER, TLS_TRACEROUTE_MARKER
+from scripts.db_connectivity_probe_script import ENHANCED_DB_CONNECTIVITY_PROBE_SCRIPT
 from scripts.tls_traceroute_script import TLS_TRACEROUTE_SCRIPT
 from athena_helper import (
     AthenaConfigurationError,
@@ -2448,11 +2449,11 @@ def handle_db_connectivity_probe(params: dict) -> dict:
 
     try:
         # --- Generate script from template (Req 11.11) ---
-        script_text = _DB_CONNECTIVITY_PROBE_SCRIPT_TEMPLATE.format(
+        script_text = ENHANCED_DB_CONNECTIVITY_PROBE_SCRIPT.format(
             endpoint=endpoint,
             port=port,
             engine=engine or "",
-            DB_CONNECTIVITY_PROBE_MARKER=DB_CONNECTIVITY_PROBE_MARKER,
+            instance_id=instance_id,
         )
 
         # --- Execute via SSM (Req 3.1, 3.2, 3.8-3.14) ---
@@ -2512,12 +2513,32 @@ def handle_db_connectivity_probe(params: dict) -> dict:
             )
 
         # --- Process phase results (Reqs 11.4-11.10) ---
-        tcp_phase = result.get("tcp")
-        tls_phase = result.get("tls")
-        auth_phase = result.get("auth")
+        # Enhanced probe returns nested structure; extract connection test phases
+        # Legacy probe returns flat tcp/tls/auth at top level
+        connection_test = result.get("connection_test")
+        if connection_test and isinstance(connection_test, dict) and "tcp" in connection_test:
+            tcp_phase = connection_test.get("tcp")
+            tls_phase = connection_test.get("tls")
+            auth_phase = connection_test.get("auth")
+        else:
+            tcp_phase = result.get("tcp")
+            tls_phase = result.get("tls")
+            auth_phase = result.get("auth")
 
-        # Determine overall verdict (Req 11.13)
-        if tcp_phase and not tcp_phase.get("connected"):
+        # Enhanced probe fields
+        dns_phase = result.get("dns_resolution")
+        instance_state_phase = result.get("instance_state")
+        network_phase = result.get("network_checks")
+        pool_status = result.get("connection_pool_status")
+        param_findings = result.get("parameter_group_findings")
+        overall_verdict = result.get("overall_verdict", "")
+        root_cause = result.get("root_cause_category", "unknown")
+        remediation = result.get("remediation_steps", [])
+
+        # Determine verdict — prefer enhanced probe's overall_verdict
+        if overall_verdict and overall_verdict != "unknown":
+            verdict = overall_verdict
+        elif tcp_phase and not tcp_phase.get("connected"):
             verdict = "tcp_failed"
         elif tls_phase and not tls_phase.get("connected"):
             verdict = "tls_failed"
@@ -2532,11 +2553,19 @@ def handle_db_connectivity_probe(params: dict) -> dict:
             "endpoint": endpoint,
             "port": port,
             "engine": engine,
+            "dns_resolution": dns_phase,
+            "instance_state": instance_state_phase,
+            "network_checks": network_phase,
             "tcp": tcp_phase,
             "tls": tls_phase,
             "auth": auth_phase,
+            "connection_pool_status": pool_status,
+            "parameter_group_findings": param_findings,
             "verdict": verdict,
+            "root_cause_category": root_cause,
         }
+        if remediation:
+            probe_data["remediation_steps"] = remediation
 
         # --- Format formattedText with phase-by-phase summary (Req 11.13) ---
         formatted_lines = [
@@ -2545,6 +2574,31 @@ def handle_db_connectivity_probe(params: dict) -> dict:
         if engine:
             formatted_lines.append(f"Engine: {engine}")
         formatted_lines.append("")
+
+        # DNS phase
+        if dns_phase and dns_phase.get("status") != "skipped":
+            if dns_phase.get("status") == "pass":
+                ips = ", ".join(dns_phase.get("resolved_ips", []))
+                formatted_lines.append(f"  \u2713 DNS Resolution: {ips}")
+            else:
+                dns_error = dns_phase.get("error", "unknown")
+                formatted_lines.append(f"  \u2717 DNS Resolution: FAILED \u2014 {dns_error}")
+
+        # Instance state phase
+        if instance_state_phase and instance_state_phase.get("status") != "skipped":
+            if instance_state_phase.get("status") == "pass":
+                formatted_lines.append(f"  \u2713 RDS Instance State: available")
+            else:
+                db_status = instance_state_phase.get("db_instance_status", "unknown")
+                formatted_lines.append(f"  \u2717 RDS Instance State: {db_status}")
+
+        # Network phase
+        if network_phase and network_phase.get("status") != "skipped":
+            if network_phase.get("status") == "pass":
+                formatted_lines.append(f"  \u2713 Network Path: SG/NACL/Routes allow traffic")
+            else:
+                net_error = network_phase.get("error", "blocked")
+                formatted_lines.append(f"  \u2717 Network Path: BLOCKED \u2014 {net_error}")
 
         # TCP phase
         if tcp_phase:
@@ -2556,7 +2610,7 @@ def handle_db_connectivity_probe(params: dict) -> dict:
             else:
                 tcp_error = tcp_phase.get("error", "unknown")
                 formatted_lines.append(
-                    f"  \u2717 TCP Connect: FAILED — {tcp_error}"
+                    f"  \u2717 TCP Connect: FAILED \u2014 {tcp_error}"
                 )
 
         # TLS phase
@@ -2569,7 +2623,7 @@ def handle_db_connectivity_probe(params: dict) -> dict:
             else:
                 tls_error = tls_phase.get("error", "unknown")
                 formatted_lines.append(
-                    f"  \u2717 TLS Handshake: FAILED — {tls_error}"
+                    f"  \u2717 TLS Handshake: FAILED \u2014 {tls_error}"
                 )
         elif tcp_phase and not tcp_phase.get("connected"):
             formatted_lines.append(
@@ -2579,14 +2633,14 @@ def handle_db_connectivity_probe(params: dict) -> dict:
         # Auth phase
         if auth_phase:
             if auth_phase.get("success"):
-                protocol_resp = auth_phase.get("protocol_response", "ok")
+                server_ver = auth_phase.get("details", {}).get("server_version", "ok")
                 formatted_lines.append(
-                    f"  \u2713 Auth Handshake: success ({protocol_resp})"
+                    f"  \u2713 Auth Handshake: success ({server_ver})"
                 )
             else:
                 auth_error = auth_phase.get("error", "unknown")
                 formatted_lines.append(
-                    f"  \u2717 Auth Handshake: FAILED — {auth_error}"
+                    f"  \u2717 Auth Handshake: FAILED \u2014 {auth_error}"
                 )
         elif engine and tls_phase and not tls_phase.get("connected"):
             formatted_lines.append(
@@ -2601,6 +2655,29 @@ def handle_db_connectivity_probe(params: dict) -> dict:
                 "  - Auth Handshake: skipped (no engine specified)"
             )
 
+        # Connection pool status
+        if pool_status and pool_status.get("status") not in ("skipped", "unknown", None):
+            pool_stat = pool_status.get("status", "unknown")
+            threads = pool_status.get("threads_connected")
+            max_conn = pool_status.get("max_connections")
+            util_pct = pool_status.get("utilization_percent")
+            if threads is not None and max_conn is not None:
+                icon = "\u2717" if pool_stat in ("exhausted", "warning") else "\u2713"
+                formatted_lines.append(
+                    f"  {icon} Connection Pool: {pool_stat} ({threads}/{max_conn} = {util_pct}%)"
+                )
+            else:
+                formatted_lines.append(f"  - Connection Pool: {pool_stat}")
+
+        # Parameter group findings
+        if param_findings and param_findings.get("status") == "warning":
+            flagged = param_findings.get("flagged_parameters", [])
+            if flagged:
+                for f in flagged:
+                    formatted_lines.append(
+                        f"  \u2717 Parameter Issue: {f.get('name')}={f.get('value')} \u2014 {f.get('issue', '')[:100]}"
+                    )
+
         # Overall verdict
         formatted_lines.append("")
         verdict_display = {
@@ -2609,9 +2686,18 @@ def handle_db_connectivity_probe(params: dict) -> dict:
             "tls_failed": "TLS handshake FAILED",
             "auth_failed": "Authentication FAILED",
         }
-        formatted_lines.append(
-            f"Verdict: {verdict_display.get(verdict, verdict)}"
-        )
+        # Use display mapping for short verdicts; use raw for enhanced verdicts
+        display_verdict = verdict_display.get(verdict, verdict)
+        formatted_lines.append(f"Verdict: {display_verdict}")
+        if root_cause and root_cause != "unknown":
+            formatted_lines.append(f"Root Cause: {root_cause}")
+
+        # Remediation steps
+        if remediation:
+            formatted_lines.append("")
+            formatted_lines.append("Remediation Steps:")
+            for i, step in enumerate(remediation, 1):
+                formatted_lines.append(f"  {i}. {step}")
 
         formatted_text = "\n".join(formatted_lines)
 

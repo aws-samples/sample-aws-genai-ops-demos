@@ -105,8 +105,9 @@ export class BaseRuntimeStack extends cdk.Stack {
     // -----------------------------------------------------------------------
     const agentSourceUpload = new s3deploy.BucketDeployment(this, 'AgentSourceUpload', {
       sources: [s3deploy.Source.asset(agentSourcePath, {
-        exclude: ['venv/**', '__pycache__/**', '*.pyc', '.git/**',
-          'node_modules/**', '.DS_Store', '*.log', 'build/**', 'dist/**'],
+        exclude: ['venv', '__pycache__', '*.pyc', '.git',
+          'node_modules', '.DS_Store', '*.log', 'build', 'dist',
+          '.hypothesis', '.pytest_cache', 'test_*'],
       })],
       destinationBucket: sourceBucket,
       destinationKeyPrefix: 'agent-source/',
@@ -122,8 +123,9 @@ export class BaseRuntimeStack extends cdk.Stack {
     // 5-10 minute rebuild on every no-op synth.)
     // -----------------------------------------------------------------------
     const sourceFingerprint = cdk.FileSystem.fingerprint(agentSourcePath, {
-      exclude: ['venv/**', '__pycache__/**', '*.pyc', '.git/**',
-        'node_modules/**', '.DS_Store', '*.log', 'build/**', 'dist/**'],
+      exclude: ['venv', '__pycache__', '*.pyc', '.git',
+        'node_modules', '.DS_Store', '*.log', 'build', 'dist',
+        '.hypothesis', '.pytest_cache', 'test_*'],
     });
 
     // -----------------------------------------------------------------------

@@ -153,8 +153,96 @@ switch ($Scenario) {
             -CategoryCode "general-guidance"
     }
     "network-troubleshooting" {
+        # --- Pre-deploy: Ensure pymysql Lambda layer exists ---
+        Write-Host "`nChecking pymysql Lambda layer..." -ForegroundColor Yellow
+        $layerExists = aws lambda list-layer-versions --layer-name "pymysql" --query "LayerVersions[0].LayerVersionArn" --output text --no-cli-pager 2>&1
+        if (-not $layerExists -or $layerExists -eq "None" -or $layerExists -match "error") {
+            Write-Host "  Publishing pymysql Lambda layer..." -ForegroundColor Cyan
+            $layerDir = "$env:TEMP\pymysql_layer_$(Get-Date -Format 'yyyyMMddHHmmss')"
+            New-Item -ItemType Directory -Force -Path "$layerDir\python" | Out-Null
+            python -m pip install pymysql -t "$layerDir\python" -q 2>&1 | Out-Null
+            Compress-Archive -Path "$layerDir\python" -DestinationPath "$layerDir\pymysql-layer.zip" -Force
+            $layerArn = aws lambda publish-layer-version --layer-name "pymysql" --zip-file "fileb://$layerDir/pymysql-layer.zip" --compatible-runtimes "python3.12" --description "PyMySQL library for Lambda" --output text --no-cli-pager --query "LayerVersionArn"
+            Remove-Item -Recurse -Force $layerDir -ErrorAction SilentlyContinue
+            Write-Host "  Published: $layerArn" -ForegroundColor Green
+        } else {
+            Write-Host "  pymysql layer exists: $layerExists" -ForegroundColor Green
+        }
+
+        # --- CDK Deploy ---
         $stackGL = "GOATDemoScenariosGL-$region"
         Invoke-CdkDeploy $stackGL
+
+        # --- Post-deploy: Configure MySQL auth for pool saturator ---
+        Write-Host "`nConfiguring MySQL authentication for pool saturator..." -ForegroundColor Yellow
+
+        # Get svc-alpha instance ID from stack outputs
+        $svcAlphaId = aws cloudformation describe-stacks --stack-name $stackGL --query "Stacks[0].Outputs[?OutputKey=='ScenarioHSvcAlphaInstanceId'].OutputValue" --output text --no-cli-pager
+        $rdsEndpoint = aws cloudformation describe-stacks --stack-name $stackGL --query "Stacks[0].Outputs[?OutputKey=='ScenarioKRdsEndpoint'].OutputValue" --output text --no-cli-pager
+
+        if ($svcAlphaId -and $rdsEndpoint -and $svcAlphaId -ne "None") {
+            # Wait for SSM agent to be online
+            Write-Host "  Waiting for SSM agent on svc-alpha ($svcAlphaId)..." -ForegroundColor DarkGray
+            $ssmReady = $false
+            for ($i = 0; $i -lt 30; $i++) {
+                $pingStatus = aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$svcAlphaId" --query "InstanceInformationList[0].PingStatus" --output text --no-cli-pager 2>&1
+                if ($pingStatus -eq "Online") { $ssmReady = $true; break }
+                Start-Sleep -Seconds 10
+            }
+
+            if ($ssmReady) {
+                # Install mariadb client and run ALTER USER via SSM
+                # Note: For fresh deployments, the authentication_policy parameter group
+                # takes effect immediately and ALTER USER may not be needed. If the pool
+                # is already saturated (Lambda connected successfully), skip ALTER USER.
+                Write-Host "  Checking if pool saturator is already working..." -ForegroundColor Cyan
+                $prevEAP0 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+                aws lambda invoke --function-name "svc-data-sync-worker" --payload '{}' "$env:TEMP\saturator_check.json" --output text --no-cli-pager 2>$null | Out-Null
+                $ErrorActionPreference = $prevEAP0
+                $satCheck = Get-Content "$env:TEMP\saturator_check.json" -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($satCheck -and $satCheck.active -gt 10) {
+                    Write-Host "  Pool saturator already holding $($satCheck.active) connections - skipping ALTER USER." -ForegroundColor Green
+                } else {
+                    Write-Host "  Running ALTER USER to set mysql_native_password..." -ForegroundColor Cyan
+                    $ssmScript = "#!/bin/bash`nyum install -y mariadb105 -q 2>/dev/null`nmysql -h $rdsEndpoint -u admin -pGoatDemoK2026! -e `"ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!'; TRUNCATE TABLE performance_schema.host_cache;`" 2>&1"
+                    $ssmParamsFile = "$env:TEMP\ssm_alter_user.json"
+                    $json = @{ commands = @($ssmScript) } | ConvertTo-Json -Depth 3
+                    [System.IO.File]::WriteAllText($ssmParamsFile, $json, [System.Text.UTF8Encoding]::new($false))
+                    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+                    $cmdId = aws ssm send-command --instance-ids $svcAlphaId --document-name "AWS-RunShellScript" --parameters "file://$ssmParamsFile" --output text --no-cli-pager --query "Command.CommandId" 2>&1
+                    $ErrorActionPreference = $prevEAP
+                    if ($cmdId -and $cmdId -notmatch "error|Error") {
+                        Start-Sleep -Seconds 25
+                        $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+                        $cmdResult = aws ssm get-command-invocation --command-id $cmdId --instance-id $svcAlphaId --query "Status" --output text --no-cli-pager 2>&1
+                        $ErrorActionPreference = $prevEAP2
+                        if ($cmdResult -eq "Success") {
+                            Write-Host "  MySQL auth configured successfully." -ForegroundColor Green
+                        } else {
+                            Write-Host "  Warning: ALTER USER may have failed (status: $cmdResult). Pool saturator may not authenticate." -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Host "  Warning: SSM send-command failed. Pool saturator may not authenticate." -ForegroundColor Yellow
+                    }
+                    Remove-Item $ssmParamsFile -ErrorAction SilentlyContinue
+                }
+
+                # Invoke pool saturator to pre-saturate connections
+                Write-Host "  Pre-saturating connection pool..." -ForegroundColor Cyan
+                for ($j = 0; $j -lt 3; $j++) {
+                    aws lambda invoke --function-name "svc-data-sync-worker" --payload '{}' "$env:TEMP\saturator_out.json" --output text --no-cli-pager 2>$null | Out-Null
+                    Start-Sleep -Seconds 3
+                }
+                $satResult = Get-Content "$env:TEMP\saturator_out.json" -ErrorAction SilentlyContinue
+                Write-Host "  Pool saturator result: $satResult" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  Warning: SSM agent not ready on svc-alpha. Pool saturator may not authenticate." -ForegroundColor Yellow
+                Write-Host "  Manual fix after instance is ready:" -ForegroundColor DarkGray
+                Write-Host "    mysql -h $rdsEndpoint -u admin -pGoatDemoK2026! -e `"ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!';`"" -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host "  Warning: Could not find svc-alpha or RDS endpoint from stack outputs." -ForegroundColor Yellow
+        }
     }
 }
 

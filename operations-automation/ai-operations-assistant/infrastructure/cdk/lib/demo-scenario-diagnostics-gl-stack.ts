@@ -546,7 +546,7 @@ export class DemoScenarioDiagnosticsGLStack extends cdk.Stack {
       '    if payload[0] == 0xFF:',
       '        ecode = struct.unpack(\"<H\", payload[1:3])[0]',
       '        msg_start = 4',
-      '        if len(payload) > 4 and payload[3:4] == b\"#\":",
+      '        if len(payload) > 4 and payload[3:4] == b"#":',
       '            msg_start = 9',
       '        errmsg = payload[msg_start:].decode(\"ascii\", errors=\"replace\")',
       '        print(f\"CONNECTION_FAILED|error_code={ecode}|message={errmsg}\")',
@@ -1157,17 +1157,45 @@ def handler(event, context):
     });
 
     // -----------------------------------------------------------------------
+    // Scenario K — Custom Parameter Group
+    //
+    // Sets authentication_policy to mysql_native_password so the pymysql-based
+    // pool-saturator Lambda can authenticate reliably with MySQL 8.4.
+    // Does NOT override max_connections — keeps RDS default (~60 for
+    // db.t4g.micro). This makes pool exhaustion invisible from the AWS API
+    // (DescribeDBParameters shows normal max_connections defaults).
+    //
+    // NOTE: The admin user must also be altered to use mysql_native_password:
+    //   ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!';
+    // This is done once after initial deployment (not in CDK since RDS doesn't
+    // support ALTER USER via CloudFormation).
+    // -----------------------------------------------------------------------
+    const scenarioKParamGroup = new rds.CfnDBParameterGroup(this, 'ScenarioKParamGroup', {
+      family: 'mysql8.4',
+      description: 'GOAT Scenario K - mysql_native_password auth for pool saturator',
+      parameters: {
+        authentication_policy: '*:mysql_native_password',
+      },
+      tags: [
+        { key: 'Name', value: 'goat-scenario-k-params' },
+        { key: 'goat-demo', value: 'true' },
+        { key: 'goat-scenario', value: 'network-troubleshooting-k' },
+        { key: 'auto-delete', value: 'no' },
+      ],
+    });
+
+    // -----------------------------------------------------------------------
     // Scenario K — RDS MySQL instance (svc-data-01)
     //
     // Single-AZ, no public access, db.t4g.micro (minimal demo resource).
-    // Uses the DEFAULT parameter group (no custom max_connections override).
-    // The default max_connections for db.t4g.micro is ~85 (formula-based).
+    // Uses default max_connections (~60 for db.t4g.micro, formula-based).
     //
-    // The pool-saturator Lambda holds 90+ connections, exhausting the pool.
-    // This makes the issue INVISIBLE from the AWS API — DescribeDBParameters
-    // shows normal defaults, so the DevOps Agent cannot diagnose the problem
-    // without using the db_connectivity_probe tool (which runs SHOW STATUS
-    // from inside the VPC to discover Threads_connected >= max_connections).
+    // The pool-saturator Lambda holds 58+ connections via pymysql, exhausting
+    // the pool. This makes the issue INVISIBLE from the AWS API —
+    // DescribeDBParameters shows normal defaults, so the DevOps Agent cannot
+    // diagnose the problem without using the db_connectivity_probe tool
+    // (which runs SHOW STATUS from inside the VPC to discover
+    // Threads_connected >= max_connections).
     // -----------------------------------------------------------------------
     this.scenarioKRdsInstance = new rds.CfnDBInstance(this, 'ScenarioKRdsInstance', {
       dbInstanceIdentifier: 'svc-data-01',
@@ -1178,7 +1206,7 @@ def handler(event, context):
       allocatedStorage: '20',
       storageType: 'gp2',
       dbSubnetGroupName: this.scenarioKDbSubnetGroup.ref,
-      // No custom parameter group — uses RDS default (max_connections ~85)
+      dbParameterGroupName: scenarioKParamGroup.ref,
       vpcSecurityGroups: [scenarioKDbSg.attrGroupId],
       publiclyAccessible: false,
       multiAz: false,
@@ -1204,9 +1232,10 @@ def handler(event, context):
     // -----------------------------------------------------------------------
     // Scenario K — Pool Saturator Lambda (connection pool exhaustion client)
     //
-    // A Lambda function that maintains 90 persistent MySQL connections to
-    // svc-data-01, saturating the default max_connections (~85 for
-    // db.t4g.micro). Triggered every 5 minutes via EventBridge.
+    // A Lambda function that maintains persistent MySQL connections to
+    // svc-data-01 via pymysql (Lambda layer), saturating the default
+    // max_connections (~60 for db.t4g.micro). Triggered every minute via
+    // EventBridge to maintain saturation across Lambda container recycling.
     //
     // KEY DESIGN: No custom parameter group is used — the RDS instance has
     // normal default settings. The agent CANNOT detect this issue from AWS
@@ -1271,8 +1300,10 @@ def handler(event, context):
       ],
     });
 
-    // Pool Saturator Lambda function — Python 3.12, placeholder code
-    // (actual handler logic is added in task 1.4)
+    // Pool Saturator Lambda function — uses pymysql via Lambda Layer
+    // Maintains persistent MySQL connections to exhaust the RDS connection pool.
+    // The pymysql layer is published separately (arn below) and handles MySQL 8.4
+    // authentication negotiation (caching_sha2_password → mysql_native_password).
     const scenarioKPoolSaturator = new lambda.CfnFunction(this, 'ScenarioKPoolSaturator', {
       functionName: 'svc-data-sync-worker',
       runtime: 'python3.12',
@@ -1281,6 +1312,9 @@ def handler(event, context):
       timeout: 300,
       reservedConcurrentExecutions: 1,
       role: scenarioKPoolSaturatorRole.attrArn,
+      layers: [
+        `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:layer:pymysql:1`,
+      ],
       vpcConfig: {
         subnetIds: [this.scenarioHSubnetC.attrSubnetId],
         securityGroupIds: [scenarioKPoolSaturatorSg.attrGroupId],
@@ -1290,12 +1324,14 @@ def handler(event, context):
           DB_ENDPOINT: this.scenarioKRdsInstance.attrEndpointAddress,
           DB_USERNAME: 'admin',
           DB_PASSWORD: 'GoatDemoK2026!',
-          TARGET_CONNECTIONS: '90',
+          DB_PORT: '3306',
+          TARGET_CONNECTIONS: '150',
         },
       },
       code: {
         zipFile: [
-          'import os, socket, struct, time, json, logging',
+          'import os, time, json, logging',
+          'import pymysql',
           '',
           'logger = logging.getLogger()',
           'logger.setLevel(logging.INFO)',
@@ -1310,12 +1346,12 @@ def handler(event, context):
           '',
           '    # Clean dead connections',
           '    alive = []',
-          '    for s in connections:',
+          '    for c in connections:',
           '        try:',
-          '            s.sendall(b"\\x01\\x00\\x00\\x00\\x0e")',
-          '            alive.append(s)',
+          '            c.ping(reconnect=False)',
+          '            alive.append(c)',
           '        except:',
-          '            try: s.close()',
+          '            try: c.close()',
           '            except: pass',
           '    connections[:] = alive',
           '',
@@ -1323,65 +1359,22 @@ def handler(event, context):
           '    opened = 0',
           '    while len(connections) < target:',
           '        try:',
-          '            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)',
-          '            s.settimeout(5)',
-          '            s.connect((endpoint, port))',
-          '            # Read MySQL handshake',
-          '            hdr = b""',
-          '            while len(hdr) < 4: hdr += s.recv(4 - len(hdr))',
-          '            plen = struct.unpack("<I", hdr[:3] + b"\\x00")[0]',
-          '            payload = b""',
-          '            while len(payload) < plen: payload += s.recv(plen - len(payload))',
-          '            if payload[0] == 0xFF:',
-          '                logger.info(f"Max retries at {len(connections)} conns (error packet)")',
-          '                s.close()',
+          '            conn = pymysql.connect(',
+          '                host=endpoint, port=port,',
+          '                user=username, password=password,',
+          '                database="information_schema",',
+          '                connect_timeout=5, read_timeout=300',
+          '            )',
+          '            connections.append(conn)',
+          '            opened += 1',
+          '        except pymysql.err.OperationalError as e:',
+          '            if e.args[0] == 1040:',
+          '                logger.info(f"Pool exhausted at {len(connections)} conns")',
           '                break',
-          '            # Send auth response (native password)',
-          '            # Extract salt from handshake',
-          '            null1 = payload.find(b"\\x00", 1)',
-          '            salt1 = payload[null1+5:null1+13]',
-          '            rest = payload[null1+13+1:]  # skip filler',
-          '            # capabilities, charset, etc - skip to salt2',
-          '            salt2 = rest[12:12+12] if len(rest) > 24 else b""',
-          '            salt = salt1 + salt2',
-          '            # Build HandshakeResponse41 with mysql_native_password',
-          '            import hashlib',
-          '            pwd_hash = hashlib.sha1(password.encode()).digest()',
-          '            pwd_hash2 = hashlib.sha1(pwd_hash).digest()',
-          '            xor_input = hashlib.sha1(salt + pwd_hash2).digest()',
-          '            auth_resp = bytes(a ^ b for a, b in zip(pwd_hash, xor_input))',
-          '            # Build packet',
-          '            cap = 0x000FA68D',
-          '            pkt = struct.pack("<IIB", cap, 16777216, 33)',
-          '            pkt += b"\\x00" * 23',
-          '            pkt += username.encode() + b"\\x00"',
-          '            pkt += bytes([len(auth_resp)]) + auth_resp',
-          '            pkt += b"\\x00"  # no db',
-          '            pkt_hdr = struct.pack("<I", len(pkt))[:3] + b"\\x01"',
-          '            s.sendall(pkt_hdr + pkt)',
-          '            # Read response',
-          '            rhdr = b""',
-          '            while len(rhdr) < 4: rhdr += s.recv(4 - len(rhdr))',
-          '            rlen = struct.unpack("<I", rhdr[:3] + b"\\x00")[0]',
-          '            rbody = b""',
-          '            while len(rbody) < rlen: rbody += s.recv(rlen - len(rbody))',
-          '            if rbody[0] == 0x00:  # OK packet',
-          '                connections.append(s)',
-          '                opened += 1',
-          '            elif rbody[0] == 0xFF:  # Error',
-          '                ecode = struct.unpack("<H", rbody[1:3])[0]',
-          '                if ecode == 1040:',
-          '                    logger.info(f"Connection limit reached at {len(connections)} conns")',
-          '                    s.close()',
-          '                    break',
-          '                logger.warning(f"Auth error {ecode}")',
-          '                s.close()',
-          '                break',
-          '            else:',
-          '                connections.append(s)',
-          '                opened += 1',
+          '            logger.error(f"Connection error: {e}")',
+          '            break',
           '        except Exception as e:',
-          '            logger.error(f"Connection failed: {e}")',
+          '            logger.error(f"Unexpected error: {e}")',
           '            break',
           '',
           '    result = {"active": len(connections), "target": target, "opened": opened, "status": "ok"}',
@@ -1427,6 +1420,11 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'ScenarioKRdsInstanceId', {
       value: this.scenarioKRdsInstance.ref,
       description: 'Scenario K svc-data-01 RDS instance ID',
+    });
+
+    new cdk.CfnOutput(this, 'ScenarioKTestPrompt', {
+      value: `Use the rds troubleshooting tool to investigate why instance ${this.scenarioHSvcAlphaInstance.ref} can't connect to ${this.scenarioKRdsInstance.attrEndpointAddress} on port 3306`,
+      description: 'Scenario K - DevOps Agent test prompt (copy-paste into agent chat)',
     });
 
     // =========================================================================

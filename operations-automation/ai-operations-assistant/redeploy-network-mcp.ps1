@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # G.O.A.T. - Full uninstall + redeploy NETWORK-MCP mode only
 #
 # Destroys every GOAT stack (both CDK apps) in dependency order, then
@@ -208,7 +208,7 @@ if ([string]::IsNullOrWhiteSpace($leftover)) {
 
     # Delete any remaining active stacks (CREATE_COMPLETE, UPDATE_COMPLETE, etc.)
     # that CDK never reached due to the earlier abort. Delete in reverse-dependency
-    # order: Runtime stacks first, then Infra, then Data.
+    # order: Demo/Scenario stacks first, then Runtime, then Infra, then Data.
     $activeStacks = aws cloudformation list-stacks `
         --query "StackSummaries[?contains(StackName,'GOAT') && (StackStatus=='CREATE_COMPLETE' || StackStatus=='UPDATE_COMPLETE' || StackStatus=='UPDATE_ROLLBACK_COMPLETE')].StackName" `
         --output text --no-cli-pager 2>&1
@@ -217,33 +217,67 @@ if ([string]::IsNullOrWhiteSpace($leftover)) {
     if ($activeList.Count -gt 0) {
         Write-Host "Destroying $($activeList.Count) remaining active stack(s) individually..." -ForegroundColor Yellow
 
-        # Sort: Runtime stacks first, then Infra, then Data/Auth/Frontend (reverse dependency)
-        $runtimeStacks = $activeList | Where-Object { $_ -match "Runtime" }
-        $infraStacks = $activeList | Where-Object { $_ -match "Infra" -and $_ -notmatch "Runtime" }
-        $otherStacks = $activeList | Where-Object { $_ -notmatch "Runtime" -and $_ -notmatch "Infra" }
-        $orderedStacks = @($runtimeStacks) + @($infraStacks) + @($otherStacks)
+        # Sort: Demo/Scenario first, then Runtime, then Infra, then Data (reverse dependency)
+        $demoStacks = $activeList | Where-Object { $_ -match "Demo|Scenario" }
+        $runtimeStacks = $activeList | Where-Object { $_ -match "Runtime" -and $_ -notmatch "Demo|Scenario" }
+        $infraStacks = $activeList | Where-Object { $_ -match "Infra" -and $_ -notmatch "Runtime|Demo|Scenario" }
+        $dataStacks = $activeList | Where-Object { $_ -match "Data" -and $_ -notmatch "Runtime|Infra|Demo|Scenario" }
+        $otherStacks = $activeList | Where-Object { $_ -notmatch "Runtime|Infra|Data|Demo|Scenario" }
+        $waves = @(
+            @($demoStacks) + @($runtimeStacks) + @($otherStacks),  # wave 1: demo + runtime + other
+            @($infraStacks),                                         # wave 2: infra (depends on demo/runtime)
+            @($dataStacks)                                           # wave 3: data (depends on infra)
+        )
 
-        foreach ($stack in $orderedStacks) {
-            Write-Host "  Deleting $stack..." -ForegroundColor Yellow
-            aws cloudformation delete-stack --stack-name $stack --no-cli-pager 2>&1 | Out-Null
-        }
-        # Wait for all (in parallel - they're independent once ordered correctly)
-        foreach ($stack in $orderedStacks) {
-            Write-Host "  Waiting for $stack..." -ForegroundColor DarkGray
-            aws cloudformation wait stack-delete-complete --stack-name $stack --no-cli-pager 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                # Might be another AgentCore timeout - force-delete
-                Write-Host "  $stack delete timed out - force-deleting with --retain-resources..." -ForegroundColor DarkYellow
-                $failedRes = aws cloudformation describe-stack-resources --stack-name $stack `
-                    --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" `
-                    --output text --no-cli-pager 2>&1
-                $retainRes = @(($failedRes -split '\s+') | Where-Object { $_ -and $_ -ne "None" })
-                if ($retainRes.Count -gt 0) {
-                    aws cloudformation delete-stack --stack-name $stack --retain-resources $retainRes --no-cli-pager 2>&1 | Out-Null
-                } else {
-                    aws cloudformation delete-stack --stack-name $stack --no-cli-pager 2>&1 | Out-Null
-                }
+        foreach ($wave in $waves) {
+            $waveStacks = @($wave | Where-Object { $_ })
+            if ($waveStacks.Count -eq 0) { continue }
+
+            # Issue delete for all stacks in this wave
+            foreach ($stack in $waveStacks) {
+                Write-Host "  Deleting $stack..." -ForegroundColor Yellow
+                $prevEAP3 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+                aws cloudformation delete-stack --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                $ErrorActionPreference = $prevEAP3
+            }
+
+            # Wait for all stacks in this wave to complete
+            foreach ($stack in $waveStacks) {
+                Write-Host "  Waiting for $stack..." -ForegroundColor DarkGray
+                $prevEAP4 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
                 aws cloudformation wait stack-delete-complete --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                $waitExit = $LASTEXITCODE
+                $ErrorActionPreference = $prevEAP4
+
+                if ($waitExit -ne 0) {
+                    # Check if stack still exists and its status
+                    $stackStatus = aws cloudformation describe-stacks --stack-name $stack `
+                        --query "Stacks[0].StackStatus" --output text --no-cli-pager 2>&1
+                    if ($stackStatus -match "does not exist" -or $stackStatus -eq "DELETE_COMPLETE") {
+                        Write-Host "  $stack deleted (confirmed)." -ForegroundColor Green
+                        continue
+                    }
+                    if ($stackStatus -eq "DELETE_FAILED") {
+                        Write-Host "  $stack failed - force-deleting with --retain-resources..." -ForegroundColor DarkYellow
+                        $failedRes = aws cloudformation describe-stack-resources --stack-name $stack `
+                            --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" `
+                            --output text --no-cli-pager 2>&1
+                        $retainRes = @(($failedRes -split '\s+') | Where-Object { $_ -and $_ -ne "None" })
+                        if ($retainRes.Count -gt 0) {
+                            aws cloudformation delete-stack --stack-name $stack --retain-resources $retainRes --no-cli-pager 2>&1 | Out-Null
+                        } else {
+                            aws cloudformation delete-stack --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                        }
+                        aws cloudformation wait stack-delete-complete --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                    } elseif ($stackStatus -eq "DELETE_IN_PROGRESS") {
+                        Write-Host "  $stack still deleting - waiting again..." -ForegroundColor DarkGray
+                        aws cloudformation wait stack-delete-complete --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                    } else {
+                        Write-Host "  $stack in state $stackStatus - retrying delete..." -ForegroundColor DarkYellow
+                        aws cloudformation delete-stack --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                        aws cloudformation wait stack-delete-complete --stack-name $stack --no-cli-pager 2>&1 | Out-Null
+                    }
+                }
             }
         }
 
@@ -389,7 +423,7 @@ foreach ($ctxFile in $contextFiles) {
         Remove-Item -Recurse -Force $ctxFile -ErrorAction SilentlyContinue
     }
 }
-Write-Host "  Context caches cleared — CDK will re-resolve VPC lookups from live exports." -ForegroundColor Green
+Write-Host "  Context caches cleared -- CDK will re-resolve VPC lookups from live exports." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 5. REDEPLOY - Network Agent + MCP integration (network-mcp mode)
@@ -415,7 +449,7 @@ Pop-Location
 
 Write-Step "Deploying in network-mcp mode (Network Agent + DevOps MCP integration only)"
 Push-Location $root
-& ".\deploy-all.ps1" -DeploymentMode "network-mcp"
+& '.\deploy-all.ps1' -DeploymentMode "network-mcp"
 $deployExit = $LASTEXITCODE
 Pop-Location
 if ($deployExit -ne 0) { Write-Host "deploy-all.ps1 -DeploymentMode network-mcp failed." -ForegroundColor Red; exit 1 }
@@ -482,5 +516,5 @@ Write-Host "    - Scenario K  : Database Troubleshooting (db_connectivity_probe)
 Write-Host "    - Scenario L  : SSM Troubleshooting (ssm_health_check)" -ForegroundColor White
 Write-Host ""
 Write-Host "  No Cognito sign-in required - use via AWS DevOps Agent MCP integration." -ForegroundColor DarkGray
-Write-Host "  To add the full chat UI later: .\deploy-all.ps1 -DeploymentMode full" -ForegroundColor DarkGray
+Write-Host '  To add the full chat UI later: .\deploy-all.ps1 -DeploymentMode full' -ForegroundColor DarkGray
 Write-Host ""

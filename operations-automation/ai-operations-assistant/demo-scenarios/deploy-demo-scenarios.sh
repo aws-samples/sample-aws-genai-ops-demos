@@ -181,6 +181,73 @@ case "$SCENARIO" in
             "service-network-firewall" \
             "general-guidance"
         ;;
+    network-troubleshooting)
+        # --- Pre-deploy: Ensure pymysql Lambda layer exists ---
+        echo -e "\n\033[0;33mChecking pymysql Lambda layer...\033[0m"
+        layer_arn=$(aws lambda list-layer-versions --layer-name "pymysql" --query "LayerVersions[0].LayerVersionArn" --output text --no-cli-pager 2>/dev/null || echo "None")
+        if [ -z "$layer_arn" ] || [ "$layer_arn" = "None" ]; then
+            echo -e "  \033[0;36mPublishing pymysql Lambda layer...\033[0m"
+            layer_dir=$(mktemp -d)
+            mkdir -p "$layer_dir/python"
+            python3 -m pip install pymysql -t "$layer_dir/python" -q 2>/dev/null
+            cd "$layer_dir" && zip -r pymysql-layer.zip python -q
+            layer_arn=$(aws lambda publish-layer-version --layer-name "pymysql" --zip-file "fileb://$layer_dir/pymysql-layer.zip" --compatible-runtimes "python3.12" --description "PyMySQL library for Lambda" --output text --no-cli-pager --query "LayerVersionArn")
+            rm -rf "$layer_dir"
+            echo -e "  \033[0;32mPublished: $layer_arn\033[0m"
+            cd "$CDK_DIR/.."
+        else
+            echo -e "  \033[0;32mpymysql layer exists: $layer_arn\033[0m"
+        fi
+
+        # --- CDK Deploy ---
+        stack_gl="GOATDemoScenariosGL-$region"
+        invoke_cdk_deploy "$stack_gl"
+
+        # --- Post-deploy: Configure MySQL auth for pool saturator ---
+        echo -e "\n\033[0;33mConfiguring MySQL authentication for pool saturator...\033[0m"
+
+        svc_alpha_id=$(aws cloudformation describe-stacks --stack-name "$stack_gl" --query "Stacks[0].Outputs[?OutputKey=='ScenarioHSvcAlphaInstanceId'].OutputValue" --output text --no-cli-pager 2>/dev/null)
+        rds_endpoint=$(aws cloudformation describe-stacks --stack-name "$stack_gl" --query "Stacks[0].Outputs[?OutputKey=='ScenarioKRdsEndpoint'].OutputValue" --output text --no-cli-pager 2>/dev/null)
+
+        if [ -n "$svc_alpha_id" ] && [ "$svc_alpha_id" != "None" ] && [ -n "$rds_endpoint" ]; then
+            # Wait for SSM agent
+            echo -e "  \033[0;90mWaiting for SSM agent on svc-alpha ($svc_alpha_id)...\033[0m"
+            ssm_ready=false
+            for i in $(seq 1 30); do
+                ping_status=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$svc_alpha_id" --query "InstanceInformationList[0].PingStatus" --output text --no-cli-pager 2>/dev/null || echo "")
+                if [ "$ping_status" = "Online" ]; then ssm_ready=true; break; fi
+                sleep 10
+            done
+
+            if [ "$ssm_ready" = "true" ]; then
+                echo -e "  \033[0;36mRunning ALTER USER to set mysql_native_password...\033[0m"
+                alter_cmd="yum install -y mariadb105 -q 2>/dev/null; mysql -h $rds_endpoint -u admin -pGoatDemoK2026! -e \"ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!'; TRUNCATE TABLE performance_schema.host_cache;\" 2>&1"
+                cmd_id=$(aws ssm send-command --instance-ids "$svc_alpha_id" --document-name "AWS-RunShellScript" --parameters "commands=[\"$alter_cmd\"]" --output text --no-cli-pager --query "Command.CommandId")
+                sleep 20
+                cmd_result=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$svc_alpha_id" --query "Status" --output text --no-cli-pager 2>/dev/null || echo "Unknown")
+                if [ "$cmd_result" = "Success" ]; then
+                    echo -e "  \033[0;32mMySQL auth configured successfully.\033[0m"
+                else
+                    echo -e "  \033[0;33mWarning: ALTER USER may have failed (status: $cmd_result). Pool saturator may not authenticate.\033[0m"
+                    echo -e "  \033[0;90mManual fix: mysql -h $rds_endpoint -u admin -pGoatDemoK2026! -e \"ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!';\"\033[0m"
+                fi
+
+                # Pre-saturate connection pool
+                echo -e "  \033[0;36mPre-saturating connection pool...\033[0m"
+                for j in 1 2 3; do
+                    aws lambda invoke --function-name "svc-data-sync-worker" --payload '{}' /tmp/saturator_out.json --output text --no-cli-pager 2>/dev/null || true
+                    sleep 3
+                done
+                sat_result=$(cat /tmp/saturator_out.json 2>/dev/null || echo "N/A")
+                echo -e "  \033[0;90mPool saturator result: $sat_result\033[0m"
+            else
+                echo -e "  \033[0;33mWarning: SSM agent not ready on svc-alpha. Pool saturator may not authenticate.\033[0m"
+                echo -e "  \033[0;90mManual fix: mysql -h $rds_endpoint -u admin -pGoatDemoK2026! -e \"ALTER USER admin IDENTIFIED WITH mysql_native_password BY 'GoatDemoK2026!';\"\033[0m"
+            fi
+        else
+            echo -e "  \033[0;33mWarning: Could not find svc-alpha or RDS endpoint from stack outputs.\033[0m"
+        fi
+        ;;
 esac
 
 # ---------------------------------------------------------------------------
