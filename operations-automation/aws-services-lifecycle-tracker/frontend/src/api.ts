@@ -320,3 +320,77 @@ export const deleteActionPlan = async (
     plan_id: planId
   });
 };
+
+// Health Event Types
+export interface HealthEvent {
+  event_arn: string;
+  service_name: string;
+  health_service?: string;
+  event_type_code: string;
+  event_type_category: 'issue' | 'accountNotification' | 'scheduledChange';
+  region: string;
+  availability_zone?: string;
+  start_time: string;
+  end_time?: string;
+  last_updated_time?: string;
+  status_code: 'open' | 'closed' | 'upcoming';
+  description: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  priority?: string;
+  lifecycle_context?: Record<string, any>;
+  affected_entities?: any[];
+  notification_status?: 'active' | 'resolved';
+  resolution_time?: string;
+}
+
+export interface HealthSummary {
+  active_events: HealthEvent[];
+  by_service: Record<string, HealthEvent[]>;
+  total_active: number;
+}
+
+// Health API Functions
+
+export const fetchHealthSummary = async (): Promise<HealthSummary> => {
+  const result = await invokeAgentWithPayload({
+    action: 'get_health_summary'
+  });
+
+  const events: HealthEvent[] = result.events || result.active_events || [];
+  const byService: Record<string, HealthEvent[]> = {};
+
+  for (const event of events) {
+    const service = event.service_name || 'Unknown';
+    if (!byService[service]) {
+      byService[service] = [];
+    }
+    byService[service].push(event);
+  }
+
+  return {
+    active_events: events,
+    by_service: result.by_service || byService,
+    total_active: result.total_active ?? events.length
+  };
+};
+
+export const fetchHealthEvents = async (filters?: {
+  service?: string;
+  event_type_category?: string;
+  severity?: string;
+  status_code?: string;
+}): Promise<HealthEvent[]> => {
+  const result = await invokeAgentWithPayload({
+    action: 'list_health_events',
+    filters
+  });
+  return result.events || [];
+};
+
+export const fetchHealthEvent = async (eventArn: string): Promise<HealthEvent | null> => {
+  const result = await invokeAgentWithPayload({
+    action: 'get_health_event',
+    event_arn: eventArn
+  });
+  return result.event || null;
+};
