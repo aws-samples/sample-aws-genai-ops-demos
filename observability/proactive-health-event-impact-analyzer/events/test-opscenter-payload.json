@@ -1,0 +1,60 @@
+{
+  "investigationResult": {
+    "investigationStatus": "IMPACT_DETECTED",
+    "summary": "EC2 scheduled maintenance will restart 2 payment-service instances in eu-west-1a. No multi-AZ redundancy detected — service will be unavailable during the 4-hour maintenance window.",
+    "rootCause": "Hardware degradation in availability zone eu-west-1a requires host replacement",
+    "priority": "HIGH",
+    "findings": [
+      {
+        "description": "payment-service instances will be stopped and restarted during maintenance window (02:00-06:00 UTC)",
+        "severity": "HIGH",
+        "affectedResources": ["i-0abc123def456789a", "i-0abc123def456789b"],
+        "owningTeam": "payments"
+      },
+      {
+        "description": "No Auto Scaling group detected — instances will not be automatically replaced",
+        "severity": "MEDIUM",
+        "affectedResources": ["i-0abc123def456789a", "i-0abc123def456789b"],
+        "owningTeam": "payments"
+      }
+    ],
+    "recommendations": [
+      {
+        "description": "Launch replacement instances in eu-west-1b before the maintenance window",
+        "priority": "HIGH"
+      },
+      {
+        "description": "Configure an Auto Scaling group with multi-AZ distribution to prevent future single-AZ failures",
+        "priority": "MEDIUM"
+      }
+    ],
+    "investigationLink": "https://eu-west-1.console.aws.amazon.com/devopsagent/home?region=eu-west-1#/spaces/space-123/investigations/inv-456",
+    "teamsToNotify": ["payments"]
+  },
+  "healthEvent": {
+    "eventId": "arn:aws:health:eu-west-1::event/EC2/AWS_EC2_SCHEDULED_MAINTENANCE/AWS_EC2_SCHEDULED_MAINTENANCE_20260522",
+    "service": "EC2",
+    "eventType": "AWS_EC2_SCHEDULED_MAINTENANCE",
+    "category": "scheduledChange",
+    "region": "eu-west-1",
+    "availabilityZone": "eu-west-1a",
+    "startTime": "2026-05-28T02:00:00Z",
+    "endTime": "2026-05-28T06:00:00Z",
+    "status": "upcoming",
+    "description": "We have detected degradation of the underlying hardware hosting your Amazon EC2 instances in the eu-west-1a availability zone.",
+    "affectedResources": [
+      {
+        "resourceId": "i-0abc123def456789a",
+        "tags": {"Name": "payment-service-1", "Environment": "production", "Team": "payments"},
+        "status": "PENDING"
+      },
+      {
+        "resourceId": "i-0abc123def456789b",
+        "tags": {"Name": "payment-service-2", "Environment": "production", "Team": "payments"},
+        "status": "PENDING"
+      }
+    ],
+    "sourceAccountId": "123456789012",
+    "ingestedAt": "2026-05-26T00:00:00Z"
+  }
+}

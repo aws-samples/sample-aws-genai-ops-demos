@@ -1,0 +1,19 @@
+{
+  "name": "notifier",
+  "version": "1.0.0",
+  "description": "Routes impact notifications to affected teams",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js --external:@aws-sdk/*"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sns": "^3.600.0",
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-account": "^3.600.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.140",
+    "esbuild": "^0.21.0",
+    "typescript": "~5.4.5"
+  }
+}

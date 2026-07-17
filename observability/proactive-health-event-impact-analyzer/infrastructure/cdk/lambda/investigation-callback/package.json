@@ -1,0 +1,18 @@
+{
+  "name": "investigation-callback",
+  "version": "1.0.0",
+  "description": "Handles DevOps Agent investigation completion and resumes Step Functions",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js --external:@aws-sdk/*"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-sfn": "^3.600.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.140",
+    "esbuild": "^0.21.0",
+    "typescript": "~5.4.5"
+  }
+}
