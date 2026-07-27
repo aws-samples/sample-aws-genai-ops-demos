@@ -49,7 +49,7 @@ function App() {
           <TopNavigation
             identity={{
               href: "/",
-              title: "AI IAM Access Analyzer Assistant",
+              title: "IAM Security Assistant",
             }}
             utilities={[
               {

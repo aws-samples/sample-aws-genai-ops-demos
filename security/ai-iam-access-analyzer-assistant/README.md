@@ -1,25 +1,29 @@
-# AI IAM Access Analyzer Assistant
-*Conversational least-privilege policy management powered by Amazon Bedrock*
+# IAM Security Assistant
+
+Help teams identify and remediate overly-permissive IAM roles through natural language conversation, so they stop guessing which roles to fix and start acting on data-driven recommendations.
 
 ## Overview
 
-The AI IAM Access Analyzer Assistant provides a conversational interface for managing your AWS IAM security posture. Instead of navigating multiple console pages and writing JSON policies by hand, users ask natural language questions and receive actionable insights backed by IAM Access Analyzer findings, CloudTrail activity analysis, and policy validation.
+As AWS accounts grow, IAM roles accumulate — created for projects long finished, granted broad permissions "just to get it working," or inherited from teams that moved on. Security Hub and IAM Access Analyzer flag these roles as findings, but translating findings into safe, tested policy changes still requires manual analysis: checking CloudTrail for actual usage, mapping dependencies, validating that a tighter policy won't break production.
+
+This assistant automates that analysis. It's a **read-only** conversational tool — it queries your security findings, analyzes role usage, generates recommended policies, and assesses blast radius, but **never modifies IAM roles, policies, or configurations**. Teams get expert-level analysis and ready-to-apply recommendations without risk of accidental changes.
+
+The core question it answers: "What should I fix first, and how do I fix it safely?"
 
 ## At a Glance
 
-- **Duration**: 15 minutes (deploy) + ongoing usage
-- **Difficulty**: Intermediate
-- **Target Audience**: Security engineers, cloud architects, DevOps teams
-- **Key Technologies**: Amazon Bedrock (Claude), IAM Access Analyzer, Security Hub, CloudTrail, Lambda, API Gateway, Cognito, CloudFront
-- **Estimated Cost**: $6-57/month depending on usage
+- **Time**: ~15 min deployment + immediate demo
+- **Difficulty**: Beginner
+- **Audience**: Security Engineers, Cloud Admins, TAMs/SAs demoing IAM remediation workflows
+- **Tech Stack**: React + Cloudscape, Amazon Bedrock Converse API (Claude Sonnet, toolConfig), Python 3.12, AWS CDK
+- **Estimated Cost**: ~$0.05-0.15 per session — see Cost Estimate in ARCHITECTURE.md
 
 ## Business Value
 
-- Reduces time to review IAM findings from hours to minutes
-- Generates least-privilege policies automatically from CloudTrail data
-- **Blast radius analysis** before any IAM change — shows exactly what would break
-- Validates policies against security best practices before deployment
-- Makes IAM security accessible to non-IAM-specialists through natural language
+- **Speed**: Reduces IAM finding triage from 30+ min/role to under 2 minutes of conversation
+- **Safety**: Read-only analysis with blast radius checks — know what breaks before you touch anything
+- **Adoption**: Guided mode lowers the barrier for teams intimidated by IAM complexity
+- **Actionable**: Generates ready-to-apply policies, not just findings — export to S3 with one command
 
 ## What You Get
 
@@ -212,7 +216,7 @@ You: Check dependencies for ConsoleAdminAccess
 Assistant: Dependency Analysis for ConsoleAdminAccess:
 
          Risk Level: LOW (Score: 0/100)
-         Direct Dependents: None
+         Quick Dependents: None
          Trust: arn:aws:iam::727820809195:root (with ExternalId condition)
          Policies Attached: None
 

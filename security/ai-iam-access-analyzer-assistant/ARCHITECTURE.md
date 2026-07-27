@@ -1,8 +1,8 @@
-# AI IAM Access Analyzer Assistant — Architecture
+# IAM Security Assistant — Architecture
 
 ## Architecture Diagram
 
-![AI IAM Access Analyzer Assistant — Architecture](docs/architecture-diagram.svg)
+![IAM Security Assistant — Architecture](docs/architecture-diagram.svg)
 
 ## Conversation Flow
 
@@ -221,7 +221,7 @@ frontend/
 - **Model**: `us.anthropic.claude-sonnet-4-5-20250929-v1:0` (configurable via `BEDROCK_MODEL_ID` env var)
 - **Max output tokens**: 2048 (keeps responses within API Gateway timeout)
 - **Conversation history**: Last 8 messages sent to Bedrock (older messages trimmed to prevent payload overflow)
-- **System prompt**: Instructs the model to act as an IAM security analyst with tool access, educational capabilities (Discovery/Direct modes), change management guidance, and scope boundaries. Protected from extraction.
+- **System prompt**: Instructs the model to act as an IAM security analyst with tool access, educational capabilities (Guided/Quick modes), change management guidance, and scope boundaries. Protected from extraction.
 - **Tool orchestration**: Bedrock Converse API with `toolConfig` — supports multi-turn `tool_use` loops where the model decides which tools to invoke based on user intent
 - **Performance rule**: Max 2 tool calls per response turn to stay within timeout limits
 

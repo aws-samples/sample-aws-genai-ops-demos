@@ -559,7 +559,7 @@ def handler(event, context):
         # POST /conversation — process user message
         user_message = body.get("message", "")
         conversation_history = body.get("history", [])
-        mode = body.get("mode", "discovery")
+        mode = body.get("mode", "guided")
 
         if not user_message:
             return {
@@ -617,10 +617,10 @@ def handler(event, context):
 
 def _get_system_prompt(mode: str) -> str:
     """Get system prompt adjusted for the user's selected mode."""
-    if mode == "direct":
+    if mode == "quick":
         return SYSTEM_PROMPT + """
 
-MODE: DIRECT
+MODE: QUICK
 The user is experienced with IAM and AWS security. Adjust your responses:
 - Be concise — skip explanations of basic concepts
 - Get straight to the data and recommendations
@@ -633,7 +633,7 @@ The user is experienced with IAM and AWS security. Adjust your responses:
     else:
         return SYSTEM_PROMPT + """
 
-MODE: DISCOVERY
+MODE: GUIDED
 The user wants to learn and understand. Adjust your responses:
 - Explain WHY something is a risk, not just WHAT the risk is
 - Show which tools you're using and explain what each tool does

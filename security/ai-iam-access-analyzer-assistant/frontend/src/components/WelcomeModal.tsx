@@ -27,7 +27,7 @@ export default function WelcomeModal() {
     <Modal
       visible={visible}
       onDismiss={handleDismiss}
-      header="Welcome to AI IAM Access Analyzer Assistant"
+      header="Welcome to IAM Security Assistant"
       size="large"
       footer={
         <Box float="right">
@@ -76,11 +76,11 @@ export default function WelcomeModal() {
         <Box variant="h4">Quick Tips</Box>
         <SpaceBetween size="xs">
           <Box variant="p">
-            <strong>Discovery Mode</strong> (default) explains everything in
+            <strong>Guided Mode</strong> (default) explains everything in
             detail with AWS documentation links — great for learning.
           </Box>
           <Box variant="p">
-            <strong>Direct Mode</strong> gives concise, data-focused answers
+            <strong>Quick Mode</strong> gives concise, data-focused answers
             for experienced IAM practitioners.
           </Box>
           <Box variant="p">

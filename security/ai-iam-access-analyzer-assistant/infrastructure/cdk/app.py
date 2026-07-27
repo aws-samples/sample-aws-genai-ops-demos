@@ -20,7 +20,7 @@ IamAnalyzerAssistantStack(
     app,
     f"IamAnalyzerAssistantStack-{region}",
     env=env,
-    description="AI IAM Access Analyzer Assistant - Conversational least-privilege policy management (uksb-do9bhieqqh)(tag:ai-iam-access-analyzer-assistant,security)",
+    description="IAM Security Assistant - Conversational least-privilege policy management (uksb-do9bhieqqh)(tag:ai-iam-access-analyzer-assistant,security)",
 )
 
 app.synth()

@@ -14,14 +14,14 @@ import { Message } from "../types";
 const WELCOME_MESSAGE: Message = {
   role: "assistant",
   content:
-    "Hello! I'm your IAM Access Analyzer Assistant. I can help you with:\n\n" +
-    "- **Reviewing IAM findings** from Security Hub\n" +
-    "- **Generating least-privilege policies** based on CloudTrail activity\n" +
-    "- **Blast radius analysis** before modifying or deleting IAM resources\n" +
-    "- **Validating IAM policies** for security best practices\n" +
-    "- **Prioritized action plans** for IAM remediation\n\n" +
-    "Click a suggestion below to get started, or just ask me anything in your own words.\n\n" +
-    "*Tip: Anything I generate (policies, reports, change requests) can be saved to S3 — just ask me to export it.*",
+    "Hello! I'm your **IAM Security Assistant**. I help you understand and fix your IAM roles and policies — unused roles, overly-permissive permissions, and cross-account access risks.\n\n" +
+    "**Three capabilities that work independently or together:**\n\n" +
+    "- **Analyze** — surface unused roles, excessive permissions, cross-account risks\n" +
+    "- **Generate** — create least-privilege policies from actual usage\n" +
+    "- **Protect** — validate changes, assess blast radius before you act\n\n" +
+    "Click a suggestion below to get started, or ask anything in your own words.\n\n" +
+    "*Tip: Anything I generate can be saved to S3 — just say \"export that\".*\n\n" +
+    "🔒 **Read-only** — this assistant analyzes and recommends but never modifies your IAM roles, policies, or configurations.",
 };
 
 interface ActivityEntry {
@@ -29,7 +29,7 @@ interface ActivityEntry {
   timestamp: string;
 }
 
-type AssistantMode = "discovery" | "direct";
+type AssistantMode = "guided" | "quick";
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
@@ -37,7 +37,7 @@ export default function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionActivity, setSessionActivity] = useState<ActivityEntry[]>([]);
-  const [mode, setMode] = useState<AssistantMode>("discovery");
+  const [mode, setMode] = useState<AssistantMode>("guided");
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -146,15 +146,15 @@ export default function ChatInterface() {
           }}
         >
           <span style={{ fontSize: "13px", color: "var(--color-text-body-secondary)" }}>
-            {mode === "discovery"
-              ? "Discovery Mode — detailed explanations, AWS doc links, tool transparency"
-              : "Direct Mode — concise answers, no hand-holding"}
+            {mode === "guided"
+              ? "Guided Mode — detailed explanations, step-by-step recommendations, educational context"
+              : "Quick Mode — concise answers, data-first, no hand-holding"}
           </span>
           <Button
             variant="inline-link"
-            onClick={() => setMode(mode === "discovery" ? "direct" : "discovery")}
+            onClick={() => setMode(mode === "guided" ? "quick" : "guided")}
           >
-            Switch to {mode === "discovery" ? "Direct" : "Discovery"}
+            Switch to {mode === "guided" ? "Direct" : "Discovery"}
           </Button>
         </div>
 

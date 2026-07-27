@@ -1,10 +1,10 @@
-# AI IAM Access Analyzer Assistant — Steering Document
+# IAM Security Assistant — Steering Document
 
 ## Demo Metadata
 
 | Field | Value |
 |-------|-------|
-| Demo Name | AI IAM Access Analyzer Assistant |
+| Demo Name | IAM Security Assistant |
 | Pillar | Security |
 | Pattern | Infrastructure deployment (deploy-all.ps1 / deploy-all.sh) |
 | Primary AWS Service | Amazon Bedrock |
@@ -15,13 +15,13 @@
 
 ## Press Release
 
-**AWS Launches AI IAM Access Analyzer Assistant — Conversational Least-Privilege Policy Management**
+**AWS Launches IAM Security Assistant — Conversational Least-Privilege Policy Management**
 
 *Security teams can now ask natural language questions about their IAM posture and get actionable least-privilege recommendations in seconds*
 
-**Seattle, WA** — Today, AWS announced the AI IAM Access Analyzer Assistant, an open-source demo that combines Amazon Bedrock with IAM Access Analyzer and Security Hub to deliver a conversational interface for IAM security posture management.
+**Seattle, WA** — Today, AWS announced the IAM Security Assistant, an open-source demo that combines Amazon Bedrock with IAM Access Analyzer and Security Hub to deliver a conversational interface for IAM security posture management.
 
-Security teams spend hours manually reviewing IAM Access Analyzer findings, cross-referencing CloudTrail logs, and crafting least-privilege policies. The AI IAM Access Analyzer Assistant eliminates this toil by letting users ask plain-English questions like "What are my critical IAM findings?", "Generate a least-privilege policy for role X based on the last 90 days of activity", or "What other roles depend on this policy before I modify it?"
+Security teams spend hours manually reviewing IAM Access Analyzer findings, cross-referencing CloudTrail logs, and crafting least-privilege policies. The IAM Security Assistant eliminates this toil by letting users ask plain-English questions like "What are my critical IAM findings?", "Generate a least-privilege policy for role X based on the last 90 days of activity", or "What other roles depend on this policy before I modify it?"
 
 The assistant deploys as a self-contained web application using React, Cloudscape, and Amazon Cognito for authentication. Behind the scenes, Amazon Bedrock orchestrates tool calls to Lambda functions that query Security Hub findings, analyze CloudTrail access patterns, map role dependencies, and validate proposed policy changes — all without users needing to understand the underlying API calls.
 

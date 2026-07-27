@@ -22,7 +22,7 @@ interface MessageHistory {
 export async function sendMessage(
   message: string,
   history: MessageHistory[],
-  mode: string = "discovery"
+  mode: string = "guided"
 ): Promise<ConversationResponse> {
   const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
