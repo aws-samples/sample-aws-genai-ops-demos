@@ -84,6 +84,12 @@ The provider registry (`agent/providers.json`) is the source-controlled seed. On
 
 The script uploads `agent/providers.json` to `s3://saas-status-mcp-<account>-<region>/config/providers.json` and confirms how many providers are now live. The running server picks up the change within its poll interval (default 60 seconds) — no restart, no CDK, no zip.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/4yx03kpuwdor)
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a full breakdown of components, data flow, IAM roles, CDK stacks, and design decisions.
