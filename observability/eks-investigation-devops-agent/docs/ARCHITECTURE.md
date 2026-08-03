@@ -208,7 +208,7 @@ Container → Fluent Bit → CloudWatch Logs
 | Business Logic | Java + Spring Boot | 21.x / 3.5.x |
 | Webhooks | Node.js + TypeScript | 20.x |
 | Database | PostgreSQL | 15.x |
-| Container Orchestration | Amazon EKS | 1.33 |
+| Container Orchestration | Amazon EKS | 1.36 (default; see `EKS_KUBERNETES_VERSION`) |
 | IaC | AWS CDK (TypeScript) | 2.x |
 | Observability | CloudWatch + Fluent Bit | - |
 | Incident Response | AWS DevOps Agent | - |

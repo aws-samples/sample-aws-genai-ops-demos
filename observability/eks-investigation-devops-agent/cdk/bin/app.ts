@@ -43,6 +43,10 @@ const projectName = app.node.tryGetContext('projectName') ?? 'devops-agent-eks';
 const eksNodeArchitecture = app.node.tryGetContext('eksNodeArchitecture') ?? 'arm64';
 const eksNodeInstanceType = app.node.tryGetContext('eksNodeInstanceType') ?? 't4g.medium';
 const eksNodeDesiredCapacity = Number(app.node.tryGetContext('eksNodeDesiredCapacity') ?? '2');
+// Newest supported release, correct for a new cluster. Upgrading an existing
+// cluster moves one minor version at a time, so override and step through.
+// Keep the kubectl layer in failure-simulator-api-stack.ts in step with this.
+const eksKubernetesVersion = app.node.tryGetContext('eksKubernetesVersion') ?? '1.36';
 const devOpsAgentWebhookUrl = app.node.tryGetContext('devOpsAgentWebhookUrl') ?? '';
 const devOpsAgentWebhookSecret = app.node.tryGetContext('devOpsAgentWebhookSecret') ?? '';
 const apiGatewayEndpoint = app.node.tryGetContext('apiGatewayEndpoint') ?? '';
@@ -89,6 +93,7 @@ const computeStack = new ComputeStack(app, `DevOpsAgentEksCompute-${region}`, {
   nodeInstanceType: eksNodeInstanceType,
   nodeArchitecture: eksNodeArchitecture,
   nodeDesiredCapacity: eksNodeDesiredCapacity,
+  kubernetesVersion: eksKubernetesVersion,
   description: 'DevOps Agent EKS Demo Compute Stack',
 });
 

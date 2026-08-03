@@ -12,6 +12,7 @@ export interface ComputeStackProps extends cdk.StackProps {
   nodeInstanceType: string;
   nodeArchitecture: string; // 'arm64' | 'amd64'
   nodeDesiredCapacity: number;
+  kubernetesVersion: string;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -35,6 +36,7 @@ export class ComputeStack extends cdk.Stack {
       nodeInstanceType,
       nodeArchitecture,
       nodeDesiredCapacity,
+      kubernetesVersion,
     } = props;
 
     const isArm = nodeArchitecture === 'arm64';
@@ -67,12 +69,21 @@ export class ComputeStack extends cdk.Stack {
 
     // -----------------------------------------------------------------------
     // EKS Cluster — L1 CfnCluster to avoid L2 side effects
-    // (K8s 1.33, public+private endpoint, specified security group)
+    // (public+private endpoint, specified security group)
+    //
+    // supportType STANDARD auto-upgrades the cluster at end of standard
+    // support instead of entering (billable) extended support. It only takes
+    // effect at create time — extended support cannot be disabled once a
+    // cluster has entered it.
+    // https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
     // -----------------------------------------------------------------------
     const cluster = new eks.CfnCluster(this, 'EksCluster', {
       name: `${projectName}-${environment}-cluster`,
-      version: '1.33',
+      version: kubernetesVersion,
       roleArn: eksClusterRole.roleArn,
+      upgradePolicy: {
+        supportType: 'STANDARD',
+      },
       accessConfig: {
         authenticationMode: 'API_AND_CONFIG_MAP',
       },

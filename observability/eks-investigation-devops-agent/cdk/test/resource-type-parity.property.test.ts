@@ -115,6 +115,7 @@ function synthesizeAll(env: string, arch: string) {
     eksSecurityGroup: net.eksSecurityGroup,
     nodeInstanceType: arch === 'arm64' ? 't4g.medium' : 't3.medium',
     nodeArchitecture: arch, nodeDesiredCapacity: 2,
+    kubernetesVersion: '1.36',
   });
   const pipeline = new PipelineStack(app, `DevOpsAgentEksPipeline-${region}`, {
     env: cdkEnv, environment: env, projectName, eksNodeArchitecture: arch,

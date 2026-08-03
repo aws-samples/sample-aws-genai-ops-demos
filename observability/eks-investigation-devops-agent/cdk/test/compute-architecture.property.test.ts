@@ -47,6 +47,7 @@ function synthesizeComputeStack(architecture: string): Template {
     nodeInstanceType: architecture === 'arm64' ? 't4g.medium' : 't3.medium',
     nodeArchitecture: architecture,
     nodeDesiredCapacity: 2,
+    kubernetesVersion: '1.36',
   });
 
   return Template.fromStack(stack);
