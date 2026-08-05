@@ -389,9 +389,9 @@ aws secretsmanager put-secret-value \
 ---
 
 ## Slack Notification Examples
-![Architecture Diagram](slack-notification-example1.png)
+![Slack Notification Example 1](slack-notification-example-1.png)
 
-![Architecture Diagram](slack-notification-example2.png)
+![Slack Notification Example 2](slack-notification-example-2.png)
 
 ---
 ## Cost Estimate
