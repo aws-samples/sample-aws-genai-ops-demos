@@ -388,6 +388,12 @@ aws secretsmanager put-secret-value \
 
 ---
 
+## Slack Notification Examples
+![Architecture Diagram](slack-notification-example1.png)
+
+![Architecture Diagram](slack-notification-example2.png)
+
+---
 ## Cost Estimate
 
 | Scenario | Bedrock Calls/Day | Monthly Cost |
