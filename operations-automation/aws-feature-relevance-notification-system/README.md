@@ -428,6 +428,25 @@ aws opensearchserverless delete-collection --id YOUR_COLLECTION_ID --region <YOU
 
 **us.anthropic.claude-sonnet-4-6** (Amazon Bedrock inference profile).
 
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## Support
+
+For issues and questions:
+- Check the troubleshooting section
+- Review AWS Bedrock documentation
+- Open an issue in the repository
+
+We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
+
+## Contributing
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.

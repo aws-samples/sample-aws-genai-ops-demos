@@ -7,8 +7,8 @@ import boto3
 import json
 import os
 
-bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
-bedrock_agent = boto3.client('bedrock-agent-runtime', region_name='us-west-2')
+bedrock = boto3.client('bedrock-runtime', region_name='<YOUR_REGION>')
+bedrock_agent = boto3.client('bedrock-agent-runtime', region_name='<YOUR_REGION>')
 
 MODEL_ID = os.environ.get('MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '')
