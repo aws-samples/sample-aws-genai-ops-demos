@@ -83,6 +83,17 @@ jobs:
               fi
             fi
 
+            # Check CDK infrastructure exists (required unless .no-deploy)
+            if [ ! -f "$DEMO/.no-deploy" ]; then
+              CDK_DIR=$(find "$DEMO" -type d -name "cdk" -path "*/infrastructure/*" -o -type d -name "cdk" | head -1)
+              if [ -z "$CDK_DIR" ]; then
+                echo "❌ Missing CDK infrastructure (no cdk/ directory found). CDK is required — SAM/CloudFormation/Terraform-only is not accepted."
+                EXIT_CODE=1
+              else
+                echo "✅ CDK directory exists: $CDK_DIR"
+              fi
+            fi
+
             # Check for solution adoption tracking in CDK app file
             APP_FILE=$(find "$DEMO" -name "app.py" -path "*/cdk/*" -o -name "app.ts" -path "*/cdk/*" 2>/dev/null | head -1)
             if [ -n "$APP_FILE" ]; then
@@ -92,6 +103,22 @@ jobs:
               else
                 echo "✅ Solution adoption tracking present"
               fi
+            elif [ ! -f "$DEMO/.no-deploy" ]; then
+              echo "❌ No CDK app file (app.py or app.ts) found — cannot verify solution adoption tracking"
+              EXIT_CODE=1
+            fi
+
+            # Check for prohibited files (demos must not duplicate repo-level governance)
+            PROHIBITED_FILES="CONTRIBUTING.md CODE_OF_CONDUCT.md LICENSE NOTICE"
+            for PROHIBITED in $PROHIBITED_FILES; do
+              if [ -f "$DEMO/$PROHIBITED" ]; then
+                echo "❌ Prohibited file: $PROHIBITED (use repo-level file instead — see contributor guide)"
+                EXIT_CODE=1
+              fi
+            done
+            if [ -d "$DEMO/.github" ]; then
+              echo "❌ Prohibited directory: .github/ (demo-level GitHub config not allowed)"
+              EXIT_CODE=1
             fi
 
             # Check for hardcoded regions (excluding docs, comments, and fallbacks)
