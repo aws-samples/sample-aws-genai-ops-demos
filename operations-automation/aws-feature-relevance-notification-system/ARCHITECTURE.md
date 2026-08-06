@@ -8,7 +8,7 @@ This system transforms the high-volume AWS "What's New" feed (200+ announcements
 
 ## Architecture Diagram
 
-![Architecture Diagram](architecture.png)
+![Architecture Diagram](docs/architecture.png)
 
 ---
 

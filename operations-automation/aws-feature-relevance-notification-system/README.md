@@ -31,7 +31,7 @@ AWS publishes 200+ feature announcements every month. For enterprise customers o
 
 ## Architecture
 
-![Architecture Diagram](architecture.png)
+![Architecture Diagram](docs/architecture.png)
 
 ### Pipeline Flow
 
@@ -164,9 +164,9 @@ aws lambda invoke --function-name "$RSS_FUNCTION" \
 
 ## Slack Notification Examples
 
-![Slack Notification Example 1](slack-notification-example-1.png)
+![Slack Notification Example 1](docs/slack-notification-example-1.png)
 
-![Slack Notification Example 2](slack-notification-example-2.png)
+![Slack Notification Example 2](docs/slack-notification-example-2.png)
 
 ---
 
@@ -206,7 +206,10 @@ aws-feature-relevance-notification-system/
 ├── ARCHITECTURE.md
 ├── deploy-all.ps1
 ├── deploy-all.sh
-├── architecture.png
+├── docs/
+│   ├── architecture.png
+│   ├── slack-notification-example-1.png
+│   └── slack-notification-example-2.png
 ├── infrastructure/
 │   └── cdk/
 │       ├── app.py                     # CDK app with tracking
