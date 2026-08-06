@@ -45,7 +45,9 @@ The core question it answers: "What should I fix first, and how do I fix it safe
 
 ## Interactive Demo
 
-Coming soon.
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/rf9tmdd93eq6)
 
 ## Prerequisites
 
