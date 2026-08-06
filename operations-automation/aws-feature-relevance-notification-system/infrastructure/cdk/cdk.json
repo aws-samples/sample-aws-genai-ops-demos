@@ -1,0 +1,8 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "bedrock_model_id": "us.anthropic.claude-sonnet-4-6",
+    "knowledge_base_id": "",
+    "slack_webhook_url": ""
+  }
+}

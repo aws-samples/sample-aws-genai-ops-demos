@@ -5,5 +5,7 @@ __pycache__/
 *.zip
 ~$*
 *.mp4
-.ash/
-.aws-sam/
+cdk.out/
+cdk.out*/
+.venv/
+node_modules/
