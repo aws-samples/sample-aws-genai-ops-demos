@@ -96,6 +96,16 @@ case "$EKS_ARCHITECTURE" in
         ;;
 esac
 echo "EKS architecture: $EKS_ARCHITECTURE"
+
+# ---------------------------------------------------------------------------
+# Kubernetes version — override via EKS_KUBERNETES_VERSION env var.
+# Keep this on a release still in EKS standard support; older versions bill
+# an extended-support surcharge per cluster hour. Upgrading an existing
+# cluster moves one minor version at a time, so step through if needed.
+# https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+# ---------------------------------------------------------------------------
+EKS_KUBERNETES_VERSION="${EKS_KUBERNETES_VERSION:-1.36}"
+echo "EKS Kubernetes version: $EKS_KUBERNETES_VERSION"
 echo "EKS instance:     $EKS_INSTANCE_TYPE"
 echo ""
 
@@ -185,7 +195,7 @@ echo ""
 # script) to avoid CloudFormation AlreadyExists conflicts.
 echo "[2/9] Deploying CDK stacks (this takes ~15 minutes)..."
 
-CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNodeArchitecture=$EKS_ARCHITECTURE -c eksNodeInstanceType=$EKS_INSTANCE_TYPE -c eksNodeDesiredCapacity=2 -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET -c devOpsAgentRegion=$DEVOPS_AGENT_REGION -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
+CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNodeArchitecture=$EKS_ARCHITECTURE -c eksNodeInstanceType=$EKS_INSTANCE_TYPE -c eksNodeDesiredCapacity=2 -c eksKubernetesVersion=$EKS_KUBERNETES_VERSION -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL -c devOpsAgentWebhookSecret=$DEVOPS_WEBHOOK_SECRET -c devOpsAgentRegion=$DEVOPS_AGENT_REGION -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
 
 cd cdk
 npx cdk deploy --all \

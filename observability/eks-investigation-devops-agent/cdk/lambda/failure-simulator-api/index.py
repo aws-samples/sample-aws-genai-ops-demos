@@ -90,7 +90,7 @@ def _check_and_auto_revert():
 
     return reverted
 
-# Binary paths from the kubectl Lambda layer (@aws-cdk/lambda-layer-kubectl-v31).
+# Binary paths from the kubectl Lambda layer (@aws-cdk/lambda-layer-kubectl-v36).
 # This layer provides kubectl and helm — do NOT install these tools separately.
 # See failure-simulator-api-stack.ts for the layer configuration.
 # NOTE: aws CLI is NOT included in this layer. Use boto3 for AWS API calls.

@@ -4,7 +4,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import { KubectlV31Layer } from '@aws-cdk/lambda-layer-kubectl-v31';
+import { KubectlV36Layer } from '@aws-cdk/lambda-layer-kubectl-v36';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -108,9 +108,10 @@ export class FailureSimulatorApiStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // kubectl Lambda Layer
+    // kubectl Lambda Layer — keep within one minor version of the cluster
+    // (see eksKubernetesVersion in bin/app.ts).
     // -----------------------------------------------------------------------
-    const kubectlLayer = new KubectlV31Layer(this, 'KubectlLayer');
+    const kubectlLayer = new KubectlV36Layer(this, 'KubectlLayer');
 
     // -----------------------------------------------------------------------
     // Lambda Function

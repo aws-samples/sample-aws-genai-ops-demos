@@ -106,6 +106,7 @@ function synthesizeComputeStack(environment: string, projectName: string): Templ
     nodeInstanceType: 't4g.medium',
     nodeArchitecture: 'arm64',
     nodeDesiredCapacity: 2,
+    kubernetesVersion: '1.36',
   });
 
   return Template.fromStack(stack);

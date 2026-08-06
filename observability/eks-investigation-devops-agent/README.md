@@ -47,7 +47,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 ## Prerequisites
 
 - **AWS CLI v2.34.21+** with configured credentials and default region
-- kubectl v1.31+
+- kubectl v1.36+
 - Node.js 20+ with npm
 - `zip` utility
 - Git
@@ -268,7 +268,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 | Stack | Purpose | Key Resources |
 |-------|---------|---------------|
 | `DevOpsAgentEksNetwork-{region}` | Networking | VPC, 2 AZs, public + private + data subnets, NAT gateway |
-| `DevOpsAgentEksCompute-{region}` | Compute | EKS cluster (K8s 1.33), managed node group (Graviton), IRSA |
+| `DevOpsAgentEksCompute-{region}` | Compute | EKS cluster (K8s 1.36, override with `EKS_KUBERNETES_VERSION`), managed node group (Graviton), IRSA |
 | `DevOpsAgentEksPipeline-{region}` | CI/CD | 3 CodeBuild projects, 3 ECR repositories |
 | `DevOpsAgentEksDatabase-{region}` | Data | RDS PostgreSQL 15 (db.t3.micro, encrypted), Secrets Manager |
 | `DevOpsAgentEksAuth-{region}` | Auth | Cognito User Pool with custom attributes |
