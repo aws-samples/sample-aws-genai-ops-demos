@@ -20,6 +20,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from shared.utils.aws_utils import get_bedrock_model_id
+
 
 class FeatureRelevanceStack(Stack):
     """Stack for the AWS Feature Relevance Notification System."""
@@ -28,7 +30,7 @@ class FeatureRelevanceStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # Context values (overridable via cdk.json or --context)
-        bedrock_model_id = self.node.try_get_context("bedrock_model_id") or "us.anthropic.claude-sonnet-4-6"
+        bedrock_model_id = self.node.try_get_context("bedrock_model_id") or get_bedrock_model_id()
         knowledge_base_id = self.node.try_get_context("knowledge_base_id") or ""
         slack_webhook_url = self.node.try_get_context("slack_webhook_url") or ""
 
