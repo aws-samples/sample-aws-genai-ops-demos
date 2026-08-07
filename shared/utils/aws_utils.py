@@ -66,3 +66,37 @@ def get_account_id() -> Optional[str]:
         pass
     
     return None
+
+
+def get_bedrock_model_id(model_name: str = "anthropic.claude-sonnet-4-6") -> str:
+    """
+    Get the correct cross-region inference (CRIS) prefixed model ID for the current region.
+
+    Amazon Bedrock newer models are often only available via cross-region inference
+    profiles. This function detects the deployment region and applies the appropriate
+    geographic prefix (us/eu/ap) or falls back to global for regions without a
+    dedicated geographic CRIS (ca, me, af, sa, il, mx).
+
+    Args:
+        model_name: Base model identifier without prefix (e.g. "anthropic.claude-sonnet-4-6")
+
+    Returns:
+        str: CRIS-prefixed model ID (e.g. "eu.anthropic.claude-sonnet-4-6")
+
+    Examples:
+        >>> os.environ['AWS_REGION'] = 'eu-west-1'
+        >>> get_bedrock_model_id()
+        'eu.anthropic.claude-sonnet-4-6'
+
+        >>> os.environ['AWS_REGION'] = 'us-east-1'
+        >>> get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0")
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+
+        >>> os.environ['AWS_REGION'] = 'ca-central-1'
+        >>> get_bedrock_model_id()
+        'global.anthropic.claude-sonnet-4-6'
+    """
+    region = get_region()
+    geo_prefix = region.split('-')[0]
+    cris_prefix = {'us': 'us', 'eu': 'eu', 'ap': 'ap'}.get(geo_prefix, 'global')
+    return f"{cris_prefix}.{model_name}"
