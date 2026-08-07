@@ -2,7 +2,6 @@
 import os
 
 from aws_cdk import (
-    BundlingOptions,
     CfnOutput,
     Duration,
     RemovalPolicy,
@@ -119,16 +118,7 @@ class FeatureRelevanceStack(Stack):
             self,
             "RSSIngestionFunction",
             handler="index.lambda_handler",
-            code=lambda_.Code.from_asset(
-                os.path.join(lambdas_dir, "rss-ingestion"),
-                bundling=BundlingOptions(
-                    image=lambda_.Runtime.PYTHON_3_12.bundling_image,
-                    command=[
-                        "bash", "-c",
-                        "pip install -r requirements.txt -t /asset-output && cp -r . /asset-output",
-                    ],
-                ),
-            ),
+            code=lambda_.Code.from_asset(os.path.join(lambdas_dir, "rss-ingestion")),
             reserved_concurrent_executions=5,
             environment={
                 "STATE_TABLE": announcement_state_table.table_name,
@@ -206,13 +196,13 @@ class FeatureRelevanceStack(Stack):
         encryption_key.grant_decrypt(slack_notification_fn)
         encryption_key.grant_decrypt(workload_manager_fn)
 
-        # Bedrock access for scorer
+        # Bedrock access for scorer (wildcard region needed for cross-region inference profiles)
         relevance_scorer_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/{bedrock_model_id}",
-                    f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{bedrock_model_id}",
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
                 ],
             )
         )

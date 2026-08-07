@@ -41,6 +41,10 @@ Push-Location $CdkDir
 python -m pip install -r requirements.txt -q
 Pop-Location
 
+# Install Lambda dependencies (no Docker required)
+Write-Host "Installing Lambda dependencies..." -ForegroundColor Yellow
+python -m pip install -r "$ScriptDir\lambdas\rss-ingestion\requirements.txt" -t "$ScriptDir\lambdas\rss-ingestion" -q
+
 # Set PYTHONPATH for shared utilities
 $WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..").Path
 $env:PYTHONPATH = "$WorkspaceRoot;$env:PYTHONPATH"
