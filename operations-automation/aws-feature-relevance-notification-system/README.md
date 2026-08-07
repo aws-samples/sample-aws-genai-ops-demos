@@ -89,41 +89,49 @@ EventBridge (daily) → RSS Lambda → DynamoDB (dedup) → Step Functions
 ### Step 1: Deploy Infrastructure
 
 ```bash
-./deploy-all.sh
+./deploy-all.sh --slack-webhook-url "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 ```
 
 Or on Windows:
 ```powershell
-.\deploy-all.ps1
+.\deploy-all.ps1 -SlackWebhookUrl "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 ```
 
 The deploy script will:
-- Install CDK dependencies
+- Check prerequisites (AWS CLI, CDK, Python, Bedrock service availability)
+- Install Lambda dependencies (defusedxml) and CDK packages
 - Set `PYTHONPATH` for shared utilities
 - Run `cdk deploy` with your configured region
 - Output stack resource names
 
-### Step 2: Configure Slack Webhook
+If you prefer to configure the Slack webhook after deployment, omit the flag and see Step 2.
 
-Update the Secrets Manager secret with your actual webhook URL:
+### Step 2: Configure Slack Webhook (if not passed at deploy time)
 
 ```bash
-STACK_NAME="FeatureRelevanceNotification-$(aws configure get region)"
-SECRET_ARN=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+REGION=$(aws configure get region)
+STACK_NAME="FeatureRelevanceNotification-$REGION"
+
+SECRET_ARN=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='SlackSecretArn'].OutputValue" --output text)
 
 aws secretsmanager put-secret-value \
   --secret-id "$SECRET_ARN" \
-  --secret-string '{"webhook_url":"https://hooks.slack.com/services/YOUR/WEBHOOK/URL"}'
+  --secret-string '{"webhook_url":"https://hooks.slack.com/services/YOUR/WEBHOOK/URL"}' \
+  --region "$REGION"
 ```
 
 ### Step 3: Create Workload Profiles
 
 ```bash
-WORKLOAD_MANAGER=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+REGION=$(aws configure get region)
+STACK_NAME="FeatureRelevanceNotification-$REGION"
+
+WORKLOAD_MANAGER=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='WorkloadManagerFunctionName'].OutputValue" --output text)
 
 aws lambda invoke --function-name "$WORKLOAD_MANAGER" \
+  --region "$REGION" \
   --cli-binary-format raw-in-base64-out \
   --payload '{
     "action": "create",
@@ -136,7 +144,7 @@ aws lambda invoke --function-name "$WORKLOAD_MANAGER" \
       "free_text_description": "Describe your workload architecture here.",
       "key_services": ["Amazon EKS", "Amazon DynamoDB", "Amazon S3"]
     }
-  }' /tmp/output.json
+  }' /tmp/output.json && cat /tmp/output.json
 ```
 
 **Key fields:**
@@ -152,10 +160,14 @@ aws lambda invoke --function-name "$WORKLOAD_MANAGER" \
 ### Step 4: Test
 
 ```bash
-RSS_FUNCTION=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+REGION=$(aws configure get region)
+STACK_NAME="FeatureRelevanceNotification-$REGION"
+
+RSS_FUNCTION=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='RSSIngestionFunctionName'].OutputValue" --output text)
 
 aws lambda invoke --function-name "$RSS_FUNCTION" \
+  --region "$REGION" \
   --cli-binary-format raw-in-base64-out \
   --payload '{"test_mode": true}' /tmp/test.json && cat /tmp/test.json
 ```
