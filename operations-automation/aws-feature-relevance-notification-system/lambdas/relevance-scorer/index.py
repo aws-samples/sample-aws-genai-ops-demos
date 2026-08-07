@@ -10,7 +10,7 @@ import os
 bedrock = boto3.client('bedrock-runtime')
 bedrock_agent = boto3.client('bedrock-agent-runtime')
 
-MODEL_ID = os.environ.get('MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
+MODEL_ID = os.environ['MODEL_ID']  # Required — set by CDK stack via get_bedrock_model_id()
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '')
 
 SCORING_PROMPT = """You are an AWS Solutions Architect analyzing AWS feature announcements for enterprise customers. Your job is to score the relevance of a new AWS announcement against a specific customer workload.

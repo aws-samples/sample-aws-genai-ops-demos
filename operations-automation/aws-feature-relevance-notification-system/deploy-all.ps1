@@ -43,7 +43,7 @@ Pop-Location
 
 # Install Lambda dependencies (no Docker required)
 Write-Host "Installing Lambda dependencies..." -ForegroundColor Yellow
-python -m pip install -r "$ScriptDir\lambdas\rss-ingestion\requirements.txt" -t "$ScriptDir\lambdas\rss-ingestion" -q
+python -m pip install -r "$ScriptDir\lambdas\rss-ingestion\requirements.txt" -t "$ScriptDir\lambdas\rss-ingestion" -q --no-compile
 
 # Set PYTHONPATH for shared utilities
 $WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..").Path

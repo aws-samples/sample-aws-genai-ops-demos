@@ -48,8 +48,8 @@ pip3 install -r requirements.txt -q 2>/dev/null || pip3 install -r requirements.
 # Install Lambda dependencies (no Docker required)
 echo ""
 echo "Installing Lambda dependencies..."
-pip3 install -r "$SCRIPT_DIR/lambdas/rss-ingestion/requirements.txt" -t "$SCRIPT_DIR/lambdas/rss-ingestion/" -q 2>/dev/null || \
-pip3 install -r "$SCRIPT_DIR/lambdas/rss-ingestion/requirements.txt" -t "$SCRIPT_DIR/lambdas/rss-ingestion/" -q --break-system-packages 2>/dev/null
+pip3 install -r "$SCRIPT_DIR/lambdas/rss-ingestion/requirements.txt" -t "$SCRIPT_DIR/lambdas/rss-ingestion/" -q --no-compile 2>/dev/null || \
+pip3 install -r "$SCRIPT_DIR/lambdas/rss-ingestion/requirements.txt" -t "$SCRIPT_DIR/lambdas/rss-ingestion/" -q --no-compile --break-system-packages 2>/dev/null
 
 # Set PYTHONPATH for shared utilities
 export PYTHONPATH="$SCRIPT_DIR/../..:$PYTHONPATH"
