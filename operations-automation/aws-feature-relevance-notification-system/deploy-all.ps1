@@ -9,24 +9,21 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "=== AWS Feature Relevance Notification System Deployment ===" -ForegroundColor Green
 
-# Use shared prerequisites check
-Write-Host "Checking prerequisites..." -ForegroundColor Yellow
-& "..\..\shared\scripts\check-prerequisites.ps1" -MinPythonVersion "3.9" -RequireCDK
+# Use shared prerequisites check (validates AWS CLI, region, service availability)
+# Region is available as $global:AWS_REGION after this call
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+& "$ScriptDir\..\..\shared\scripts\check-prerequisites.ps1" -RequiredService bedrock
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Prerequisites check failed" -ForegroundColor Red
     exit 1
 }
 
-# Get region
-$Region = if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION }
-          elseif ($env:AWS_REGION) { $env:AWS_REGION }
-          else { (aws configure get region 2>$null) }
-if (-not $Region) { $Region = "us-east-1" }
-Write-Host "Using region: $Region" -ForegroundColor Cyan
-
+$Region = $global:AWS_REGION
 $StackName = "FeatureRelevanceNotification-$Region"
-$CdkDir = Join-Path $PSScriptRoot "infrastructure" "cdk"
+$CdkDir = Join-Path $ScriptDir "infrastructure" "cdk"
+
+Write-Host "Using region: $Region" -ForegroundColor Cyan
 
 # Destroy mode
 if ($DestroyInfra) {
@@ -45,7 +42,7 @@ python -m pip install -r requirements.txt -q
 Pop-Location
 
 # Set PYTHONPATH for shared utilities
-$WorkspaceRoot = (Resolve-Path "$PSScriptRoot\..\..\..\..").Path
+$WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..\..\..").Path
 $env:PYTHONPATH = "$WorkspaceRoot;$env:PYTHONPATH"
 
 # Build context args

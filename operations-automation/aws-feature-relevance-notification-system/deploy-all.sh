@@ -17,26 +17,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHARED_SCRIPTS_DIR="$SCRIPT_DIR/../../shared/scripts"
 CDK_DIR="$SCRIPT_DIR/infrastructure/cdk"
 
 echo "=== AWS Feature Relevance Notification System Deployment ==="
 
-# Use shared prerequisites check
-echo "Checking prerequisites..."
-source "$SHARED_SCRIPTS_DIR/check-prerequisites.sh" --min-python-version 3.9 --require-cdk
+# Use shared prerequisites check (validates AWS CLI, region, service availability)
+# Region is available as $AWS_REGION after this call
+source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" bedrock
 
-# Get region
-if [ -n "$AWS_DEFAULT_REGION" ]; then
-    REGION="$AWS_DEFAULT_REGION"
-elif [ -n "$AWS_REGION" ]; then
-    REGION="$AWS_REGION"
-else
-    REGION=$(aws configure get region 2>/dev/null || echo "us-east-1")
-fi
-echo "Using region: $REGION"
-
+REGION="$AWS_REGION"
 STACK_NAME="FeatureRelevanceNotification-$REGION"
+
+echo "Using region: $REGION"
 
 # Destroy mode
 if [ "$DESTROY_INFRA" = true ]; then
