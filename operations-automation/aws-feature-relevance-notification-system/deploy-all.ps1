@@ -23,13 +23,16 @@ $Region = $global:AWS_REGION
 $StackName = "FeatureRelevanceNotification-$Region"
 $CdkDir = Join-Path $ScriptDir "infrastructure" "cdk"
 
+# On Windows, cdk.json references "python3" which doesn't exist; override with "python"
+$cdkAppArg = @("--app", "python app.py")
+
 Write-Host "Using region: $Region" -ForegroundColor Cyan
 
 # Destroy mode
 if ($DestroyInfra) {
     Write-Host "Destroying infrastructure..." -ForegroundColor Red
     Push-Location $CdkDir
-    cdk destroy $StackName --force
+    cdk destroy $StackName @cdkAppArg --force
     Pop-Location
     Write-Host "Infrastructure destruction completed" -ForegroundColor Green
     exit 0
@@ -63,7 +66,7 @@ if (-not [string]::IsNullOrEmpty($SlackWebhookUrl)) {
 # Deploy CDK stack
 Write-Host "`nDeploying CDK stack..." -ForegroundColor Yellow
 Push-Location $CdkDir
-cdk deploy $StackName --require-approval never @contextArgs
+cdk deploy $StackName @cdkAppArg --require-approval never @contextArgs
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     Write-Host "ERROR: CDK deployment failed" -ForegroundColor Red
