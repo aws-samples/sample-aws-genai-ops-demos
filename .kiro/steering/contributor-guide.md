@@ -32,6 +32,24 @@ All demos align with one of five pillars:
 | **AWS Transform** | Documentation generation, code analysis, migration assessments |
 | **MCP Servers** | Tool integration, Kiro Powers |
 
+### Bedrock Model IDs
+
+**NEVER hardcode region-prefixed model IDs** (e.g., `us.anthropic.claude-sonnet-4-6`). Use the shared utility to get the correct cross-region inference (CRIS) prefix for the deployment region:
+
+```python
+from shared.utils.aws_utils import get_bedrock_model_id
+
+MODEL_ID = get_bedrock_model_id()  # Auto-prefixes based on region
+```
+
+For Lambdas, compute the model ID in the CDK stack and pass it as an environment variable:
+
+```python
+environment={"MODEL_ID": get_bedrock_model_id()}
+```
+
+See `shared/README.md` for full documentation on the region-to-prefix mapping.
+
 ### Infrastructure as Code
 
 **AWS CDK is required** — TypeScript (preferred) or Python. No Terraform or CloudFormation-only.

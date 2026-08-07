@@ -90,6 +90,49 @@ if ([string]::IsNullOrEmpty($currentRegion)) {
 }
 ```
 
+## Bedrock Model ID (Cross-Region Inference)
+
+Newer Bedrock models (Claude Sonnet 4, 4.5, 4.6) are often only available via cross-region inference (CRIS) profiles. Use the shared utility to get the correct CRIS-prefixed model ID for the deployment region:
+
+### Python Usage
+```python
+from shared.utils.aws_utils import get_bedrock_model_id
+
+# Default model (anthropic.claude-sonnet-4-6)
+model_id = get_bedrock_model_id()
+# Returns: "eu.anthropic.claude-sonnet-4-6" in eu-west-1
+
+# Custom model
+model_id = get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0")
+# Returns: "eu.anthropic.claude-sonnet-4-5-20250929-v1:0" in eu-west-1
+```
+
+### Region-to-prefix mapping
+
+| Region prefix | CRIS prefix | Data residency |
+|---|---|---|
+| `us-*` | `us.` | US only |
+| `eu-*` | `eu.` | EU only |
+| `ap-*` | `ap.` | APAC only |
+| Others (`ca-`, `me-`, `af-`, `sa-`, `il-`, `mx-`) | `global.` | Worldwide |
+
+### CDK pattern for Lambdas
+
+The recommended pattern is to compute the model ID in the CDK app (which has access to shared utils via PYTHONPATH) and pass it as a Lambda environment variable:
+
+```python
+# infrastructure/cdk/app.py or stack.py
+from shared.utils.aws_utils import get_bedrock_model_id
+
+lambda_.Function(
+    self, "MyFunction",
+    environment={"MODEL_ID": get_bedrock_model_id()},
+    ...
+)
+```
+
+The Lambda then reads `os.environ['MODEL_ID']` at runtime — no shared utils dependency needed in the Lambda bundle.
+
 ## Scripts
 
 ### Prerequisites Check
