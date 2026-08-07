@@ -42,7 +42,7 @@ python -m pip install -r requirements.txt -q
 Pop-Location
 
 # Set PYTHONPATH for shared utilities
-$WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..\..\..").Path
+$WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..").Path
 $env:PYTHONPATH = "$WorkspaceRoot;$env:PYTHONPATH"
 
 # Build context args

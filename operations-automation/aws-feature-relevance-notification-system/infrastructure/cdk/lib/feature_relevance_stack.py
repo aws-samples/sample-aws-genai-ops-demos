@@ -2,6 +2,8 @@
 import os
 
 from aws_cdk import (
+    BundlingOptions,
+    CfnOutput,
     Duration,
     RemovalPolicy,
     Stack,
@@ -117,7 +119,16 @@ class FeatureRelevanceStack(Stack):
             self,
             "RSSIngestionFunction",
             handler="index.lambda_handler",
-            code=lambda_.Code.from_asset(os.path.join(lambdas_dir, "rss-ingestion")),
+            code=lambda_.Code.from_asset(
+                os.path.join(lambdas_dir, "rss-ingestion"),
+                bundling=BundlingOptions(
+                    image=lambda_.Runtime.PYTHON_3_12.bundling_image,
+                    command=[
+                        "bash", "-c",
+                        "pip install -r requirements.txt -t /asset-output && cp -r . /asset-output",
+                    ],
+                ),
+            ),
             reserved_concurrent_executions=5,
             environment={
                 "STATE_TABLE": announcement_state_table.table_name,
@@ -325,3 +336,26 @@ class FeatureRelevanceStack(Stack):
             schedule=events.Schedule.rate(Duration.days(1)),
             targets=[targets.LambdaFunction(rss_ingestion_fn)],
         )
+
+        # ============================================================
+        # Stack Outputs
+        # ============================================================
+        CfnOutput(self, "RSSIngestionFunctionName",
+                  value=rss_ingestion_fn.function_name,
+                  description="RSS Ingestion Lambda function name")
+
+        CfnOutput(self, "WorkloadManagerFunctionName",
+                  value=workload_manager_fn.function_name,
+                  description="Workload Manager Lambda function name")
+
+        CfnOutput(self, "SlackSecretArn",
+                  value=slack_webhook_secret.secret_arn,
+                  description="Secrets Manager ARN for Slack webhook")
+
+        CfnOutput(self, "StateMachineArn",
+                  value=state_machine.state_machine_arn,
+                  description="Step Functions State Machine ARN")
+
+        CfnOutput(self, "WorkloadProfilesTableName",
+                  value=workload_profiles_table.table_name,
+                  description="DynamoDB table for workload profiles")

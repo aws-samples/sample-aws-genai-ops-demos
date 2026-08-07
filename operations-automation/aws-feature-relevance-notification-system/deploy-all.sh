@@ -23,7 +23,7 @@ echo "=== AWS Feature Relevance Notification System Deployment ==="
 
 # Use shared prerequisites check (validates AWS CLI, region, service availability)
 # Region is available as $AWS_REGION after this call
-source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" bedrock
+source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" --required-service bedrock
 
 REGION="$AWS_REGION"
 STACK_NAME="FeatureRelevanceNotification-$REGION"
@@ -46,7 +46,7 @@ cd "$CDK_DIR"
 pip3 install -r requirements.txt -q 2>/dev/null || pip3 install -r requirements.txt -q --break-system-packages 2>/dev/null
 
 # Set PYTHONPATH for shared utilities
-export PYTHONPATH="$SCRIPT_DIR/../../../..:$PYTHONPATH"
+export PYTHONPATH="$SCRIPT_DIR/../..:$PYTHONPATH"
 
 # Build context args
 CONTEXT_ARGS=""
