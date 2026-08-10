@@ -1,5 +1,5 @@
 ---
-inclusion: always
+inclusion: fileMatch
 fileMatchPattern: '**/cdk/**/app.{py,ts}'
 ---
 

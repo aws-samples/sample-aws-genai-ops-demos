@@ -1,5 +1,7 @@
 ---
-inclusion: always
+inclusion: auto
+name: demo-structure-template
+description: Template and examples for creating new GenAI Ops demos including README structure, repository layout, and CDK app file patterns
 ---
 
 # Demo Structure Template

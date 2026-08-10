@@ -98,11 +98,13 @@ sample-genai-ops-demos/
 ├── shared/
 │   ├── scripts/
 │   │   ├── check-prerequisites.ps1
-│   │   └── check-prerequisites.sh
+│   │   ├── check-prerequisites.sh
+│   │   ├── deploy-cdk.ps1
+│   │   └── deploy-cdk.sh
 │   └── utils/
 │       ├── aws_utils.py
 │       ├── aws-utils.ts
-│       └── get-aws-region.sh
+│       └── aws-utils.sh
 └── .kiro/
     ├── steering/
     └── hooks/
