@@ -13,7 +13,7 @@ region = get_region()
 FeatureRelevanceStack(
     app,
     f"FeatureRelevanceNotification-{region}",
-    description="AWS Feature Relevance Notification System: AI-powered scoring of AWS announcements against workload profiles (uksb-do9bhieqqh)(tag:feature-relevance-notification,operations-automation)",
+    description="AWS Feature Relevance Notification System: AI-powered scoring of AWS announcements against workload profiles (uksb-do9bhieqqh)(tag:feature-relevance-notification,observability)",
     env=cdk.Environment(region=region),
 )
 
