@@ -7,6 +7,8 @@ prioritize which roles to address first.
 
 import json
 import logging
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -47,11 +49,18 @@ def handler(event, context=None):
     compare_by = event.get("compare_by", "all")
 
     try:
-        comparisons = []
-
-        for role_name in role_names:
-            role_analysis = _analyze_role(role_name, lookback_days, compare_by)
-            comparisons.append(role_analysis)
+        # Analyze roles CONCURRENTLY. Each role does several IAM calls plus a slow
+        # CloudTrail lookup; doing 3-5 roles sequentially blew past the API
+        # gateway's 29s limit. Running them in parallel makes total time roughly
+        # the slowest single role instead of the sum. boto3 clients are
+        # thread-safe and each task writes its own result dict.
+        with ThreadPoolExecutor(max_workers=min(len(role_names), 5)) as executor:
+            comparisons = list(
+                executor.map(
+                    lambda rn: _analyze_role(rn, lookback_days, compare_by),
+                    role_names,
+                )
+            )
 
         # Generate rankings
         rankings = _generate_rankings(comparisons)
@@ -156,9 +165,36 @@ def _get_permissions_summary(role_name: str) -> dict:
             except Exception:
                 pass
 
-        # Inline policies
+        # Inline policies — fetch and analyze each document, not just count them.
+        # Roles whose permissions live entirely in inline policies (common) were
+        # reporting 0 actions granted, which wrongly ranked them "least permissive /
+        # safest to delete". For a tool that recommends deletion, that's dangerous.
         inline = iam_client.list_role_policies(RoleName=role_name)
-        inline_count = len(inline.get("PolicyNames", []))
+        inline_names = inline.get("PolicyNames", [])
+        inline_count = len(inline_names)
+        for policy_name in inline_names:
+            try:
+                inline_doc = iam_client.get_role_policy(
+                    RoleName=role_name, PolicyName=policy_name
+                ).get("PolicyDocument", {})
+                # boto3 usually returns a dict; handle a URL-encoded string too.
+                if isinstance(inline_doc, str):
+                    inline_doc = json.loads(urllib.parse.unquote(inline_doc))
+                statements = inline_doc.get("Statement", [])
+                if isinstance(statements, dict):
+                    statements = [statements]
+                for stmt in statements:
+                    if stmt.get("Effect") != "Allow":
+                        continue
+                    actions = stmt.get("Action", [])
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    total_actions += len(actions)
+                    if "*" in actions:
+                        has_wildcards = True
+                        has_admin = True
+            except Exception:
+                pass
 
     except Exception as e:
         return {"error": str(e)}

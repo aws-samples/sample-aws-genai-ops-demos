@@ -6,6 +6,7 @@ details, related findings, remediation steps, and risk assessment.
 
 import json
 import logging
+import urllib.parse
 
 import boto3
 
@@ -36,26 +37,40 @@ def handler(event, context=None):
         }
     """
     finding_id = event.get("finding_id")
-    if not finding_id:
-        return {"error": "finding_id is required"}
+    role_name = event.get("role_name")
+    if not finding_id and not role_name:
+        return {"error": "Provide either finding_id (a Security Hub finding ID/ARN) or role_name"}
 
     include_resource_details = event.get("include_resource_details", True)
     include_related_findings = event.get("include_related_findings", True)
 
     try:
-        # Fetch the finding
-        response = securityhub_client.get_findings(
-            Filters={
-                "Id": [{"Value": finding_id, "Comparison": "EQUALS"}],
-            },
-            MaxResults=1,
-        )
+        finding = None
 
-        findings = response.get("Findings", [])
-        if not findings:
-            return {"error": f"Finding not found: {finding_id}"}
+        # Exact-ID lookup only when we were handed a real finding ID (ARN-like).
+        if finding_id and _looks_like_finding_id(finding_id):
+            response = securityhub_client.get_findings(
+                Filters={
+                    "Id": [{"Value": finding_id, "Comparison": "EQUALS"}],
+                },
+                MaxResults=1,
+            )
+            matches = response.get("Findings", [])
+            finding = matches[0] if matches else None
 
-        finding = findings[0]
+        # Otherwise resolve by the affected role/resource name. This covers the
+        # common "investigate role N" flow: the model knows the row number maps to
+        # a role name and passes role_name (or a bare token as finding_id). We
+        # resolve it in ONE Security Hub call instead of the old guess-ID -> fail
+        # -> re-list -> retry dance, which chained 3 tool calls and blew past the
+        # API gateway's 29s timeout.
+        if finding is None:
+            finding = _resolve_finding_by_resource_name(role_name or finding_id)
+
+        if finding is None:
+            hint = role_name or finding_id
+            return {"error": f"No active finding found matching '{hint}'. Try the exact role name from the findings list."}
+
         resources = finding.get("Resources", [{}])
         primary_resource = resources[0] if resources else {}
 
@@ -113,6 +128,46 @@ def handler(event, context=None):
         return {"error": str(e)}
 
 
+def _looks_like_finding_id(value: str) -> bool:
+    """True only for real Security Hub finding IDs (ARNs / long composite IDs),
+    so a bare row number like "8" or a plain role name is NOT mistaken for one."""
+    v = (value or "").strip()
+    return v.startswith("arn:") or "/" in v or len(v) > 40
+
+
+def _resolve_finding_by_resource_name(name: str):
+    """Resolve the active IAM Access Analyzer finding for a role/resource name.
+
+    Security Hub's ResourceId filter does NOT support CONTAINS (only EQUALS/PREFIX),
+    so we fetch the Access Analyzer findings with the same filter list_findings uses
+    (which is known to work) and match the role name in Python against the resource
+    ARN and the finding Id. One API call, no dependency on server-side CONTAINS."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    try:
+        response = securityhub_client.get_findings(
+            Filters={
+                "ProductName": [{"Value": "IAM Access Analyzer", "Comparison": "EQUALS"}],
+                "RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}],
+            },
+            MaxResults=50,
+            SortCriteria=[{"Field": "SeverityNormalized", "SortOrder": "desc"}],
+        )
+        lname = name.lower()
+        for finding in response.get("Findings", []):
+            resources = finding.get("Resources", [{}])
+            resource_id = (resources[0].get("Id", "") if resources else "").lower()
+            finding_id = (finding.get("Id", "") or "").lower()
+            title = (finding.get("Title", "") or "").lower()
+            if lname in resource_id or lname in finding_id or lname in title:
+                return finding
+        return None
+    except Exception as e:
+        logger.warning(f"Could not resolve finding by resource name '{name}': {e}")
+        return None
+
+
 def _get_resource_details(resource: dict) -> dict:
     """Fetch current IAM state for the affected resource."""
     resource_type = resource.get("Type", "")
@@ -128,6 +183,23 @@ def _get_resource_details(resource: dict) -> dict:
             attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
             inline_policies = iam_client.list_role_policies(RoleName=role_name)
 
+            # Fetch each inline policy DOCUMENT, not just the name — otherwise the
+            # risk assessment (and any deletion/least-privilege advice) is blind to
+            # permissions that live in inline policies, which is where many roles
+            # keep them.
+            inline_names = inline_policies.get("PolicyNames", [])
+            inline_docs = []
+            for policy_name in inline_names:
+                try:
+                    doc = iam_client.get_role_policy(
+                        RoleName=role_name, PolicyName=policy_name
+                    ).get("PolicyDocument", {})
+                    if isinstance(doc, str):
+                        doc = json.loads(urllib.parse.unquote(doc))
+                    inline_docs.append({"name": policy_name, "document": doc})
+                except Exception as e:
+                    inline_docs.append({"name": policy_name, "document": {}, "error": str(e)})
+
             return {
                 "type": "IAM Role",
                 "name": role_name,
@@ -139,7 +211,8 @@ def _get_resource_details(resource: dict) -> dict:
                     {"name": p["PolicyName"], "arn": p["PolicyArn"]}
                     for p in attached_policies.get("AttachedPolicies", [])
                 ],
-                "inline_policy_names": inline_policies.get("PolicyNames", []),
+                "inline_policy_names": inline_names,
+                "inline_policies": inline_docs,
                 "max_session_duration": role_info["Role"].get("MaxSessionDuration", 3600),
                 "path": role_info["Role"].get("Path", "/"),
             }

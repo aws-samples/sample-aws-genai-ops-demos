@@ -154,7 +154,7 @@ export default function ChatInterface() {
             variant="inline-link"
             onClick={() => setMode(mode === "guided" ? "quick" : "guided")}
           >
-            Switch to {mode === "guided" ? "Direct" : "Discovery"}
+            Switch to {mode === "guided" ? "Quick" : "Guided"}
           </Button>
         </div>
 

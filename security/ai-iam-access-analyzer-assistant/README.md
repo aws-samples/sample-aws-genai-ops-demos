@@ -219,7 +219,7 @@ Assistant: Dependency Analysis for ConsoleAdminAccess:
 
          Risk Level: LOW (Score: 0/100)
          Quick Dependents: None
-         Trust: arn:aws:iam::727820809195:root (with ExternalId condition)
+         Trust: arn:aws:iam::123456789012:root (with ExternalId condition)
          Policies Attached: None
 
          Recommendation: Safe to delete. No resources depend on this role,
@@ -391,6 +391,24 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### CDK deploy fails on bootstrap (missing SSM parameter / stale bootstrap stack)
+
+**Cause:** The target account/region isn't bootstrapped for CDK, or has an outdated/partial bootstrap. This is common in accounts managed by a landing zone, where the bootstrap stack may have been created with custom permission boundaries or qualifiers.
+**Fix:** Bootstrap the environment before deploying:
+
+```bash
+npx cdk bootstrap aws://<account-id>/<region>
+```
+
+If your organization requires a permissions boundary or a custom qualifier on the bootstrap stack, pass it explicitly, for example:
+
+```bash
+npx cdk bootstrap aws://<account-id>/<region> \
+  --custom-permissions-boundary <boundary-policy-name>
+```
+
+See the [AWS CDK bootstrapping guide](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html) for options specific to managed/enterprise accounts.
 
 ### "Password does not conform to policy" in Cognito UI
 

@@ -89,6 +89,27 @@ class ApiConstruct(Construct):
             ),
         )
 
+        # Attach CORS headers to gateway-generated error responses (4xx/5xx).
+        # Without these, an API Gateway integration timeout (504) or throttle
+        # response is returned WITHOUT CORS headers, so the browser can't read it
+        # and surfaces a generic "Failed to fetch" instead of the real status.
+        # Adding them lets the frontend detect the timeout and show useful guidance.
+        _error_cors_headers = {
+            "Access-Control-Allow-Origin": "'*'",
+            "Access-Control-Allow-Headers": "'Content-Type,Authorization'",
+            "Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+        }
+        api.add_gateway_response(
+            "Default5xxCors",
+            type=apigw.ResponseType.DEFAULT_5_XX,
+            response_headers=_error_cors_headers,
+        )
+        api.add_gateway_response(
+            "Default4xxCors",
+            type=apigw.ResponseType.DEFAULT_4_XX,
+            response_headers=_error_cors_headers,
+        )
+
         # Cognito authorizer
         authorizer = apigw.CognitoUserPoolsAuthorizer(
             self,

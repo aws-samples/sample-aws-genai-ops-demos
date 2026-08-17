@@ -1,6 +1,6 @@
 # AI IAM Access Analyzer Assistant — Test Prompts
 
-Use these prompts to test all functionality of the deployed assistant. Run each one through the web UI (https://d35uakxtpftk0q.cloudfront.net) and verify the expected behavior.
+Use these prompts to test all functionality of the deployed assistant. Run each one through the web UI (use the CloudFront URL from your deployment's stack outputs) and verify the expected behavior.
 
 ---
 

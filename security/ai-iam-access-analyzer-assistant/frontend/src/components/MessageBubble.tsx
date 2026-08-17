@@ -1,4 +1,5 @@
 import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import PolicyViewer from "./PolicyViewer";
 import FindingsTable from "./FindingsTable";
@@ -150,8 +151,11 @@ function parseAssistantMessage(content: string): MessageSection[] {
 
     const codeContent = match[1].trim();
 
-    // Detect if it's a policy
-    if (isPolicyDocument(codeContent)) {
+    if (/^https?:\/\/\S+$/.test(codeContent)) {
+      // A lone URL fenced as a code block (e.g. a presigned download link the
+      // model wrapped in ```) should be a clickable link, not a monospace box.
+      sections.push({ type: "text", content: codeContent });
+    } else if (isPolicyDocument(codeContent)) {
       sections.push({
         type: "policy",
         content: codeContent,
@@ -236,19 +240,9 @@ function DownloadButton({ content }: { content: string }) {
   };
 
   return (
-    <button
-      onClick={handleDownload}
-      style={{
-        background: "none",
-        border: "none",
-        color: "var(--color-text-link-default)",
-        cursor: "pointer",
-        fontSize: "12px",
-        padding: 0,
-      }}
-    >
+    <Button iconName="download" variant="normal" onClick={handleDownload}>
       Save as .md
-    </button>
+    </Button>
   );
 }
 
@@ -257,7 +251,16 @@ function formatMarkdown(content: string): string {
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/`(.*?)`/g, '<code style="background:var(--color-background-code-editor-gutter-default, #2a2d35);color:var(--color-text-code-editor-plain-text, #e0e0e0);padding:2px 6px;border-radius:4px;font-size:12px;font-family:monospace;">$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--color-text-link-default);">$1</a>')
+    // Lenient: the closing ')' is optional and the URL runs to the next space.
+    // Long presigned URLs sometimes arrive without the closing paren (truncated
+    // mid-line); the strict form left those as raw text. This still renders a
+    // clean link using the label, hiding the URL.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)?/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--color-text-link-default);word-break:break-all;">$1</a>')
+    // Auto-linkify bare URLs (e.g. presigned S3 download links) that the model
+    // emitted without markdown link syntax. The lookbehind skips URLs already
+    // inside an anchor (href="…), a markdown link '(…', or after '>' so we never
+    // double-wrap the links handled by the rule above.
+    .replace(/(?<!["=(])(https?:\/\/[^\s<>()[\]]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--color-text-link-default);word-break:break-all;">$1</a>')
     .replace(/^### (.*$)/gm, '<h4 style="margin:8px 0 4px;">$1</h4>')
     .replace(/^## (.*$)/gm, '<h3 style="margin:12px 0 4px;">$1</h3>')
     .replace(/^- (.*$)/gm, '<li style="margin:2px 0;">$1</li>')

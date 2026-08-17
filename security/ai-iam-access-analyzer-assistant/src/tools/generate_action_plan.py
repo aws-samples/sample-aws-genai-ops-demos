@@ -35,7 +35,8 @@ def handler(event, context=None):
             risk_distribution: {critical, high, medium, low}
         }
     """
-    max_items = min(event.get("max_items", 50), 100)    include_quick_wins = event.get("include_quick_wins", True)
+    max_items = min(event.get("max_items", 50), 100)
+    include_quick_wins = event.get("include_quick_wins", True)
     focus_area = event.get("focus_area")
 
     try:
