@@ -7,9 +7,7 @@ ENV UV_SYSTEM_PYTHON=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_NO_PROGRESS=1 \
     PYTHONUNBUFFERED=1 \
-    DOCKER_CONTAINER=1 \
-    AWS_REGION=us-east-1 \
-    AWS_DEFAULT_REGION=us-east-1
+    DOCKER_CONTAINER=1
 
 # Install dependencies (separate layer for caching)
 COPY requirements.txt .

@@ -19,35 +19,35 @@ logger = logging.getLogger(__name__)
 
 
 class HealthCollector:
-    """Collecteur d'événements AWS Health."""
+    """AWS Health event collector."""
 
     def __init__(self, region: str = 'us-east-1'):
         """
-        Initialise le client Health en us-east-1 (endpoint global).
+        Initialize the Health client in us-east-1 (global endpoint).
 
         Args:
-            region: Région AWS pour le client Health. Doit être us-east-1
-                    car l'API Health est un endpoint global accessible
-                    uniquement depuis cette région.
+            region: AWS region for the Health client. Must be us-east-1
+                    because the Health API is a global endpoint only
+                    accessible from this region.
         """
         self.region = region
         self.client = boto3.client('health', region_name=self.region)
 
     def collect_events(self, service_filter: Optional[List[str]] = None) -> dict:
         """
-        Collecte les événements Health actifs.
+        Collect active Health events.
 
         Args:
-            service_filter: Liste des services à surveiller (depuis service_configs).
-                           Utilise le champ health_event_mapping des configs.
+            service_filter: List of services to monitor (from service_configs).
+                           Uses the health_event_mapping field from configs.
 
         Returns:
-            dict avec:
-                - success: bool indiquant le succès global
-                - events_collected: nombre d'événements collectés
-                - events_enriched: nombre d'événements avec détails
-                - errors: liste des erreurs rencontrées
-                - events: liste des événements collectés
+            dict with:
+                - success: bool indicating overall success
+                - events_collected: number of events collected
+                - events_enriched: number of events with details
+                - errors: list of errors encountered
+                - events: list of collected events
         """
         errors: List[str] = []
         events: List[dict] = []
@@ -114,16 +114,16 @@ class HealthCollector:
 
     def _describe_events(self, filter_params: dict) -> List[dict]:
         """
-        Appelle health:DescribeEvents avec pagination.
+        Call health:DescribeEvents with pagination.
 
         Args:
-            filter_params: Paramètres de filtre pour l'API Health.
+            filter_params: Filter parameters for the Health API.
 
         Returns:
-            Liste complète des événements paginés.
+            Complete list of paginated events.
 
         Raises:
-            ClientError: Si l'API retourne une erreur non-récupérable.
+            ClientError: If the API returns a non-recoverable error.
         """
         all_events: List[dict] = []
         next_token: Optional[str] = None
@@ -167,19 +167,18 @@ class HealthCollector:
 
     def _describe_event_details(self, event_arns: List[str]) -> List[dict]:
         """
-        Récupère les détails pour une liste d'ARNs d'événements.
+        Retrieve details for a list of event ARNs.
 
-        L'API Health limite à 10 ARNs par appel, donc on batch les requêtes.
+        The Health API limits to 10 ARNs per call, so requests are batched.
 
         Args:
-            event_arns: Liste des ARNs d'événements pour lesquels
-                       récupérer les détails.
+            event_arns: List of event ARNs to retrieve details for.
 
         Returns:
-            Liste des détails d'événements.
+            List of event details.
 
         Raises:
-            ClientError: Si l'API retourne une erreur non-récupérable.
+            ClientError: If the API returns a non-recoverable error.
         """
         all_details: List[dict] = []
         batch_size = 10  # API limit per call
@@ -224,19 +223,19 @@ class HealthCollector:
 
     def _apply_backoff(self, attempt: int, base_delay: float = 1.0, max_attempts: int = 5) -> bool:
         """
-        Applique un backoff exponentiel en cas de throttling.
+        Apply exponential backoff on throttling.
 
         Delay = 2^(N-1) * base_delay seconds.
         Returns False if attempt > max_attempts.
 
         Args:
-            attempt: Numéro de la tentative courante (1-indexed).
-            base_delay: Délai de base en secondes.
-            max_attempts: Nombre maximum de tentatives.
+            attempt: Current attempt number (1-indexed).
+            base_delay: Base delay in seconds.
+            max_attempts: Maximum number of attempts.
 
         Returns:
-            True si le backoff a été appliqué (on peut réessayer),
-            False si le nombre maximum de tentatives est dépassé.
+            True if backoff was applied (can retry),
+            False if max attempts exceeded.
         """
         if attempt > max_attempts:
             logger.error(
@@ -254,13 +253,13 @@ class HealthCollector:
 
     def _format_event(self, event: dict) -> dict:
         """
-        Formate un événement brut de l'API Health en structure standardisée.
+        Format a raw Health API event into a standardized structure.
 
         Args:
-            event: Événement brut retourné par describe_events.
+            event: Raw event returned by describe_events.
 
         Returns:
-            Événement formaté avec champs standardisés.
+            Formatted event with standardized fields.
         """
         collected_at = datetime.now(timezone.utc).isoformat()
 
@@ -288,13 +287,13 @@ class HealthCollector:
     @staticmethod
     def _format_datetime(dt) -> str:
         """
-        Formate un datetime en ISO 8601 string.
+        Format a datetime to ISO 8601 string.
 
         Args:
-            dt: Objet datetime ou None.
+            dt: Datetime object or None.
 
         Returns:
-            String ISO 8601 ou chaîne vide si None.
+            ISO 8601 string or empty string if None.
         """
         if dt is None:
             return ''
