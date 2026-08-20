@@ -10,11 +10,18 @@ import os
 from datetime import datetime, timezone
 
 import boto3
+from botocore.config import Config
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3_client = boto3.client("s3")
+# Pin SigV4 + the regional endpoint. The default global endpoint (s3.amazonaws.com)
+# combined with the Lambda's temporary role credentials was producing malformed
+# SigV2 presigned URLs (missing the Expires param), which S3 rejects with
+# AccessDenied. SigV4 generates a valid X-Amz-* signed URL that includes the
+# security token and expiry.
+_REGION = os.environ.get("AWS_REGION", "us-east-1")
+s3_client = boto3.client("s3", region_name=_REGION, config=Config(signature_version="s3v4"))
 REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
 
 

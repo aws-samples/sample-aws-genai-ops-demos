@@ -31,17 +31,27 @@ from tools.get_finding_details import handler as get_finding_details_handler
 from tools.generate_policy import handler as generate_policy_handler
 from tools.check_dependencies import handler as check_dependencies_handler
 from tools.validate_policy import handler as validate_policy_handler
+from tools.generate_action_plan import handler as generate_action_plan_handler
+from tools.export_report import handler as export_report_handler
+from tools.compare_roles import handler as compare_roles_handler
+from tools.list_exports import handler as list_exports_handler
 
 # Import agent config (system prompt + tool definitions)
 from agent import SYSTEM_PROMPT, TOOL_CONFIG
 
 # Local tool dispatch — bypasses Lambda.invoke()
+# NOTE: this must cover every tool declared in agent.TOOL_CONFIG, otherwise the
+# model can call a tool the harness can't dispatch (returns "Unknown tool").
 LOCAL_TOOLS = {
     "list_findings": list_findings_handler,
     "get_finding_details": get_finding_details_handler,
     "generate_policy": generate_policy_handler,
     "check_dependencies": check_dependencies_handler,
     "validate_policy": validate_policy_handler,
+    "generate_action_plan": generate_action_plan_handler,
+    "export_report": export_report_handler,
+    "compare_roles": compare_roles_handler,
+    "list_exports": list_exports_handler,
 }
 
 bedrock_client = boto3.client("bedrock-runtime")

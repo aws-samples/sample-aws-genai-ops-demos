@@ -272,6 +272,32 @@ def test_validate_policy(args):
     print("\n  validate_policy: PASSED")
 
 
+def test_generate_action_plan(args):
+    """Test generate_action_plan tool (R1 — verifies the module imports and runs)."""
+    from tools.generate_action_plan import handler
+
+    print("\n--- Testing generate_action_plan ---")
+    print("Building a prioritized remediation plan from active findings...\n")
+
+    # Default run
+    result = handler({"max_items": 25, "include_quick_wins": True})
+    _print_result("Action plan (max_items=25, quick wins on)", result)
+
+    if result.get("error"):
+        print(f"\n  ERROR: {result['error']}")
+        print("  Make sure Security Hub is enabled with IAM Access Analyzer integration.")
+        return
+
+    summary = result.get("summary", {})
+    print(f"\n  Total findings analyzed: {summary.get('total_findings', 0)}")
+    print(f"  Quick wins: {summary.get('quick_wins_count', 0)}")
+    print(f"  High priority: {summary.get('high_priority_count', 0)}")
+    print(f"  Estimated time: {summary.get('estimated_total_time_human', 'N/A')}")
+    print(f"  Action items returned: {len(result.get('action_plan', []))}")
+
+    print("\n  generate_action_plan: PASSED")
+
+
 def _print_result(label: str, result: dict):
     """Pretty-print a result dict."""
     print(f"\n  [{label}]")
@@ -292,7 +318,7 @@ def main():
     )
     parser.add_argument(
         "--tool",
-        choices=["list_findings", "get_finding_details", "generate_policy", "check_dependencies", "validate_policy", "all"],
+        choices=["list_findings", "get_finding_details", "generate_policy", "check_dependencies", "validate_policy", "generate_action_plan", "all"],
         default="all",
         help="Which tool to test (default: all)",
     )
@@ -325,6 +351,7 @@ def main():
         "generate_policy": test_generate_policy,
         "check_dependencies": test_check_dependencies,
         "validate_policy": test_validate_policy,
+        "generate_action_plan": test_generate_action_plan,
     }
 
     if args.tool == "all":

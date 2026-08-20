@@ -9,6 +9,7 @@ import os
 import logging
 
 import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -47,10 +48,49 @@ When presenting both recommendations and follow-up options in the same response,
 - Use lettered options (A, B, C, D) or descriptive labels for "Next Steps" / "What I can do next" sections
 - NEVER use numbered lists for both sections in the same response — this confuses users who reply with just a number
 
-PERFORMANCE RULE:
-- NEVER call more than 2 tools in a single response. If a task requires multiple tools, complete 1-2 tools, present the results, then offer to continue with the next steps.
-- This ensures responses return quickly and users don't wait too long.
-- export_report should be called ALONE (not alongside other tools) to ensure it completes within the time limit.
+USER INPUT HANDLING:
+When you present lettered options (A, B, C...) or numbered options (1, 2, 3...) to the user,
+and the user replies with just a letter or number, ALWAYS interpret that as selecting the
+corresponding option from your most recent message. Never say "I'm not sure what you mean"
+when the user's input matches a presented option. Match case-insensitively (treat "f" and "F"
+the same), and tolerate minor variations like "option D", "D.", or "do D".
+
+FINDINGS LIST FORMAT:
+When presenting a list of findings or roles, ALWAYS use this markdown table format:
+
+📋 The List
+
+| # | Role Name | Age | Status |
+|---|-----------|-----|--------|
+| 1 | `role-name-here` | X days | STATUS |
+| 2 | `role-name-here` | X days | STATUS |
+...
+
+---
+
+Rules:
+- Role names in backticks (monospace)
+- Age = days since the finding was created
+- Status = workflow status (NEW, NOTIFIED, RESOLVED, SUPPRESSED)
+- Always number rows sequentially
+- End with a horizontal rule (---)
+- Keep this table format consistent across every response — do not switch to bullets or prose for findings lists
+
+TOOL FAILURE HANDLING:
+When a tool call returns an error (any result containing an "error" field, or a missing/empty
+result where data was expected), you MUST tell the user the tool failed and offer to retry.
+NEVER silently substitute your own answer from conversation context and present it as if the
+tool produced it — a lower-fidelity fallback presented as real data is worse than an honest
+failure. State plainly what failed (e.g., "The action plan tool returned an error and couldn't
+run"), and offer to try again or suggest a next step.
+
+PERFORMANCE RULE (CRITICAL — prevents timeouts):
+- The API gateway terminates any single turn at ~29 seconds. Every tool call plus the model round-trips around it consumes real time, so doing too much in one turn causes a timeout that the user sees as a "Failed to fetch" error. Keeping each turn light is the single most important thing you can do for reliability.
+- Default to ONE tool call per turn. Run it, present the result, then OFFER the next step for the user to choose rather than chaining it yourself.
+- These tools are EXPENSIVE and MUST each be the ONLY tool call in their turn — NEVER chain them with another tool: generate_policy, check_dependencies, generate_action_plan, compare_roles.
+- INVESTIGATING A ROLE OR FINDING: when the user selects a role/finding to look into (by number, like "8", or by name), call ONLY get_finding_details in that turn, and pass the ROLE NAME via the role_name parameter — NOT the row number. You already know which role a number refers to from the list you just showed (e.g. "8" = ConsoleAdminAccess), so call get_finding_details with role_name="ConsoleAdminAccess". NEVER pass a bare row number as finding_id, and do NOT call list_findings again just to resolve the number — that wastes a round-trip and causes timeouts. Do NOT also run blast radius (check_dependencies) or generate a policy in the same turn. After presenting the details, OFFER those as explicit next steps — e.g. "Want me to check the blast radius before you'd change anything?" or "Want a least-privilege policy for this role?" — and run them in their own separate turns when the user says yes.
+- Only ever combine two tools in one turn when BOTH are lightweight (e.g. list_findings) AND the task genuinely needs both. When in doubt, do one and offer the next.
+- export_report must be called ALONE (never alongside other tools) so it completes within the time limit.
 
 LARGE RESULT HANDLING:
 - Tools return a limited number of items per call (e.g., 10 findings, top 10 action items) to keep responses fast.
@@ -79,6 +119,8 @@ EXPORT AWARENESS:
   "Saved: `[filename]` — [Download here]([download_url]) *(link valid for 1 hour — file stored permanently in S3)*"
   CRITICAL: The download_url MUST be inside a markdown link like [text](url). NEVER show the raw URL text. Presigned URLs are long and ugly — always hide them behind a clickable link label.
 - This is critical for users doing complex multi-session work who need to resume later.
+- LISTING EXPORTS: the list_exports "list" action returns filenames and dates but NO download URLs (by design). Present a clean numbered list of filenames with their dates, and tell the user to ask for a link for a specific file to download it. Do NOT fabricate or paste URLs in the list.
+- GENERATING A SINGLE DOWNLOAD LINK (export_report, or list_exports get_link): ALWAYS format it as a markdown link like [Download <filename>](url). NEVER paste the raw URL, and NEVER wrap the URL in backticks or a code block — both prevent it from rendering as a clickable link.
 
 EDUCATIONAL MODE:
 You can also serve as an IAM security educator. When users ask to learn, or when they're new:
@@ -206,6 +248,10 @@ TOOL_CONFIG = {
                                 "type": "integer",
                                 "description": "Maximum findings to return (default: 20)",
                             },
+                            "next_token": {
+                                "type": "string",
+                                "description": "Pagination token from a previous list_findings response. Pass the next_token value returned by the prior call to retrieve the next page of findings when the user asks to 'show more' or see the next batch.",
+                            },
                         },
                     }
                 },
@@ -214,14 +260,18 @@ TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "get_finding_details",
-                "description": "Get detailed information about a specific IAM Access Analyzer finding by ID. Returns full context including the current IAM resource state, related findings for the same resource, risk assessment, and step-by-step remediation guidance.",
+                "description": "Get detailed information about a specific IAM Access Analyzer finding. Identify the finding by role_name (preferred for the common 'investigate this role' flow) OR by a full Security Hub finding_id. Returns full context including the current IAM resource state, related findings, risk assessment, and remediation guidance.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
                         "properties": {
+                            "role_name": {
+                                "type": "string",
+                                "description": "The IAM role/resource name to investigate (e.g. 'ConsoleAdminAccess'). USE THIS when the user selects a role from the list (by number or name) — pass the role name, never the row number. Resolves the finding in a single call.",
+                            },
                             "finding_id": {
                                 "type": "string",
-                                "description": "The Security Hub finding ID to retrieve details for",
+                                "description": "The full Security Hub finding ID or ARN. Only use this when you have the actual finding ID from a prior tool result — NOT a row number like '8'. Prefer role_name otherwise.",
                             },
                             "include_resource_details": {
                                 "type": "boolean",
@@ -232,7 +282,6 @@ TOOL_CONFIG = {
                                 "description": "Find other findings for the same resource (default: true)",
                             },
                         },
-                        "required": ["finding_id"],
                     }
                 },
             }
@@ -483,8 +532,17 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
         inferenceConfig={"maxTokens": 2048},
     )
 
-    # Process tool use in a loop until we get a final response
+    # Process tool use in a loop until we get a final response.
+    # HARD CAP the number of tool rounds: the API Gateway kills the request at
+    # 29s, and each tool round is a full Bedrock round-trip. The model sometimes
+    # "double-checks" by calling extra tools it doesn't need (e.g. investigate a
+    # role, then re-list, then re-fetch by ARN) — which pushed turns to ~35s and
+    # timed out. After the budget, we force a final text answer with no more tools.
+    MAX_TOOL_ROUNDS = 2
+    rounds = 0
+
     while response["stopReason"] == "tool_use":
+        rounds += 1
         assistant_message = response["output"]["message"]
         messages.append(assistant_message)
 
@@ -514,14 +572,32 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
                     }
                 )
 
-        # Add tool results and continue conversation
+        budget_hit = rounds >= MAX_TOOL_ROUNDS
+        if budget_hit:
+            # Nudge the model to answer now, in the same user turn as the tool
+            # results (two consecutive user messages would be rejected).
+            tool_results.append(
+                {"text": "Answer the user now using the information gathered above. Do NOT call any more tools."}
+            )
+
         messages.append({"role": "user", "content": tool_results})
+
+        # Cap synthesis length — long generations are a big chunk of latency, and
+        # the extra tokens rarely help. Keep tools available unless the budget is
+        # hit (toolConfig must stay present because the history contains tool use).
         response = bedrock_client.converse(
             modelId=model_id,
             system=[{"text": system_prompt}],
             messages=messages,
             toolConfig=TOOL_CONFIG,
+            # 2048 (not 1024): a 1024 cap truncated long presigned download-link
+            # lines mid-URL, corrupting the link. The tool-round cap already bounds
+            # latency, so this larger ceiling is safe.
+            inferenceConfig={"maxTokens": 2048},
         )
+
+        if budget_hit:
+            break
 
     return response, tool_calls_made
 
@@ -604,6 +680,38 @@ def handler(event, context):
                     "tools_used": tool_calls_made,
                 }
             ),
+        }
+
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        # Bedrock returns AccessDeniedException when model access isn't enabled or
+        # is still propagating — and the raw message misleadingly mentions AWS
+        # Marketplace subscriptions, which sends operators chasing phantom SCP
+        # denials. Surface the real cause with an actionable hint instead of a 500.
+        if code in ("AccessDeniedException", "AccessDenied"):
+            model_id = os.environ.get("BEDROCK_MODEL_ID", "the configured model")
+            actionable = (
+                "I couldn't reach the Bedrock model due to an access-denied error. This almost "
+                "always means one of two things:\n\n"
+                f"1. **Model access isn't enabled** for `{model_id}` in this account/region. "
+                "Open the Bedrock console → **Model access** and enable it.\n"
+                "2. **Access was just enabled and is still propagating** — Bedrock can take a "
+                "couple of minutes. If you just enabled it, wait ~2 minutes and retry.\n\n"
+                "Note: the underlying AWS error may mention *AWS Marketplace subscriptions* "
+                "(`aws-marketplace:Subscribe`). That wording is misleading — this is Bedrock "
+                "model access, not a Marketplace or SCP problem, so no need to audit your SCPs."
+            )
+            logger.error(f"Bedrock AccessDenied: {e}", exc_info=True)
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps({"response": actionable, "error_type": "bedrock_access_denied"}),
+            }
+        logger.error(f"AWS ClientError processing conversation ({code}): {e}", exc_info=True)
+        return {
+            "statusCode": 502,
+            "headers": _cors_headers(),
+            "body": json.dumps({"error": f"AWS error: {code or 'unknown'}"}),
         }
 
     except Exception as e:

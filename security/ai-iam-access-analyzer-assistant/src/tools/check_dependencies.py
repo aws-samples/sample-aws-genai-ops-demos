@@ -4,7 +4,9 @@ Maps what roles, users, services, and resources depend on a given IAM entity.
 Provides risk scoring to help understand the blast radius of changes.
 """
 
+import json
 import logging
+import urllib.parse
 from collections import defaultdict
 
 import boto3
@@ -197,6 +199,13 @@ def _analyze_role_dependencies(role_name: str, result: dict, include_service_lin
                 "type": "inline",
             })
 
+        # Assess the role's OWN privilege level. Blast radius alone measures what
+        # would break if you change the role; it does NOT capture how dangerous the
+        # role's permissions are. Without this, a high-privilege admin role that
+        # nothing depends on scores LOW and reads as "safe to ignore" — a false and
+        # dangerous verdict for a security tool.
+        result["privilege"] = _analyze_role_permissions(role_name)
+
         # Recursive: find roles that reference this role in their policies
         if depth > 1:
             _find_roles_referencing(role_info["Role"]["Arn"], result, include_service_linked)
@@ -245,6 +254,73 @@ def _analyze_user_dependencies(user_name: str, result: dict):
         result["warnings"].append(f"User '{user_name}' not found")
     except Exception as e:
         result["warnings"].append(f"Error analyzing user: {e}")
+
+
+def _analyze_role_permissions(role_name: str) -> dict:
+    """Assess the role's own privilege level (admin / wildcard / action count),
+    reading BOTH managed and inline policy documents. Feeds the risk score so a
+    high-privilege role is never reported as low-risk / 'safe to ignore'."""
+    total_actions = 0
+    has_admin = False
+    has_wildcard = False
+    admin_policies = []
+
+    def _count(document, source_name=""):
+        nonlocal total_actions, has_admin, has_wildcard
+        statements = document.get("Statement", []) if isinstance(document, dict) else []
+        if isinstance(statements, dict):
+            statements = [statements]
+        for stmt in statements:
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            total_actions += len(actions)
+            if any(a == "*" for a in actions):
+                has_wildcard = True
+                has_admin = True
+                if source_name:
+                    admin_policies.append(source_name)
+
+    try:
+        attached = iam_client.list_attached_role_policies(RoleName=role_name)
+        for policy in attached.get("AttachedPolicies", []):
+            name = policy["PolicyName"]
+            if "Admin" in name or "FullAccess" in name:
+                has_admin = True
+                admin_policies.append(name)
+            try:
+                pinfo = iam_client.get_policy(PolicyArn=policy["PolicyArn"])
+                ver = iam_client.get_policy_version(
+                    PolicyArn=policy["PolicyArn"],
+                    VersionId=pinfo["Policy"]["DefaultVersionId"],
+                )
+                _count(ver["PolicyVersion"]["Document"], name)
+            except Exception:
+                pass
+
+        inline = iam_client.list_role_policies(RoleName=role_name)
+        for policy_name in inline.get("PolicyNames", []):
+            try:
+                doc = iam_client.get_role_policy(
+                    RoleName=role_name, PolicyName=policy_name
+                ).get("PolicyDocument", {})
+                if isinstance(doc, str):
+                    doc = json.loads(urllib.parse.unquote(doc))
+                _count(doc, policy_name)
+            except Exception:
+                pass
+    except Exception as e:
+        return {"error": str(e)}
+
+    return {
+        "total_actions_granted": total_actions,
+        "has_admin_access": has_admin,
+        "has_wildcard_actions": has_wildcard,
+        "admin_policies": sorted(set(admin_policies)),
+        "is_high_privilege": has_admin or has_wildcard or total_actions > 50,
+    }
 
 
 def _find_roles_referencing(target_arn: str, result: dict, include_service_linked: bool):
@@ -345,6 +421,29 @@ def _calculate_risk_score(result: dict) -> dict:
     aws_managed = sum(1 for p in result["policy_attachments"] if p.get("is_aws_managed"))
     if aws_managed > 0:
         factors.append(f"Uses {aws_managed} AWS-managed policy(ies) — stable dependency")
+
+    # Privilege level of the role ITSELF (not just what depends on it). A
+    # high-privilege role is a security concern even with a small blast radius,
+    # so it must not be reported as low-risk / "safe to ignore".
+    priv = result.get("privilege", {})
+    if priv.get("has_admin_access") or priv.get("has_wildcard_actions"):
+        score += 40
+        detail = f" ({', '.join(priv['admin_policies'])})" if priv.get("admin_policies") else ""
+        factors.append(
+            f"HIGH PRIVILEGE: role grants admin/wildcard permissions{detail} — a "
+            "security risk even if little depends on it; do NOT treat as safe to ignore"
+        )
+        result.setdefault("warnings", []).append(
+            "This role has admin/wildcard permissions. A low blast radius means it is "
+            "safe to CHANGE, not safe to LEAVE — high-privilege unused roles are prime "
+            "attack targets and should be scoped down or removed."
+        )
+    elif priv.get("total_actions_granted", 0) > 50:
+        score += 20
+        factors.append(
+            f"Broad permissions ({priv['total_actions_granted']} actions granted) — "
+            "review scope even if blast radius is low"
+        )
 
     # Cap at 100
     score = min(score, 100)

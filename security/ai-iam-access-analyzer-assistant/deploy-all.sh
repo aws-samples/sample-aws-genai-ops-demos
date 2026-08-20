@@ -6,9 +6,58 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Keep in sync with BEDROCK_MODEL_ID in infrastructure/cdk/stacks/api_construct.py
+BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+# Verify the configured Bedrock model is actually enabled BEFORE the long deploy,
+# so operators don't deploy successfully and then hit an opaque runtime 500 whose
+# real cause (model access not enabled / still propagating) is masked by a
+# misleading "AWS Marketplace subscription" error. Warns, does not hard-fail —
+# propagation timing means a legitimate deploy shouldn't be blocked.
+check_bedrock_model_access() {
+    local region="$1"
+    local model_id="$BEDROCK_MODEL_ID"
+    # Cross-region inference profile IDs are prefixed (us./eu./apac.); the
+    # availability API expects the underlying base model id.
+    local base_model_id="${model_id#us.}"
+    base_model_id="${base_model_id#eu.}"
+    base_model_id="${base_model_id#apac.}"
+
+    echo "Checking Bedrock model access for $model_id in $region ..."
+    local avail=""
+    if avail=$(aws bedrock get-foundation-model-availability \
+        --model-id "$base_model_id" --region "$region" 2>/dev/null); then
+        if echo "$avail" | grep -q '"entitlementAvailability": *"AVAILABLE"'; then
+            echo " ✓ Bedrock model access is enabled."
+            return 0
+        fi
+        echo ""
+        echo " ⚠ Bedrock model access is NOT enabled for $base_model_id in $region."
+        echo "   Enable it: Bedrock console → Model access → enable the model."
+        echo "   If you just enabled it, wait ~2 minutes for propagation."
+        echo ""
+        return 1
+    fi
+
+    # Fallback for CLIs without get-foundation-model-availability: a tiny converse.
+    if aws bedrock-runtime converse --model-id "$model_id" \
+        --messages '[{"role":"user","content":[{"text":"ping"}]}]' \
+        --region "$region" >/dev/null 2>&1; then
+        echo " ✓ Bedrock model is reachable (test invocation succeeded)."
+        return 0
+    fi
+    echo ""
+    echo " ⚠ Could not invoke $model_id in $region — model access may not be enabled"
+    echo "   or is still propagating. Enable it in the Bedrock console → Model access."
+    echo "   NOTE: a raw AccessDenied may mention 'AWS Marketplace subscriptions' — that"
+    echo "   wording is misleading; this is Bedrock model access, not an SCP/Marketplace issue."
+    echo ""
+    return 1
+}
+
 # Check prerequisites
 if [ -f "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" ]; then
-    source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" bedrock 2.31.13
+    source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" --required-service bedrock --min-aws-cli-version 2.31.13
 else
     # Standalone mode — inline checks
     echo "Checking prerequisites..."
@@ -32,6 +81,11 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
 
 echo " Region: $REGION"
 echo " Account: $ACCOUNT_ID"
+echo ""
+
+# Verify Bedrock model access up front (warns but continues)
+check_bedrock_model_access "$REGION" || \
+    echo " ⚠ Continuing deploy despite the model-access warning above — the assistant will"$'\n'"   return an access error at runtime until model access is enabled and propagated."
 echo ""
 
 # Step 1: Install CDK dependencies
