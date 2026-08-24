@@ -4,7 +4,7 @@
   "description": "Handles DevOps Agent investigation completion and resumes Step Functions",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js --external:@aws-sdk/*"
+    "build": "esbuild index.ts --bundle --platform=node --target=node24 --outfile=index.js --external:@aws-sdk/*"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.600.0",
