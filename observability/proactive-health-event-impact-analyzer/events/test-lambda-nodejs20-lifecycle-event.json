@@ -1,0 +1,29 @@
+{
+  "version": "0",
+  "id": "a1b2c3d4-1234-5678-abcd-ef0123456789",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "",
+  "time": "2026-04-30T07:00:00Z",
+  "region": "eu-central-1",
+  "resources": [],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-central-1::event/LAMBDA/AWS_LAMBDA_PLANNED_LIFECYCLE_EVENT/AWS_LAMBDA_PLANNED_LIFECYCLE_EVENT_nodejs20",
+    "service": "LAMBDA",
+    "eventTypeCode": "AWS_LAMBDA_PLANNED_LIFECYCLE_EVENT",
+    "eventTypeCategory": "scheduledChange",
+    "region": "eu-central-1",
+    "startTime": "2026-04-30T07:00:00Z",
+    "endTime": null,
+    "lastUpdatedTime": "2026-04-30T07:00:00Z",
+    "statusCode": "open",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "We are contacting you as we have identified that your AWS Account currently has one or more AWS Lambda functions using the Node.js 20.x runtime. We ended support for Node.js 20.x in Lambda on April 30, 2026. This follows Node.js 20.x End-Of-Life (EOL) reached on April 30, 2026. End of support does not impact function execution. Your functions will continue to run. However, they will be running on an unsupported runtime which is no longer maintained or patched by the AWS Lambda team. Starting February 1, 2027, you will no longer be able to create new Lambda functions using the Node.js 20.x runtime. Starting March 3, 2027, you will no longer be able to update existing functions using the Node.js 20.x runtime. We recommend that you upgrade your existing Node.js 20.x functions to the latest available Node.js runtime in Lambda. Your impacted Lambda functions using the Node.js 20.x runtime are listed on the Affected resources tab."
+      }
+    ],
+    "affectedEntities": []
+  }
+}

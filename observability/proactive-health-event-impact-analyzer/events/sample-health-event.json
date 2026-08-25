@@ -1,0 +1,52 @@
+{
+  "version": "0",
+  "id": "7bf73129-1428-4cd3-a780-95db273d1602",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-20T10:00:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "i-0abc123def456789a",
+    "i-0abc123def456789b"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-west-1::event/EC2/AWS_EC2_SCHEDULED_MAINTENANCE/AWS_EC2_SCHEDULED_MAINTENANCE_20260522",
+    "service": "EC2",
+    "eventTypeCode": "AWS_EC2_SCHEDULED_MAINTENANCE",
+    "eventTypeCategory": "scheduledChange",
+    "region": "eu-west-1",
+    "availabilityZone": "eu-west-1a",
+    "startTime": "2026-05-22T02:00:00Z",
+    "endTime": "2026-05-22T06:00:00Z",
+    "lastUpdatedTime": "2026-05-20T10:00:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "We have detected degradation of the underlying hardware hosting your Amazon EC2 instances in the eu-west-1a availability zone. The instances listed below are scheduled for maintenance on 2026-05-22 between 02:00 and 06:00 UTC. During this window, these instances will be stopped and restarted. Please plan accordingly."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "i-0abc123def456789a",
+        "tags": {
+          "Name": "payment-service-1",
+          "Environment": "production",
+          "Team": "payments"
+        },
+        "status": "PENDING"
+      },
+      {
+        "entityValue": "i-0abc123def456789b",
+        "tags": {
+          "Name": "payment-service-2",
+          "Environment": "production",
+          "Team": "payments"
+        },
+        "status": "PENDING"
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "version": "0",
+  "id": "11223344-5566-7788-99aa-bbccddeeff00",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T02:30:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:states:eu-west-1:123456789012:stateMachine:health-event-impact-analyzer"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-west-1::event/STATES/AWS_STEPFUNCTIONS_API_ISSUE/AWS_STEPFUNCTIONS_API_ISSUE_20260526",
+    "service": "STATES",
+    "eventTypeCode": "AWS_STEPFUNCTIONS_API_ISSUE",
+    "eventTypeCategory": "issue",
+    "region": "eu-west-1",
+    "startTime": "2026-05-26T02:15:00Z",
+    "lastUpdatedTime": "2026-05-26T02:30:00Z",
+    "statusCode": "open",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "We are experiencing elevated error rates for AWS Step Functions API calls in the eu-west-1 region. StartExecution and SendTaskSuccess API calls may fail intermittently with InternalError responses. State machine executions that are currently running will continue, but new executions may fail to start. We are investigating the root cause and working to restore full service availability."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:states:eu-west-1:123456789012:stateMachine:health-event-impact-analyzer",
+        "tags": {
+          "Name": "health-event-impact-analyzer",
+          "Environment": "production",
+          "Team": "platform",
+          "aws:cloudformation:stack-name": "HealthEventAnalyzerStack-eu-west-1"
+        },
+        "status": "IMPAIRED"
+      }
+    ]
+  }
+}

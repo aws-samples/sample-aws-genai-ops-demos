@@ -1,0 +1,29 @@
+{
+  "version": "0",
+  "id": "a1b2c3d4-5678-90ab-cdef-aabbccddeeff",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "",
+  "time": "2026-06-01T08:00:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "eventArn": "arn:aws:health:global::event/RDS/AWS_RDS_CA_CERTIFICATE_ROTATION/AWS_RDS_CA_EXPIRY_20260901",
+    "service": "RDS",
+    "eventTypeCode": "AWS_RDS_CA_CERTIFICATE_ROTATION",
+    "eventTypeCategory": "scheduledChange",
+    "region": "global",
+    "startTime": "2026-09-01T00:00:00Z",
+    "endTime": "2026-09-01T00:00:00Z",
+    "lastUpdatedTime": "2026-06-01T08:00:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "IMPORTANT: The RDS Certificate Authority (CA) certificate rds-ca-2019 will expire on September 1, 2026. After expiration, any RDS or Aurora database instance still using rds-ca-2019 will fail to establish new TLS connections. Applications connecting via SSL/TLS will experience immediate connection failures resulting in service outage. This affects ALL regions where you have RDS or Aurora instances using the rds-ca-2019 certificate. You must rotate all affected database instances to rds-ca-rsa2048-g1 or rds-ca-ecc384-g1 before the deadline. Rotation requires a brief instance reboot. Identify all instances using the expiring CA across every region in your account and schedule the rotation immediately."
+      }
+    ],
+    "affectedEntities": []
+  }
+}

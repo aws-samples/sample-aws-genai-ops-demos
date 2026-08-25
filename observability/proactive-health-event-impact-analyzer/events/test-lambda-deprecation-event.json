@@ -1,0 +1,61 @@
+{
+  "version": "0",
+  "id": "deadbeef-cafe-babe-f00d-123456789abc",
+  "detail-type": "AWS Health Event",
+  "source": "aws.health",
+  "account": "123456789012",
+  "time": "2026-05-26T02:10:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationNotifierE3A-r1z7022xrrgz",
+    "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationOpsCenterCr-mDFMHARMI0Rk",
+    "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--EventIngestionEventRoute-L6tdUlhUsL2p",
+    "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationInvestigati-wxu7D9H7fqqm",
+    "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationInvestigati-zBUYNhP10Rpw"
+  ],
+  "detail": {
+    "eventArn": "arn:aws:health:eu-west-1::event/LAMBDA/AWS_LAMBDA_RUNTIME_DEPRECATION/AWS_LAMBDA_NODEJS20_EOL_20260526",
+    "service": "LAMBDA",
+    "eventTypeCode": "AWS_LAMBDA_RUNTIME_DEPRECATION",
+    "eventTypeCategory": "scheduledChange",
+    "region": "eu-west-1",
+    "startTime": "2026-07-01T00:00:00Z",
+    "endTime": "2026-07-01T00:00:00Z",
+    "lastUpdatedTime": "2026-05-26T02:10:00Z",
+    "statusCode": "upcoming",
+    "eventScopeCode": "ACCOUNT_SPECIFIC",
+    "eventDescription": [
+      {
+        "language": "en_US",
+        "latestDescription": "URGENT: AWS Lambda Node.js 20 runtime will reach end-of-life on July 1, 2026. After this date, all Lambda functions using the nodejs20.x runtime will be PERMANENTLY DISABLED and will no longer execute. You have 5 functions in eu-west-1 that must be migrated to nodejs22.x before the deadline. Functions that are not migrated will stop processing events, causing complete service outage for any workloads depending on them. This is a BREAKING CHANGE with no grace period. Immediate action required."
+      }
+    ],
+    "affectedEntities": [
+      {
+        "entityValue": "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationNotifierE3A-r1z7022xrrgz",
+        "tags": {"Name": "health-event-notifier", "Environment": "production", "Team": "platform", "Runtime": "nodejs20.x"},
+        "status": "PENDING"
+      },
+      {
+        "entityValue": "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationOpsCenterCr-mDFMHARMI0Rk",
+        "tags": {"Name": "opscenter-creator", "Environment": "production", "Team": "platform", "Runtime": "nodejs20.x"},
+        "status": "PENDING"
+      },
+      {
+        "entityValue": "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--EventIngestionEventRoute-L6tdUlhUsL2p",
+        "tags": {"Name": "event-router", "Environment": "production", "Team": "platform", "Runtime": "nodejs20.x"},
+        "status": "PENDING"
+      },
+      {
+        "entityValue": "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationInvestigati-wxu7D9H7fqqm",
+        "tags": {"Name": "investigation-trigger", "Environment": "production", "Team": "platform", "Runtime": "nodejs20.x"},
+        "status": "PENDING"
+      },
+      {
+        "entityValue": "arn:aws:lambda:eu-west-1:123456789012:function:HealthEventAnalyzerStack--InvestigationInvestigati-zBUYNhP10Rpw",
+        "tags": {"Name": "investigation-callback", "Environment": "production", "Team": "platform", "Runtime": "nodejs20.x"},
+        "status": "PENDING"
+      }
+    ]
+  }
+}
