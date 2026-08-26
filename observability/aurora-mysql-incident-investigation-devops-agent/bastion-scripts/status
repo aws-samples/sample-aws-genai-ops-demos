@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Show current demo/injection state. Run ON the bastion (via sudo).
+set -uo pipefail
+source "$(dirname "$0")/lib.sh"
+
+echo "=== Active injections ==="
+shopt -s nullglob
+found=0
+for f in "$PIDDIR"/*.pids; do found=1; echo "  running: $(basename "$f" .pids)"; done
+[[ $found -eq 0 ]] && echo "  none"
+
+echo ""
+echo "=== Writer connections ==="
+mysql_w -N -e "SELECT CONCAT('threads_connected=', COUNT(*)) FROM information_schema.processlist;" 2>/dev/null \
+  || echo "  (writer unreachable)"
+
+echo ""
+echo "=== InnoDB deadlocks (cumulative) ==="
+mysql_w -N -e "SHOW GLOBAL STATUS LIKE 'Innodb_deadlocks';" 2>/dev/null || true
+
+echo ""
+echo "=== Reader reachability ==="
+mysql_r -N -e "SELECT 'reader reachable';" 2>/dev/null || echo "  (reader unreachable)"
