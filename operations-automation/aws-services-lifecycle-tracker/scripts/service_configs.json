@@ -23,6 +23,7 @@
         "status"
       ],
       "enabled": true,
+      "health_event_mapping": "LAMBDA",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -47,6 +48,7 @@
         "end_of_standard_support_date"
       ],
       "enabled": true,
+      "health_event_mapping": "EKS",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -74,6 +76,7 @@
         "version"
       ],
       "enabled": true,
+      "health_event_mapping": "RDS",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -103,6 +106,7 @@
         "end_of_standard_support_date"
       ],
       "enabled": true,
+      "health_event_mapping": "ELASTICACHE",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -130,6 +134,7 @@
         "end_of_extended_support_date"
       ],
       "enabled": true,
+      "health_event_mapping": "OPENSEARCH",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -154,6 +159,7 @@
         "runtime_version"
       ],
       "enabled": true,
+      "health_event_mapping": "ELASTICBEANSTALK",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -181,6 +187,7 @@
         "eol_date"
       ],
       "enabled": true,
+      "health_event_mapping": "BEDROCK",
       "last_extraction": "",
       "extraction_count": 0
     },
@@ -205,6 +212,656 @@
         "end_of_support_date"
       ],
       "enabled": true,
+      "health_event_mapping": "KAFKA",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "ecs": {
+      "name": "Amazon ECS",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/platform-versions.html"
+      ],
+      "extraction_focus": "Locate the Fargate platform versions table. Extract all platform versions with their release dates and deprecation status. For each platform version, extract: version number, release date, deprecation date, and status.",
+      "schema_key": "platform_versions",
+      "item_properties": {
+        "name": "Fargate platform version (e.g., 'Fargate platform version 1.4.0')",
+        "identifier": "Platform version identifier (e.g., 'fargate-1.4.0')",
+        "platform": "Platform type (Fargate Linux, Fargate Windows)",
+        "version": "Platform version number",
+        "release_date": "Release date",
+        "deprecation_date": "Deprecation date",
+        "status": "Current status (Active, Deprecated)"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "ECS",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "batch": {
+      "name": "AWS Batch",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/batch/latest/userguide/platform-versions.html"
+      ],
+      "extraction_focus": "Locate compute environment platform version information. Extract platform versions and their lifecycle status. For each version, extract: platform version, supported features, deprecation notices, and end of support dates.",
+      "schema_key": "platform_versions",
+      "item_properties": {
+        "name": "AWS Batch platform version (e.g., 'Batch on Fargate 1.4.0')",
+        "identifier": "Platform version identifier (e.g., 'batch-fargate-1.4.0')",
+        "platform": "Compute environment type (EC2, Fargate)",
+        "version": "Platform version number",
+        "deprecation_date": "Deprecation date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "platform",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "BATCH",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "aurora": {
+      "name": "Amazon Aurora",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.VersionPolicy.html"
+      ],
+      "extraction_focus": "Locate the Aurora engine version lifecycle tables for both MySQL-compatible and PostgreSQL-compatible editions. Extract all versions with their lifecycle dates. For each version, extract: engine type, version number, release date, end of standard support date, and end of extended support date.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "Aurora engine and version (e.g., 'Aurora MySQL 2.11.4')",
+        "identifier": "Engine version identifier (e.g., 'aurora-mysql-2.11.4')",
+        "engine": "Aurora engine (Aurora MySQL, Aurora PostgreSQL)",
+        "version": "Engine version number",
+        "release_date": "Release date",
+        "end_of_standard_support_date": "End of standard support date",
+        "end_of_extended_support_date": "End of extended support date"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "engine",
+        "version",
+        "end_of_standard_support_date"
+      ],
+      "enabled": true,
+      "health_event_mapping": "RDS",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "documentdb": {
+      "name": "Amazon DocumentDB",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/documentdb/latest/developerguide/release-notes.html"
+      ],
+      "extraction_focus": "Locate DocumentDB engine version information and lifecycle dates. Extract all engine versions with their release and end of life dates. For each version, extract: engine version, compatibility, release date, and end of life date.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "DocumentDB engine version (e.g., 'DocumentDB 4.0')",
+        "identifier": "Engine version identifier (e.g., 'docdb-4.0')",
+        "engine": "DocumentDB",
+        "version": "Engine version number",
+        "mongodb_compatibility": "MongoDB compatibility version",
+        "release_date": "Release date",
+        "end_of_life_date": "End of life date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "DOCUMENTDB",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "neptune": {
+      "name": "Amazon Neptune",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/neptune/latest/userguide/engine-releases.html"
+      ],
+      "extraction_focus": "Locate Neptune engine version lifecycle information. Extract all engine versions with their support status. For each version, extract: engine version, release date, end of life date, and support status.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "Neptune engine version (e.g., 'Neptune 1.2.1.0')",
+        "identifier": "Engine version identifier (e.g., 'neptune-1.2.1.0')",
+        "engine": "Neptune",
+        "version": "Engine version number",
+        "release_date": "Release date",
+        "end_of_life_date": "End of life date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "NEPTUNE",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "memorydb": {
+      "name": "Amazon MemoryDB",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/memorydb/latest/devguide/supported-engine-versions.html"
+      ],
+      "extraction_focus": "Locate MemoryDB engine version lifecycle information. Extract all Redis OSS versions supported by MemoryDB with their lifecycle dates. For each version, extract: engine version, release date, end of support date, and status.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "MemoryDB Redis version (e.g., 'MemoryDB Redis 7.1')",
+        "identifier": "Engine version identifier (e.g., 'memorydb-redis-7.1')",
+        "engine": "Redis OSS (MemoryDB)",
+        "version": "Engine version number",
+        "release_date": "Release date",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "MEMORYDB",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "dynamodb": {
+      "name": "Amazon DynamoDB",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/globaltables.V1.html"
+      ],
+      "extraction_focus": "Locate information about deprecated DynamoDB features such as Global Tables Version 2017 and DynamoDB Streams legacy features. Extract deprecated features with their end of support dates and migration paths.",
+      "schema_key": "features",
+      "item_properties": {
+        "name": "DynamoDB feature name (e.g., 'Global Tables Version 2017.11.29')",
+        "identifier": "Feature identifier (e.g., 'global-tables-v2017')",
+        "feature_type": "Feature type (Global Tables, Streams, etc.)",
+        "deprecation_date": "Deprecation announcement date",
+        "end_of_support_date": "End of support date",
+        "migration_target": "Recommended migration target",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "DYNAMODB",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "apigateway": {
+      "name": "Amazon API Gateway",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/apigateway/latest/developerguide/api-ref.html"
+      ],
+      "extraction_focus": "Locate API Gateway version and protocol deprecation information. Extract deprecated API versions, TLS protocol changes, and endpoint type migrations. For each item, extract: feature name, deprecation date, end of support date, and migration instructions.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "API Gateway feature or version (e.g., 'REST API edge-optimized endpoint')",
+        "identifier": "Feature identifier (e.g., 'rest-api-edge-v1')",
+        "api_type": "API type (REST, HTTP, WebSocket)",
+        "feature": "Specific feature or protocol version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "APIGATEWAY",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "cloudfront": {
+      "name": "Amazon CloudFront",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-edge-runtime.html"
+      ],
+      "extraction_focus": "Locate Lambda@Edge and CloudFront Functions runtime version lifecycle information. Extract deprecated or retiring runtimes for Lambda@Edge. For each runtime, extract: runtime name, version, deprecation date, and end of support date.",
+      "schema_key": "runtimes",
+      "item_properties": {
+        "name": "CloudFront runtime (e.g., 'Lambda@Edge Node.js 16')",
+        "identifier": "Runtime identifier (e.g., 'lambda-edge-nodejs16')",
+        "runtime_type": "Runtime type (Lambda@Edge, CloudFront Functions)",
+        "version": "Runtime version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "CLOUDFRONT",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "appmesh": {
+      "name": "AWS App Mesh",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/app-mesh/latest/userguide/envoy-releases.html"
+      ],
+      "extraction_focus": "Locate Envoy proxy version lifecycle information used by App Mesh. Extract all Envoy versions with their support status and end of life dates. For each version, extract: Envoy version, release date, end of support date, and status.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "App Mesh Envoy version (e.g., 'Envoy 1.27')",
+        "identifier": "Envoy version identifier (e.g., 'envoy-1.27')",
+        "envoy_version": "Envoy proxy version",
+        "release_date": "Release date in App Mesh",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "envoy_version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "APPMESH",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "emr": {
+      "name": "Amazon EMR",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-release-components.html"
+      ],
+      "extraction_focus": "Locate EMR release version lifecycle information. Extract EMR releases with their lifecycle status, particularly those approaching end of support. For each release, extract: EMR release label, release date, included component versions, and support status.",
+      "schema_key": "releases",
+      "item_properties": {
+        "name": "EMR release (e.g., 'EMR 6.15.0')",
+        "identifier": "Release identifier (e.g., 'emr-6.15.0')",
+        "release_label": "EMR release label",
+        "release_date": "Release date",
+        "hadoop_version": "Apache Hadoop version",
+        "spark_version": "Apache Spark version",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "release_label",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "EMR",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "glue": {
+      "name": "AWS Glue",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/glue/latest/dg/glue-version-support-policy.html"
+      ],
+      "extraction_focus": "Locate AWS Glue version support policy and lifecycle information. Extract all Glue versions with their support and end-of-life dates. For each version, extract: Glue version, Spark version, Python version, support end date, and status.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "AWS Glue version (e.g., 'Glue 3.0')",
+        "identifier": "Glue version identifier (e.g., 'glue-3.0')",
+        "glue_version": "AWS Glue version number",
+        "spark_version": "Apache Spark version",
+        "python_version": "Python version supported",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "glue_version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "GLUE",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "athena": {
+      "name": "Amazon Athena",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/athena/latest/ug/engine-versions-reference.html"
+      ],
+      "extraction_focus": "Locate Athena engine version lifecycle information. Extract all engine versions with their lifecycle dates and deprecation status. For each version, extract: engine version, release date, deprecation date, and features.",
+      "schema_key": "engine_versions",
+      "item_properties": {
+        "name": "Athena engine version (e.g., 'Athena engine version 3')",
+        "identifier": "Engine version identifier (e.g., 'athena-engine-v3')",
+        "engine_version": "Athena engine version number",
+        "trino_version": "Underlying Trino/Presto version",
+        "release_date": "Release date",
+        "deprecation_date": "Deprecation date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "engine_version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "ATHENA",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "redshift": {
+      "name": "Amazon Redshift",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/redshift/latest/mgmt/cluster-versions.html"
+      ],
+      "extraction_focus": "Locate Redshift cluster version and maintenance track information. Extract deprecated node types and cluster versions with end of support dates. For each item, extract: version or node type, deprecation date, end of support date, and migration target.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Redshift version or node type (e.g., 'Redshift dc1.large')",
+        "identifier": "Version or node type identifier (e.g., 'redshift-dc1.large')",
+        "type": "Item type (cluster_version, node_type)",
+        "version": "Cluster version or node type",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "migration_target": "Recommended migration target",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "type",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "REDSHIFT",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "sagemaker": {
+      "name": "Amazon SageMaker",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/sagemaker/latest/dg/supported-instance-types.html"
+      ],
+      "extraction_focus": "Locate SageMaker framework and instance lifecycle information. Extract deprecated ML framework versions, deprecated instance types, and end-of-support notices. For each item, extract: framework name, version, deprecation date, and replacement.",
+      "schema_key": "frameworks",
+      "item_properties": {
+        "name": "SageMaker framework or instance (e.g., 'TensorFlow 2.11')",
+        "identifier": "Framework identifier (e.g., 'tensorflow-2.11')",
+        "framework": "ML framework (TensorFlow, PyTorch, MXNet, etc.)",
+        "version": "Framework version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "replacement": "Recommended replacement version",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "framework",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "SAGEMAKER",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "comprehend": {
+      "name": "Amazon Comprehend",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/comprehend/latest/dg/functionality-versions.html"
+      ],
+      "extraction_focus": "Locate Comprehend API version and model version lifecycle information. Extract deprecated API versions and model versions with their end of support dates. For each version, extract: version identifier, feature area, deprecation date, and status.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Comprehend version (e.g., 'Comprehend v1 entities model')",
+        "identifier": "Version identifier (e.g., 'comprehend-entities-v1')",
+        "feature_area": "Feature area (Entities, Sentiment, etc.)",
+        "version": "Model or API version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "COMPREHEND",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "rekognition": {
+      "name": "Amazon Rekognition",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/rekognition/latest/dg/face-detection-model.html"
+      ],
+      "extraction_focus": "Locate Rekognition model version lifecycle information. Extract deprecated face detection models, content moderation models, and API versions. For each version, extract: model name, version, deprecation date, and recommended migration.",
+      "schema_key": "models",
+      "item_properties": {
+        "name": "Rekognition model (e.g., 'Face Detection Model v6')",
+        "identifier": "Model identifier (e.g., 'face-detection-v6')",
+        "model_type": "Model type (Face Detection, Content Moderation, etc.)",
+        "version": "Model version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "replacement_version": "Recommended replacement model version",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "model_type",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "REKOGNITION",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "waf": {
+      "name": "AWS WAF",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/waf/latest/developerguide/waf-chapter.html"
+      ],
+      "extraction_focus": "Locate WAF Classic to WAFv2 migration information and deprecation notices. Extract deprecated WAF Classic features, rule group versions, and API versions. For each item, extract: feature name, deprecation date, migration deadline, and status.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "WAF feature or version (e.g., 'WAF Classic')",
+        "identifier": "Feature identifier (e.g., 'waf-classic')",
+        "feature": "WAF feature name",
+        "api_version": "API version (Classic, v2)",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "migration_target": "Migration target (WAFv2)",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "WAF",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "guardduty": {
+      "name": "Amazon GuardDuty",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/guardduty/latest/ug/guardduty-features-activation-model.html"
+      ],
+      "extraction_focus": "Locate GuardDuty feature and runtime agent version lifecycle information. Extract deprecated protection plans, agent versions, and finding type changes. For each item, extract: feature name, version, deprecation date, and status.",
+      "schema_key": "features",
+      "item_properties": {
+        "name": "GuardDuty feature or version (e.g., 'GuardDuty Runtime Agent 1.0')",
+        "identifier": "Feature identifier (e.g., 'guardduty-runtime-agent-1.0')",
+        "feature_type": "Feature type (Runtime Monitoring, Protection Plan, etc.)",
+        "version": "Feature version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "GUARDDUTY",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "inspector": {
+      "name": "Amazon Inspector",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/inspector/latest/user/what-is-inspector.html"
+      ],
+      "extraction_focus": "Locate Inspector version lifecycle information, particularly the migration from Inspector Classic to Inspector v2. Extract deprecated assessment templates, agent versions, and Classic features. For each item, extract: feature name, version, deprecation date, and migration target.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Inspector feature or version (e.g., 'Inspector Classic')",
+        "identifier": "Feature identifier (e.g., 'inspector-classic')",
+        "inspector_version": "Inspector version (Classic, v2)",
+        "feature": "Feature name",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "migration_target": "Recommended migration target",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "INSPECTOR",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "elasticsearch": {
+      "name": "Amazon Elasticsearch Service (Legacy)",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/what-is.html"
+      ],
+      "extraction_focus": "Locate Elasticsearch version lifecycle information for the legacy Amazon Elasticsearch Service domains. Extract all deprecated Elasticsearch versions and their migration paths to OpenSearch. For each version, extract: version, end of support date, and migration target.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Elasticsearch version (e.g., 'Elasticsearch 6.8')",
+        "identifier": "Version identifier (e.g., 'elasticsearch-6.8')",
+        "engine": "Elasticsearch",
+        "version": "Engine version number",
+        "end_of_standard_support_date": "End of standard support date",
+        "end_of_extended_support_date": "End of extended support date",
+        "migration_target": "Recommended OpenSearch version",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "OPENSEARCH",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "kinesis": {
+      "name": "Amazon Kinesis Data Analytics",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/managed-flink/latest/java/what-is.html"
+      ],
+      "extraction_focus": "Locate Kinesis Data Analytics (now Managed Apache Flink) runtime version lifecycle. Extract Apache Flink runtime versions supported, with their deprecation and end of support dates. For each version, extract: Flink version, release date, end of support date, and status.",
+      "schema_key": "runtimes",
+      "item_properties": {
+        "name": "Flink runtime version (e.g., 'Apache Flink 1.15')",
+        "identifier": "Runtime identifier (e.g., 'flink-1.15')",
+        "flink_version": "Apache Flink version",
+        "release_date": "Release date in service",
+        "end_of_support_date": "End of support date",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "flink_version",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "KINESIS_ANALYTICS",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "amplify": {
+      "name": "AWS Amplify",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/amplify/latest/userguide/build-image-support.html"
+      ],
+      "extraction_focus": "Locate Amplify build image and framework version lifecycle information. Extract deprecated build images, Node.js versions, and framework versions. For each item, extract: build image or framework name, version, deprecation date, and replacement.",
+      "schema_key": "versions",
+      "item_properties": {
+        "name": "Amplify build image or framework version (e.g., 'Amplify Build Image Amazon Linux 2')",
+        "identifier": "Version identifier (e.g., 'amplify-build-al2')",
+        "component_type": "Component type (Build Image, Framework, Runtime)",
+        "version": "Component version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "replacement": "Recommended replacement",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "AMPLIFY",
+      "last_extraction": "",
+      "extraction_count": 0
+    },
+    "codebuild": {
+      "name": "AWS CodeBuild",
+      "documentation_urls": [
+        "https://docs.aws.amazon.com/codebuild/latest/userguide/available-runtimes.html"
+      ],
+      "extraction_focus": "Locate CodeBuild build image and runtime version lifecycle information. Extract deprecated build images and runtime versions. For each item, extract: image name, runtime name, version, deprecation date, and replacement image.",
+      "schema_key": "runtimes",
+      "item_properties": {
+        "name": "CodeBuild runtime or image (e.g., 'Ubuntu Standard 5.0')",
+        "identifier": "Runtime identifier (e.g., 'codebuild-ubuntu-std-5.0')",
+        "image_type": "Image type (Ubuntu, Amazon Linux, Windows)",
+        "runtime": "Runtime name",
+        "version": "Runtime version",
+        "deprecation_date": "Deprecation date",
+        "end_of_support_date": "End of support date",
+        "replacement_image": "Recommended replacement image",
+        "status": "Current status"
+      },
+      "required_fields": [
+        "name",
+        "identifier",
+        "status"
+      ],
+      "enabled": true,
+      "health_event_mapping": "CODEBUILD",
       "last_extraction": "",
       "extraction_count": 0
     }
