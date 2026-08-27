@@ -13,6 +13,10 @@ import { getRegion } from '../../../../shared/utils/aws-utils';
 
 const app = new cdk.App();
 
+// Tag every resource in every stack so Cost Explorer can filter by project.
+cdk.Tags.of(app).add('Project', 'prowler-security-findings-agent');
+cdk.Tags.of(app).add('Demo', 'genai-security-ops');
+
 const region = getRegion();
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
