@@ -1,0 +1,12 @@
+{
+  "page": {
+    "id": "abc123",
+    "name": "Snowflake Status",
+    "url": "https://status.snowflake.com",
+    "updated_at": "2026-07-06T15:30:00.000Z"
+  },
+  "status": {
+    "indicator": "operational",
+    "description": "All Systems Operational"
+  }
+}

@@ -16,7 +16,7 @@ DEFAULT_SKIP_DIRS = {
     "bower_components", "jspm_packages",
     
     # Build outputs
-    "dist", "build", "out", "target", "bin", "obj",
+    "out", "target", "bin", "obj",
     ".next", ".nuxt", ".output", ".vercel", ".netlify",
     
     # CDK/Terraform
@@ -37,8 +37,10 @@ DEFAULT_SKIP_DIRS = {
     
     # Documentation builds
     "docs/_build", "site", "_site",
-    
-    # Test directories
+}
+
+# Test directories — excluded by default but configurable via include_tests parameter
+TEST_SKIP_DIRS = {
     "tests", "test", "__tests__", "spec", "specs",
 }
 
@@ -94,12 +96,13 @@ def should_skip_directory(dir_path: Path, skip_dirs: Set[str] = None) -> bool:
     return False
 
 
-def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE) -> bool:
+def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE, include_tests: bool = False) -> bool:
     """Check if a file should be scanned.
     
     Args:
         file_path: File path to check
         max_size: Maximum file size in bytes
+        include_tests: If True, don't skip test files (test_*.py, test-*.py)
         
     Returns:
         True if file should be scanned
@@ -112,10 +115,11 @@ def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE) -> bool:
     if file_path.suffix not in SCANNABLE_EXTENSIONS:
         return False
     
-    # Skip test files (test-*.* or test_*.*)
-    file_name = file_path.name.lower()
-    if file_name.startswith("test-") or file_name.startswith("test_"):
-        return False
+    # Skip test files (test-*.* or test_*.*) unless include_tests is set
+    if not include_tests:
+        file_name = file_path.name.lower()
+        if file_name.startswith("test-") or file_name.startswith("test_"):
+            return False
     
     # Skip compiled JavaScript files when TypeScript source exists
     # Example: skip "runtime-stack.js" if "runtime-stack.ts" exists
@@ -164,7 +168,8 @@ def should_scan_file(file_path: Path, max_size: int = MAX_FILE_SIZE) -> bool:
 def find_scannable_files(
     project_path: Path,
     skip_dirs: Set[str] = None,
-    max_files: int = None
+    max_files: int = None,
+    include_tests: bool = False
 ) -> List[Path]:
     """Find all scannable files in a project using smart filtering.
     
@@ -175,12 +180,17 @@ def find_scannable_files(
         project_path: Root directory to scan
         skip_dirs: Custom set of directory names to skip
         max_files: Maximum number of files to return (None for unlimited)
+        include_tests: If True, include test directories and test files
         
     Returns:
         List of file paths to scan
     """
     if skip_dirs is None:
-        skip_dirs = DEFAULT_SKIP_DIRS
+        skip_dirs = DEFAULT_SKIP_DIRS.copy()
+    
+    # Add test directories to skip unless include_tests is set
+    if not include_tests:
+        skip_dirs = skip_dirs | TEST_SKIP_DIRS
     
     scannable_files = []
     
@@ -198,7 +208,7 @@ def find_scannable_files(
         for file_name in files:
             file_path = root_path / file_name
             
-            if should_scan_file(file_path):
+            if should_scan_file(file_path, include_tests=include_tests):
                 scannable_files.append(file_path)
                 
                 # Stop if we've hit the max

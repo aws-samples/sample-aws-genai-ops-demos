@@ -7,7 +7,7 @@
         <mxCell id="title-bar" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#232F3E;strokeColor=#232F3E;" parent="1" vertex="1">
           <mxGeometry x="20" y="15" width="1300" height="45" as="geometry" />
         </mxCell>
-        <mxCell id="title-text" value="Intelligent EKS Incident Investigation with Amazon DevOps Agent" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#FFFFFF;" parent="1" vertex="1">
+        <mxCell id="title-text" value="Intelligent EKS Incident Investigation with AWS DevOps Agent" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#FFFFFF;" parent="1" vertex="1">
           <mxGeometry x="20" y="18" width="1300" height="40" as="geometry" />
         </mxCell>
         <mxCell id="users" value="Users" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#232F3E;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.users;" parent="1" vertex="1">

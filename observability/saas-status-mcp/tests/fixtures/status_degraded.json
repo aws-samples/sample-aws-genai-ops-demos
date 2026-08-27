@@ -1,0 +1,12 @@
+{
+  "page": {
+    "id": "abc123",
+    "name": "MongoDB Atlas Status",
+    "url": "https://status.cloud.mongodb.com",
+    "updated_at": "2026-07-06T14:00:00.000Z"
+  },
+  "status": {
+    "indicator": "degraded_performance",
+    "description": "Degraded Performance"
+  }
+}

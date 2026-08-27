@@ -1,0 +1,41 @@
+name: Security Scan (ASH)
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install UV
+        run: curl -LsSf https://astral.sh/uv/0.11.19/install.sh | sh
+
+      - name: Run ASH security scan
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uvx git+https://github.com/awslabs/automated-security-helper.git@v3 \
+            --mode local \
+            --fail-on-findings false \
+            --output-dir .ash/output
+        continue-on-error: true
+
+      - name: Report findings
+        run: |
+          if [ -f .ash/output/reports/ash.summary.txt ]; then
+            echo "## ASH Security Scan Results" >> $GITHUB_STEP_SUMMARY
+            cat .ash/output/reports/ash.summary.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ASH Security Scan" >> $GITHUB_STEP_SUMMARY
+            echo "Scan completed — no summary file generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ash-scan-results
+          path: .ash/output/
+          retention-days: 7

@@ -18,7 +18,7 @@ def main() -> NoReturn:
     """
     try:
         # Run the FastMCP server with stdio transport
-        mcp.run()
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
     except KeyboardInterrupt:
         # Handle graceful shutdown on Ctrl+C
         sys.exit(0)

@@ -321,7 +321,7 @@ export default function Dashboard() {
             <div>
               <h1>Security Operations Center</h1>
               <div className="soc-hero-sub">
-                Prowler · Amazon Bedrock · Amazon DevOps Agent · Account <span style={{ color: 'var(--soc-accent)', fontFamily: 'JetBrains Mono, monospace' }}>{accountId}</span> · Region <span style={{ color: 'var(--soc-accent)', fontFamily: 'JetBrains Mono, monospace' }}>{region}</span>
+                Prowler · Amazon Bedrock · AWS DevOps Agent · Account <span style={{ color: 'var(--soc-accent)', fontFamily: 'JetBrains Mono, monospace' }}>{accountId}</span> · Region <span style={{ color: 'var(--soc-accent)', fontFamily: 'JetBrains Mono, monospace' }}>{region}</span>
               </div>
               <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
                 {activeScanCount > 0 ? (

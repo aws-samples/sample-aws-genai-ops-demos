@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.DS_Store
+/tmp/
+*.zip
+~$*
+*.mp4
+cdk.out/
+cdk.out*/
+.venv/
+node_modules/
+# Lambda installed dependencies (deploy scripts install these)
+lambdas/rss-ingestion/defusedxml*/
+lambdas/rss-ingestion/*.dist-info/

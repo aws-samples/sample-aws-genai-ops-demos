@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Post-Task Conformity Summary",
+      "description": "Review completed task against project standards",
+      "trigger": "PostTaskExec",
+      "action": {
+        "type": "agent",
+        "prompt": "Review all changes made in this task against .kiro/steering/ standards. Verify: deployment scripts exist (PS1 + SH), shared prerequisites are used, CDK stack IDs include region suffix, solution adoption tracking is present, README has all required sections, no hardcoded regions or credentials. Report any non-compliant items."
+      },
+      "enabled": true
+    }
+  ]
+}

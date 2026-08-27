@@ -1,12 +1,12 @@
-# Intelligent Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent
+# Intelligent Site-to-Site VPN Tunnel Investigation with AWS DevOps Agent
 
-*Automated root-cause analysis and business-context enrichment for AWS Site-to-Site VPN tunnel failures — powered by Amazon DevOps Agent.*
+*Automated root-cause analysis and business-context enrichment for AWS Site-to-Site VPN tunnel failures — powered by AWS DevOps Agent.*
 
 ## Overview
 
 AWS Site-to-Site VPN tunnels fail for dozens of reasons — pre-shared key mismatches, IKE proposal incompatibilities, dead-peer-detection timeouts, BGP session drops, BGP route withdrawals, and subtle throughput degradation. When a tunnel goes down at 2 AM, an on-call engineer must sift through CloudWatch metrics, VPN tunnel logs, and IPsec configuration to find the root cause. That manual triage is slow, error-prone, and expensive.
 
-This demo deploys a fully self-contained VPN environment — two VPCs, a Libreswan/GoBGP customer gateway on Amazon Linux 2023, per-tunnel CloudWatch alarms, and a throughput alarm — then lets you inject 10 realistic failure scenarios and watch Amazon DevOps Agent automatically investigate each one. The agent reads VPN tunnel logs, correlates CloudWatch metrics, identifies the root cause, and enriches its findings with business context from an MCP server that provides service dependency, cost impact, and compliance data.
+This demo deploys a fully self-contained VPN environment — two VPCs, a Libreswan/GoBGP customer gateway on Amazon Linux 2023, per-tunnel CloudWatch alarms, and a throughput alarm — then lets you inject 10 realistic failure scenarios and watch AWS DevOps Agent automatically investigate each one. The agent reads VPN tunnel logs, correlates CloudWatch metrics, identifies the root cause, and enriches its findings with business context from an MCP server that provides service dependency, cost impact, and compliance data.
 
 What makes this demo unique: per-tunnel alarms ensure that even a single tunnel failure triggers the agent (not just full VPN outages), a metric-math throughput alarm catches performance degradation before a full outage, BGP routing scenarios exercise dynamic routing failures, and the MCP integration shows how the agent combines AWS telemetry with organizational context to produce actionable incident reports.
 
@@ -14,8 +14,8 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 
 - **Duration**: ~25 minutes total (Agent Space setup + infrastructure deployment)
 - **Difficulty**: Intermediate
-- **Audience**: DevOps engineers, SREs, cloud architects evaluating Amazon DevOps Agent
-- **Key technologies**: AWS Site-to-Site VPN, CloudWatch, SNS, Lambda, AWS CDK (Python), Libreswan, GoBGP, Amazon DevOps Agent, MCP (Model Context Protocol)
+- **Audience**: DevOps engineers, SREs, cloud architects evaluating AWS DevOps Agent
+- **Key technologies**: AWS Site-to-Site VPN, CloudWatch, SNS, Lambda, AWS CDK (Python), Libreswan, GoBGP, AWS DevOps Agent, MCP (Model Context Protocol)
 - **Cost**: ~$0.12/hr (VPN connection + 2× t3.micro instances + public IPv4 addresses + CloudWatch/Lambda/SNS)
 - **Failure scenarios**: 10 total — 5 IKE scenarios + 3 BGP scenarios + 1 route withdrawal scenario + 1 throughput scenario (run last two with dedicated alarms enabled)
 - **Routing modes**: BGP (dynamic routing)
@@ -30,6 +30,12 @@ What makes this demo unique: per-tunnel alarms ensure that even a single tunnel 
 | **Per-tunnel Monitoring** | Individual TunnelState alarms per tunnel IP — single tunnel failure triggers investigation |
 | **Throughput Monitoring** | Metric-math alarm detects performance degradation — agent investigates even when tunnels remain UP |
 | **BGP Route Monitoring** | CloudWatch Logs metric filter detects BGP route withdrawals — agent investigates routing changes that don't affect tunnel state |
+
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/zive0mxjced6)
 
 ## Architecture
 
@@ -278,7 +284,7 @@ The deploy script:
              │
              ▼
   ┌─────────────────────────┐
-  │ Amazon DevOps Agent     │  1. Reads VPN tunnel logs from CloudWatch
+  │ AWS DevOps Agent     │  1. Reads VPN tunnel logs from CloudWatch
   │                         │  2. Checks VPN connection state & metrics
   │                         │  3. Queries MCP server for business context
   │                         │  4. Produces root-cause analysis

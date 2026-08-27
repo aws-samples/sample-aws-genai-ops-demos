@@ -132,7 +132,7 @@
         </mxCell>
 
         <!-- DevOps Agent -->
-        <mxCell id="devops-agent" value="Amazon DevOps Agent&#xa;(Agent Space)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#01A88D;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=1;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.machinelearning;" vertex="1" parent="1">
+        <mxCell id="devops-agent" value="AWS DevOps Agent&#xa;(Agent Space)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#01A88D;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=1;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.machinelearning;" vertex="1" parent="1">
           <mxGeometry x="600" y="600" width="60" height="60" as="geometry" />
         </mxCell>
 
@@ -187,7 +187,7 @@
         </mxCell>
 
         <!-- Title -->
-        <mxCell id="title" value="Intelligent Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1;fontColor=#232F3E;" vertex="1" parent="1">
+        <mxCell id="title" value="Intelligent Site-to-Site VPN Tunnel Investigation with AWS DevOps Agent" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1;fontColor=#232F3E;" vertex="1" parent="1">
           <mxGeometry x="500" y="30" width="600" height="30" as="geometry" />
         </mxCell>
 

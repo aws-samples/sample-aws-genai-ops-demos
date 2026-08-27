@@ -161,6 +161,41 @@ aws cognito-idp admin-set-user-password `
     --no-cli-pager *> $null
 End-Step
 
+# Kick off the first scan now — image is in ECR (the CodeBuild step already
+# pushed it), so the Fargate task will pull it cleanly. Doing this here
+# rather than from a CDK custom resource avoids the race where the stack
+# creates faster than CodeBuild publishes :latest.
+$ScannerClusterArn = aws cloudformation describe-stacks `
+    --stack-name "ProwlerSecurityScanner-$AwsRegion" `
+    --query "Stacks[0].Outputs[?OutputKey=='ClusterArn'].OutputValue" --output text
+$ScannerTaskDef = aws cloudformation describe-stacks `
+    --stack-name "ProwlerSecurityScanner-$AwsRegion" `
+    --query "Stacks[0].Outputs[?OutputKey=='TaskDefinitionArn'].OutputValue" --output text
+$ScannerSubnetsCsv = aws cloudformation describe-stacks `
+    --stack-name "ProwlerSecurityScanner-$AwsRegion" `
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerSubnetIds'].OutputValue" --output text
+$ScannerSg = aws cloudformation describe-stacks `
+    --stack-name "ProwlerSecurityScanner-$AwsRegion" `
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerSecurityGroupId'].OutputValue" --output text
+
+Write-Host "Starting first Prowler scan..."
+$SubnetsJson = ($ScannerSubnetsCsv.Split(',') | ForEach-Object { '"' + $_ + '"' }) -join ','
+$NetworkCfg = '{"awsvpcConfiguration":{"subnets":[' + $SubnetsJson + '],"securityGroups":["' + $ScannerSg + '"],"assignPublicIp":"ENABLED"}}'
+aws ecs run-task `
+    --cluster $ScannerClusterArn `
+    --task-definition $ScannerTaskDef `
+    --launch-type FARGATE `
+    --platform-version LATEST `
+    --network-configuration $NetworkCfg `
+    --count 1 `
+    --no-cli-pager --query 'tasks[0].taskArn' --output text *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  First scan launched."
+} else {
+    Write-Host "  WARN: failed to launch first scan — start it from the dashboard with 'Run scan now'."
+}
+Write-Host ""
+
 $TotalElapsed = (Get-Date) - $DeployStart
 Write-Host ("Total deploy time: {0:mm\:ss}" -f $TotalElapsed)
 Write-Host ""
@@ -177,12 +212,11 @@ Write-Host "  Username: $DemoUsername"
 Write-Host "  Password: $DemoPassword"
 Write-Host "  (Override with `$env:DEMO_USERNAME / `$env:DEMO_PASSWORD before deploy.)"
 Write-Host ""
-Write-Host "Trigger your first scan:"
+Write-Host "First scan is running:"
 Write-Host "  1. Log in to $WebsiteUrl"
-Write-Host "  2. Click 'Run scan now' on the Dashboard"
-Write-Host "  3. Wait ~3-10 min for findings to appear"
-Write-Host "  4. Open any finding and click 'Generate Bedrock Insights' for the"
-Write-Host "     Nova Pro remediation playbook, or 'Investigate with DevOps Agent'"
+Write-Host "  2. Wait ~3-10 min for findings to appear (re-run with 'Run scan now' anytime)"
+Write-Host "  3. Open any finding and click 'Generate Bedrock Insights' for the"
+Write-Host "     Nova Lite 2 remediation playbook, or 'Investigate with DevOps Agent'"
 Write-Host "     to dispatch an autonomous investigation (both are on-demand)."
 Write-Host ""
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or $env:DEVOPS_AGENT_WEBHOOK_URL -eq "") {

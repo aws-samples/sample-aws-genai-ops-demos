@@ -88,6 +88,16 @@ switch ($EksArchitecture) {
 }
 Write-Host "EKS architecture: $EksArchitecture"
 Write-Host "EKS instance:     $EksInstanceType"
+
+# ---------------------------------------------------------------------------
+# Kubernetes version — override via EKS_KUBERNETES_VERSION env var.
+# Keep this on a release still in EKS standard support; older versions bill
+# an extended-support surcharge per cluster hour. Upgrading an existing
+# cluster moves one minor version at a time, so step through if needed.
+# https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+# ---------------------------------------------------------------------------
+$EksKubernetesVersion = if ($env:EKS_KUBERNETES_VERSION) { $env:EKS_KUBERNETES_VERSION } else { "1.36" }
+Write-Host "EKS K8s version:  $EksKubernetesVersion"
 Write-Host ""
 
 $ECR_REGISTRY = "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
@@ -180,6 +190,7 @@ $cdkArgs = @(
     "-c", "eksNodeArchitecture=$EksArchitecture",
     "-c", "eksNodeInstanceType=$EksInstanceType",
     "-c", "eksNodeDesiredCapacity=2",
+    "-c", "eksKubernetesVersion=$EksKubernetesVersion",
     "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
     "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",
     "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
@@ -970,6 +981,7 @@ if ($NLB_HOSTNAME) {
         "-c", "eksNodeArchitecture=$EksArchitecture",
         "-c", "eksNodeInstanceType=$EksInstanceType",
         "-c", "eksNodeDesiredCapacity=2",
+        "-c", "eksKubernetesVersion=$EksKubernetesVersion",
         "-c", "apiGatewayEndpoint=$NLB_HOSTNAME",
         "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
         "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",

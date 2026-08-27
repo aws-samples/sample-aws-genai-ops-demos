@@ -139,7 +139,7 @@ export class ApiStack extends cdk.Stack {
       resources: [props.devOpsAgentSecretArn],
     }));
 
-    // Read-only queries against Amazon DevOps Agent for the Investigation tab.
+    // Read-only queries against AWS DevOps Agent for the Investigation tab.
     // The IAM service namespace is `aidevops` (not `devops-agent` — that's only
     // the AWS CLI command surface).
     role.addToPolicy(new iam.PolicyStatement({

@@ -94,7 +94,7 @@ export default function Investigations() {
       header={
         <Header
           variant="h1"
-          description="Every finding that's been dispatched to Amazon DevOps Agent from this demo. Click a row to re-open the finding detail with the full agent journal."
+          description="Every finding that's been dispatched to AWS DevOps Agent from this demo. Click a row to re-open the finding detail with the full agent journal."
           actions={<Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>}
         >
           DevOps Agent investigations

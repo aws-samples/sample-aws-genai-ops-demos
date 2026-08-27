@@ -6,7 +6,7 @@ This repository contains deployable code samples demonstrating how generative AI
 
 | Demo Name | Pillar | Description | Repository |
 |-----------|--------|-------------|------------|
-| AI-Powered Security Posture with Prowler + DevOps Agent | Security | Continuous Prowler scans with Nova-generated remediation playbooks and Amazon DevOps Agent incident dispatch, surfaced in a React dashboard | [security/prowler-security-findings-agent/](security/prowler-security-findings-agent/README.md) |
+| AI-Powered Security Posture with Prowler + DevOps Agent | Security | Continuous Prowler scans with Nova-generated remediation playbooks and AWS DevOps Agent incident dispatch, surfaced in a React dashboard | [security/prowler-security-findings-agent/](security/prowler-security-findings-agent/README.md) |
 | AI-Powered Graviton Migration Assessment | Cost Optimization | Get comprehensive migration assessment with cost analysis and ready-to-use migration artifacts for any codebase | [cost-optimization/ai-graviton-migration-assessment/](cost-optimization/ai-graviton-migration-assessment/README.md) |
 | AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Operations Automation | Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
@@ -17,6 +17,11 @@ This repository contains deployable code samples demonstrating how generative AI
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
+| SaaS Status MCP Server for AWS DevOps Agent | Observability | Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more) — so investigations stop chasing internal infrastructure when the outage is upstream | [observability/saas-status-mcp/](observability/saas-status-mcp/README.md) |
+| AWS Feature Relevance Notification System | Observability | AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates | [observability/aws-feature-relevance-notification-system/](observability/aws-feature-relevance-notification-system/README.md) |
+| AI Incident Response Playbook Builder | Security | Analyze AWS architecture and generate tailored IR playbooks with MITRE ATT&CK mapping, SSM Automation documents, and step-by-step response procedures | [security/ai-incident-response-playbook-builder/](security/ai-incident-response-playbook-builder/README.md) |
+| AI Permission Boundary Generator | Security | Analyze CloudTrail logs for IAM roles/users, identify unused permissions, and generate least-privilege permission boundaries as ready-to-deploy CDK/CloudFormation resources | [security/ai-permission-boundary-generator/](security/ai-permission-boundary-generator/README.md) |
+| IAM Security Assistant | Security | Conversational IAM security assistant that queries Security Hub findings, analyzes role usage via CloudTrail, generates least-privilege policies, and assesses blast radius — all read-only, with exportable remediation artifacts | [security/ai-iam-access-analyzer-assistant/](security/ai-iam-access-analyzer-assistant/README.md) |
 
 ## Roadmap (Coming Soon)
 
@@ -38,11 +43,16 @@ operations-automation/
 ├── anycompany-it-demo-portal/
 └── aws-services-lifecycle-tracker/
 observability/
+├── aws-feature-relevance-notification-system/
+├── aws-site-to-site-vpn-tunnel-investigation-devops-agent/
 ├── eks-investigation-devops-agent/
-└── aws-site-to-site-vpn-tunnel-investigation-devops-agent/
+└── saas-status-mcp/
 resilience/
 └── ai-chaos-engineering-with-fis/
 security/
+├── ai-iam-access-analyzer-assistant/
+├── ai-incident-response-playbook-builder/
+├── ai-permission-boundary-generator/
 └── prowler-security-findings-agent/
 shared/
 ├── scripts/                # Common prerequisite checks
@@ -69,7 +79,7 @@ Each demo folder typically contains:
 ## Prerequisites
 
 - AWS CLI configured with appropriate permissions
-- AWS CDK or Terraform (depending on demo)
+- AWS CDK (TypeScript or Python) for infrastructure deployment
 - Node.js 20+ (for CDK-based demos)
 - Python 3.10+ (for Python-based demos)
 
@@ -95,6 +105,21 @@ Each demo folder typically contains:
 ## Cost Considerations
 
 Each demo includes detailed cost estimates and optimization recommendations. Typical costs range from $10-50/month depending on usage patterns. See individual demo READMEs for specific cost breakdowns.
+
+## For Contributors
+
+This repository includes AI-assisted development guidance via steering files in `.kiro/steering/`. These files provide project standards, patterns, and anti-patterns to any AI coding assistant.
+
+| AI IDE | How to use the steering files |
+|--------|-------------------------------|
+| **Kiro** | Loads automatically from `.kiro/steering/` |
+| **Cursor** | Reference `.kiro/steering/contributor-guide.md` in project context or `.cursorrules` |
+| **GitHub Copilot** | Reference via `.github/copilot-instructions.md` |
+| **Cline** | Reference via `.clinerules` |
+| **Claude Code** | Reference via `CLAUDE.md` |
+| **Other** | Point your AI assistant to `.kiro/steering/contributor-guide.md` |
+
+Start with the [Contributor Guide](.kiro/steering/contributor-guide.md) for all project standards.
 
 ## Contributing
 

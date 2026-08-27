@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 920" width="1200" height="920">
+  <defs>
+    <style>
+      .bg { fill: #f8f9fa; }
+      .aws-cloud { fill: none; stroke: #FF9900; stroke-width: 2; stroke-dasharray: 8,4; rx: 12; }
+      .service-group { fill: #ffffff; stroke: #dee2e6; stroke-width: 1.5; rx: 8; }
+      .service-box { fill: #f1f3f5; stroke: #ced4da; stroke-width: 1; rx: 6; }
+      .service-label { fill: #212529; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; font-weight: 600; }
+      .service-sublabel { fill: #495057; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 9px; }
+      .group-label { fill: #c76a00; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; }
+      .section-label { fill: #1565c0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+      .arrow { stroke: #1976d2; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+      .arrow-data { stroke: #2e7d32; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead-green); stroke-dasharray: 4,3; }
+      .arrow-auth { stroke: #e65100; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead-orange); }
+      .note { fill: #6c757d; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 9px; font-style: italic; }
+      .title { fill: #212529; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; font-weight: 700; }
+      .subtitle { fill: #495057; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; }
+      .connector-label { fill: #495057; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 8px; }
+      .lambda-accent { fill: #FF9900; }
+      .bedrock-accent { fill: #7B61FF; }
+      .security-accent { fill: #DD3522; }
+      .storage-accent { fill: #3F8624; }
+      .user-box { fill: #e3f2fd; stroke: #1976d2; stroke-width: 1.5; rx: 8; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#1976d2"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2e7d32"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#e65100"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="1200" height="920"/>
+
+  <!-- Title -->
+  <text class="title" x="40" y="35">AI IAM Access Analyzer Assistant — Architecture</text>
+  <text class="subtitle" x="40" y="52">React + Cloudscape → CloudFront → API Gateway → Lambda → Bedrock Converse (toolConfig) → AWS Security Services</text>
+
+  <!-- Legend -->
+  <rect x="880" y="15" width="300" height="50" rx="6" fill="#ffffff" stroke="#dee2e6"/>
+  <line x1="895" y1="32" x2="925" y2="32" class="arrow"/>
+  <text class="connector-label" x="930" y="35">Request flow</text>
+  <line x1="895" y1="48" x2="925" y2="48" class="arrow-data"/>
+  <text class="connector-label" x="930" y="51">Data return</text>
+  <line x1="1020" y1="32" x2="1050" y2="32" class="arrow-auth"/>
+  <text class="connector-label" x="1055" y="35">Auth flow</text>
+
+  <!-- USER BROWSER -->
+  <rect class="user-box" x="40" y="75" width="420" height="140"/>
+  <text class="section-label" x="55" y="93">User Browser</text>
+  
+  <rect class="service-box" x="55" y="100" width="140" height="45"/>
+  <text class="service-label" x="75" y="120">React + Cloudscape</text>
+  <text class="service-sublabel" x="75" y="133">Chat Interface</text>
+  
+  <rect class="service-box" x="205" y="100" width="200" height="45"/>
+  <text class="service-label" x="225" y="120">AWS Amplify SDK</text>
+  <text class="service-sublabel" x="225" y="133">SigV4 Auth + Cognito</text>
+
+  <rect class="service-box" x="55" y="155" width="390" height="48"/>
+  <text class="service-label" x="70" y="174">Discovery / Direct Mode • Token Counter • Dark Mode • Save as .md</text>
+  <text class="service-sublabel" x="75" y="186">Session: tool calls, tokens used, estimated cost</text>
+
+  <!-- AWS CLOUD BOUNDARY -->
+  <rect class="aws-cloud" x="30" y="250" width="1140" height="650"/>
+  <text class="group-label" x="880" y="268">AWS Cloud (Customer Account)</text>
+
+  <!-- FRONTEND HOSTING -->
+  <rect class="service-group" x="50" y="260" width="350" height="100"/>
+  <text class="section-label" x="65" y="278">Frontend Hosting</text>
+  
+  <rect class="service-box" x="65" y="285" width="150" height="55"/>
+  <circle cx="80" cy="310" r="6" fill="#8C4FFF"/>
+  <text class="service-label" x="92" y="307">CloudFront</text>
+  <text class="service-sublabel" x="92" y="320">Distribution (OAC)</text>
+  <text class="service-sublabel" x="92" y="332">Static assets + /api/*</text>
+
+  <rect class="service-box" x="230" y="285" width="150" height="55"/>
+  <circle cx="245" cy="310" r="6" fill="#3F8624"/>
+  <text class="service-label" x="257" y="307">S3 Bucket</text>
+  <text class="service-sublabel" x="257" y="320">React build (dist/)</text>
+  <text class="service-sublabel" x="257" y="332">Origin Access Control</text>
+
+  <!-- AUTHENTICATION -->
+  <rect class="service-group" x="420" y="260" width="340" height="100"/>
+  <text class="section-label" x="435" y="278">Authentication</text>
+  
+  <rect class="service-box" x="435" y="285" width="145" height="55"/>
+  <circle cx="450" cy="310" r="6" fill="#DD344C"/>
+  <text class="service-label" x="462" y="307">Cognito User Pool</text>
+  <text class="service-sublabel" x="462" y="320">Email/password</text>
+  <text class="service-sublabel" x="462" y="332">No self-signup</text>
+
+  <rect class="service-box" x="595" y="285" width="150" height="55"/>
+  <circle cx="610" cy="310" r="6" fill="#DD344C"/>
+  <text class="service-label" x="622" y="307">Identity Pool</text>
+  <text class="service-sublabel" x="622" y="320">Temp AWS credentials</text>
+  <text class="service-sublabel" x="622" y="332">Authenticated IAM role</text>
+
+  <!-- API LAYER -->
+  <rect class="service-group" x="50" y="385" width="350" height="105"/>
+  <text class="section-label" x="65" y="403">API Layer</text>
+  
+  <rect class="service-box" x="65" y="410" width="320" height="65"/>
+  <circle cx="80" cy="435" r="6" fill="#FF4F8B"/>
+  <text class="service-label" x="92" y="430">API Gateway (REST)</text>
+  <text class="service-sublabel" x="92" y="443">POST /api/conversation • Cognito Authorizer</text>
+  <text class="service-sublabel" x="92" y="456">GET /api/exports • 29s timeout</text>
+  <text class="service-sublabel" x="92" y="468">CORS enabled for CloudFront origin</text>
+
+  <!-- COMPUTE -->
+  <rect class="service-group" x="50" y="510" width="500" height="150"/>
+  <text class="section-label" x="65" y="528">Compute — Lambda (Python 3.12)</text>
+  
+  <rect class="service-box" x="65" y="535" width="220" height="110"/>
+  <circle cx="80" cy="560" r="6" class="lambda-accent"/>
+  <text class="service-label" x="92" y="555">Conversation Handler</text>
+  <text class="service-sublabel" x="92" y="568">agent.py — 60s timeout, 512MB</text>
+  <text class="service-sublabel" x="92" y="581">Bedrock Converse API + toolConfig</text>
+  <text class="service-sublabel" x="92" y="594">8-message history trim</text>
+  <text class="service-sublabel" x="92" y="607">2048 max output tokens</text>
+  <text class="service-sublabel" x="92" y="620">System prompt: IAM analyst role</text>
+  <text class="service-sublabel" x="92" y="633">Off-topic redirect + confidentiality</text>
+
+  <rect class="service-box" x="300" y="535" width="235" height="110"/>
+  <circle cx="315" cy="560" r="6" class="lambda-accent"/>
+  <text class="service-label" x="327" y="555">Tool Functions (9 tools)</text>
+  <text class="service-sublabel" x="327" y="568">list_findings • get_finding_details</text>
+  <text class="service-sublabel" x="327" y="581">generate_policy • check_dependencies</text>
+  <text class="service-sublabel" x="327" y="594">validate_policy • generate_action_plan</text>
+  <text class="service-sublabel" x="327" y="607">compare_roles • build_policy</text>
+  <text class="service-sublabel" x="327" y="620">export_report • list_exports</text>
+  <text class="service-sublabel" x="327" y="633">→ S3 PutObject + presigned URL (1hr)</text>
+
+  <!-- AI / BEDROCK -->
+  <rect class="service-group" x="580" y="385" width="300" height="105"/>
+  <text class="section-label" x="595" y="403">GenAI — Amazon Bedrock</text>
+  
+  <rect class="service-box" x="595" y="410" width="270" height="65"/>
+  <circle cx="610" cy="435" r="6" class="bedrock-accent"/>
+  <text class="service-label" x="622" y="430">Bedrock Converse API</text>
+  <text class="service-sublabel" x="622" y="443">Model: Claude Sonnet 4 (configurable)</text>
+  <text class="service-sublabel" x="622" y="456">toolConfig with 9 tool definitions</text>
+  <text class="service-sublabel" x="622" y="468">Temp 0.3 • Multi-turn tool_use loop</text>
+
+  <!-- SECURITY SERVICES -->
+  <rect class="service-group" x="580" y="510" width="580" height="150"/>
+  <text class="section-label" x="595" y="528">AWS Security Services (Read-Only)</text>
+  
+  <rect class="service-box" x="595" y="535" width="170" height="55"/>
+  <circle cx="610" cy="558" r="6" class="security-accent"/>
+  <text class="service-label" x="622" y="555">Security Hub</text>
+  <text class="service-sublabel" x="622" y="568">GetFindings (ACTIVE filter)</text>
+  <text class="service-sublabel" x="622" y="581">Severity, resource, status</text>
+
+  <rect class="service-box" x="780" y="535" width="180" height="55"/>
+  <circle cx="795" cy="558" r="6" class="security-accent"/>
+  <text class="service-label" x="807" y="555">IAM Access Analyzer</text>
+  <text class="service-sublabel" x="807" y="568">ListFindings, GetFinding</text>
+  <text class="service-sublabel" x="807" y="581">ValidatePolicy, CheckAccess</text>
+
+  <rect class="service-box" x="975" y="535" width="170" height="55"/>
+  <circle cx="990" cy="558" r="6" class="security-accent"/>
+  <text class="service-label" x="1002" y="555">CloudTrail</text>
+  <text class="service-sublabel" x="1002" y="568">LookupEvents (90 days)</text>
+  <text class="service-sublabel" x="1002" y="581">Usage-based policy gen</text>
+
+  <rect class="service-box" x="595" y="600" width="170" height="50"/>
+  <circle cx="610" cy="623" r="6" fill="#FF9900"/>
+  <text class="service-label" x="622" y="620">IAM (read-only)</text>
+  <text class="service-sublabel" x="622" y="633">GetRole, ListAttachedPolicies</text>
+  <text class="service-sublabel" x="622" y="645">GetPolicy, ListRoles</text>
+
+  <rect class="service-box" x="780" y="600" width="180" height="50"/>
+  <circle cx="795" cy="623" r="6" fill="#FF9900"/>
+  <text class="service-label" x="807" y="620">Lambda / ECS / etc.</text>
+  <text class="service-sublabel" x="807" y="633">Dependency discovery</text>
+  <text class="service-sublabel" x="807" y="645">(trust policy references)</text>
+
+  <rect class="service-box" x="975" y="600" width="170" height="50"/>
+  <circle cx="990" cy="623" r="6" class="storage-accent"/>
+  <text class="service-label" x="1002" y="620">S3 (Reports Bucket)</text>
+  <text class="service-sublabel" x="1002" y="633">PutObject, ListObjects</text>
+  <text class="service-sublabel" x="1002" y="645">GeneratePresignedUrl</text>
+
+  <!-- IAM ROLES -->
+  <rect class="service-group" x="50" y="690" width="1110" height="80"/>
+  <text class="section-label" x="65" y="708">IAM Execution Role (Lambda)</text>
+  <text class="service-sublabel" x="65" y="725">securityhub:GetFindings • access-analyzer:ListFindings,GetFinding,ValidatePolicy,CheckAccessNotGranted</text>
+  <text class="service-sublabel" x="65" y="738">cloudtrail:LookupEvents • iam:GetRole,GetPolicy,GetPolicyVersion,ListAttachedRolePolicies,ListRoles</text>
+  <text class="service-sublabel" x="65" y="751">lambda:ListFunctions,GetFunction • ecs:ListServices,DescribeServices • s3:PutObject,GetObject,ListBucket (reports bucket only)</text>
+  <text class="service-sublabel" x="65" y="764">bedrock:InvokeModel (anthropic.claude-* only) • ❌ NO iam:Create*, iam:Put*, iam:Delete*, iam:Attach* — strictly read-only</text>
+
+  <!-- CDK STACK -->
+  <rect class="service-group" x="50" y="790" width="1110" height="60"/>
+  <text class="section-label" x="65" y="808">CDK Stack: IamAnalyzerAssistantStack-{region}</text>
+  <text class="service-sublabel" x="65" y="825">Tracking: (uksb-do9bhieqqh)(tag:ai-iam-access-analyzer-assistant,security)</text>
+  <text class="service-sublabel" x="65" y="838">Constructs: FrontendConstruct • AuthConstruct • ApiConstruct • ComputeConstruct • StorageConstruct</text>
+
+  <!-- ARROWS -->
+  <path class="arrow" d="M 200,205 L 200,270"/>
+  <text class="connector-label" x="207" y="230">HTTPS</text>
+
+  <path class="arrow" d="M 200,360 L 200,385"/>
+  <text class="connector-label" x="207" y="376">/api/*</text>
+
+  <path class="arrow-auth" d="M 360,315 L 420,315"/>
+  <text class="connector-label" x="375" y="308">JWT</text>
+
+  <path class="arrow" d="M 200,490 L 200,510"/>
+
+  <path class="arrow" d="M 540,570 L 580,440"/>
+  <text class="connector-label" x="548" y="500">Converse</text>
+
+  <path class="arrow-data" d="M 595,475 L 545,545"/>
+  <text class="connector-label" x="552" y="515">tool_use</text>
+
+  <path class="arrow" d="M 535,580 L 580,560"/>
+  <text class="connector-label" x="545" y="568">APIs</text>
+</svg>

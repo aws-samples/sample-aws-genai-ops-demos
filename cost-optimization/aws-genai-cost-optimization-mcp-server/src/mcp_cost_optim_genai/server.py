@@ -23,7 +23,8 @@ async def scan_project(
     path: str,
     skip_dirs: str = "",
     max_files: int = 0,
-    estimate_only: bool = False
+    estimate_only: bool = False,
+    include_tests: bool = False
 ) -> str:
     """Scan a project directory for AWS GenAI service usage patterns.
     
@@ -38,6 +39,8 @@ async def scan_project(
                   safety limit for very large projects.
         estimate_only: If true, only return scan size estimate without actually scanning.
                       Useful for checking if a scan will be too large.
+        include_tests: If true, include test directories and test files in the scan.
+                      Useful for CDK/IaC projects where test dirs contain production code.
         
     Returns:
         JSON string with scan results and findings.
@@ -56,6 +59,9 @@ async def scan_project(
         
         # Skip additional custom directories
         scan_project("/path/to/project", skip_dirs="data,models,checkpoints")
+        
+        # Include test directories (useful for CDK projects)
+        scan_project("/path/to/project", include_tests=True)
     """
     global _latest_scan
     scanner = ProjectScanner()
@@ -72,7 +78,8 @@ async def scan_project(
         path,
         skip_dirs=custom_skip_dirs,
         max_files=max_files_param,
-        estimate_only=estimate_only
+        estimate_only=estimate_only,
+        include_tests=include_tests
     )
     
     if not estimate_only:

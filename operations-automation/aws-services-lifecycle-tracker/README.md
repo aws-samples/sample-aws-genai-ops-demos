@@ -16,6 +16,13 @@ This system transforms manual deprecation tracking into an automated, scalable, 
 - **⚙️ Service Configuration Management**: Add/modify AWS services via UI or service configuration files
 - **📈 Scalable Architecture**: Serverless design that scales from single services to enterprise-wide monitoring
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/jtv9je6phpy4)
+
+
 ## Demo
 
 ![Demo](img/LifeCycle.gif)

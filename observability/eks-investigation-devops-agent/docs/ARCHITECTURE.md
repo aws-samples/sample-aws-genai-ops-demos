@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The DevOps Agent EKS Demo Platform is a demo-quality, cloud-native payment processing system built on AWS EKS, demonstrating security, observability, and incident investigation patterns using the Amazon DevOps Agent.
+The DevOps Agent EKS Demo Platform is a demo-quality, cloud-native payment processing system built on AWS EKS, demonstrating security, observability, and incident investigation patterns using the AWS DevOps Agent.
 
 ## High-Level Architecture
 
@@ -208,10 +208,10 @@ Container → Fluent Bit → CloudWatch Logs
 | Business Logic | Java + Spring Boot | 21.x / 3.5.x |
 | Webhooks | Node.js + TypeScript | 20.x |
 | Database | PostgreSQL | 15.x |
-| Container Orchestration | Amazon EKS | 1.33 |
+| Container Orchestration | Amazon EKS | 1.36 (default; see `EKS_KUBERNETES_VERSION`) |
 | IaC | AWS CDK (TypeScript) | 2.x |
 | Observability | CloudWatch + Fluent Bit | - |
-| Incident Response | Amazon DevOps Agent | - |
+| Incident Response | AWS DevOps Agent | - |
 
 ## Deployment Architecture
 

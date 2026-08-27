@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+*.egg-info/
+dist/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.env.production.local
+
+# CDK
+infrastructure/cdk/cdk.out/
+infrastructure/cdk/outputs.json
+*.js.map
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build logs
+build.log
+
+# Environment
+.env
+.env.local
+*.local

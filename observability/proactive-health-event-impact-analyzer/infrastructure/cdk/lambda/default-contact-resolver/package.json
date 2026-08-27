@@ -1,0 +1,9 @@
+{
+  "name": "default-contact-resolver",
+  "version": "1.0.0",
+  "description": "Resolves default notification contacts from AWS Account when no team routing is configured",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-account": "^3.600.0"
+  }
+}

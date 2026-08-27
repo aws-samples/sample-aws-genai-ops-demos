@@ -1,11 +1,22 @@
 """Detector for Amazon Bedrock usage patterns."""
 
+import logging
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
 from .base import BaseDetector
+
+logger = logging.getLogger(__name__)
+
+# Ensure logs go to stderr, not stdout (stdout is used for MCP JSON-RPC)
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.WARNING)
 
 
 class BedrockDetector(BaseDetector):
@@ -38,12 +49,12 @@ class BedrockDetector(BaseDetector):
         "ChatBedrockConverse": r"ChatBedrockConverse\s*\(",
         "ChatBedrock": r"ChatBedrock\s*\(",
         "BedrockLLM": r"BedrockLLM\s*\(",
-        "Bedrock": r"Bedrock\s*\(",  # Legacy LangChain class
+        "Bedrock": r"(?<!\w)Bedrock\s*\(",  # Legacy LangChain class — word boundary to avoid matching unrelated classes
     }
 
     def can_analyze(self, file_path: Path) -> bool:
-        """Check if file is Python or TypeScript/JavaScript."""
-        return file_path.suffix in [".py", ".ts", ".js", ".tsx", ".jsx"]
+        """Check if file type is supported for Bedrock pattern detection."""
+        return file_path.suffix in [".py", ".ts", ".js", ".tsx", ".jsx", ".yaml", ".yml", ".json", ".tf", ".tfvars"]
     
     def _parse_model_id(self, model_id: str) -> Dict[str, Any]:
         """Parse a Bedrock model ID into structured components.
@@ -188,6 +199,9 @@ class BedrockDetector(BaseDetector):
         """Analyze content for Bedrock usage."""
         findings = []
 
+        # Cache for _find_prompts results within this analyze() call
+        self._prompts_cache = None
+
         # Check for Bedrock client initialization
         if self._has_bedrock_client(content):
             findings.append({
@@ -218,7 +232,7 @@ class BedrockDetector(BaseDetector):
         findings.extend(nova_caching_findings)
 
         # Detect caching with cross-region inference anti-pattern
-        cross_region_findings = self._detect_caching_cross_region_antipattern(content, file_path)
+        cross_region_findings = self._detect_caching_cross_region_antipattern(content, file_path, model_findings)
         findings.extend(cross_region_findings)
         
         # Detect dynamic variables in system prompts
@@ -238,6 +252,9 @@ class BedrockDetector(BaseDetector):
         for finding in findings:
             if 'line' in finding and finding.get('file'):
                 finding['file_link'] = create_file_link(finding['file'], finding['line'])
+
+        # Clear per-file cache
+        self._prompts_cache = None
 
         return findings
 
@@ -558,7 +575,17 @@ class BedrockDetector(BaseDetector):
         """Detect Bedrock API call patterns."""
         findings = []
 
+        # Check if file has LangChain Bedrock imports (needed for legacy "Bedrock" pattern)
+        has_langchain_bedrock_import = bool(re.search(
+            r'from\s+langchain.*import.*Bedrock|from\s+langchain_aws.*import.*Bedrock',
+            content
+        ))
+
         for call_type, pattern in self.INVOKE_PATTERNS.items():
+            # Skip legacy "Bedrock" pattern if no LangChain import is present
+            if call_type == "Bedrock" and not has_langchain_bedrock_import:
+                continue
+
             matches = re.finditer(pattern, content)
             for match in matches:
                 line_num = content[:match.start()].count('\n') + 1
@@ -631,7 +658,19 @@ class BedrockDetector(BaseDetector):
         
         Uses Bedrock AI to intelligently identify prompts in Python, TypeScript, JavaScript.
         Falls back to regex if AI analysis fails or AWS credentials not available.
+        
+        Results are memoized within a single analyze() call to avoid repeated Bedrock invocations.
         """
+        # Return cached result if available (avoids 3+ Bedrock calls per file)
+        if self._prompts_cache is not None:
+            return self._prompts_cache
+
+        result = self._find_prompts_uncached(content, file_path)
+        self._prompts_cache = result
+        return result
+
+    def _find_prompts_uncached(self, content: str, file_path: str) -> List[Dict[str, Any]]:
+        """Internal implementation of prompt finding (not memoized)."""
         # Try AI-powered detection first
         try:
             from ..utils.bedrock_helper import analyze_code_for_prompts
@@ -651,7 +690,7 @@ class BedrockDetector(BaseDetector):
                 return prompts
         except Exception as e:
             # Fall back to regex if AI fails
-            print(f"AI prompt detection failed, using regex fallback: {e}")
+            logger.debug("AI prompt detection failed, using regex fallback: %s", e)
         
         # Regex fallback (simple patterns)
         prompts = []
@@ -748,12 +787,6 @@ class BedrockDetector(BaseDetector):
             if estimated_tokens < 150:
                 continue
             
-            monthly_requests = 1000
-            cost_without_caching = (monthly_requests * estimated_tokens * 0.00006) / 1000
-            cost_with_caching = (estimated_tokens * 0.00009 / 1000) + \
-                               ((monthly_requests - 1) * estimated_tokens * 0.000006 / 1000)
-            monthly_savings = cost_without_caching - cost_with_caching
-            
             finding = {
                 'type': 'nova_explicit_caching_opportunity',
                 'file': file_path,
@@ -762,8 +795,9 @@ class BedrockDetector(BaseDetector):
                 'estimated_static_tokens': estimated_tokens,
                 'service': 'bedrock',
                 'description': f'Nova model with large prompt (~{estimated_tokens} tokens) without explicit caching',
-                'cost_consideration': f'This prompt has ~{estimated_tokens} tokens that are repeated for each request. Without explicit caching, you\'re paying full price ($0.00006 per 1K tokens). With explicit caching, you\'d pay 90% less ($0.000006 per 1K tokens) after the first request.',
-                'potential_savings': f'${monthly_savings:.2f}/month (90% reduction)',
+                'cost_consideration': f'This prompt has ~{estimated_tokens} tokens that are repeated for each request. Without explicit caching, you pay full price per request. With explicit caching, cached tokens cost 90% less after the first request.',
+                'potential_savings': '90% reduction on cached input tokens (consistent across all Nova tiers)',
+                'pricing_note': 'Use AWS Pricing MCP Server to fetch current per-token rates for your specific Nova model tier',
                 'documentation': 'https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html',
                 'enrichment_required': {
                     'priority': 'HIGH',
@@ -776,7 +810,8 @@ class BedrockDetector(BaseDetector):
                         'documentation': 'https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html'
                     },
                     'validation': f'Estimated {estimated_tokens} tokens - {"✅ Meets minimum" if estimated_tokens >= 1000 else "❌ Below 1,000 token minimum - caching will NOT work"}',
-                    'recommendation': 'If below minimum, do NOT suggest prompt caching for this prompt'
+                    'recommendation': 'If below minimum, do NOT suggest prompt caching for this prompt',
+                    'pricing_action': 'Use AWS Pricing MCP Server to get current pricing for the specific Nova tier'
                 }
             }
             
@@ -784,7 +819,7 @@ class BedrockDetector(BaseDetector):
         
         return findings
 
-    def _detect_caching_cross_region_antipattern(self, content: str, file_path: str) -> List[Dict[str, Any]]:
+    def _detect_caching_cross_region_antipattern(self, content: str, file_path: str, existing_model_findings: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Detect prompt caching used with cross-region inference profiles.
         
         Uses the generic model detection to find cross-region model IDs,
@@ -792,13 +827,29 @@ class BedrockDetector(BaseDetector):
         
         Static prompts + cross-region + caching = OK (same cache across regions)
         Dynamic prompts + cross-region + caching = RISK (different cache per request)
+        
+        Args:
+            content: File content
+            file_path: Path to file
+            existing_model_findings: Pre-computed model findings from analyze() to avoid re-detection
         """
         findings = []
         
         # Check if caching is enabled in this file
         # Support both snake_case (Python) and camelCase (TypeScript/JavaScript)
-        has_cache_point = bool(re.search(r'cachePoint', content))
-        has_cache_control = bool(re.search(r'cache(?:_control|Control)', content))  # Matches cache_control or cacheControl
+        # Use finditer to check context and filter false positives (comments, docstrings)
+        cache_point_matches = list(re.finditer(r'cachePoint', content))
+        cache_control_matches = list(re.finditer(r'cache(?:_control|Control)', content))
+        
+        # Filter out matches in comments/docstrings
+        has_cache_point = any(
+            not self._is_likely_false_positive(content, m.start(), m.end())
+            for m in cache_point_matches
+        )
+        has_cache_control = any(
+            not self._is_likely_false_positive(content, m.start(), m.end())
+            for m in cache_control_matches
+        )
         
         if not (has_cache_point or has_cache_control):
             return findings  # No caching, no anti-pattern
@@ -806,8 +857,11 @@ class BedrockDetector(BaseDetector):
         # Analyze if prompts are static or dynamic
         prompt_analysis = self._analyze_prompt_staticness(content)
         
-        # Use generic model detection to find ALL models with region prefixes
-        model_findings = self._detect_models(content, file_path)
+        # Use pre-computed model findings if available, otherwise detect (for standalone calls)
+        if existing_model_findings is not None:
+            model_findings = existing_model_findings
+        else:
+            model_findings = self._detect_models(content, file_path)
         
         for model_finding in model_findings:
             parsed = model_finding.get("parsed", {})
@@ -1243,8 +1297,13 @@ response = agent(query)''',
         if complexity_findings:
             findings.extend(complexity_findings)
         
-        # Opportunity 3: Premium/ultra-premium tier usage
-        if premium_models and not models_by_family:
+        # Opportunity 3: Premium/ultra-premium tier with single model but mixed complexity prompts
+        # Only trigger if no multi-model opportunity was already found (Opportunity 1)
+        has_multi_model_opportunity = any(
+            len(set(m['model_id'] for m in models)) > 1
+            for models in models_by_family.values()
+        )
+        if premium_models and not has_multi_model_opportunity:
             # Using premium models but no multiple models detected
             # Suggest routing if there's complexity variation
             for model_info in premium_models:
@@ -1492,22 +1551,30 @@ response = agent(query)''',
                 findings.append(finding)
         
         # Detect API calls WITHOUT service_tier (optimization opportunity)
-        # Reuse the same INVOKE_PATTERNS defined at class level for consistency
-        for api_name, pattern in self.INVOKE_PATTERNS.items():
+        # Only report ONCE per file and only if direct boto3 API calls are present
+        # (LangChain wrappers don't support service_tier directly)
+        direct_api_patterns = {
+            "invoke_model": self.INVOKE_PATTERNS["invoke_model"],
+            "invoke_model_with_response_stream": self.INVOKE_PATTERNS["invoke_model_with_response_stream"],
+            "converse": self.INVOKE_PATTERNS["converse"],
+            "converse_stream": self.INVOKE_PATTERNS["converse_stream"],
+        }
+        
+        missing_tier_reported = False
+        for api_name, pattern in direct_api_patterns.items():
+            if missing_tier_reported:
+                break
             matches = re.finditer(pattern, content)
             for match in matches:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 # Check if this API call already has service_tier configured
-                # Find the closing parenthesis for this specific call to limit search scope
                 call_start = match.start()
                 call_end = self._find_matching_paren(content, match.end() - 1)
                 
                 if call_end == -1:
-                    # Couldn't find matching paren, use limited context
                     call_context = content[call_start:min(call_start + 300, len(content))]
                 else:
-                    # Use only the content within this API call
                     call_context = content[call_start:call_end + 1]
                 
                 has_service_tier = any(
@@ -1516,7 +1583,7 @@ response = agent(query)''',
                 )
                 
                 if not has_service_tier:
-                    # API call without service_tier - optimization opportunity
+                    # Report once per file as informational
                     findings.append({
                         "type": "bedrock_service_tier_missing",
                         "file": file_path,
@@ -1524,19 +1591,14 @@ response = agent(query)''',
                         "api_call": api_name,
                         "service_tier": "default (implicit)",
                         "service": "bedrock",
+                        "severity": "informational",
                         "optimization_opportunity": True,
-                        "description": f"{api_name} call without service_tier parameter",
-                        "issue": "Using default (Standard) tier without considering cost optimization",
-                        "recommendation": "Consider adding service_tier parameter based on workload requirements. Flex tier offers cost savings for non-latency-sensitive workloads (batch processing, content summarization, model evaluations).",
-                        "cost_consideration": "Flex tier provides pricing discount compared to Standard tier for workloads that can tolerate slightly longer response times",
-                        "next_steps": [
-                            "Assess if workload is latency-sensitive (real-time chat, customer-facing) or can tolerate delays (batch, background)",
-                            "For non-latency-sensitive: Add service_tier='flex' for cost savings",
-                            "For latency-sensitive: Keep default or use service_tier='priority'",
-                            "Use AWS MCP Server to compare Standard vs Flex pricing for your model"
-                        ],
+                        "description": f"Bedrock API calls in this file use default (Standard) tier",
+                        "recommendation": "Consider service_tier='flex' for non-latency-sensitive workloads (batch processing, content summarization) to get pricing discount.",
                         "documentation": "https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html"
                     })
+                    missing_tier_reported = True
+                    break
         
         return findings
     

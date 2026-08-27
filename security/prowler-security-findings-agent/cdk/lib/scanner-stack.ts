@@ -7,7 +7,6 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
-import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 
 export interface ScannerStackProps extends cdk.StackProps {
@@ -215,56 +214,6 @@ export class ScannerStack extends cdk.Stack {
     this.subnetIds = vpc.publicSubnets.map((s) => s.subnetId);
     this.securityGroupId = securityGroup.securityGroupId;
     this.logGroupName = logGroup.logGroupName;
-
-    // Kick off the first scan as soon as the stack is created. Demos otherwise
-    // open to an empty dashboard until the EventBridge schedule or the user
-    // clicks "Run scan now", which makes the first-time experience feel slow
-    // ("it doesn't work" vs "it's warming up"). Only runs onCreate — never on
-    // update or replace — so re-deploys don't queue extra scans.
-    const firstScan = new AwsCustomResource(this, 'AutoStartFirstScan', {
-      onCreate: {
-        service: 'ECS',
-        action: 'runTask',
-        parameters: {
-          cluster: cluster.clusterArn,
-          taskDefinition: taskDefinition.taskDefinitionArn,
-          launchType: 'FARGATE',
-          platformVersion: 'LATEST',
-          count: 1,
-          networkConfiguration: {
-            awsvpcConfiguration: {
-              subnets: vpc.publicSubnets.map((s) => s.subnetId),
-              securityGroups: [securityGroup.securityGroupId],
-              assignPublicIp: 'ENABLED',
-            },
-          },
-        },
-        physicalResourceId: PhysicalResourceId.of('prowler-first-scan'),
-        // The runTask response body holds taskArn + failures; we don't need to
-        // read any of it back into CFN outputs, so ignore any errors rather
-        // than rolling back the whole stack on a transient ECS hiccup.
-        ignoreErrorCodesMatching: '.*',
-      },
-      policy: AwsCustomResourcePolicy.fromStatements([
-        new iam.PolicyStatement({
-          effect: iam.Effect.ALLOW,
-          actions: ['ecs:RunTask'],
-          resources: [`${taskDefinition.taskDefinitionArn}`, `${taskDefinition.taskDefinitionArn}:*`],
-        }),
-        new iam.PolicyStatement({
-          effect: iam.Effect.ALLOW,
-          actions: ['iam:PassRole'],
-          resources: [taskRole.roleArn, taskDefinition.executionRole!.roleArn],
-          conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
-        }),
-      ]),
-      // Keep logs short so CW costs stay minimal; the scanner itself logs
-      // anyway.
-      logRetention: logs.RetentionDays.ONE_DAY,
-    });
-    // Wire an explicit dependency on the log group + container so the task
-    // definition is fully ready before we RunTask.
-    firstScan.node.addDependency(taskDefinition);
 
     new cdk.CfnOutput(this, 'EcrRepoUri', {
       value: ecrRepo.repositoryUri,

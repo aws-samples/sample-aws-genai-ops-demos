@@ -10,6 +10,7 @@ export class DataStack extends cdk.Stack {
   public readonly lifecycleTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
   public readonly actionPlanTable: dynamodb.Table;
+  public readonly healthEventsTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -115,6 +116,48 @@ export class DataStack extends cdk.Stack {
       },
     });
 
+    // Health Events table for AWS Health API integration
+    this.healthEventsTable = new dynamodb.Table(this, 'HealthEventsTable', {
+      tableName: 'aws-health-events',
+      partitionKey: {
+        name: 'event_arn',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'event_type_category',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: 'ttl',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // GSI for querying health events by service name
+    this.healthEventsTable.addGlobalSecondaryIndex({
+      indexName: 'service-index',
+      partitionKey: {
+        name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'start_time',
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
+    // GSI for querying health events by status code
+    this.healthEventsTable.addGlobalSecondaryIndex({
+      indexName: 'status-index',
+      partitionKey: {
+        name: 'status_code',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'start_time',
+        type: dynamodb.AttributeType.STRING,
+      },
+    });
+
     // Outputs for other stacks
     new cdk.CfnOutput(this, 'LifecycleTableName', {
       value: this.lifecycleTable.tableName,
@@ -150,6 +193,18 @@ export class DataStack extends cdk.Stack {
       value: this.actionPlanTable.tableArn,
       description: 'DynamoDB table ARN for action plans',
       exportName: 'AWSServicesLifecycleTrackerActionPlanTableArn',
+    });
+
+    new cdk.CfnOutput(this, 'HealthEventsTableName', {
+      value: this.healthEventsTable.tableName,
+      description: 'DynamoDB table for AWS Health events',
+      exportName: 'AWSServicesLifecycleTrackerHealthEventsTableName',
+    });
+
+    new cdk.CfnOutput(this, 'HealthEventsTableArn', {
+      value: this.healthEventsTable.tableArn,
+      description: 'DynamoDB table ARN for Health events',
+      exportName: 'AWSServicesLifecycleTrackerHealthEventsTableArn',
     });
 
     // Custom Resource to populate service configurations

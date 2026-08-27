@@ -221,6 +221,41 @@ aws cognito-idp admin-set-user-password \
     --no-cli-pager >/dev/null
 timed_step_done
 
+# Kick off the first scan now — image is in ECR (step 3 already pushed it),
+# so the Fargate task will pull it cleanly. Doing this here instead of from
+# a CDK custom resource at stack-create time avoids the race where the
+# stack creates faster than CodeBuild publishes :latest.
+SCANNER_CLUSTER_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ClusterArn'].OutputValue" --output text)
+SCANNER_TASK_DEF=$(aws cloudformation describe-stacks \
+    --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='TaskDefinitionArn'].OutputValue" --output text)
+SCANNER_SUBNETS=$(aws cloudformation describe-stacks \
+    --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerSubnetIds'].OutputValue" --output text)
+SCANNER_SG=$(aws cloudformation describe-stacks \
+    --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerSecurityGroupId'].OutputValue" --output text)
+
+echo "Starting first Prowler scan..."
+NETWORK_CFG=$(printf '{"awsvpcConfiguration":{"subnets":[%s],"securityGroups":["%s"],"assignPublicIp":"ENABLED"}}' \
+    "$(echo "$SCANNER_SUBNETS" | awk -F, '{for(i=1;i<=NF;i++) printf (i>1?",":"") "\"" $i "\""}')" \
+    "$SCANNER_SG")
+if aws ecs run-task \
+    --cluster "$SCANNER_CLUSTER_ARN" \
+    --task-definition "$SCANNER_TASK_DEF" \
+    --launch-type FARGATE \
+    --platform-version LATEST \
+    --network-configuration "$NETWORK_CFG" \
+    --count 1 \
+    --no-cli-pager --query 'tasks[0].taskArn' --output text >/dev/null 2>&1; then
+    echo "  First scan launched."
+else
+    echo "  WARN: failed to launch first scan — start it from the dashboard with 'Run scan now'."
+fi
+echo ""
+
 DEPLOY_TOTAL=$(( $(date +%s) - DEPLOY_START ))
 printf "Total deploy time: %dm %02ds\n\n" $((DEPLOY_TOTAL/60)) $((DEPLOY_TOTAL%60))
 
@@ -236,11 +271,10 @@ echo "  Username: $DEMO_USERNAME"
 echo "  Password: $DEMO_PASSWORD"
 echo "  (Override with DEMO_USERNAME / DEMO_PASSWORD env vars before deploy.)"
 echo ""
-echo "Trigger your first scan:"
+echo "First scan is running:"
 echo "  1. Log in to $WEBSITE_URL"
-echo "  2. Click 'Run scan now' on the Dashboard"
-echo "  3. Wait ~3-10 min for findings to appear"
-echo "  4. Open any finding and click 'Generate Bedrock Insights' for the"
+echo "  2. Wait ~3-10 min for findings to appear (re-run with 'Run scan now' anytime)"
+echo "  3. Open any finding and click 'Generate Bedrock Insights' for the"
 echo "     Nova Lite 2 remediation playbook, or 'Investigate with DevOps Agent'"
 echo "     to dispatch an autonomous investigation (both are on-demand)."
 echo ""

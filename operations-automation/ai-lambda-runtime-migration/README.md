@@ -15,6 +15,12 @@ The demo does not modify your Lambda functions — it produces migrated source c
 - **Key Technologies**: Amazon Bedrock AgentCore, Amazon Nova 2 Lite, AgentCore Code Interpreter, Amazon Cognito, Amazon CloudFront, Cloudscape Design System
 - **Estimated Cost**: ~$27 for 1,000 functions (see [Cost Estimate](#cost-estimate))
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://app.storylane.io/share/u1yb99jmimas)
+
 ## Architecture
 
 An editable draw.io diagram is available at [img/architecture.drawio](img/architecture.drawio).

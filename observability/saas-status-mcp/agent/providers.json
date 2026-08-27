@@ -1,0 +1,32 @@
+{
+  "providers": [
+    { "name": "snowflake", "display_name": "Snowflake", "api_base": "https://status.snowflake.com/api/v2", "url": "https://status.snowflake.com" },
+    { "name": "datadog", "display_name": "Datadog", "api_base": "https://status.datadoghq.com/api/v2", "url": "https://status.datadoghq.com" },
+    { "name": "mongodb", "display_name": "MongoDB Cloud", "api_base": "https://status.mongodb.com/api/v2", "url": "https://status.mongodb.com" },
+    { "name": "github", "display_name": "GitHub", "api_base": "https://www.githubstatus.com/api/v2", "url": "https://www.githubstatus.com" },
+    { "name": "gitlab", "display_name": "GitLab", "api_base": "https://status.gitlab.com/api/v2", "url": "https://status.gitlab.com" },
+    { "name": "pagerduty", "display_name": "PagerDuty", "api_base": "https://status.pagerduty.com/api/v2", "url": "https://status.pagerduty.com" },
+    { "name": "atlassian", "display_name": "Atlassian", "api_base": "https://status.atlassian.com/api/v2", "url": "https://status.atlassian.com" },
+    { "name": "cloudflare", "display_name": "Cloudflare", "api_base": "https://www.cloudflarestatus.com/api/v2", "url": "https://www.cloudflarestatus.com" },
+    { "name": "twilio", "display_name": "Twilio", "api_base": "https://status.twilio.com/api/v2", "url": "https://status.twilio.com" },
+    { "name": "sendgrid", "display_name": "Twilio SendGrid", "api_base": "https://status.sendgrid.com/api/v2", "url": "https://status.sendgrid.com" },
+    { "name": "fastly", "display_name": "Fastly", "api_base": "https://www.fastlystatus.com/api/v2", "url": "https://www.fastlystatus.com" },
+    { "name": "newrelic", "display_name": "New Relic", "api_base": "https://status.newrelic.com/api/v2", "url": "https://status.newrelic.com" },
+    { "name": "auth0", "display_name": "Auth0", "api_base": "https://status.auth0.com/api/v2", "url": "https://status.auth0.com" },
+    { "name": "zoom", "display_name": "Zoom", "api_base": "https://status.zoom.us/api/v2", "url": "https://status.zoom.us" },
+    { "name": "digitalocean", "display_name": "DigitalOcean", "api_base": "https://status.digitalocean.com/api/v2", "url": "https://status.digitalocean.com" },
+    { "name": "discord", "display_name": "Discord", "api_base": "https://discordstatus.com/api/v2", "url": "https://discordstatus.com" },
+    { "name": "dropbox", "display_name": "Dropbox", "api_base": "https://status.dropbox.com/api/v2", "url": "https://status.dropbox.com" },
+    { "name": "sentry", "display_name": "Sentry", "api_base": "https://status.sentry.io/api/v2", "url": "https://status.sentry.io" },
+    { "name": "circleci", "display_name": "CircleCI", "api_base": "https://status.circleci.com/api/v2", "url": "https://status.circleci.com" },
+    { "name": "netlify", "display_name": "Netlify", "api_base": "https://www.netlifystatus.com/api/v2", "url": "https://www.netlifystatus.com" },
+    { "name": "vercel", "display_name": "Vercel", "api_base": "https://www.vercel-status.com/api/v2", "url": "https://www.vercel-status.com" },
+    { "name": "npm", "display_name": "npm", "api_base": "https://status.npmjs.org/api/v2", "url": "https://status.npmjs.org" },
+    { "name": "docker", "display_name": "Docker", "api_base": "https://www.dockerstatus.com/api/v2", "url": "https://www.dockerstatus.com" },
+    { "name": "hashicorp", "display_name": "HashiCorp", "api_base": "https://status.hashicorp.com/api/v2", "url": "https://status.hashicorp.com" },
+    { "name": "elastic", "display_name": "Elastic Cloud", "api_base": "https://status.elastic.co/api/v2", "url": "https://status.elastic.co" },
+    { "name": "grafana", "display_name": "Grafana Cloud", "api_base": "https://status.grafana.com/api/v2", "url": "https://status.grafana.com" },
+    { "name": "splunk", "display_name": "Splunk", "api_base": "https://status.splunk.com/api/v2", "url": "https://status.splunk.com" },
+    { "name": "dynatrace", "display_name": "Dynatrace", "api_base": "https://status.dynatrace.com/api/v2", "url": "https://status.dynatrace.com" }
+  ]
+}

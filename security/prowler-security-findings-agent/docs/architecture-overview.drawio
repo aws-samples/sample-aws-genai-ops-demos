@@ -91,7 +91,7 @@
         <mxCell id="user" value="Security&#xa;Engineer" style="sketch=0;points=[[0,0.5,0],[1,0.5,0],[0.5,0,0],[0.5,1,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#232F3E;strokeColor=#232F3E;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;shape=mxgraph.aws4.user;" parent="1" vertex="1">
           <mxGeometry x="1530" y="460" width="50" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="devops-agent" value="Amazon DevOps Agent&#xa;autonomous investigation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
+        <mxCell id="devops-agent" value="AWS DevOps Agent&#xa;autonomous investigation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">
           <mxGeometry x="1020" y="640" width="180" height="60" as="geometry" />
         </mxCell>
         <mxCell id="security-hub" value="AWS Security Hub&#xa;ASFF (-S flag)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEC;strokeColor=#D45D5D;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#232F3E;verticalAlign=middle;align=center;arcSize=6;" parent="1" vertex="1">

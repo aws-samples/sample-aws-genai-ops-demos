@@ -1,0 +1,7 @@
+# aws-cdk-lib >= 2.251.0 is required for typed DevOps Agent MCP (SigV4) constructs:
+#   - CfnService (register the MCP server)                      [added by 2.247.0]
+#   - CfnAssociation ServiceConfiguration.mcp_server_sig_v4     [added by 2.251.0]
+# Earlier versions lack the mcp_server_sig_v4 association field, so the CDK-based
+# DevOps Agent registration path will not synthesize on them.
+aws-cdk-lib>=2.251.0
+constructs>=10.0.0
