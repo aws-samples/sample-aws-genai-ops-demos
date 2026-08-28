@@ -1,0 +1,20 @@
+# Agent runtime
+strands-agents>=1.0
+bedrock-agentcore>=0.1
+boto3>=1.34
+python-dotenv>=1.0
+# Observability: provides `opentelemetry-instrument` so the container emits
+# logs/traces to CloudWatch (AgentCore captures the OTEL pipeline).
+aws-opentelemetry-distro>=0.10
+
+# DLT REST is IAM SigV4 — signed with botocore (comes with boto3), no extra dep.
+# builder/ (spec_input, jmx_builder, validate_run) is stdlib-only by design.
+
+# Locust MUST NOT be added here. It belongs to T5 validate_script, not to the
+# agent, and it is installed into /opt/locust-venv by the Dockerfile instead.
+# Adding it to this file on 2026-08-27 broke every invoke with a 500:
+#   RuntimeError: asyncio.run() cannot be called from a running event loop
+# See the Locust block in the Dockerfile for the full account.
+
+# Optional: YAML OpenAPI input support for T1 parse_spec_input
+PyYAML>=6.0

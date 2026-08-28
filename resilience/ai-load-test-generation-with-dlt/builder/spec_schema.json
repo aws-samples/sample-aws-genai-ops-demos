@@ -1,0 +1,173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/perf-agent/testspec.schema.json",
+  "title": "TestSpec",
+  "description": "The ONLY artifact an LLM is allowed to author. No XML, ever. The builder turns this into a JMX deterministically.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "target", "load", "endpoints"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "protocol", "environment"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hostname only. No scheme, no path, no port.",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "enum": ["http", "https"] },
+        "environment": {
+          "enum": ["dev", "test", "staging", "prod"],
+          "description": "Declared explicitly. 'prod' makes the builder refuse to emit write-method endpoints unless allow_prod_writes is set."
+        },
+        "allow_prod_writes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Must be set by a human, never inferred by the agent."
+        },
+        "connect_timeout_ms": { "type": "integer", "minimum": 100, "default": 5000 },
+        "response_timeout_ms": { "type": "integer", "minimum": 100, "default": 30000 }
+      }
+    },
+
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concurrency", "ramp_up_s", "hold_for_s"],
+      "properties": {
+        "concurrency": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "ramp_up_s": { "type": "integer", "minimum": 0 },
+        "hold_for_s": { "type": "integer", "minimum": 1 },
+        "think_time_ms": {
+          "type": "integer", "minimum": 0, "default": 1000,
+          "description": "Base delay. Randomized by think_time_jitter_ms via UniformRandomTimer."
+        },
+        "think_time_jitter_ms": { "type": "integer", "minimum": 0, "default": 500 }
+      }
+    },
+
+    "variables": {
+      "type": "object",
+      "description": "Test-plan level User Defined Variables. Values may reference ${__P(name,default)} for external injection.",
+      "additionalProperties": { "type": "string" }
+    },
+
+    "csv_data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filename", "variable_names"],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Filename only, no directories. DLT/Taurus places data files beside the JMX."
+          },
+          "variable_names": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "delimiter": { "type": "string", "default": "," },
+          "ignore_first_line": { "type": "boolean", "default": true },
+          "recycle": { "type": "boolean", "default": true },
+          "share_mode": { "enum": ["all", "group", "thread"], "default": "all" }
+        }
+      }
+    },
+
+    "setup": {
+      "type": "object",
+      "description": "Requests run once per VU before measurement, inside a setUp-style Once Only Controller. Excluded from load ratios and reported separately.",
+      "additionalProperties": false,
+      "required": ["endpoints"],
+      "properties": {
+        "endpoints": { "type": "array", "items": { "$ref": "#/definitions/endpoint" }, "minItems": 1 }
+      }
+    },
+
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Measured endpoints. Each becomes its own Thread Group so Taurus/DLT can distribute total concurrency by weight.",
+      "items": { "$ref": "#/definitions/endpoint" }
+    }
+  },
+
+  "definitions": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "method", "success"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.\\-/ ]+$" },
+        "path": { "type": "string", "pattern": "^/", "description": "Must start with /. May contain ${var} references." },
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
+        "weight": {
+          "type": "number", "exclusiveMinimum": 0, "default": 1,
+          "description": "Relative load share. Builder normalizes weights to Thread Group num_threads."
+        },
+        "query": { "type": "object", "additionalProperties": { "type": "string" } },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "body": {
+          "type": "string",
+          "description": "Raw request body. Builder sets postBodyRaw and escapes XML. Rejected for GET/HEAD."
+        },
+        "success": {
+          "$ref": "#/definitions/success",
+          "description": "REQUIRED. A status code alone is not accepted as the sole criterion for JSON APIs."
+        },
+        "extract": { "type": "array", "items": { "$ref": "#/definitions/extractor" } }
+      }
+    },
+
+    "success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "integer", "minimum": 100, "maximum": 599,
+          "description": "Asserted with Equals on the response code."
+        },
+        "body_contains": {
+          "type": "array", "items": { "type": "string", "minLength": 1 },
+          "description": "Substrings that MUST appear in the response body. Required unless body_check_waived is true."
+        },
+        "body_not_contains": {
+          "type": "array", "items": { "type": "string", "minLength": 1 },
+          "description": "Substrings that must NOT appear. Use for error envelopes returned with HTTP 200."
+        },
+        "json_path_equals": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "JSONPath -> expected value, asserted via JSON Assertion."
+        },
+        "body_check_waived": {
+          "type": "boolean", "default": false,
+          "description": "Escape hatch for genuinely body-less responses (204, HEAD). Requires waiver_reason."
+        },
+        "waiver_reason": { "type": "string", "minLength": 5 }
+      }
+    },
+
+    "extractor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable", "type", "expression"],
+      "properties": {
+        "variable": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "type": { "enum": ["jsonpath", "regex", "header"] },
+        "expression": { "type": "string", "minLength": 1 },
+        "match_number": { "type": "integer", "default": 1 },
+        "default_value": {
+          "type": "string", "default": "EXTRACT_FAILED",
+          "description": "Never empty. An empty default makes a failed correlation invisible."
+        }
+      }
+    }
+  }
+}

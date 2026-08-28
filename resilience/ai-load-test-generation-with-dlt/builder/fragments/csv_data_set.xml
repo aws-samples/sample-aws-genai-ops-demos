@@ -1,0 +1,12 @@
+      <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="CSV {{CSV_FILENAME}}" enabled="true">
+        <stringProp name="filename">{{CSV_FILENAME}}</stringProp>
+        <stringProp name="variableNames">{{CSV_VARIABLES}}</stringProp>
+        <stringProp name="delimiter">{{CSV_DELIMITER}}</stringProp>
+        <stringProp name="fileEncoding">UTF-8</stringProp>
+        <boolProp name="ignoreFirstLine">{{CSV_IGNORE_FIRST_LINE}}</boolProp>
+        <boolProp name="quotedData">false</boolProp>
+        <boolProp name="recycle">{{CSV_RECYCLE}}</boolProp>
+        <boolProp name="stopThread">false</boolProp>
+        <stringProp name="shareMode">shareMode.{{CSV_SHARE_MODE}}</stringProp>
+      </CSVDataSet>
+      <hashTree/>

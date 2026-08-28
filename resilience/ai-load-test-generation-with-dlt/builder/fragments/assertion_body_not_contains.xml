@@ -1,0 +1,10 @@
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="ASSERT_body_not_contains" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+{{TEST_STRINGS}}
+                </collectionProp>
+                <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                <boolProp name="Assertion.assume_success">false</boolProp>
+                <intProp name="Assertion.test_type">20</intProp>
+                <stringProp name="Assertion.custom_message">Response body contains forbidden error marker</stringProp>
+              </ResponseAssertion>
+              <hashTree/>

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "name": "Orders API load test",
+  "target": {
+    "host": "127.0.0.1",
+    "port": 18110,
+    "protocol": "http",
+    "environment": "test",
+    "connect_timeout_ms": 5000,
+    "response_timeout_ms": 30000
+  },
+  "load": {
+    "concurrency": 6,
+    "ramp_up_s": 1,
+    "hold_for_s": 6,
+    "think_time_ms": 300,
+    "think_time_jitter_ms": 100
+  },
+  "variables": {
+    "LOGIN_PASSWORD": "${__P(login_password,correct)}"
+  },
+  "setup": {
+    "endpoints": [
+      {
+        "name": "Login",
+        "path": "/login",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"userId\":\"u1\",\"password\":\"${LOGIN_PASSWORD}\"}",
+        "success": {
+          "status": 200,
+          "body_contains": ["\"resultCode\":\"0000\"", "accessToken"],
+          "body_not_contains": ["\"accessToken\":null"]
+        },
+        "extract": [
+          {
+            "variable": "authToken",
+            "type": "jsonpath",
+            "expression": "$.accessToken",
+            "default_value": "TOKEN_EXTRACT_FAILED"
+          }
+        ]
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "name": "List orders",
+      "path": "/orders",
+      "method": "GET",
+      "weight": 3,
+      "query": { "page": "1", "size": "20" },
+      "headers": { "Authorization": "Bearer ${authToken}" },
+      "success": {
+        "status": 200,
+        "body_contains": ["\"resultCode\":\"0000\""],
+        "body_not_contains": ["9401"]
+      }
+    },
+    {
+      "name": "Create order",
+      "path": "/orders",
+      "method": "POST",
+      "weight": 1,
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer ${authToken}"
+      },
+      "body": "{\"sku\":\"SKU-1\",\"qty\":2}",
+      "success": {
+        "status": 201,
+        "json_path_equals": { "$.resultCode": "0000" }
+      },
+      "extract": [
+        {
+          "variable": "orderId",
+          "type": "jsonpath",
+          "expression": "$.orderId",
+          "default_value": "ORDER_ID_MISSING"
+        }
+      ]
+    }
+  ]
+}
