@@ -62,8 +62,8 @@ Why CDK:
 ### Scripting & Deployment
 
 - **PowerShell + Bash**: Must provide both for every demo
-- **Python 3.9+**: Backend services, agents, data processing
-- **TypeScript/Node.js 18+**: CDK infrastructure, frontend apps
+- **Python 3.12+**: Backend services, agents, data processing
+- **TypeScript/Node.js 20+**: CDK infrastructure, frontend apps
 
 ### Frontend Technologies
 
