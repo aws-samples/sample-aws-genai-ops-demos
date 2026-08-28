@@ -93,8 +93,10 @@ def discover_dlt_config(stack_name: str = "", region: str = "") -> str:
         region: the region the stack lives in. Falls back to DLT_REGION.
 
     Returns:
-        JSON: {ok, api_endpoint, scenarios_bucket, console_url, regions[]}.
-        Give console_url to the user — that is where progress and charts are.
+        JSON: {ok, api_endpoint, scenarios_bucket, console_url, headless,
+        regions[]}. console_url exists only for the ALB/CloudFront DLT
+        patterns; for the headless pattern it is null and headless is true —
+        report results via fetch_results (and the scenarios bucket), not a link.
     """
     stack_name = stack_name or os.environ.get("DLT_STACK_NAME", "")
     region = region or os.environ.get("DLT_REGION", "")
@@ -134,16 +136,23 @@ def discover_dlt_config(stack_name: str = "", region: str = "") -> str:
     if switched:
         _registered.clear()
     _config.clear()
+    # ConsoleURL is emitted only by the ALB/CloudFront DLT patterns. The
+    # headless pattern has no web console, so its absence IS the headless
+    # signal — record it and stop promising a link that does not exist.
+    console_url = outputs.get("ConsoleURL")
+    headless = console_url is None
     _config.update({
         "api_endpoint": api_endpoint.rstrip("/"),
         "api_region": region,
         "scenarios_bucket": bucket,
-        "console_url": outputs.get("ConsoleURL"),
+        "console_url": console_url,
+        "headless": headless,
         "regions": regions,
     })
     return _ok(api_endpoint=_config["api_endpoint"],
                scenarios_bucket=bucket,
-               console_url=_config["console_url"],
+               console_url=console_url,
+               headless=headless,
                regions=[{k: r.get(k) for k in
                          ("region", "version", "compatible")} for r in regions],
                incompatible_regions=incompatible)
@@ -299,7 +308,9 @@ def run_scenario(test_id: str, approval_summary: str) -> str:
             e.g. "target X, 10 VUs, 30s, us-east-2 — approved by user"
 
     Returns:
-        JSON: {ok, test_id, status, console_url} — status will be "queued".
+        JSON: {ok, test_id, status, console_url, headless, results_hint} —
+        status will be "queued". console_url is null for the headless pattern
+        (headless=true); use fetch_results for results rather than a link.
         Expect about 90 seconds of provisioning plus the load duration. Do not
         block and poll.
     """
@@ -319,6 +330,11 @@ def run_scenario(test_id: str, approval_summary: str) -> str:
     return _ok(test_id=test_id, status=body.get("status"),
                started_at=body.get("startTime"),
                console_url=_config.get("console_url"),
+               headless=_config.get("headless"),
+               results_hint=(
+                   "headless DLT pattern: no web console — poll_test_status, "
+                   "then fetch_results for metrics"
+                   if _config.get("headless") else None),
                approval_summary=approval_summary)
 
 
@@ -401,7 +417,10 @@ def fetch_results(test_id: str) -> str:
         test_id: the ID of the completed scenario
 
     Returns:
-        JSON: {ok, results{total, per_region}, labels[]}
+        JSON: {ok, status, task_failure_count, total, labels[],
+        scenarios_bucket}. scenarios_bucket is the result handle for the
+        headless pattern (no web console); it is the right thing to give the
+        user for headless / CI use.
     """
     if not _config:
         return _err("run discover_dlt_config first")
@@ -421,4 +440,5 @@ def fetch_results(test_id: str) -> str:
     return _ok(status=body.get("status"),
                task_failure_count=body.get("taskFailureCount", 0),
                total=results.get("total"),
-               labels=labels)
+               labels=labels,
+               scenarios_bucket=_config.get("scenarios_bucket"))

@@ -194,6 +194,45 @@ Resources:
               - !Sub "${SpecInputBucket.Arn}/*"
             Condition: { Bool: { "aws:SecureTransport": "false" } }
 
+  # Script-output bucket (private). The agent uploads generated scripts here on
+  # request so the user can retrieve them; the build tools otherwise write only
+  # to the container's /tmp. SSE-S3 (AES256) so a plain s3:PutObject needs no
+  # extra kms:GenerateDataKey grant on the runtime role.
+  ScriptOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-generated-scripts
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration: { NoncurrentDays: 7 }
+
+  ScriptOutputBucketTlsOnlyPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ScriptOutputBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ScriptOutputBucket.Arn
+              - !Sub "${ScriptOutputBucket.Arn}/*"
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+
   # =========================================================================
   # Container image: ECR + CodeBuild (ARM64) + custom resource trigger
   # =========================================================================
@@ -433,6 +472,12 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub "${SpecInputBucket.Arn}/*"
+              - Sid: ScriptOutputWrite
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject   # GetObject lets the agent presign a retrieval URL
+                Resource: !Sub "${ScriptOutputBucket.Arn}/*"
               # --- AgentCore runtime platform baseline (required by the runtime
               #     itself; without these a session fails to pull the image / log) ---
               - Sid: EcrPull
@@ -517,6 +562,7 @@ Resources:
         BEDROCK_MODEL_PRIMARY: !Ref BedrockModelPrimary
         BEDROCK_MODEL_FALLBACK: !Ref BedrockModelFallback
         SPEC_INPUT_BUCKET: !Ref SpecInputBucket
+        SCRIPT_OUTPUT_BUCKET: !Ref ScriptOutputBucket
 
   # =========================================================================
   # Networking (new-VPC path)
@@ -758,6 +804,9 @@ Outputs:
   AgentRuntimeArn:
     Description: ARN of the AgentCore runtime (use with InvokeAgentRuntime).
     Value: !GetAtt AgentRuntime.AgentRuntimeArn
+  ScriptOutputBucketName:
+    Description: Generated scripts are uploaded here on request; retrieve with aws s3 cp.
+    Value: !Ref ScriptOutputBucket
   SpecInputBucketName:
     Description: Upload swagger/OpenAPI here; reference its s3:// URI in the invoke prompt.
     Value: !Ref SpecInputBucket

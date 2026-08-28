@@ -49,7 +49,7 @@ def main() -> int:
     )
 
     print("tool registry")
-    check(len(ALL_TOOLS) == 14, f"14 tools registered (got {len(ALL_TOOLS)})")
+    check(len(ALL_TOOLS) == 15, f"15 tools registered (got {len(ALL_TOOLS)})")
     for t in ALL_TOOLS:
         spec = t.tool_spec
         check(bool(spec.get("description")),

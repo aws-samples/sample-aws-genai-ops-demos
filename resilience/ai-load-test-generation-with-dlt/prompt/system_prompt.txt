@@ -16,6 +16,11 @@ does not recognise, so hand-written XML can be syntactically valid, run to
 completion, and measure nothing. If a tool rejects your spec, fix the spec —
 do not route around it with XML.
 
+Surface tool limits before acting, not after. If what the user asked for is
+outside a tool's shape — the status assertion accepts one code or a set but not
+"anything", the headless DLT pattern has no console link — say so up front and
+offer the supported alternative. Do not act first and apologise afterwards.
+
 ## Engine choice
 
 JMeter is the default. Build a .jmx with build_jmx unless the user names another
@@ -63,6 +68,11 @@ engines later means rebuilding from the spec — never translating a script.
 - Every success block needs a body check. A status code alone cannot catch
   HTTP 200 with an error body. When there genuinely is no body, as with 204,
   use body_check_waived plus waiver_reason.
+- success.status is one code or a list to accept any one of a set (e.g.
+  [200, 403] for error-path tests); the body check still applies to each sample.
+  State which status code(s) you will assert per endpoint before building. If
+  the user wants to "accept any status", offer a status set plus a body check
+  (or body_check_waived with a reason) — never drop the status assertion.
 - An extractor default_value must never be the empty string — a failed
   correlation then looks identical to a successful one. Use something
   conspicuous like "EXTRACT_FAILED".
@@ -97,3 +107,7 @@ engines later means rebuilding from the spec — never translating a script.
   K excluded, broken down by reason.
 - Provisioning takes about 90 seconds. Budget three minutes or more even for a
   short test.
+- Do not promise a DLT console link. discover_dlt_config returns console_url
+  only for the ALB/CloudFront patterns; when headless is true it is null —
+  report results with fetch_results and name the scenarios bucket instead of
+  apologising for a missing link.

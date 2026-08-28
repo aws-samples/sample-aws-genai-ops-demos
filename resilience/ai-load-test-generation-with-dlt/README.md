@@ -84,8 +84,10 @@ and creates the runtime. **By default (`--network-mode public`) no VPC is create
 the runtime uses AWS-managed egress. With `--network-mode vpc` CDK also creates the
 private VPC (NAT + interface/S3 endpoints) and a runtime-egress security group.
 Stack: `AILoadTestGen-<region>`. Teardown: `cd infrastructure/cdk &&
-npx aws-cdk@latest destroy AILoadTestGen-<region>` (no `CDK_DOCKER` needed — destroy
-does not rebuild the image; deploy auto-detects docker/finch/nerdctl).
+. .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>`
+(activate `.venv` first — `deploy-all.sh` installs the CDK Python deps there and
+`cdk destroy` re-synths `app.py`; no `CDK_DOCKER` needed — destroy does not
+rebuild the image; deploy auto-detects docker/finch/nerdctl).
 
 ### Method B — CloudFormation (`infrastructure/cloudformation/`)
 
@@ -131,6 +133,11 @@ The runtime is invoked identically regardless of how it was deployed. Get the
 your `--stack-name` for CloudFormation), then send an `InvokeAgentRuntime` request.
 The snippets below assume you've set `REGION` (the region you deployed to) and
 `ARN` — the setup block further down shows how to derive both.
+
+Iterating across turns (e.g. "proceed 70/30")? Reuse a single
+`--runtime-session-id` so the agent keeps the prior turn's context — the per-call
+`uuidgen` in the one-shot snippets below deliberately starts fresh. See
+[Keep the same session id across turns](#keep-the-same-session-id-across-turns).
 
 The payload is a single JSON body: a `prompt` plus **either** an inline spec
 (`spec` / `swagger` object, or base64 `spec_b64`) **or** an `s3://` URI in the
@@ -230,6 +237,29 @@ JSON
 - With DLT wired, verify the [test scenario](https://docs.aws.amazon.com/solutions/latest/distributed-load-testing-on-aws/create-test-scenario.html)
   was registered (DLT DynamoDB scenarios table) and its script landed in S3
   (`public/test-scenarios/jmeter/<testId>.jmx`).
+
+### Retrieve the generated script
+
+The `build_*` tools write the script to a path **inside the runtime container**
+(`/tmp/dlt-out/…`) that you cannot reach — there is no shell or file channel back.
+So both deploy paths also provision a private `ScriptOutputBucket` (its name is in
+the stack output `ScriptOutputBucketName` and reaches the runtime as the
+`SCRIPT_OUTPUT_BUCKET` environment variable). Ask the agent to **save / show /
+download** the script and it calls `save_generated_script`, which uploads the file
+there and returns an `s3://` URI, a ready-to-run `aws s3 cp` command, and a
+time-limited presigned download URL. Retrieve it with either:
+
+```bash
+OUT=$(aws cloudformation describe-stacks --region "$REGION" \
+  --stack-name "AILoadTestGen-$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='ScriptOutputBucketName'].OutputValue" --output text)
+
+# use the exact key the agent reported (defaults to generated-scripts/<name>)
+aws s3 cp "s3://$OUT/generated-scripts/concert-read-path.jmx" . --region "$REGION"
+```
+
+The runtime role can write only to this bucket. To land scripts elsewhere, pass a
+`bucket` to the tool and grant that bucket write access to the execution role.
 
 ### Keep the same session id across turns
 
@@ -473,9 +503,12 @@ down when idle; keep X-Ray off unless Transaction Search is enabled.
 
 ## Teardown
 
-- **CDK**: `cd infrastructure/cdk && npx aws-cdk@latest destroy AILoadTestGen-<region>`
-  (no `CDK_DOCKER` needed — destroy does not rebuild the image; deploy auto-detects
-  the container engine: docker → finch → nerdctl).
+- **CDK**: `cd infrastructure/cdk && . .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>`
+  (activate `.venv` first — `deploy-all.sh` installs the CDK Python deps into
+  `infrastructure/cdk/.venv`, and `cdk destroy` re-synths `app.py` with whatever
+  `python3` is on `PATH`; without the venv you'll hit `ModuleNotFoundError: No
+  module named 'aws_cdk'`. No `CDK_DOCKER` needed — destroy does not rebuild the
+  image; deploy auto-detects the container engine: docker → finch → nerdctl).
 - **CloudFormation**: `infrastructure/cloudformation/teardown.sh --stack-name <name> --region <region>`.
 - Note: in **`vpc` mode**, AgentCore creates service-managed ENIs that AWS
   reclaims asynchronously (up to ~8h), so a delete can land in `DELETE_FAILED` on
@@ -491,6 +524,14 @@ down when idle; keep X-Ray off unless Transaction Search is enabled.
   (override with `DLT_OUT_DIR`); inline specs are staged to `/tmp`.
 - Primary/fallback models chosen at deploy time set `BEDROCK_MODEL_PRIMARY/FALLBACK`;
   the IAM invoke scope is derived from the same picks, so they never drift.
+- Each endpoint asserts a **set of status codes** — `success.status` is a single
+  code or a list (e.g. `[200, 403]` for error-path tests). JMeter emits one Equals
+  assertion with the Or bit (test_type 40); k6/Locust use set membership. A body
+  check always applies, so there is no unbounded "accept any status".
+- A DLT **console link exists only for the ALB/CloudFront patterns**. Under the
+  **Headless** pattern `discover_dlt_config` returns `console_url: null` and
+  `headless: true`; read results with `fetch_results` (metrics) plus the
+  `scenarios_bucket` it returns, not a web console.
 
 ## Tests
 

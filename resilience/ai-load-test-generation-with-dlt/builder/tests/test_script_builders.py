@@ -131,6 +131,14 @@ def test_generation() -> None:
     for w in set(weights):
         check(f"@task({w})" in lc, f"locust emits @task({w})")
 
+    # status set: k6 uses Array.includes, locust uses `not in (...)`
+    multi = copy.deepcopy(spec)
+    multi["endpoints"][0]["success"]["status"] = [200, 404]
+    check("[200, 404].includes(r.status)" in build_k6(multi),
+          "k6 asserts a status set with Array.includes")
+    check("r.status_code not in (200, 404)" in build_locust(multi),
+          "locust asserts a status set with `not in`")
+
     # setup runs once per VU
     check("if (vuVars === null)" in k6, "k6 setup is once per VU")
     check("def on_start(self):" in lc, "locust setup is in on_start")

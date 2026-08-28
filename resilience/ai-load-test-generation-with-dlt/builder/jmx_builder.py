@@ -305,9 +305,19 @@ def _validate_success(endpoint: dict, label: str, scope: str) -> list[str]:
     if not isinstance(success, dict):
         return [f"{label}: success criteria are required"]
 
+    # status may be a single code or a non-empty list of codes (accept any one
+    # of a set, e.g. [200, 403] for error-path tests). bool is an int subclass,
+    # so exclude it explicitly.
     status = success.get("status")
-    if not isinstance(status, int) or not 100 <= status <= 599:
-        errors.append(f"{label}: success.status must be an HTTP status code")
+    statuses = status if isinstance(status, list) else [status]
+    if not statuses or not all(
+        isinstance(s, int) and not isinstance(s, bool) and 100 <= s <= 599
+        for s in statuses
+    ):
+        errors.append(
+            f"{label}: success.status must be an HTTP status code (100–599) "
+            "or a non-empty list of them"
+        )
 
     # Body markers must be lists, and this is checked rather than coerced.
     # Every builder iterates this value, so a bare string is not a harmless
@@ -470,9 +480,25 @@ def build_headers(headers: dict[str, str]) -> str:
 
 def build_assertions(success: dict, label: str) -> str:
     parts: list[str] = []
-    status = str(success["status"])
+    # status is one code or a set: emit one <stringProp> per code. A single
+    # code keeps EQUALS (8); a set adds the OR bit (32) => 40, so the assertion
+    # passes if the response code equals ANY one of them. This is scoped to the
+    # status ResponseAssertion only — the body assertions below stay ANDed.
+    statuses = success["status"]
+    if not isinstance(statuses, list):
+        statuses = [statuses]
+    status_test_strings = "".join(
+        render("assertion_test_string",
+               S_HASH=jmeter_hash(str(code)), S_VALUE=xml_escape(str(code)))
+        for code in statuses
+    ).rstrip("\n")
+    status_label = ",".join(str(code) for code in statuses)
+    status_test_type = 8 if len(statuses) == 1 else 40
     parts.append(
-        render("assertion_status", STATUS=status, STATUS_HASH=jmeter_hash(status))
+        render("assertion_status",
+               TEST_STRINGS=status_test_strings,
+               TEST_TYPE=status_test_type,
+               STATUS_LABEL=xml_escape(status_label))
     )
 
     for key, fragment_name in (

@@ -10,6 +10,7 @@ from tools.script_tools import (
     build_k6_script,
     build_locust_script,
     parse_spec_input,
+    save_generated_script,
     select_targets,
     validate_script,
     validate_spec,
@@ -33,6 +34,7 @@ ALL_TOOLS = [
     build_k6_script,
     build_locust_script,
     validate_script,
+    save_generated_script,
     # DLT (T7–T12)
     discover_dlt_config,
     upload_script,

@@ -372,3 +372,59 @@ def validate_script(script_path: str) -> str:
                     "impossible; report this honestly", engine=engine,
                     passed=False, output=output[-1500:])
     return _ok(passed=passed, engine=engine, output=output[-3000:])
+
+
+@tool
+def save_generated_script(script_path: str, bucket: str = "",
+                          key: str = "") -> str:
+    """Upload a generated script to S3 so the user can retrieve it.
+
+    Use this whenever the user asks to see, download, save, or share the
+    generated script. build_jmx / build_k6_script / build_locust_script write
+    the file to a path *inside the AgentCore container* (e.g. /tmp/dlt-out/...),
+    which the user cannot reach — there is no shell and no file channel back.
+    Pointing them at that container path is useless; upload it here and return
+    the S3 location instead.
+
+    Args:
+        script_path: the jmx_path / script_path returned by a build_* tool.
+        bucket: destination bucket. Defaults to the SCRIPT_OUTPUT_BUCKET the
+            stack provisioned (leave empty to use it). The runtime role is only
+            granted write access to that bucket, so a different bucket would
+            need its own grant.
+        key: destination object key. Defaults to
+            generated-scripts/<filename>.
+
+    Returns:
+        JSON: {ok, s3_uri, bucket, key, retrieve_command, presigned_url}. Give
+        the user s3_uri and retrieve_command; presigned_url is a time-limited
+        direct download and may be null if signing is unavailable.
+    """
+    bucket = bucket or os.environ.get("SCRIPT_OUTPUT_BUCKET", "")
+    if not bucket:
+        return _err("no destination bucket: pass bucket= or deploy with "
+                    "SCRIPT_OUTPUT_BUCKET set (the stack provisions one)")
+    path = Path(script_path)
+    if not path.exists():
+        return _err(f"script not found: {script_path} — build it first")
+    key = key or f"generated-scripts/{path.name}"
+
+    import boto3  # local import: keeps the module importable without AWS
+
+    try:
+        s3 = boto3.client("s3")
+        s3.upload_file(str(path), bucket, key)
+    except Exception as exc:
+        return _err(f"upload to s3://{bucket}/{key} failed: {exc}")
+
+    s3_uri = f"s3://{bucket}/{key}"
+    try:
+        presigned = s3.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=3600)
+    except Exception:
+        presigned = None  # best-effort — the s3:// URI is always returned
+
+    return _ok(s3_uri=s3_uri, bucket=bucket, key=key,
+               retrieve_command=f"aws s3 cp {s3_uri} .",
+               presigned_url=presigned)

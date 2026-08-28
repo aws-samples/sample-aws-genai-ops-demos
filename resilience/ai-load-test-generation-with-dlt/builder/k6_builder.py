@@ -96,8 +96,15 @@ def _request_fn(endpoint: dict, fn_name: str, is_setup: bool) -> str:
     body_expr = _resolve_expr(body) if body else "null"
 
     success = endpoint.get("success", {})
-    status_label = _js_str("status is %s" % success.get("status"))
-    checks = [f'{status_label}: (r) => r.status === {success.get("status")}']
+    statuses = success.get("status")
+    statuses = statuses if isinstance(statuses, list) else [statuses]
+    if len(statuses) == 1:
+        status_label = _js_str("status is %s" % statuses[0])
+        status_pred = "(r) => r.status === %s" % statuses[0]
+    else:
+        status_label = _js_str("status in %s" % ",".join(map(str, statuses)))
+        status_pred = "(r) => [%s].includes(r.status)" % ", ".join(map(str, statuses))
+    checks = [f'{status_label}: {status_pred}']
     for marker in success.get("body_contains") or []:
         checks.append(f'{_js_str("body contains " + marker)}: '
                       f'(r) => r.body.includes({_js_str(marker)})')

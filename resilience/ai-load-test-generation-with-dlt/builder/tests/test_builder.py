@@ -196,6 +196,19 @@ def test_validation() -> None:
                                        "json_path_equals": [["$.total", 1]]}
     rejects(spec, "json_path_equals", "reject non-object json_path_equals")
 
+    # status may be a set of codes (accept any one) — for error-path testing.
+    spec = copy.deepcopy(BASE_SPEC)
+    spec["endpoints"][0]["success"]["status"] = [200, 403, 404]
+    check(validate_spec(spec) == [], "accept a list of status codes")
+
+    spec = copy.deepcopy(BASE_SPEC)
+    spec["endpoints"][0]["success"]["status"] = []
+    rejects(spec, "status", "reject an empty status list")
+
+    spec = copy.deepcopy(BASE_SPEC)
+    spec["endpoints"][0]["success"]["status"] = [200, 999]
+    rejects(spec, "status", "reject an out-of-range code in a status list")
+
 
 # --------------------------------------------------------------------------
 # 2. unit behaviour
@@ -246,6 +259,20 @@ def test_units() -> None:
     check(
         'name="Assertion.test_type">8' in xml,
         "status assertion uses Equals (8), not SUBSTRING",
+    )
+
+    # A status set becomes one Equals assertion with the Or bit: 8|32 = 40, so
+    # the sample passes if the code equals ANY one of them.
+    multi_spec = copy.deepcopy(BASE_SPEC)
+    multi_spec["endpoints"][0]["success"]["status"] = [200, 403]
+    multi_xml = build(multi_spec)
+    check(
+        'name="Assertion.test_type">40' in multi_xml,
+        "a status set uses Equals|Or (40)",
+    )
+    check(
+        ">200</stringProp>" in multi_xml and ">403</stringProp>" in multi_xml,
+        "each status in the set is emitted as its own test string",
     )
 
     # Body checks must be SUBSTRING (16) / NOT|SUBSTRING (20), never CONTAINS (2).
@@ -391,6 +418,29 @@ def test_end_to_end(tmpdir: Path) -> None:
     dangling["setup"]["endpoints"][0]["extract"][0]["expression"] = "$.noSuchField"
     rc, output = run_validator(dangling, tmpdir, "dangling")
     check(rc != 0, f"failed correlation is detected (rc={rc})\n{output[:600]}")
+
+    # status SET, end to end: GET /orders with no token deterministically returns
+    # HTTP 200 here. A set that includes 200 must pass; a set that excludes it
+    # must fail — proving the Equals|Or (40) assertion actually gates at runtime,
+    # not just that the XML renders.
+    set_ok = copy.deepcopy(spec)
+    set_ok["endpoints"] = [{
+        "name": "OrdersAnyOf",
+        "path": "/orders",
+        "method": "GET",
+        "success": {"status": [200, 403], "body_contains": ["resultCode"]},
+    }]
+    set_ok["load"]["concurrency"] = 1
+    set_ok.pop("setup", None)
+    rc, output = run_validator(set_ok, tmpdir, "set_ok")
+    check(rc == 0,
+          f"status set including the real code passes (rc={rc})\n{output}")
+
+    set_bad = copy.deepcopy(set_ok)
+    set_bad["endpoints"][0]["success"]["status"] = [403, 404]  # excludes the real 200
+    rc, output = run_validator(set_bad, tmpdir, "set_bad")
+    check(rc != 0,
+          f"status set excluding the real code fails (rc={rc})\n{output[:600]}")
 
 
 def main() -> int:

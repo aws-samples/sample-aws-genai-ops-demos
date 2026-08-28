@@ -164,6 +164,31 @@ class AILoadTestGenStack(cdk.Stack):
         )
 
         # ------------------------------------------------------------------ #
+        # Script-output bucket (private; TLS-only; 30d lifecycle). The agent
+        # uploads generated scripts here on request so the user can retrieve
+        # them — the build_* tools otherwise write only to the container's
+        # /tmp, which the user cannot reach. SSE-S3 (not KMS) so a plain
+        # s3:PutObject needs no extra kms:GenerateDataKey grant on the role.
+        # ------------------------------------------------------------------ #
+        script_output_bucket = s3.Bucket(
+            self,
+            "ScriptOutputBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            versioned=True,
+            enforce_ssl=True,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="expire-generated-scripts",
+                    expiration=Duration.days(30),
+                    noncurrent_version_expiration=Duration.days(7),
+                )
+            ],
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+        )
+
+        # ------------------------------------------------------------------ #
         # Container image — DockerImageAsset (ARM64). No CodeBuild/ECR/Lambda.
         # container_uri context skips the build (fast synth / CI / BYO image).
         # ------------------------------------------------------------------ #
@@ -237,6 +262,15 @@ class AILoadTestGenStack(cdk.Stack):
                 sid="SpecInputRead",
                 actions=["s3:GetObject"],
                 resources=[spec_bucket.arn_for_objects("*")],
+            )
+        )
+        # Script-output bucket write — the agent saves generated scripts here on
+        # request. GetObject too so the tool can presign a retrieval URL.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ScriptOutputWrite",
+                actions=["s3:PutObject", "s3:GetObject"],
+                resources=[script_output_bucket.arn_for_objects("*")],
             )
         )
         # ECR pull (image) + auth token (star-only action).
@@ -336,6 +370,7 @@ class AILoadTestGenStack(cdk.Stack):
             "BEDROCK_MODEL_PRIMARY": bedrock_model_primary,
             "BEDROCK_MODEL_FALLBACK": bedrock_model_fallback,
             "SPEC_INPUT_BUCKET": spec_bucket.bucket_name,
+            "SCRIPT_OUTPUT_BUCKET": script_output_bucket.bucket_name,
         }
         if has_dlt:
             env_vars["DLT_STACK_NAME"] = dlt_stack_name
@@ -391,4 +426,10 @@ class AILoadTestGenStack(cdk.Stack):
             "SpecInputBucketName",
             value=spec_bucket.bucket_name,
             description="Upload swagger/OpenAPI here; reference its s3:// URI in the prompt.",
+        )
+        cdk.CfnOutput(
+            self,
+            "ScriptOutputBucketName",
+            value=script_output_bucket.bucket_name,
+            description="Generated scripts are uploaded here on request; retrieve with aws s3 cp.",
         )

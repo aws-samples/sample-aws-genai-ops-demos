@@ -105,8 +105,16 @@ def _request_method(endpoint: dict, method_name: str, is_setup: bool) -> list[st
 
     lines.append(f"        with self.client.{method.lower()}("
                  f"{', '.join(args)}) as r:")
-    lines.append(f"            if r.status_code != {status}:")
-    lines.append(f"                r.failure(f\"expected {status}, "
+    statuses = status if isinstance(status, list) else [status]
+    if len(statuses) == 1:
+        status_cond = f"r.status_code != {statuses[0]}"
+        expected_desc = str(statuses[0])
+    else:
+        status_tuple = "(" + ", ".join(str(s) for s in statuses) + ")"
+        status_cond = f"r.status_code not in {status_tuple}"
+        expected_desc = "one of " + status_tuple
+    lines.append(f"            if {status_cond}:")
+    lines.append(f"                r.failure(f\"expected {expected_desc}, "
                  f"got {{r.status_code}}\")")
     lines.append("                return")
     for marker in success.get("body_contains") or []:

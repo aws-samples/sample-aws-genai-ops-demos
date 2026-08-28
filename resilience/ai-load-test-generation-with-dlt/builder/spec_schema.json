@@ -130,8 +130,11 @@
       "required": ["status"],
       "properties": {
         "status": {
-          "type": "integer", "minimum": 100, "maximum": 599,
-          "description": "Asserted with Equals on the response code."
+          "oneOf": [
+            { "type": "integer", "minimum": 100, "maximum": 599 },
+            { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "minItems": 1 }
+          ],
+          "description": "Expected HTTP status, asserted with Equals on the response code. A single integer, or a non-empty array of integers to accept any one of a set (e.g. [200, 403] for error-path tests). A body check still applies."
         },
         "body_contains": {
           "type": "array", "items": { "type": "string", "minLength": 1 },
