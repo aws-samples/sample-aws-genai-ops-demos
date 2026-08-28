@@ -16,25 +16,25 @@ logger = logging.getLogger(__name__)
 
 
 class HealthEnricher:
-    """Enrichissement des événements Health avec données lifecycle."""
+    """Enriches Health events with lifecycle data."""
 
     def enrich_events(self, events: List[dict], service_configs: dict) -> List[dict]:
         """
-        Enrichit les événements avec les données de cycle de vie.
+        Enrich events with lifecycle data.
 
-        Pour chaque événement:
-        1. Mappe le service Health vers le service_name lifecycle (via health_event_mapping)
-        2. Récupère les items lifecycle du service concerné
-        3. Ajoute les versions en dépréciation/fin de support
-        4. Calcule la priorité (élevée si scheduledChange + items deprecated)
+        For each event:
+        1. Map the Health service to the lifecycle service_name (via health_event_mapping)
+        2. Retrieve the lifecycle items for the matched service
+        3. Add the deprecated / end-of-support versions
+        4. Calculate the priority (higher for scheduledChange + deprecated items)
 
         Args:
-            events: Liste d'événements Health bruts (depuis HealthCollector).
-            service_configs: Dictionnaire des configurations de services
-                            (contenu de service_configs.json['services']).
+            events: List of raw Health events (from HealthCollector).
+            service_configs: Dictionary of service configurations
+                            (contents of service_configs.json['services']).
 
         Returns:
-            Liste d'événements enrichis prêts pour le stockage.
+            List of enriched events ready for storage.
         """
         enriched_events: List[dict] = []
 
@@ -79,20 +79,19 @@ class HealthEnricher:
 
     def _map_service_name(self, health_service: str, service_configs: dict) -> Optional[str]:
         """
-        Mappe le nom de service Health API vers le service_name interne.
+        Map the Health API service name to the internal service_name.
 
-        Recherche dans les service_configs un service dont le champ
-        'health_event_mapping' correspond au nom du service Health.
-        Si aucun mapping explicite n'est trouvé, tente un matching
-        insensible à la casse sur le nom du service.
+        Looks in service_configs for a service whose 'health_event_mapping'
+        field matches the Health service name. If no explicit mapping is
+        found, falls back to a case-insensitive match on the service name.
 
         Args:
-            health_service: Nom du service tel que retourné par l'API Health
-                           (ex: 'LAMBDA', 'EKS', 'RDS').
-            service_configs: Dictionnaire des configurations de services.
+            health_service: Service name as returned by the Health API
+                           (e.g. 'LAMBDA', 'EKS', 'RDS').
+            service_configs: Dictionary of service configurations.
 
         Returns:
-            Le service_name interne correspondant, ou None si non trouvé.
+            The matching internal service_name, or None if not found.
         """
         if not health_service:
             return None
@@ -113,7 +112,7 @@ class HealthEnricher:
 
     def _calculate_priority(self, event: dict, lifecycle_items: List[dict]) -> str:
         """
-        Calcule la priorité : critical, high, medium, low.
+        Calculate the priority: critical, high, medium, low.
 
         Rules:
         - issue with status_code=open → critical
@@ -122,11 +121,11 @@ class HealthEnricher:
         - accountNotification → low
 
         Args:
-            event: Événement Health avec les champs event_type_category et status_code.
-            lifecycle_items: Liste des items lifecycle du service concerné.
+            event: Health event with event_type_category and status_code fields.
+            lifecycle_items: List of lifecycle items for the matched service.
 
         Returns:
-            Priorité calculée: 'critical', 'high', 'medium', ou 'low'.
+            Calculated priority: 'critical', 'high', 'medium', or 'low'.
         """
         event_type_category = event.get('event_type_category', '')
         status_code = event.get('status_code', '')
@@ -165,17 +164,17 @@ class HealthEnricher:
 
     def _format_health_notification(self, event: dict, enrichment: dict) -> dict:
         """
-        Formate la notification finale pour stockage.
+        Format the final notification for storage.
 
         Includes: time_remaining for future scheduledChange events.
 
         Args:
-            event: Événement Health formaté par HealthCollector.
-            enrichment: Données d'enrichissement incluant service_name,
-                       lifecycle_items, deprecated_items, et priority.
+            event: Health event formatted by HealthCollector.
+            enrichment: Enrichment data including service_name,
+                       lifecycle_items, deprecated_items, and priority.
 
         Returns:
-            Notification formatée prête pour stockage DynamoDB.
+            Formatted notification ready for DynamoDB storage.
         """
         notification = {
             # Core event fields
@@ -212,17 +211,17 @@ class HealthEnricher:
 
     def _get_lifecycle_items(self, service_name: str, service_configs: dict) -> List[dict]:
         """
-        Récupère les items lifecycle depuis DynamoDB pour un service donné.
+        Retrieve lifecycle items from DynamoDB for a given service.
 
-        Tente de lire depuis la table lifecycle via database_reads.
-        En cas d'erreur, retourne une liste vide.
+        Attempts to read from the lifecycle table via database_reads.
+        Returns an empty list on error.
 
         Args:
-            service_name: Nom interne du service.
-            service_configs: Configurations des services (pour contexte).
+            service_name: Internal service name.
+            service_configs: Service configurations (for context).
 
         Returns:
-            Liste des items lifecycle du service.
+            List of lifecycle items for the service.
         """
         try:
             from database_reads import list_deprecations
@@ -248,13 +247,13 @@ class HealthEnricher:
 
     def _build_lifecycle_context(self, enrichment: dict) -> dict:
         """
-        Construit le contexte lifecycle pour inclusion dans la notification.
+        Build the lifecycle context for inclusion in the notification.
 
         Args:
-            enrichment: Données d'enrichissement.
+            enrichment: Enrichment data.
 
         Returns:
-            Dictionnaire du contexte lifecycle (versions deprecated, dates).
+            Lifecycle context dictionary (deprecated versions, dates).
         """
         deprecated_items = enrichment.get('deprecated_items', [])
 
@@ -284,13 +283,13 @@ class HealthEnricher:
 
     def _determine_notification_status(self, event: dict) -> str:
         """
-        Détermine le statut de notification basé sur l'événement.
+        Determine the notification status based on the event.
 
         Args:
-            event: Événement Health.
+            event: Health event.
 
         Returns:
-            'active' ou 'resolved'.
+            'active' or 'resolved'.
         """
         status_code = event.get('status_code', '')
         if status_code == 'closed':
@@ -300,15 +299,15 @@ class HealthEnricher:
     @staticmethod
     def _calculate_time_remaining(start_time_str: str) -> Optional[str]:
         """
-        Calcule le temps restant avant un événement scheduledChange futur.
+        Calculate the time remaining before a future scheduledChange event.
 
         Args:
-            start_time_str: Date de début en format ISO 8601.
+            start_time_str: Start date in ISO 8601 format.
 
         Returns:
-            Chaîne humaine représentant le temps restant
-            (ex: '5 days, 3 hours'), ou None si l'événement est dans
-            le passé ou la date invalide.
+            Human-readable string representing the time remaining
+            (e.g. '5 days, 3 hours'), or None if the event is in the
+            past or the date is invalid.
         """
         if not start_time_str:
             return None

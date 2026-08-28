@@ -107,6 +107,7 @@ Simplified Flow:
   - AWS SSO: `aws sso login --profile <profile-name>`
   - Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 - **No Docker required!** (CodeBuild handles container builds)
+- **Paid AWS Support plan** (**AWS Business Support+, Enterprise Support, or Unified Operations**) — required for the AWS Health API integration. Accounts on Basic/Developer support receive a `SubscriptionRequiredException` when the tracker calls the Health API, and the AWS Health panel will not populate. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html). The rest of the demo (documentation extraction, deprecation tracking) works without a paid plan.
 
 ### ⚠️ Important: Region Requirements
 

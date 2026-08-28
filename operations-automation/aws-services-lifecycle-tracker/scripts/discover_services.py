@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Script de découverte des services AWS avec pages de dépréciation.
-Exécution manuelle : python scripts/discover_services.py
+Discovery script for AWS services with deprecation pages.
+Manual run: python scripts/discover_services.py
 
-Parcourt les patterns connus de documentation AWS pour identifier
-les services publiant des informations de cycle de vie.
+Walks known AWS documentation URL patterns to identify services
+that publish lifecycle information.
 """
 import json
 import argparse
@@ -263,7 +263,7 @@ CATEGORIZATION_PATTERNS: dict[str, list[str]] = {
 
 def discover_lifecycle_pages() -> list[dict]:
     """
-    Découvre les pages de documentation contenant des informations lifecycle.
+    Discover documentation pages containing lifecycle information.
 
     Scans known AWS documentation URL patterns to identify services
     that publish lifecycle/deprecation information.
@@ -288,7 +288,7 @@ def discover_lifecycle_pages() -> list[dict]:
 
 def categorize_service(service_name: str, url: str) -> str:
     """
-    Catégorise un service par type de cycle de vie en analysant l'URL.
+    Categorize a service by lifecycle type by analyzing the URL.
 
     Uses URL pattern matching to determine the lifecycle type category
     for a given service documentation URL. Longer (more specific) pattern
@@ -359,7 +359,7 @@ def _categorize_by_service_name(service_name: str) -> str:
 
 def generate_config_template(candidates: list[dict]) -> dict:
     """
-    Génère un template Service_Config pour les candidats découverts.
+    Generate a Service_Config template for the discovered candidates.
 
     Produces a JSON-compatible dict with Service_Config entries for each
     discovered candidate, ready to be merged into service_configs.json.

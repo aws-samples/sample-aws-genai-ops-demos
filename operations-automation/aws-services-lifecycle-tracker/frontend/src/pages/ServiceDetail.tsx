@@ -23,13 +23,13 @@ import {
 function getSeverityIndicator(severity: string) {
   switch (severity) {
     case 'critical':
-      return <StatusIndicator type="error">Critique</StatusIndicator>;
+      return <StatusIndicator type="error">Critical</StatusIndicator>;
     case 'high':
-      return <StatusIndicator type="warning">Élevée</StatusIndicator>;
+      return <StatusIndicator type="warning">High</StatusIndicator>;
     case 'medium':
-      return <StatusIndicator type="info">Moyenne</StatusIndicator>;
+      return <StatusIndicator type="info">Medium</StatusIndicator>;
     case 'low':
-      return <StatusIndicator type="success">Faible</StatusIndicator>;
+      return <StatusIndicator type="success">Low</StatusIndicator>;
     default:
       return <StatusIndicator>{severity}</StatusIndicator>;
   }
@@ -40,7 +40,7 @@ function getCategoryBadge(category: string) {
     case 'issue':
       return <Badge color="red">Incident</Badge>;
     case 'scheduledChange':
-      return <Badge color="blue">Maintenance planifiée</Badge>;
+      return <Badge color="blue">Scheduled maintenance</Badge>;
     case 'accountNotification':
       return <Badge color="grey">Notification</Badge>;
     default:
@@ -51,11 +51,11 @@ function getCategoryBadge(category: string) {
 function getStatusBadge(statusCode: string) {
   switch (statusCode) {
     case 'open':
-      return <StatusIndicator type="error">Ouvert</StatusIndicator>;
+      return <StatusIndicator type="error">Open</StatusIndicator>;
     case 'upcoming':
-      return <StatusIndicator type="warning">À venir</StatusIndicator>;
+      return <StatusIndicator type="warning">Upcoming</StatusIndicator>;
     case 'closed':
-      return <StatusIndicator type="success">Résolu</StatusIndicator>;
+      return <StatusIndicator type="success">Resolved</StatusIndicator>;
     default:
       return <StatusIndicator>{statusCode}</StatusIndicator>;
   }
@@ -128,7 +128,7 @@ export default function ServiceDetail() {
       <Container>
         <Box textAlign="center" padding="xxl">
           <Spinner size="large" />
-          <Box padding={{ top: 's' }}>Chargement du service...</Box>
+          <Box padding={{ top: 's' }}>Loading service...</Box>
         </Box>
       </Container>
     );
@@ -138,12 +138,12 @@ export default function ServiceDetail() {
     return (
       <Container>
         <Box textAlign="center" padding="xxl">
-          <Box variant="h2">Service non trouvé</Box>
+          <Box variant="h2">Service not found</Box>
           <Box padding={{ top: 's' }}>
-            Le service « {serviceName} » n'existe pas dans la configuration.
+            The service "{serviceName}" does not exist in the configuration.
           </Box>
           <Box padding={{ top: 'm' }}>
-            <Button onClick={() => navigate('/services')}>Retour aux services</Button>
+            <Button onClick={() => navigate('/services')}>Back to services</Button>
           </Box>
         </Box>
       </Container>
@@ -163,10 +163,10 @@ export default function ServiceDetail() {
             variant="h1"
             actions={
               <Button variant="normal" iconName="arrow-left" onClick={() => navigate('/services')}>
-                Retour aux services
+                Back to services
               </Button>
             }
-            description={`Détails et événements Health pour ${service.name}`}
+            description={`Details and Health events for ${service.name}`}
           >
             {service.name}
           </Header>
@@ -174,29 +174,29 @@ export default function ServiceDetail() {
       >
         <ColumnLayout columns={4} variant="text-grid">
           <div>
-            <Box variant="awsui-key-label">Identifiant</Box>
+            <Box variant="awsui-key-label">Identifier</Box>
             <Box>{service.service_name}</Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">Statut</Box>
+            <Box variant="awsui-key-label">Status</Box>
             <Box>
               {service.enabled ? (
-                <StatusIndicator type="success">Activé</StatusIndicator>
+                <StatusIndicator type="success">Enabled</StatusIndicator>
               ) : (
-                <StatusIndicator type="stopped">Désactivé</StatusIndicator>
+                <StatusIndicator type="stopped">Disabled</StatusIndicator>
               )}
             </Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">Dernière extraction</Box>
+            <Box variant="awsui-key-label">Last extraction</Box>
             <Box>
               {service.last_extraction
                 ? new Date(service.last_extraction).toLocaleString()
-                : 'Jamais'}
+                : 'Never'}
             </Box>
           </div>
           <div>
-            <Box variant="awsui-key-label">Nombre d'extractions</Box>
+            <Box variant="awsui-key-label">Extraction count</Box>
             <Box>{service.extraction_count || 0}</Box>
           </div>
         </ColumnLayout>
@@ -206,17 +206,17 @@ export default function ServiceDetail() {
       <ExpandableSection
         variant="container"
         defaultExpanded={true}
-        headerText={`Événements AWS Health (${activeHealthEvents.length} actif${activeHealthEvents.length !== 1 ? 's' : ''})`}
-        headerDescription="Incidents, maintenances planifiées et notifications affectant ce service"
+        headerText={`AWS Health events (${activeHealthEvents.length} active)`}
+        headerDescription="Incidents, scheduled maintenance, and notifications affecting this service"
       >
         {loadingHealth ? (
           <Box textAlign="center" padding="l">
-            <Spinner /> Chargement des événements Health...
+            <Spinner /> Loading Health events...
           </Box>
         ) : activeHealthEvents.length === 0 ? (
           <Box textAlign="center" padding="l">
             <StatusIndicator type="success">
-              Aucun événement Health actif — statut opérationnel normal
+              No active Health events — normal operational status
             </StatusIndicator>
           </Box>
         ) : (
@@ -224,7 +224,7 @@ export default function ServiceDetail() {
             columnDefinitions={[
               {
                 id: 'severity',
-                header: 'Sévérité',
+                header: 'Severity',
                 cell: (item) => getSeverityIndicator(item.severity),
                 width: 120,
               },
@@ -236,7 +236,7 @@ export default function ServiceDetail() {
               },
               {
                 id: 'status',
-                header: 'Statut',
+                header: 'Status',
                 cell: (item) => getStatusBadge(item.status_code),
                 width: 110,
               },
@@ -256,13 +256,13 @@ export default function ServiceDetail() {
               },
               {
                 id: 'region',
-                header: 'Région',
+                header: 'Region',
                 cell: (item) => item.region || '-',
                 width: 130,
               },
               {
                 id: 'start_time',
-                header: 'Début',
+                header: 'Start',
                 cell: (item) =>
                   item.start_time
                     ? new Date(item.start_time).toLocaleString()
@@ -274,7 +274,7 @@ export default function ServiceDetail() {
             variant="embedded"
             empty={
               <Box textAlign="center" color="inherit" padding="s">
-                Aucun événement Health actif
+                No active Health events
               </Box>
             }
           />
@@ -285,23 +285,23 @@ export default function ServiceDetail() {
       <ExpandableSection
         variant="container"
         defaultExpanded={true}
-        headerText={`Données de cycle de vie (${deprecations.length} élément${deprecations.length !== 1 ? 's' : ''})`}
-        headerDescription="Éléments de dépréciation et fin de support pour ce service"
+        headerText={`Lifecycle data (${deprecations.length} item${deprecations.length !== 1 ? 's' : ''})`}
+        headerDescription="Deprecation and end-of-support items for this service"
       >
         {loadingDeprecations ? (
           <Box textAlign="center" padding="l">
-            <Spinner /> Chargement des données de cycle de vie...
+            <Spinner /> Loading lifecycle data...
           </Box>
         ) : deprecations.length === 0 ? (
           <Box textAlign="center" padding="l" color="text-body-secondary">
-            Aucune donnée de cycle de vie extraite pour ce service.
+            No lifecycle data extracted for this service.
           </Box>
         ) : (
           <Table
             columnDefinitions={[
               {
                 id: 'name',
-                header: 'Nom',
+                header: 'Name',
                 cell: (item) => (
                   <SpaceBetween size="xxxs">
                     <Box variant="strong">
@@ -317,7 +317,7 @@ export default function ServiceDetail() {
               },
               {
                 id: 'status',
-                header: 'Statut',
+                header: 'Status',
                 cell: (item) => {
                   switch (item.status) {
                     case 'deprecated':
@@ -334,7 +334,7 @@ export default function ServiceDetail() {
               },
               {
                 id: 'dates',
-                header: 'Dates clés',
+                header: 'Key dates',
                 cell: (item) => {
                   const dateFields = [
                     'deprecation_date',
@@ -359,7 +359,7 @@ export default function ServiceDetail() {
               },
               {
                 id: 'last_verified',
-                header: 'Dernière vérification',
+                header: 'Last verified',
                 cell: (item) => (
                   <Box variant="small">
                     {new Date(item.last_verified).toLocaleDateString()}
@@ -372,7 +372,7 @@ export default function ServiceDetail() {
             variant="embedded"
             empty={
               <Box textAlign="center" color="inherit" padding="s">
-                Aucune donnée de cycle de vie
+                No lifecycle data
               </Box>
             }
           />
