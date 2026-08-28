@@ -3,12 +3,12 @@
   "hooks": [
     {
       "name": "Protect Governance Files",
-      "description": "Prevent agent from modifying steering files and hooks",
+      "description": "Block agent writes to .kiro/steering/ and .kiro/hooks/ (hard enforcement via exit code 2, path-based)",
       "trigger": "PreToolUse",
-      "matcher": "^(fs_write|fs_append|str_replace|delete_file|code)$",
+      "matcher": "^(fs_write|fs_append|str_replace|delete_file|smart_relocate|code)$",
       "action": {
-        "type": "agent",
-        "prompt": "If this write targets any file under .kiro/steering/ or .kiro/hooks/, STOP. Do not modify these governance files. They are maintained by repo owners only. Explain this to the user and suggest they contact the maintainers if changes are needed."
+        "type": "command",
+        "command": "bash .kiro/hooks/scripts/protect-governance.sh"
       },
       "enabled": true
     }

@@ -2,13 +2,12 @@
   "version": "v1",
   "hooks": [
     {
-      "name": "Pre-Write Conformity Check",
-      "description": "Verify file changes follow project standards before writing",
-      "trigger": "PreToolUse",
-      "matcher": "^(fs_write|fs_append|str_replace|delete_file|code)$",
+      "name": "Conformity Review (post-change)",
+      "description": "Review the completed change set against project standards once, at the end of a turn, instead of on every individual write. Deterministic checks (regions, tracking IDs, stack naming) are enforced in CI; the contributor-guide is always-on steering, so per-write prompting was redundant and slow.",
+      "trigger": "Stop",
       "action": {
         "type": "agent",
-        "prompt": "Before making this change, check it against the standards in .kiro/steering/contributor-guide.md (naming, file location, shared utilities, CDK requirement, no hardcoded regions) and .kiro/steering/solution-adoption-tracking.md (tracking in app file). If the change would violate a standard, flag it and suggest the compliant approach."
+        "prompt": "Review any code changes made this turn against the standards in .kiro/steering/contributor-guide.md (naming, file location, shared utilities, CDK requirement, no hardcoded regions) and .kiro/steering/solution-adoption-tracking.md (tracking in the CDK app file, main stack only). If any change violates a standard, flag it and suggest the compliant fix. If everything conforms, say nothing."
       },
       "enabled": true
     }
