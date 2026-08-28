@@ -39,15 +39,15 @@ function getSeverityIndicatorType(severity: string): 'error' | 'warning' | 'info
 function getSeverityLabel(severity: string): string {
   switch (severity) {
     case 'critical':
-      return 'Critique';
+      return 'Critical';
     case 'high':
     case 'warning':
-      return 'Avertissement';
+      return 'Warning';
     case 'medium':
     case 'info':
-      return 'Informatif';
+      return 'Informational';
     case 'low':
-      return 'Faible';
+      return 'Low';
     default:
       return severity;
   }
@@ -61,7 +61,7 @@ function getCategoryLabel(category: string): string {
     case 'issue':
       return 'Incident';
     case 'scheduledChange':
-      return 'Maintenance planifiée';
+      return 'Scheduled maintenance';
     case 'accountNotification':
       return 'Notification';
     default:
@@ -104,7 +104,7 @@ export default function HealthPanel() {
       const data = await fetchHealthSummary();
       setHealthData(data);
     } catch (err: any) {
-      setError(err.message || 'Erreur lors du chargement des données Health');
+      setError(err.message || 'Error loading Health data');
     } finally {
       setLoading(false);
     }
@@ -116,7 +116,7 @@ export default function HealthPanel() {
         header={<Header variant="h2">AWS Health</Header>}
       >
         <Box textAlign="center" padding="l">
-          <StatusIndicator type="loading">Chargement des événements Health...</StatusIndicator>
+          <StatusIndicator type="loading">Loading Health events...</StatusIndicator>
         </Box>
       </Container>
     );
@@ -130,7 +130,7 @@ export default function HealthPanel() {
             variant="h2"
             actions={
               <Button iconName="refresh" onClick={loadHealthData}>
-                Actualiser
+                Refresh
               </Button>
             }
           >
@@ -165,10 +165,10 @@ export default function HealthPanel() {
         <Box textAlign="center" padding="l">
           <SpaceBetween size="xs" alignItems="center">
             <StatusIndicator type="success">
-              Statut opérationnel normal
+              Normal operational status
             </StatusIndicator>
             <Box variant="small" color="text-body-secondary">
-              Aucun événement actif détecté sur vos services
+              No active events detected on your services
             </Box>
           </SpaceBetween>
         </Box>
@@ -196,7 +196,7 @@ export default function HealthPanel() {
                     <SpaceBetween size="xxs">
                       <Box>
                         <StatusIndicator type={getSeverityIndicatorType(event.severity)}>
-                          {event.event_type_code || event.description?.substring(0, 80) || 'Événement Health'}
+                          {event.event_type_code || event.description?.substring(0, 80) || 'Health event'}
                         </StatusIndicator>
                       </Box>
                       <Box variant="small" color="text-body-secondary">
