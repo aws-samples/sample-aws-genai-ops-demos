@@ -98,5 +98,8 @@ def get_bedrock_model_id(model_name: str = "anthropic.claude-sonnet-4-6") -> str
     """
     region = get_region()
     geo_prefix = region.split('-')[0]
-    cris_prefix = {'us': 'us', 'eu': 'eu', 'ap': 'ap'}.get(geo_prefix, 'global')
+    # Asia Pacific's CRIS profile prefix is "apac", not "ap". Mapping ap-* to
+    # "ap" produces an invalid inference profile ID (e.g. "ap.anthropic.*")
+    # that fails at invoke time in every ap-* region.
+    cris_prefix = {'us': 'us', 'eu': 'eu', 'ap': 'apac'}.get(geo_prefix, 'global')
     return f"{cris_prefix}.{model_name}"

@@ -113,7 +113,7 @@ model_id = get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0")
 |---|---|---|
 | `us-*` | `us.` | US only |
 | `eu-*` | `eu.` | EU only |
-| `ap-*` | `ap.` | APAC only |
+| `ap-*` | `apac.` | APAC only |
 | Others (`ca-`, `me-`, `af-`, `sa-`, `il-`, `mx-`) | `global.` | Worldwide |
 
 ### CDK pattern for Lambdas
