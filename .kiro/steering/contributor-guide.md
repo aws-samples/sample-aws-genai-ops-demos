@@ -237,6 +237,33 @@ from .constructs import MyConstruct
 - ❌ `sys.path.insert()` or path manipulation
 - CDK deployment scripts set `PYTHONPATH` automatically
 
+#### Agent containers: the shared-utils exception
+
+Code that runs **inside an AgentCore/Docker container** (e.g. `agent.py` and its
+helpers) cannot import from `shared/utils/` — the shared module lives outside the
+image build context, so `from shared.utils import ...` fails at runtime in the
+container.
+
+For container code only, the sanctioned pattern is:
+
+1. Ship a **container-local copy** named `aws_utils.py` at the demo/agent root so
+   it is inside the build context.
+2. Keep it in sync with `shared/utils/aws_utils.py` (same function names and
+   behavior). When you fix a bug in one, fix it in the other.
+3. `sys.path` manipulation to import that local copy **is allowed here** — this is
+   the one exception to the "no `sys.path.insert()`" rule above, which otherwise
+   still applies to CDK and deployment code.
+
+This keeps "use shared utilities everywhere" intact for CDK/deploy code while
+giving container code a documented, consistent path instead of per-demo
+precedent. Existing examples: `aws-services-lifecycle-tracker/agent/aws_utils.py`,
+`ai-password-reset-chatbot/agent/aws_utils.py`,
+`ai-load-test-generation-with-dlt/aws_utils.py`.
+
+> Note: hand-copied files can drift (an APAC CRIS-prefix bug once diverged
+> between copies). Until a build-time copy mechanism exists, treat syncing these
+> copies as part of any change to the shared util.
+
 **TypeScript**:
 ```typescript
 import * as cdk from 'aws-cdk-lib';
