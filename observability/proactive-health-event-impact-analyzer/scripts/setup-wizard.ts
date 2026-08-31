@@ -842,102 +842,114 @@ async function createAgentSpace(state: SetupState): Promise<void> {
 }
 
 async function ensureIamRoles(state: SetupState): Promise<void> {
-  // Check if AgentSpace role exists
+  // Trust policies are region-scoped via the aws:SourceArn condition
+  // (arn:aws:aidevops:<region>:...:agentspace/*). If a role was created in a
+  // previous run for a DIFFERENT region than the one now selected, reusing it
+  // as-is makes associate-service fail with "Invalid STS role configuration ...
+  // Verify the role's trust policy" — because the assuming agent space's ARN
+  // (in the current region) doesn't match the stale condition. So we always
+  // (re)apply the trust policy for the current region: create-role when the
+  // role is missing, update-assume-role-policy when it already exists. This is
+  // idempotent and self-heals a region change across runs.
+  const spaceTrust = {
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Service: 'aidevops.amazonaws.com' },
+      Action: 'sts:AssumeRole',
+      Condition: {
+        StringEquals: { 'aws:SourceAccount': state.accountId },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+      },
+    }],
+  };
+  const webappTrust = {
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Service: 'aidevops.amazonaws.com' },
+      Action: ['sts:AssumeRole', 'sts:TagSession'],
+      Condition: {
+        StringEquals: { 'aws:SourceAccount': state.accountId },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+      },
+    }],
+  };
+
   const spaceRoleExists = checkRoleExists('DevOpsAgentRole-AgentSpace');
   const webappRoleExists = checkRoleExists('DevOpsAgentRole-WebappAdmin');
 
-  if (spaceRoleExists && webappRoleExists) {
-    success('IAM roles already exist (DevOpsAgentRole-AgentSpace, DevOpsAgentRole-WebappAdmin)');
-    return;
-  }
-
-  info('Creating IAM roles for DevOps Agent...');
-
-  if (!spaceRoleExists) {
-    // Create AgentSpace role — use file:// to avoid shell quoting issues on Windows
-    const spaceTrustFile = writeTempJson('space-trust', {
-      Version: '2012-10-17',
-      Statement: [{
-        Effect: 'Allow',
-        Principal: { Service: 'aidevops.amazonaws.com' },
-        Action: 'sts:AssumeRole',
-        Condition: {
-          StringEquals: { 'aws:SourceAccount': state.accountId },
-          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
-        },
-      }],
-    });
-
-    try {
+  // ─── AgentSpace role ──────────────────────────────────────────────────────
+  const spaceTrustFile = writeTempJson('space-trust', spaceTrust);
+  try {
+    if (spaceRoleExists) {
+      exec(
+        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-document file://${spaceTrustFile} --no-cli-pager`,
+        true
+      );
+      success(`Updated trust policy: DevOpsAgentRole-AgentSpace (region ${state.region})`);
+    } else {
+      info('Creating IAM role: DevOpsAgentRole-AgentSpace...');
       exec(
         `aws iam create-role --role-name DevOpsAgentRole-AgentSpace --assume-role-policy-document file://${spaceTrustFile} --no-cli-pager`,
         true
       );
-    } finally {
-      tryUnlink(spaceTrustFile);
+      success('Created role: DevOpsAgentRole-AgentSpace');
     }
-
-    exec(
-      'aws iam attach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager',
-      true
-    );
-
-    // Additional policy for Resource Explorer SLR
-    const additionalPolicyFile = writeTempJson('space-slr-policy', {
-      Version: '2012-10-17',
-      Statement: [{
-        Sid: 'AllowCreateServiceLinkedRoles',
-        Effect: 'Allow',
-        Action: ['iam:CreateServiceLinkedRole'],
-        Resource: [`arn:aws:iam::${state.accountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer`],
-      }],
-    });
-
-    try {
-      exec(
-        `aws iam put-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles --policy-document file://${additionalPolicyFile} --no-cli-pager`,
-        true
-      );
-    } finally {
-      tryUnlink(additionalPolicyFile);
-    }
-
-    success('Created role: DevOpsAgentRole-AgentSpace');
+  } finally {
+    tryUnlink(spaceTrustFile);
   }
 
-  if (!webappRoleExists) {
-    // Create WebappAdmin role — use file:// to avoid shell quoting issues on Windows
-    const webappTrustFile = writeTempJson('webapp-trust', {
-      Version: '2012-10-17',
-      Statement: [{
-        Effect: 'Allow',
-        Principal: { Service: 'aidevops.amazonaws.com' },
-        Action: ['sts:AssumeRole', 'sts:TagSession'],
-        Condition: {
-          StringEquals: { 'aws:SourceAccount': state.accountId },
-          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
-        },
-      }],
-    });
+  // Attach managed + inline policies (idempotent — safe to re-run)
+  exec(
+    'aws iam attach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager',
+    true
+  );
+  const additionalPolicyFile = writeTempJson('space-slr-policy', {
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 'AllowCreateServiceLinkedRoles',
+      Effect: 'Allow',
+      Action: ['iam:CreateServiceLinkedRole'],
+      Resource: [`arn:aws:iam::${state.accountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer`],
+    }],
+  });
+  try {
+    exec(
+      `aws iam put-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles --policy-document file://${additionalPolicyFile} --no-cli-pager`,
+      true
+    );
+  } finally {
+    tryUnlink(additionalPolicyFile);
+  }
 
-    try {
+  // ─── WebappAdmin role ─────────────────────────────────────────────────────
+  const webappTrustFile = writeTempJson('webapp-trust', webappTrust);
+  try {
+    if (webappRoleExists) {
+      exec(
+        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-document file://${webappTrustFile} --no-cli-pager`,
+        true
+      );
+      success(`Updated trust policy: DevOpsAgentRole-WebappAdmin (region ${state.region})`);
+    } else {
+      info('Creating IAM role: DevOpsAgentRole-WebappAdmin...');
       exec(
         `aws iam create-role --role-name DevOpsAgentRole-WebappAdmin --assume-role-policy-document file://${webappTrustFile} --no-cli-pager`,
         true
       );
-    } finally {
-      tryUnlink(webappTrustFile);
+      success('Created role: DevOpsAgentRole-WebappAdmin');
     }
-
-    exec(
-      'aws iam attach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager',
-      true
-    );
-
-    success('Created role: DevOpsAgentRole-WebappAdmin');
+  } finally {
+    tryUnlink(webappTrustFile);
   }
 
-  // Wait for IAM propagation
+  exec(
+    'aws iam attach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager',
+    true
+  );
+
+  // Wait for IAM propagation (create AND update both need time to reach STS)
   info('Waiting for IAM role propagation (10s)...');
   await new Promise((resolve) => setTimeout(resolve, 10000));
 }
@@ -979,9 +991,32 @@ async function ensureAccountAssociation(state: SetupState): Promise<void> {
 
   let result: any;
   try {
-    result = execJson(
-      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.region} --no-cli-pager`
-    );
+    // associate-service assumes DevOpsAgentRole-AgentSpace. IAM role/trust-policy
+    // changes are eventually consistent, so a freshly created (or just-updated)
+    // role can still fail STS assume-role with "Invalid STS role configuration ...
+    // Verify the role's trust policy" for a short window after creation. Retry
+    // with backoff so the step succeeds once propagation completes instead of
+    // forcing the user to manually retry.
+    const maxAttempts = 6;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        result = execJson(
+          `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.region} --no-cli-pager`
+        );
+        break;
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err);
+        const isTransientTrust =
+          /Invalid STS role configuration/i.test(msg) ||
+          /Verify the role's trust policy/i.test(msg);
+        if (!isTransientTrust || attempt === maxAttempts) {
+          throw err;
+        }
+        const delaySec = attempt * 10; // 10s, 20s, 30s, ...
+        warn(`Association not ready yet (IAM propagation). Retrying in ${delaySec}s (attempt ${attempt}/${maxAttempts - 1})...`);
+        await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+      }
+    }
   } finally {
     tryUnlink(configFile);
   }
