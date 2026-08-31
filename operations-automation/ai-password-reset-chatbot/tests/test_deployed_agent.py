@@ -10,7 +10,8 @@ import uuid
 from datetime import datetime
 
 # Configuration
-AGENT_RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-east-1:517675598740:runtime/password_reset_agent-CEgBZw30fn"
+# Replace with your own deployed runtime ARN (account ID + runtime ID)
+AGENT_RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/password_reset_agent-XXXXXXXXXX"
 REGION = "us-east-1"
 
 async def test_deployed_agent():
