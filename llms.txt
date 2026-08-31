@@ -1,0 +1,50 @@
+# AWS GenAI for Operations Demos
+
+> Deployable code samples demonstrating how generative AI drives operational excellence across five pillars: security, cost optimization, resilience, observability, and operations automation. Every demo works in any AWS account and region without modification, and can be deployed as-is or adapted with minimal effort. Demos are built on Amazon Bedrock, Amazon Nova models, and Amazon Bedrock AgentCore, with infrastructure defined in AWS CDK (TypeScript or Python).
+
+Each demo lives under a pillar directory and typically ships a `README.md` (deployment guide), `ARCHITECTURE.md` (technical design), and cross-platform deployment scripts (`deploy-*.ps1` for PowerShell and `deploy-*.sh` for Bash). Shared region/account detection utilities and prerequisite checks live in `shared/`. Contributor standards, patterns, and anti-patterns are documented in `.kiro/steering/contributor-guide.md`.
+
+## Overview
+
+- [README](README.md): Repository overview, full demo catalog, technology stack, prerequisites, and getting-started guide
+- [Contributor Guide](.kiro/steering/contributor-guide.md): Project standards, naming conventions, implementation patterns, and anti-patterns for building demos
+- [Contributing](CONTRIBUTING.md): Contribution guidelines and security issue reporting
+- [Shared Utilities](shared/README.md): Region/account detection utilities and prerequisite scripts used across all demos
+
+## Security
+
+- [AI-Powered Security Posture with Prowler + DevOps Agent](security/prowler-security-findings-agent/README.md): Continuous Prowler scans with Nova-generated remediation playbooks and AWS DevOps Agent incident dispatch, surfaced in a React dashboard
+- [AI Incident Response Playbook Builder](security/ai-incident-response-playbook-builder/README.md): Analyze AWS architecture and generate tailored IR playbooks with MITRE ATT&CK mapping, SSM Automation documents, and step-by-step response procedures
+- [AI Permission Boundary Generator](security/ai-permission-boundary-generator/README.md): Analyze CloudTrail logs for IAM roles/users, identify unused permissions, and generate least-privilege permission boundaries as ready-to-deploy CDK/CloudFormation resources
+- [IAM Security Assistant](security/ai-iam-access-analyzer-assistant/README.md): Conversational IAM security assistant that queries Security Hub findings, analyzes role usage via CloudTrail, generates least-privilege policies, and assesses blast radius (read-only, with exportable remediation artifacts)
+
+## Cost Optimization
+
+- [AI-Powered Graviton Migration Assessment](cost-optimization/ai-graviton-migration-assessment/README.md): Comprehensive migration assessment with cost analysis and ready-to-use migration artifacts for any codebase
+- [AWS GenAI Cost Optimization Kiro Power](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md): MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration
+
+## Operations Automation
+
+- [AI-Powered Technical Documentation Generation](operations-automation/ai-documentation-generation/README.md): Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase
+- [AI-Powered Legacy System Automation](operations-automation/ai-legacy-system-browser-automation/README.md): Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring
+- [AI Password Reset Chatbot](operations-automation/ai-password-reset-chatbot/README.md): Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access
+- [AWS Services Lifecycle Tracker](operations-automation/aws-services-lifecycle-tracker/README.md): Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface
+- [AI Lambda Runtime Migration Assistant](operations-automation/ai-lambda-runtime-migration/README.md): Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard
+
+## Resilience
+
+- [Natural Language Chaos Engineering with AWS FIS](resilience/ai-chaos-engineering-with-fis/README.md): Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching
+
+## Observability
+
+- [Intelligent EKS Incident Investigation with Amazon DevOps Agent](observability/eks-investigation-devops-agent/README.md): Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent, reducing MTTR from hours to minutes
+- [Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md): Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent
+- [SaaS Status MCP Server for AWS DevOps Agent](observability/saas-status-mcp/README.md): Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more)
+- [AWS Feature Relevance Notification System](observability/aws-feature-relevance-notification-system/README.md): AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates
+
+## Optional
+
+- [Code of Conduct](CODE_OF_CONDUCT.md): Community code of conduct
+- [Governance Guard Workflow](.github/workflows/governance-guard.yml): CI governance checks
+- [Security Scan Workflow](.github/workflows/security-scan.yml): CI security scanning
+- [Structure Check Workflow](.github/workflows/structure-check.yml): CI repository structure validation
