@@ -44,8 +44,23 @@ try {
         pip install -r requirements.txt -q 2>$null
         Write-Host "      OK: Python CDK dependencies installed" -ForegroundColor Green
     } elseif (Test-Path "package.json") {
-        if (-not (Test-Path "node_modules")) {
-            npm install 2>$null
+        # Install when node_modules is missing OR incomplete. A previous interrupted
+        # install can leave a partial node_modules that lacks declared dependencies,
+        # which then causes confusing CDK synth/compile errors. Verify completeness
+        # with `npm ls` (non-zero exit => missing/unmet deps) instead of only checking
+        # for the directory's existence.
+        $nodeModulesComplete = $false
+        if (Test-Path "node_modules") {
+            npm ls --prod --silent 2>$null | Out-Null
+            $nodeModulesComplete = ($LASTEXITCODE -eq 0)
+        }
+        if (-not $nodeModulesComplete) {
+            if (Test-Path "package-lock.json") {
+                # Deterministic, clean install from the lockfile.
+                npm ci 2>$null
+            } else {
+                npm install 2>$null
+            }
         }
         Write-Host "      OK: Node.js CDK dependencies installed" -ForegroundColor Green
     } else {

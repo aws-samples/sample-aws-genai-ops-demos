@@ -88,9 +88,19 @@ if [ -f "requirements.txt" ]; then
     CDK_APP_OVERRIDE="--app 'python3 app.py'"
     echo -e "\033[0;32m      OK: Python CDK dependencies installed\033[0m"
 elif [ -f "package.json" ]; then
-    # TypeScript/JavaScript CDK project
-    if [ ! -d "node_modules" ]; then
-        npm install
+    # TypeScript/JavaScript CDK project.
+    # Install when node_modules is missing OR incomplete. A previous interrupted
+    # install can leave a partial node_modules that lacks declared dependencies,
+    # which then causes confusing CDK synth/compile errors. Verify completeness
+    # with `npm ls` (non-zero exit => missing/unmet deps) instead of only checking
+    # for the directory's existence.
+    if [ ! -d "node_modules" ] || ! npm ls --prod --silent > /dev/null 2>&1; then
+        if [ -f "package-lock.json" ]; then
+            # Deterministic, clean install from the lockfile.
+            npm ci
+        else
+            npm install
+        fi
     fi
     echo -e "\033[0;32m      ✓ Node.js CDK dependencies installed\033[0m"
 else
