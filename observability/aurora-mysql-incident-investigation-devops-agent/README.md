@@ -21,7 +21,7 @@ This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent invest
 - **Difficulty**: Intermediate
 - **Target Audience**: DBREs, SREs, Cloud Operations, TAMs running database-focused customer conversations
 - **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, MCP
-- **Estimated Cost**: ~$0.18–0.30/hr while running (~$130–220/month if left running continuously). This demo is meant to be deployed, tested, and torn down — tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
+- **Estimated Cost**: approx. $0.18–0.30/hr while running (approx. $130–220/month if left running continuously). This demo is meant to be deployed, tested, and torn down — tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
 
 ## Business Value
 
