@@ -30,6 +30,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 - [AI Password Reset Chatbot](operations-automation/ai-password-reset-chatbot/README.md): Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access
 - [AWS Services Lifecycle Tracker](operations-automation/aws-services-lifecycle-tracker/README.md): Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface
 - [AI Lambda Runtime Migration Assistant](operations-automation/ai-lambda-runtime-migration/README.md): Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard
+- [AnyCompany IT Demo Portal](operations-automation/anycompany-it-demo-portal/README.md): Multi-portal enterprise IT system simulation demonstrating AI-powered legacy system automation using Amazon Nova Act with the AgentCore Browser Tool
 
 ## Resilience
 
@@ -41,6 +42,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 - [Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md): Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent
 - [SaaS Status MCP Server for AWS DevOps Agent](observability/saas-status-mcp/README.md): Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more)
 - [AWS Feature Relevance Notification System](observability/aws-feature-relevance-notification-system/README.md): AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates
+- [Proactive Health Event Impact Analyzer](observability/proactive-health-event-impact-analyzer/README.md): Use AWS DevOps Agent to triage AWS Health events, assess their impact, and route multi-team notifications automatically
 
 ## Optional
 
