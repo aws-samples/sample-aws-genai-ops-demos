@@ -141,3 +141,41 @@ jobs:
           done
 
           exit $EXIT_CODE
+
+      - name: Check llms.txt catalog is in sync
+        run: |
+          # The llms.txt catalog is hand-maintained and drifts as demos are
+          # added/renamed/removed. Reconcile it against the actual demo set
+          # (every pillar/demo directory that ships a README.md) in BOTH
+          # directions: missing entries (demo not listed) and stale entries
+          # (listed demo no longer exists). Either fails the check.
+          PILLARS="security cost-optimization operations-automation resilience observability"
+
+          # Actual demos: pillar/demo/README.md, two levels deep.
+          find $PILLARS -mindepth 2 -maxdepth 2 -name README.md 2>/dev/null \
+            | sort > /tmp/actual.txt
+
+          # Catalogued demos: pillar-prefixed README.md links parsed from llms.txt.
+          # The pillar prefix naturally excludes the Overview/Optional links
+          # (README.md, CONTRIBUTING.md, workflows, etc.).
+          grep -oE "($(echo "$PILLARS" | tr ' ' '|'))/[^)]+/README\.md" llms.txt \
+            | sort -u > /tmp/listed.txt
+
+          MISSING=$(comm -23 /tmp/actual.txt /tmp/listed.txt)
+          STALE=$(comm -13 /tmp/actual.txt /tmp/listed.txt)
+
+          RC=0
+          if [ -n "$MISSING" ]; then
+            echo "❌ Demos missing from llms.txt (add a catalog entry):"
+            echo "$MISSING" | sed 's/^/   - /'
+            RC=1
+          fi
+          if [ -n "$STALE" ]; then
+            echo "❌ Stale llms.txt entries (demo no longer exists — remove or fix):"
+            echo "$STALE" | sed 's/^/   - /'
+            RC=1
+          fi
+          if [ "$RC" -eq 0 ]; then
+            echo "✅ llms.txt catalog is in sync ($(wc -l < /tmp/actual.txt) demos)"
+          fi
+          exit $RC
