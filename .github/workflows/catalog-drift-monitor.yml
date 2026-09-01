@@ -1,0 +1,101 @@
+name: Catalog Drift Monitor
+
+# Repo-wide llms.txt catalog health check for MAINTAINERS (not a contributor gate).
+# The PR-scoped check in structure-check.yml keeps a contributor's own changes
+# honest; this scheduled job hunts down pre-existing / accumulated drift across
+# the whole catalog and pokes maintainers via a single, self-updating issue.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # every Monday 08:00 UTC
+  workflow_dispatch: {}     # allow manual runs
+
+permissions:
+  contents: read
+  issues: write             # needed to open/update/close the drift issue
+
+jobs:
+  catalog-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconcile llms.txt against the demo set
+        id: reconcile
+        run: |
+          PILLARS="security cost-optimization operations-automation resilience observability"
+          PILLAR_RE="($(echo "$PILLARS" | tr ' ' '|'))"
+
+          # Actual demos: pillar/demo/README.md (two levels deep).
+          find $PILLARS -mindepth 2 -maxdepth 2 -name README.md 2>/dev/null \
+            | sort > /tmp/actual.txt
+          # Catalogued demo links in llms.txt (pillar prefix excludes non-demo links).
+          grep -oE "${PILLAR_RE}/[^)]+/README\.md" llms.txt | sort -u > /tmp/listed.txt
+
+          MISSING=$(comm -23 /tmp/actual.txt /tmp/listed.txt)
+          STALE=$(comm -13 /tmp/actual.txt /tmp/listed.txt)
+
+          BODY=""
+          if [ -n "$MISSING" ]; then
+            BODY="${BODY}### Demos missing from llms.txt (not listed)\n"
+            BODY="${BODY}$(echo "$MISSING" | sed 's/^/- /')\n\n"
+          fi
+          if [ -n "$STALE" ]; then
+            BODY="${BODY}### Stale llms.txt entries (demo no longer exists)\n"
+            BODY="${BODY}$(echo "$STALE" | sed 's/^/- /')\n\n"
+          fi
+
+          if [ -z "$MISSING$STALE" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Catalog in sync ($(wc -l < /tmp/actual.txt) demos)"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+            {
+              echo "body<<$EOF"
+              printf "%b" "$BODY"
+              echo "$EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "⚠️ Catalog drift detected"
+            printf "%b" "$BODY"
+          fi
+
+      - name: Open, update, or close the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.reconcile.outputs.drift }}
+          DRIFT_BODY: ${{ steps.reconcile.outputs.body }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          LABEL="catalog-drift"
+          TITLE="llms.txt catalog drift detected"
+
+          # Ensure the label exists (idempotent).
+          gh label create "$LABEL" --repo "$REPO" \
+            --color d93f0b --description "llms.txt catalog is out of sync with the demo set" \
+            2>/dev/null || true
+
+          # Find an existing open drift issue (dedup — never spam new issues).
+          EXISTING=$(gh issue list --repo "$REPO" --state open --label "$LABEL" \
+            --json number --jq '.[0].number' 2>/dev/null || true)
+
+          if [ "$DRIFT" = "true" ]; then
+            FULL_BODY=$(printf "%b\n\n---\n_Detected by the Catalog Drift Monitor ([run](%s)). cc @bquintas @benlec. This issue auto-updates on the next run and auto-closes when the catalog is back in sync._" "$DRIFT_BODY" "$RUN_URL")
+            if [ -n "$EXISTING" ]; then
+              echo "Updating existing drift issue #$EXISTING"
+              gh issue edit "$EXISTING" --repo "$REPO" --body "$FULL_BODY"
+              gh issue comment "$EXISTING" --repo "$REPO" --body "Drift still present as of $(date -u +%Y-%m-%dT%H:%MZ). See updated list above."
+            else
+              echo "Opening new drift issue"
+              gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$FULL_BODY"
+            fi
+          else
+            if [ -n "$EXISTING" ]; then
+              echo "Catalog back in sync — closing issue #$EXISTING"
+              gh issue comment "$EXISTING" --repo "$REPO" --body "✅ Catalog is back in sync as of $(date -u +%Y-%m-%dT%H:%MZ). Closing automatically."
+              gh issue close "$EXISTING" --repo "$REPO"
+            else
+              echo "No drift and no open issue — nothing to do."
+            fi
+          fi
