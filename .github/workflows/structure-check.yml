@@ -142,40 +142,48 @@ jobs:
 
           exit $EXIT_CODE
 
-      - name: Check llms.txt catalog is in sync
+      - name: Check llms.txt catalog for changed demos
         run: |
-          # The llms.txt catalog is hand-maintained and drifts as demos are
-          # added/renamed/removed. Reconcile it against the actual demo set
-          # (every pillar/demo directory that ships a README.md) in BOTH
-          # directions: missing entries (demo not listed) and stale entries
-          # (listed demo no longer exists). Either fails the check.
+          # PR-SCOPED catalog check: only enforce llms.txt for demos THIS PR
+          # touches, so a contributor is never blocked by pre-existing drift
+          # someone else introduced. Rules:
+          #   - a demo README added in this PR  -> must be listed in llms.txt
+          #   - a demo README removed in this PR -> must be delisted from llms.txt
+          # Repo-wide stale/missing sweeps are handled by a separate scheduled
+          # maintainer-notification job, not this contributor gate.
           PILLARS="security cost-optimization operations-automation resilience observability"
+          PILLAR_RE="($(echo "$PILLARS" | tr ' ' '|'))"
 
-          # Actual demos: pillar/demo/README.md, two levels deep.
-          find $PILLARS -mindepth 2 -maxdepth 2 -name README.md 2>/dev/null \
-            | sort > /tmp/actual.txt
+          # Demo README paths this PR added / deleted (two levels deep only).
+          ADDED=$(git diff --name-status --diff-filter=A origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
+          REMOVED=$(git diff --name-status --diff-filter=D origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
 
-          # Catalogued demos: pillar-prefixed README.md links parsed from llms.txt.
-          # The pillar prefix naturally excludes the Overview/Optional links
-          # (README.md, CONTRIBUTING.md, workflows, etc.).
-          grep -oE "($(echo "$PILLARS" | tr ' ' '|'))/[^)]+/README\.md" llms.txt \
-            | sort -u > /tmp/listed.txt
-
-          MISSING=$(comm -23 /tmp/actual.txt /tmp/listed.txt)
-          STALE=$(comm -13 /tmp/actual.txt /tmp/listed.txt)
+          # Currently-catalogued demo links in llms.txt.
+          grep -oE "${PILLAR_RE}/[^)]+/README\.md" llms.txt | sort -u > /tmp/listed.txt
 
           RC=0
-          if [ -n "$MISSING" ]; then
-            echo "❌ Demos missing from llms.txt (add a catalog entry):"
-            echo "$MISSING" | sed 's/^/   - /'
-            RC=1
-          fi
-          if [ -n "$STALE" ]; then
-            echo "❌ Stale llms.txt entries (demo no longer exists — remove or fix):"
-            echo "$STALE" | sed 's/^/   - /'
-            RC=1
-          fi
-          if [ "$RC" -eq 0 ]; then
-            echo "✅ llms.txt catalog is in sync ($(wc -l < /tmp/actual.txt) demos)"
+          for path in $ADDED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "✅ Added demo listed in llms.txt: $path"
+            else
+              echo "❌ Added demo not in llms.txt (add a catalog entry): $path"
+              RC=1
+            fi
+          done
+          for path in $REMOVED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "❌ Removed demo still in llms.txt (delete its catalog entry): $path"
+              RC=1
+            else
+              echo "✅ Removed demo delisted from llms.txt: $path"
+            fi
+          done
+
+          if [ -z "$ADDED$REMOVED" ]; then
+            echo "No demo README added or removed in this PR — llms.txt check skipped."
           fi
           exit $RC
