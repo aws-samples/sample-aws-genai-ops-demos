@@ -129,6 +129,8 @@ sample-genai-ops-demos/
 5. Solution adoption tracking in CDK app file
 6. `.gitignore` including `cdk.out*`
 
+**Keep the catalog in sync.** When you add, rename, or remove a demo, update the demo catalog in both `llms.txt` (the repo's LLM-friendly index) and `README.md` so they don't drift from the actual set of demos.
+
 ### Deploy Script Exemption (`.no-deploy`)
 
 Demos that are local tools with no AWS infrastructure to deploy may opt out of deployment scripts by placing a `.no-deploy` file at the demo root. The file must contain a one-line explanation of why scripts aren't needed.
