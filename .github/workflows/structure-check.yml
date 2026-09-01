@@ -141,3 +141,49 @@ jobs:
           done
 
           exit $EXIT_CODE
+
+      - name: Check llms.txt catalog for changed demos
+        run: |
+          # PR-SCOPED catalog check: only enforce llms.txt for demos THIS PR
+          # touches, so a contributor is never blocked by pre-existing drift
+          # someone else introduced. Rules:
+          #   - a demo README added in this PR  -> must be listed in llms.txt
+          #   - a demo README removed in this PR -> must be delisted from llms.txt
+          # Repo-wide stale/missing sweeps are handled by a separate scheduled
+          # maintainer-notification job, not this contributor gate.
+          PILLARS="security cost-optimization operations-automation resilience observability"
+          PILLAR_RE="($(echo "$PILLARS" | tr ' ' '|'))"
+
+          # Demo README paths this PR added / deleted (two levels deep only).
+          ADDED=$(git diff --name-status --diff-filter=A origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
+          REMOVED=$(git diff --name-status --diff-filter=D origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
+
+          # Currently-catalogued demo links in llms.txt.
+          grep -oE "${PILLAR_RE}/[^)]+/README\.md" llms.txt | sort -u > /tmp/listed.txt
+
+          RC=0
+          for path in $ADDED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "✅ Added demo listed in llms.txt: $path"
+            else
+              echo "❌ Added demo not in llms.txt (add a catalog entry): $path"
+              RC=1
+            fi
+          done
+          for path in $REMOVED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "❌ Removed demo still in llms.txt (delete its catalog entry): $path"
+              RC=1
+            else
+              echo "✅ Removed demo delisted from llms.txt: $path"
+            fi
+          done
+
+          if [ -z "$ADDED$REMOVED" ]; then
+            echo "No demo README added or removed in this PR — llms.txt check skipped."
+          fi
+          exit $RC
