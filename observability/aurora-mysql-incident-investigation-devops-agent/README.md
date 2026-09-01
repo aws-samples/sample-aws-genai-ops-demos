@@ -20,8 +20,8 @@ This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent invest
 - **Duration**: ~25 minutes (Agent Space setup + infra deployment; Aurora cluster creation is ~10-15 min of that)
 - **Difficulty**: Intermediate
 - **Target Audience**: DBREs, SREs, Cloud Operations, TAMs running database-focused customer conversations
-- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, Performance Insights, SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, MCP
-- **Estimated Cost**: ~$0.55–0.90/hr while running; tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
+- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, MCP
+- **Estimated Cost**: ~$0.18–0.30/hr while running (~$130–220/month if left running continuously). This demo is meant to be deployed, tested, and torn down — tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
 
 ## Business Value
 
@@ -190,6 +190,13 @@ bash scripts/cleanup.sh us-west-2     # macOS/Linux
 Cleanup destroys the CDK stacks **and** removes the Agent Space + IAM roles that
 `setup-devops-agent` created. If you deployed the MCP server, remove its
 registration in the DevOps Agent console as well.
+
+## Troubleshooting
+
+| Issue | Cause | Fix |
+|---|---|---|
+| Alarm doesn't flip to ALARM after inject | CloudWatch metrics lag ~2–3 minutes behind real time | Wait 2–3 min after injecting before checking. Run `bash scripts/inject-failure.sh status --key-file <path>` to confirm the injector is actually running on the bastion. |
+| `deploy-all` hangs on "Waiting for SSH..." | Bastion still booting, or `--ssh-cidr` doesn't match your current IP | Wait — it retries for ~5 minutes. If it still fails, confirm your current public IP matches the security group rule, or rerun with `--ssh-open` for the demo (never leave this on outside a live session). |
 
 ## Security Notes (demo-grade)
 

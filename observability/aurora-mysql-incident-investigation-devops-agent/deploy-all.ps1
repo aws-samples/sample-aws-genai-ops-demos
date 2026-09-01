@@ -111,7 +111,7 @@ scp @sshOpts (Join-Path $ScriptDir "bastion-scripts\*") "${sshTarget}:/tmp/"
 ssh @sshOpts $sshTarget "sudo mkdir -p /opt/aurora-demo && sudo cp /tmp/lib.sh /tmp/inject /tmp/rollback /tmp/status /tmp/list /tmp/seed-data /opt/aurora-demo/ && sudo chmod +x /opt/aurora-demo/inject /opt/aurora-demo/rollback /opt/aurora-demo/status /opt/aurora-demo/list /opt/aurora-demo/seed-data"
 
 $envContent = "REGION=$region`nCLUSTER_ID=$ClusterId`nWRITER_ENDPOINT=$WriterEndpoint`nREADER_ENDPOINT=$ReaderEndpoint`nDB_PORT=$DbPort`nDB_NAME=$DbName`nSECRET_ARN=$SecretArn"
-ssh @sshOpts $sshTarget "sudo tee /opt/aurora-demo/env >/dev/null" <<< $envContent
+$envContent | ssh @sshOpts $sshTarget "sudo tee /opt/aurora-demo/env >/dev/null"
 
 Write-Host "==> Step 7: Seed demo schema/data..." -ForegroundColor Yellow
 ssh @sshOpts $sshTarget "sudo /opt/aurora-demo/seed-data"

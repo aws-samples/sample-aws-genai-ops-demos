@@ -83,10 +83,11 @@ class AuroraDemoStack(cdk.Stack):
             version=rds.AuroraMysqlEngineVersion.of("8.0.mysql_aurora.3.08.0", "8.0")
         )
 
-        # Graviton R-class: supports Performance Insights (burstable t3/t4g do not)
-        # and demonstrates a cost-efficient Graviton default.
+        # Graviton burstable T-class: cheapest class that still supports Performance
+        # Insights / Database Insights on Aurora MySQL (only db.t3.* and
+        # db.t4g.micro/small are excluded; db.t4g.medium+ is supported).
         instance_type = ec2.InstanceType.of(
-            ec2.InstanceClass.MEMORY6_GRAVITON, ec2.InstanceSize.LARGE
+            ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.MEDIUM
         )
 
         cluster = rds.DatabaseCluster(
@@ -254,7 +255,11 @@ class AuroraDemoStack(cdk.Stack):
             "ConnectionsHighAlarm",
             alarm_name="aurora-demo-connections-high",
             metric=rds_metric("DatabaseConnections", WRITER_ID, "Maximum"),
-            threshold=150,
+            # db.t4g.medium's max_connections (~90) is well below the 150 threshold
+            # that worked on the larger default; 70 reliably trips under the
+            # connection-storm injector's saturation ceiling while staying well
+            # above steady-state baseline (~10 connections).
+            threshold=70,
             evaluation_periods=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,

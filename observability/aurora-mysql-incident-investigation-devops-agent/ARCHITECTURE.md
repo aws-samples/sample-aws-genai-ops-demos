@@ -46,7 +46,7 @@ Two CDK stacks (region-suffixed IDs), both created from `infrastructure/cdk/app.
 
 - **`AuroraDemoStack-<region>`** (main; carries the solution-tracking tag)
   - `ec2.Vpc` — 2 AZs, `nat_gateways=0`, one public subnet group (bastion) and one `PRIVATE_ISOLATED` group (DB).
-  - `rds.DatabaseCluster` — Aurora MySQL `8.0.mysql_aurora.3.08.0`, one writer + one reader (`db.r6g.large`, Graviton — required for Performance Insights, which burstable t3/t4g classes do not support), Performance Insights on, `error`/`slowquery` logs exported to CloudWatch, `storage_encrypted`, generated credentials in Secrets Manager (`aurora-demo/credentials`).
+  - `rds.DatabaseCluster` — Aurora MySQL `8.0.mysql_aurora.3.08.0`, one writer + one reader (`db.t4g.medium`, Graviton burstable — the cheapest class that still supports CloudWatch Database Insights, formerly Performance Insights; only `db.t3.*` and `db.t4g.micro`/`small` are excluded), Database Insights on (Standard mode, free tier), `error`/`slowquery` logs exported to CloudWatch, `storage_encrypted`, generated credentials in Secrets Manager (`aurora-demo/credentials`).
   - `ec2.Instance` bastion — `t3.micro`, public subnet, instance role with read on the DB secret + `rds:FailoverDBCluster`; UserData installs the MySQL client. Fixed identifiers (`aurora-demo-cluster/-writer/-reader`) keep alarm dimensions and inject scripts deterministic.
   - Six `cloudwatch.Alarm`s → SNS. EventBridge rule matches RDS failover event IDs → SNS.
   - Conditional webhook `lambda.Function` (created only when `webhookUrl` context is supplied) subscribed to the SNS topic; HMAC-signs and POSTs to the DevOps Agent webhook.
@@ -65,9 +65,9 @@ Two CDK stacks (region-suffixed IDs), both created from `infrastructure/cdk/app.
 
 - **Reliability**: reader replica + Multi-AZ failover; the `failover` scenario exercises real RTO. Alarms treat missing data as not-breaching so the steady state is clean.
 - **Security**: DB is isolated (no public access), encrypted at rest, MySQL reachable only from the bastion SG; credentials live in Secrets Manager and are fetched via instance role — never written to disk or code. SSH defaults to the operator's IP.
-- **Cost Optimization**: `nat_gateways=0` avoids NAT charges; Graviton `db.r6g.large` instances and a `t3.micro` bastion keep the running cost reasonable; `cleanup` destroys everything.
+- **Cost Optimization**: `nat_gateways=0` avoids NAT charges; Graviton `db.t4g.medium` burstable instances and a `t3.micro` bastion keep the running cost low; `cleanup` destroys everything.
 - **Operational Excellence**: one-command deploy/inject/rollback/cleanup; dedicated alarms are gated so only the intended signal fires per scenario.
 
 ### Trade-offs
 - The bastion is intentionally public for a friction-free demo (SSH-in). In a hardened setup you would reach it via SSM Session Manager (the instance role already includes `AmazonSSMManagedInstanceCore`) and drop the public IP + port 22.
-- `memory-pressure` and `replica-lag` are best-effort; on a 16 GB `db.r6g.large` freeable-memory pressure in particular is hard to force and needs sustained load. The four core scenarios (connections, CPU, deadlock, failover) are deterministic.
+- `db.t4g.medium` is a burstable, cost-optimized default rather than a fixed-performance class. `replica-lag` remains best-effort (Aurora's shared storage keeps replica lag tiny regardless of instance size). `memory-pressure` may behave differently than on a larger instance — see the [Failure Scenarios](README.md#failure-scenarios) table for current status.
