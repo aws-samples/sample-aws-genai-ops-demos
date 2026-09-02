@@ -90,6 +90,16 @@ VITE_API_ENDPOINT=$API_ENDPOINT
 EOF
 echo -e "\033[0;32m  Generated .env.production.local with Cognito and API config\033[0m"
 
+# Remove any local-preview override left over from developer testing.
+# Vite merges .env.local into every mode (including production builds), so
+# a stray VITE_MOCK_MODE=true here would silently ship the mock-mode UI to
+# the real deployment (see frontend/.env.local usage note in this repo's
+# history for how this was discovered).
+if [ -f ".env.local" ]; then
+    echo -e "\033[0;33m  Warning: removing frontend/.env.local before build (local-preview override, must not affect deployment)\033[0m"
+    rm -f .env.local
+fi
+
 # Build the frontend
 echo "  Running Vite build..."
 npm run build
@@ -97,6 +107,13 @@ npm run build
 if [ $? -ne 0 ]; then
     popd > /dev/null
     echo "Error: Frontend build failed"
+    exit 1
+fi
+
+# Fail the deployment rather than ship a build with mock mode baked in
+if grep -q "VITE_MOCK_MODE" dist/assets/*.js 2>/dev/null; then
+    popd > /dev/null
+    echo -e "\033[0;31mError: Built bundle references VITE_MOCK_MODE - refusing to deploy a mock build\033[0m"
     exit 1
 fi
 

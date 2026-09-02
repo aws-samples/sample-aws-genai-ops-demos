@@ -103,6 +103,15 @@ VITE_API_ENDPOINT=$ApiEndpoint
 $envContent | Out-File -FilePath ".env.production.local" -Encoding UTF8
 Write-Host "  Generated .env.production.local with Cognito and API config" -ForegroundColor Green
 
+# Remove any local-preview override left over from developer testing.
+# Vite merges .env.local into every mode (including production builds), so
+# a stray VITE_MOCK_MODE=true here would silently ship the mock-mode UI to
+# the real deployment.
+if (Test-Path ".env.local") {
+    Write-Host "  Warning: removing frontend/.env.local before build (local-preview override, must not affect deployment)" -ForegroundColor Yellow
+    Remove-Item ".env.local" -Force
+}
+
 # Build the frontend
 Write-Host "  Running Vite build..." -ForegroundColor Gray
 npm run build
@@ -110,6 +119,14 @@ npm run build
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     Write-Error "Frontend build failed"
+    exit 1
+}
+
+# Fail the deployment rather than ship a build with mock mode baked in
+$mockModeFound = Select-String -Path "dist/assets/*.js" -Pattern "VITE_MOCK_MODE" -Quiet -ErrorAction SilentlyContinue
+if ($mockModeFound) {
+    Pop-Location
+    Write-Error "Built bundle references VITE_MOCK_MODE - refusing to deploy a mock build"
     exit 1
 }
 
