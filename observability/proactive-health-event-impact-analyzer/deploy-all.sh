@@ -117,11 +117,18 @@ echo "  Deployment Script"
 echo "========================================"
 
 if [ "$SKIP_SETUP" = false ]; then
-    # Use shared prerequisites if available (monorepo), otherwise inline checks
+    # Use shared prerequisites if available (monorepo), otherwise inline checks.
+    # The shared script validates the AWS CLI, credentials, region, and — via
+    # --required-service agentcore — that AWS DevOps Agent (AgentCore) is actually
+    # reachable in the resolved region (it calls bedrock-agentcore-control), then
+    # exports AWS_REGION / AWS_ACCOUNT_ID / AWS_ARN. The wizard reuses those exports
+    # instead of re-checking, so prerequisites are validated exactly once.
     SHARED_PREREQS="$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh"
     if [ -f "$SHARED_PREREQS" ]; then
-        source "$SHARED_PREREQS" bedrock 2.34.20
+        source "$SHARED_PREREQS" --required-service agentcore --min-aws-cli-version 2.34.20
         region=$AWS_REGION
+        # Hand the validated context to the wizard so it does not re-run these checks.
+        export AWS_REGION AWS_ACCOUNT_ID AWS_ARN
     else
         check_prerequisites
         region=$(get_aws_region)
@@ -151,9 +158,10 @@ echo "Launching interactive setup wizard..."
 echo "The wizard will guide you through DevOps Agent configuration and CDK deployment."
 echo ""
 
-cd "$SCRIPT_DIR"
-npx ts-node scripts/setup-wizard.ts
+cd "$SCRIPT_DIR/scripts"
+npx ts-node setup-wizard.ts
 wizard_exit_code=$?
+cd "$SCRIPT_DIR"
 
 if [ $wizard_exit_code -ne 0 ]; then
     echo ""

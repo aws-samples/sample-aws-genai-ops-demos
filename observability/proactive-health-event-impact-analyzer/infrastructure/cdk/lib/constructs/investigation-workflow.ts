@@ -54,6 +54,17 @@ export class InvestigationWorkflow extends Construct {
       ? logs.RetentionDays.THREE_MONTHS
       : logs.RetentionDays.TWO_WEEKS;
 
+    // Local esbuild bundling (esbuild is a devDependency), never Docker.
+    //
+    // Cross-platform note: NodejsFunction local bundling must NOT shell out to a
+    // host shell. aws-cdk-lib < 2.246.0 assembled the esbuild invocation as a
+    // command string and ran it through a shell (cmd/powershell on Windows),
+    // which fails on machines without powershell on PATH ("spawnSync
+    // powershell.exe ENOENT") and is otherwise non-deterministic across
+    // platforms. aws-cdk-lib >= 2.246.0 executes esbuild via array-based
+    // spawnSync with no shell, so bundling is deterministic on Windows, macOS,
+    // and Linux. The floor is pinned in infrastructure/cdk/package.json; do not
+    // lower it.
     const bundlingOptions = {
       forceDockerBundling: false,
       externalModules: ['@aws-sdk/*'],
@@ -451,8 +462,10 @@ export class InvestigationWorkflow extends Construct {
       timeToLiveAttribute: 'ttl',
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      deletionProtection: false,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Production protects the token table from accidental deletion and retains
+      // it on stack removal; non-production stays disposable for easy teardown.
+      deletionProtection: isProduction,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
     });
 
     tokenTable.grantReadWriteData(investigationTrigger);
