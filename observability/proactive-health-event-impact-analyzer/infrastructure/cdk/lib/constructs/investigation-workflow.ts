@@ -451,8 +451,10 @@ export class InvestigationWorkflow extends Construct {
       timeToLiveAttribute: 'ttl',
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      deletionProtection: false,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Production protects the token table from accidental deletion and retains
+      // it on stack removal; non-production stays disposable for easy teardown.
+      deletionProtection: isProduction,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
     });
 
     tokenTable.grantReadWriteData(investigationTrigger);

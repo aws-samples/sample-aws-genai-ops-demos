@@ -106,7 +106,7 @@ if (-not $SkipSetup) {
     # Use shared prerequisites if available (monorepo), otherwise inline checks
     $sharedPrereqs = Join-Path $ScriptDir "..\..\shared\scripts\check-prerequisites.ps1"
     if (Test-Path $sharedPrereqs) {
-        & $sharedPrereqs -RequiredService "bedrock" -MinAwsCliVersion "2.34.20"
+        & $sharedPrereqs -MinAwsCliVersion "2.34.20"
         $region = $global:AWS_REGION
     } else {
         $region = Test-Prerequisites
@@ -147,9 +147,9 @@ Write-Host "Launching interactive setup wizard..." -ForegroundColor Cyan
 Write-Host "The wizard will guide you through DevOps Agent configuration and CDK deployment." -ForegroundColor Gray
 Write-Host ""
 
-Push-Location $ScriptDir
+Push-Location (Join-Path $ScriptDir "scripts")
 try {
-    npx ts-node scripts/setup-wizard.ts
+    npx ts-node setup-wizard.ts
     $wizardExitCode = $LASTEXITCODE
 } finally {
     Pop-Location
