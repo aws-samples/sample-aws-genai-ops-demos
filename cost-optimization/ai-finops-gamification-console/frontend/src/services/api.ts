@@ -1,7 +1,9 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { Finding, Team, ScopingRule, LeaderboardEntry, DashboardStats, Learning } from '../types';
+import { mockRequest } from './mockData';
 
 const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT || '';
+const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true';
 
 async function getAuthHeaders(): Promise<HeadersInit> {
   const session = await fetchAuthSession();
@@ -17,6 +19,10 @@ async function apiRequest<T>(
   method: string = 'GET',
   body?: unknown
 ): Promise<T> {
+  if (MOCK_MODE) {
+    return mockRequest<T>(path, method, body);
+  }
+
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_ENDPOINT}${path}`, {
     method,

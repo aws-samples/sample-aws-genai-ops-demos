@@ -20,7 +20,23 @@ export interface UserInfo {
   groups: string[];
 }
 
+// Local preview mode: bypasses Cognito auth so the UI can be viewed without a
+// deployed backend. Enabled only via VITE_MOCK_MODE=true (frontend/.env.local,
+// gitignored). Never active in a real deployment.
+const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true';
+
+const MOCK_USER_INFO: UserInfo = {
+  userId: 'mock-admin-001',
+  email: 'admin@example.com',
+  name: 'Demo Admin',
+  groups: ['finops-admin'],
+};
+
 function App() {
+  if (MOCK_MODE) {
+    return <AuthenticatedApp signOut={() => window.alert('Sign out disabled in local preview mode')} />;
+  }
+
   return (
     <Authenticator>
       {({ signOut, user }) => (
@@ -36,10 +52,13 @@ interface AuthenticatedAppProps {
 }
 
 function AuthenticatedApp({ signOut, user }: AuthenticatedAppProps) {
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(MOCK_MODE ? MOCK_USER_INFO : null);
+  const [loading, setLoading] = useState(!MOCK_MODE);
 
   useEffect(() => {
+    if (MOCK_MODE) {
+      return;
+    }
     async function loadUserInfo() {
       try {
         const session = await fetchAuthSession();
