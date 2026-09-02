@@ -622,7 +622,7 @@ describe('HealthEventAnalyzerStack - SNS Topic Encryption and Resource Policy (R
     expect(denyInsecureStmt.Condition?.Bool?.['aws:SecureTransport']).toBe('false');
   });
 
-  test('SNS resource policy restricts subscribe to owning account (Req 14.4)', () => {
+  test('SNS resource policy restricts subscribe/unsubscribe to owning account (Req 14.4)', () => {
     const topicPolicies = template.findResources('AWS::SNS::TopicPolicy');
     const policyValues = Object.values(topicPolicies);
     const policy = policyValues[0] as any;
@@ -631,11 +631,8 @@ describe('HealthEventAnalyzerStack - SNS Topic Encryption and Resource Policy (R
     const subscribeStmt = statements.find((s: any) => s.Sid === 'RestrictSubscriptions');
     expect(subscribeStmt).toBeDefined();
     expect(subscribeStmt.Effect).toBe('Allow');
-    // Only sns:Subscribe is scoped. sns:Unsubscribe is NOT a valid action in an
-    // SNS resource policy — SNS rejects it at deploy time with "Policy statement
-    // action out of service scope", so it must not appear here.
-    expect(subscribeStmt.Action).toBe('sns:Subscribe');
-    expect(JSON.stringify(subscribeStmt.Action)).not.toContain('sns:Unsubscribe');
+    expect(subscribeStmt.Action).toContain('sns:Subscribe');
+    expect(subscribeStmt.Action).toContain('sns:Unsubscribe');
     // Principal should be the owning account
     expect(subscribeStmt.Principal?.AWS).toBeDefined();
   });

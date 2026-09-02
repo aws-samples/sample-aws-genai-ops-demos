@@ -46,10 +46,8 @@ export class Notification extends Construct {
       partitionKey: { name: 'teamId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      // Production protects the table from accidental deletion and retains it on
-      // stack removal; non-production stays disposable for easy teardown.
-      deletionProtection: isProduction,
-      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      deletionProtection: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     // Agent spaces routing table — maps AWS account IDs to DevOps Agent spaces
@@ -59,10 +57,8 @@ export class Notification extends Construct {
       partitionKey: { name: 'accountId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      // Production protects the table from accidental deletion and retains it on
-      // stack removal; non-production stays disposable for easy teardown.
-      deletionProtection: isProduction,
-      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      deletionProtection: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
   }
 }

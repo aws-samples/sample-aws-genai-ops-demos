@@ -1,5 +1,5 @@
 import { EventBridgeEvent } from 'aws-lambda';
-import { DynamoDBClient, GetItemCommand, ScanCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, ScanCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } from '@aws-sdk/client-sfn';
 import {
   DevOpsAgentClient,
@@ -118,8 +118,8 @@ export const handler = async (
       console.log(`Task failure sent for investigation ${correlationKey}: ${errorMessage}`);
     }
 
-    // Clean up the exact token record we resolved
-    await deleteTaskToken(taskTokenRecord.investigationId);
+    // Clean up the token record
+    await deleteTaskToken(correlationKey);
   } catch (error) {
     console.error(`Failed to send task response for ${correlationKey}:`, error);
     throw error;
@@ -191,32 +191,16 @@ async function getAgentAnalysis(agentSpaceId: string, executionId: string): Prom
 
 // ─── Correlation ────────────────────────────────────────────────────────────
 
-/** Extracts the value of a `[PREFIX:value]` tag from text, or null if absent/empty. */
-function extractTag(text: string, prefix: string): string | null {
-  const start = text.indexOf(prefix);
-  if (start === -1) return null;
-  const valueStart = start + prefix.length;
-  const end = text.indexOf(']', valueStart);
-  if (end === -1) return null;
-  return text.substring(valueStart, end).trim() || null;
-}
-
 /**
  * Extracts the correlation key from the first journal message.
  *
- * The Investigation Trigger embeds correlation data in three places:
- * 1. Description: [INVESTIGATION_ID:{incidentId}]  — unique per investigation
- * 2. Description: [CORRELATION_ID:{healthEventArn}] — shared across investigations for one event
- * 3. Title: [{incidentId}] AWS Health: ...
+ * The Investigation Trigger embeds correlation data in two places:
+ * 1. Description starts with: [CORRELATION_ID:{healthEventArn}]
+ * 2. Title starts with: [{incidentId}] AWS Health: ...
  *
- * Strategy (most-specific first):
- * - Primary: incidentId from [INVESTIGATION_ID:...] → keyed lookup by investigationId (unique).
- * - Legacy: healthEventArn from [CORRELATION_ID:...] → scan by healthEventId (NOT unique; first match).
- * - Fallback: incidentId from title [{incidentId}] → lookup by investigationId.
- *
- * The healthEventArn is shared by every investigation spawned for the same Health event,
- * so it cannot disambiguate concurrent investigations. INVESTIGATION_ID is preferred
- * because it maps 1:1 to a token-table row.
+ * Strategy:
+ * - Primary: extract healthEventArn from [CORRELATION_ID:...] → search DynamoDB by healthEventId
+ * - Fallback: extract incidentId from title [{incidentId}] → search DynamoDB by investigationId
  */
 function extractCorrelationKey(message: MessageContent): string | null {
   if (message.role !== 'user') {
@@ -228,26 +212,34 @@ function extractCorrelationKey(message: MessageContent): string | null {
     .map(c => c.text!)
     .join(' ');
 
-  // Primary: [INVESTIGATION_ID:{incidentId}] — unique per investigation.
-  const investigationId = extractTag(textContent, '[INVESTIGATION_ID:');
-  if (investigationId) {
-    console.log(`Correlation via INVESTIGATION_ID tag: ${investigationId}`);
-    return investigationId;
-  }
-
-  // Legacy: [CORRELATION_ID:{healthEventArn}] — kept for rows created before
-  // INVESTIGATION_ID tagging. Returns an `arn:`-prefixed key handled by the scan path.
-  const correlationId = extractTag(textContent, '[CORRELATION_ID:');
-  if (correlationId) {
-    console.log(`Correlation via CORRELATION_ID tag: ${correlationId}`);
-    return `arn:${correlationId}`;
+  // Primary: [CORRELATION_ID:{healthEventArn}] in description
+  const prefix = '[CORRELATION_ID:';
+  const startIdx = textContent.indexOf(prefix);
+  if (startIdx !== -1) {
+    const valueStart = startIdx + prefix.length;
+    const endIdx = textContent.indexOf(']', valueStart);
+    if (endIdx !== -1) {
+      const correlationId = textContent.substring(valueStart, endIdx).trim();
+      if (correlationId) {
+        console.log(`Correlation via CORRELATION_ID tag: ${correlationId}`);
+        return `arn:${correlationId}`;
+      }
+    }
   }
 
   // Fallback: [{incidentId}] in title (format: TITLE: [{incidentId}] AWS Health: ...)
-  const titleIncidentId = extractTag(textContent, 'TITLE: [');
-  if (titleIncidentId && titleIncidentId.startsWith('health-')) {
-    console.log(`Correlation via title incidentId: ${titleIncidentId}`);
-    return titleIncidentId;
+  const titlePrefix = 'TITLE: [';
+  const titleIdx = textContent.indexOf(titlePrefix);
+  if (titleIdx !== -1) {
+    const idStart = titleIdx + titlePrefix.length;
+    const idEnd = textContent.indexOf(']', idStart);
+    if (idEnd !== -1) {
+      const incidentId = textContent.substring(idStart, idEnd).trim();
+      if (incidentId && incidentId.startsWith('health-')) {
+        console.log(`Correlation via title incidentId: ${incidentId}`);
+        return incidentId;
+      }
+    }
   }
 
   console.warn('No correlation key found in message text');
@@ -265,20 +257,14 @@ function buildOutput(
   agentAnalysis: string | null,
   investigationLink: string
 ): object {
-  // The task priority (derived from the Health event category at intake) is only a
-  // fallback here. The reported severity should reflect the agent's own conclusion.
-  const taskPriority = detail.data.priority || 'MEDIUM';
+  const priority = detail.data.priority || 'MEDIUM';
 
   if (!agentAnalysis) {
-    // Degraded case: the investigation completed but we could not retrieve its
-    // analysis. This is intentionally NOT downgraded to LOW — we keep the task
-    // priority so the missing-analysis case still surfaces an OpsItem for a human
-    // to review, rather than being silently skipped by the workflow's LOW gate.
     return {
       investigationStatus: 'NO_IMPACT',
       summary: 'Investigation completed but no analysis available',
       rootCause: null,
-      priority: taskPriority,
+      priority,
       findings: [],
       recommendations: [],
       investigationLink,
@@ -286,15 +272,7 @@ function buildOutput(
   }
 
   // Parse the agent's markdown analysis to extract structured data
-  const parsed = parseAgentAnalysis(agentAnalysis, taskPriority);
-
-  // Severity = the highest per-workload severity the agent assigned in
-  // "## Key Findings". Fall back to the task priority only when impact exists but
-  // no severity word was parsed. No impact → LOW, so the workflow's priority gate
-  // routes it to the no-OpsItem branch.
-  const priority = parsed.hasImpact
-    ? (parsed.overallSeverity || taskPriority)
-    : 'LOW';
+  const parsed = parseAgentAnalysis(agentAnalysis, priority);
 
   return {
     investigationStatus: parsed.hasImpact ? 'IMPACT_DETECTED' : 'NO_IMPACT',
@@ -311,11 +289,10 @@ function buildOutput(
  * Parses the agent's markdown analysis into structured findings and recommendations.
  * The agent produces rich markdown with headers, tables, and bullet points.
  */
-function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
+function parseAgentAnalysis(analysis: string, priority: string): {
   hasImpact: boolean;
   summary: string;
   rootCause: string | null;
-  overallSeverity: string | null;
   findings: Array<{ description: string; severity: string; affectedResources: string[]; owningTeam?: string }>;
   recommendations: Array<{ description: string; priority: string }>;
 } {
@@ -323,7 +300,6 @@ function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
     hasImpact: false,
     summary: '',
     rootCause: null as string | null,
-    overallSeverity: null as string | null,
     findings: [] as Array<{ description: string; severity: string; affectedResources: string[]; owningTeam?: string }>,
     recommendations: [] as Array<{ description: string; priority: string }>,
   };
@@ -342,28 +318,18 @@ function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
   const answersSection = analysis.match(/## Answers to Your Questions([\s\S]*?)$/);
   const contentToSearch = findingsSection?.[1] || answersSection?.[1] || analysis;
 
-  // Severities of ALL findings, used to compute the overall severity. Kept
-  // separate from result.findings, which is capped at 5 for display — otherwise
-  // a CRITICAL workload listed 6th would be dropped and the overall severity
-  // (and the resulting OpsItem) would be under-reported.
-  const allFindingSeverities: string[] = [];
   const bulletFindings = contentToSearch.match(/[-•*]\s+\*\*(.+?)\*\*[:\s]*(.+)/g);
   if (bulletFindings) {
-    bulletFindings.forEach((bullet, i) => {
+    for (const bullet of bulletFindings.slice(0, 5)) {
       const match = bullet.match(/[-•*]\s+\*\*(.+?)\*\*[:\s]*(.*)/);
-      if (!match) return;
-      // The agent writes the impact severity in the bullet detail
-      // ("- **web-tier**: HIGH — ..."); use it, not the intake priority.
-      const severity = parseSeverity(match[2]) || fallbackPriority;
-      allFindingSeverities.push(severity);
-      if (i < 5) {
+      if (match) {
         result.findings.push({
           description: `${match[1]}: ${match[2]}`.trim(),
-          severity,
+          severity: priority,
           affectedResources: [],
         });
       }
-    });
+    }
   }
 
   // Extract recommendations from priority tables or numbered lists
@@ -432,14 +398,10 @@ function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
   if (result.findings.length === 0 && result.hasImpact) {
     result.findings.push({
       description: result.summary.substring(0, 200),
-      severity: fallbackPriority,
+      severity: priority,
       affectedResources: [],
     });
-    allFindingSeverities.push(fallbackPriority);
   }
-
-  // Overall severity = the highest severity across ALL findings (the agent's conclusion).
-  result.overallSeverity = highestSeverity(allFindingSeverities);
 
   return result;
 }
@@ -449,81 +411,70 @@ function mapPriority(p: string): string {
   return map[p] || 'MEDIUM';
 }
 
-// Severity ranking used to pick the overall (highest) investigation severity.
-const SEVERITY_RANK: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, MINIMAL: 0 };
-
-/**
- * Extracts the impact-severity word the agent wrote in a "## Key Findings"
- * bullet (e.g. "- **web-tier**: HIGH — ..."). Returns null when none is present.
- */
-function parseSeverity(text: string): string | null {
-  // Per the skill's "## Key Findings" format the severity leads the bullet detail
-  // ("<SEVERITY> — <statement>"), so only accept a severity word at the start
-  // (after optional markdown/whitespace). This avoids picking up a severity word
-  // later in the sentence (e.g. "LOW baseline, escalates to CRITICAL under load").
-  const m = text.trim().toUpperCase().match(/^[*_\s]*(CRITICAL|HIGH|MEDIUM|LOW|MINIMAL)\b/);
-  return m ? m[1] : null;
-}
-
-/** Returns the highest-ranked severity in the list, or null if the list is empty. */
-function highestSeverity(severities: string[]): string | null {
-  let best: string | null = null;
-  for (const s of severities) {
-    if (best === null || (SEVERITY_RANK[s] ?? -1) > (SEVERITY_RANK[best] ?? -1)) {
-      best = s;
-    }
-  }
-  return best;
-}
-
 // ─── DynamoDB Operations ────────────────────────────────────────────────────
 
-async function findTaskToken(correlationKey: string): Promise<{ taskToken: string; investigationId: string } | null> {
-  // Preferred path: the key IS the unique investigationId (token table partition
-  // key) → a single, unambiguous GetItem. No Scan, no first-match ambiguity.
-  if (!correlationKey.startsWith('arn:')) {
-    const { Item } = await dynamoClient.send(new GetItemCommand({
+async function findTaskToken(correlationKey: string): Promise<{ taskToken: string; healthEventId: string } | null> {
+  // If it's an ARN-based lookup, search by healthEventId
+  if (correlationKey.startsWith('arn:')) {
+    const healthEventArn = correlationKey.replace('arn:', '');
+    console.log(`Searching DynamoDB by healthEventId: ${healthEventArn}`);
+    const { Items } = await dynamoClient.send(new ScanCommand({
       TableName: TASK_TOKEN_TABLE,
-      Key: { investigationId: { S: correlationKey } },
+      FilterExpression: 'healthEventId = :arn',
+      ExpressionAttributeValues: {
+        ':arn': { S: healthEventArn },
+      },
     }));
-    if (Item?.taskToken?.S) {
-      return { taskToken: Item.taskToken.S, investigationId: correlationKey };
+
+    if (Items && Items.length > 0) {
+      return {
+        taskToken: Items[0].taskToken.S!,
+        healthEventId: Items[0].healthEventId?.S || '',
+      };
     }
     return null;
   }
 
-  // Legacy fallback for rows written before INVESTIGATION_ID tagging: scan by
-  // healthEventId. This is NOT unique across concurrent investigations for the
-  // same Health event and can only return an arbitrary match — new investigations
-  // never reach this path.
-  const healthEventArn = correlationKey.replace('arn:', '');
-  console.log(`Searching DynamoDB by healthEventId (legacy fallback): ${healthEventArn}`);
+  // Direct lookup by investigationId
   const { Items } = await dynamoClient.send(new ScanCommand({
     TableName: TASK_TOKEN_TABLE,
-    FilterExpression: 'healthEventId = :arn',
+    FilterExpression: 'investigationId = :id',
     ExpressionAttributeValues: {
-      ':arn': { S: healthEventArn },
+      ':id': { S: correlationKey },
     },
   }));
-  if (Items && Items.length > 0 && Items[0].investigationId?.S) {
+
+  if (Items && Items.length > 0) {
     return {
       taskToken: Items[0].taskToken.S!,
-      investigationId: Items[0].investigationId.S,
+      healthEventId: Items[0].healthEventId?.S || '',
     };
   }
+
   return null;
 }
 
-/**
- * Deletes the token row by its exact investigationId (the one resolved by
- * findTaskToken). Deleting the precise row we just consumed avoids the previous
- * re-scan, which could delete a different row than the one that was resolved
- * when multiple rows shared a healthEventId.
- */
-async function deleteTaskToken(investigationId: string): Promise<void> {
-  if (!investigationId) return;
+async function deleteTaskToken(correlationKey: string): Promise<void> {
+  if (correlationKey.startsWith('arn:')) {
+    const healthEventArn = correlationKey.replace('arn:', '');
+    const { Items } = await dynamoClient.send(new ScanCommand({
+      TableName: TASK_TOKEN_TABLE,
+      FilterExpression: 'healthEventId = :arn',
+      ExpressionAttributeValues: {
+        ':arn': { S: healthEventArn },
+      },
+    }));
+    if (Items && Items.length > 0 && Items[0].investigationId?.S) {
+      await dynamoClient.send(new DeleteItemCommand({
+        TableName: TASK_TOKEN_TABLE,
+        Key: { investigationId: { S: Items[0].investigationId.S } },
+      }));
+    }
+    return;
+  }
+
   await dynamoClient.send(new DeleteItemCommand({
     TableName: TASK_TOKEN_TABLE,
-    Key: { investigationId: { S: investigationId } },
+    Key: { investigationId: { S: correlationKey } },
   }));
 }

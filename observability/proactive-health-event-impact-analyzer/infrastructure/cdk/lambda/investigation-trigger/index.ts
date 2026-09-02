@@ -68,12 +68,8 @@ export const handler = async (event: TriggerInput): Promise<void> => {
 
   console.log(`Using agent space: ${agentSpace.spaceName || 'default'} (account: ${healthEvent.sourceAccountId || 'local'})`);
 
-  // Build the investigation request for DevOps Agent webhook.
-  // The random suffix guarantees a unique investigationId even when two
-  // triggers fire in the same millisecond for the same event (e.g. duplicate
-  // EventBridge deliveries), so concurrent investigations never share a
-  // token-table partition key.
-  const incidentId = `health-${healthEvent.service}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  // Build the investigation request for DevOps Agent webhook
+  const incidentId = `health-${healthEvent.service}-${Date.now()}`;
 
   const maintenanceWindow = healthEvent.startTime && healthEvent.endTime
     ? `${healthEvent.startTime} to ${healthEvent.endTime}`
@@ -93,7 +89,7 @@ export const handler = async (event: TriggerInput): Promise<void> => {
     action: 'created' as const,
     priority: mapCategoryToPriority(healthEvent.category),
     title: `[${incidentId}] AWS Health: ${healthEvent.service} ${healthEvent.eventType} in ${healthEvent.region}`,
-    description: buildDescription(healthEvent, maintenanceWindow, jiraConfig, incidentId),
+    description: buildDescription(healthEvent, maintenanceWindow, jiraConfig),
     timestamp: new Date().toISOString(),
     service: healthEvent.service,
     data: {
@@ -201,7 +197,7 @@ function mapCategoryToPriority(category: string): 'CRITICAL' | 'HIGH' | 'MEDIUM'
   }
 }
 
-function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, jiraConfig: JiraConfig | null, incidentId: string): string {
+function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, jiraConfig: JiraConfig | null): string {
   const resourceList = healthEvent.affectedResources
     .map(r => `  - ${r.resourceId} (${r.status})`)
     .join('\n');
@@ -218,7 +214,6 @@ function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, j
     : '';
 
   return `[CORRELATION_ID:${healthEvent.eventId}]
-[INVESTIGATION_ID:${incidentId}]
 ${jiraTag}
 AWS Health Event detected. Please investigate the impact on our workloads.
 
