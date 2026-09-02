@@ -104,29 +104,32 @@ rebuild the image; deploy auto-detects docker/finch/nerdctl).
 ### Method B — CloudFormation (`infrastructure/cloudformation/`)
 
 ```bash
-# script-only agent (no DLT) — interactive Bedrock model picker
+# script-only agent (no DLT) — model optional (auto-resolved), no local engine
 # (region auto-detected; stack name defaults to ai-load-test-gen)
 infrastructure/cloudformation/deploy.sh
 
 # with DLT wired
 infrastructure/cloudformation/deploy.sh --dlt-stack LaunchWizard-dlt-poc --dlt-region us-west-2
 ```
+Windows: `./deploy.ps1 [-DltStack ... -DltRegion ...] [-NetworkMode vpc]` (all optional; same behavior as `deploy.sh`).
 
-The CloudFormation path builds the image **in-stack** via CodeBuild (no local
-container engine needed) and offers an **interactive Bedrock model picker**
-(non-interactive: `--bedrock-model <id> [--bedrock-fallback <id>]`). There is no
+The CloudFormation path builds the image **in-stack** via CodeBuild (**no local
+container engine needed** — use this path if you don't have Docker/finch/nerdctl).
+The Bedrock model is **optional and auto-resolved to the deploy region**, exactly
+like the CDK path (override with `--bedrock-model` / `-BedrockModel`). There is no
 `aws cloudformation package` step — the build-trigger Lambda is inlined. Teardown:
-`infrastructure/cloudformation/teardown.sh` (auto-detects region; defaults to the `ai-load-test-gen` stack).
+`infrastructure/cloudformation/teardown.sh` (or `teardown.ps1` on Windows) —
+auto-detects region; defaults to the `ai-load-test-gen` stack.
 
-CloudFormation `deploy.sh` flags:
+CloudFormation `deploy.sh` flags (PowerShell `deploy.ps1` takes the same options as PascalCase parameters, e.g. `-BedrockModel`, `-NetworkMode`, `-DltStack`):
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--dlt-stack` | (optional) | DLT stack name. Omit for a script-only agent; pass it (now or later) to wire DLT. |
 | `--dlt-region` | — | Required only when `--dlt-stack` is given |
 | `--bedrock-region` | = `--region` | Region whose inference profiles are listed / invoked |
-| `--bedrock-model` | (interactive) | Non-interactive PRIMARY model/profile id (skips the menu) |
-| `--bedrock-fallback` | (interactive) | Non-interactive FALLBACK id |
+| `--bedrock-model` | (optional) | PRIMARY model/profile id; omit to auto-resolve a region-appropriate default |
+| `--bedrock-fallback` | (optional) | FALLBACK id; omit to auto-resolve a default |
 | `--region` | (auto-detect) | Deploy region. Defaults to `AWS_DEFAULT_REGION`/`AWS_REGION`, else `aws configure get region`, else `us-east-1` |
 | `--stack-name` | `ai-load-test-gen` | CloudFormation stack name |
 | `--network-mode public\|vpc` | `public` | Runtime network placement. `public` creates no VPC (AWS-managed egress); `vpc` creates the private VPC (NAT + endpoints + SG). Inbound is IAM SigV4 either way. |
