@@ -107,10 +107,117 @@ This demo builds an **ownership and gamification layer** on top of [AWS FinOps A
 - AWS CDK (installed automatically)
 
 ### FinOps Agent Setup (Required)
-1. Create a FinOps Agent in the AWS Console (us-east-1)
-2. Connect to your Slack workspace
-3. Create a scheduled automation for weekly cost reports
-4. Note the Slack channel ID for the ingestion configuration
+
+This demo relies on **two separate Slack integrations** — easy to conflate, but they serve different purposes:
+
+1. **FinOps Agent's own Slack connection**: AWS-managed OAuth that lets the Agent *post* reports into a channel. One-way (post-only); the Agent cannot read replies or accept commands through it.
+2. **This demo's ingestion bot**: a separate Slack app you create with a bot token, so the ingestion Lambda can *read* channel history via `conversations.history`. The Agent's own integration does not expose a reusable token, so this second app is required regardless.
+
+**1. Create the FinOps Agent** (preview, `us-east-1` only)
+- Sign in to the AWS Console, switch Region to US East (N. Virginia)
+- Open the [AWS FinOps Agent console](https://docs.aws.amazon.com/finops-agent/latest/userguide/getting-started.html) and run the creation wizard (it provisions the required IAM roles automatically)
+
+**2. Register the Agent's Slack integration**
+
+This is a two-part flow: registering the integration (once per AWS account) and connecting a channel (once per agent). Don't confuse the two buttons in the console — **Add integration** does the account-level OAuth registration; **Add connection** (a separate step, done afterward) binds a specific Slack channel to your agent.
+
+**2a. Register the integration** (account level, one-time per AWS account)
+- Turn off multi-session mode in the console first (the OAuth flow fails while it's on)
+- From the FinOps Agent console, choose **Add integration** → **Slack**
+- The wizard has 3 steps: **Getting started** → **Authorize and connect** (redirects to Slack, approve the requested permissions) → **Complete**
+- On completion you'll see the connected workspace name and an **Integration ID** (e.g. `Connected workspace: Crawlo`, `Integration ID: 98jsod5926hkomxssa77xnc7`) — note this down, you'll select it in the next step
+- This integration is now available to any agent in the account
+
+**2b. Get the Slack channel ID**
+- In Slack, open the channel you want reports posted to (create one, e.g. `#finops-test`, if needed)
+- Right-click the channel name → **View channel details** → copy the channel ID at the bottom (e.g. `C04ABCDEF12`) — you'll need this now and again later for the ingestion bot
+
+**2c. Add a channel connection to your agent**
+- Go to your agent's detail page → **Add connection** → **Slack**
+- Select the Slack integration you registered in step 2a from the dropdown
+- Paste the channel ID from step 2b
+- Choose **Create**
+- If the app hasn't been added to the channel yet, the console blocks you here with: *"You must add the AWS FinOps Agent app to the channel before connecting."* If you see this, go to step 2d and come back.
+
+**2d. Add the AWS FinOps Agent app to the Slack channel**
+- In Slack, open the channel → channel name → **Integrations** tab → **Add an App**
+- Search for the app — its name is region-qualified, e.g. **"AWS FinOps Agent US EAST..."** (not just "AWS FinOps Agent"), so search for "FinOps" if the exact name doesn't autocomplete
+- Add it, then return to step 2c and retry **Create**
+
+See [Enable Slack with AWS FinOps Agent](https://docs.aws.amazon.com/finops-agent/latest/userguide/slack-integration.html) for the full reference.
+
+**3. Create a separate Slack app for ingestion**
+
+The AWS FinOps Agent Slack integration from step 2 is post-only by design — it posts reports but cannot read channel history back out. This demo needs its own Slack app, with its own bot token, to read what the Agent posted.
+
+- [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
+- In the "Create new app" dialog, Slack offers four starting points: **AI agent**, **Starter app**, **From a manifest**, and **Blank app**. Choose **Blank app** ("Empty app with minimal setup") — the others bundle AI/event/command features this app doesn't need; it only has to expose a bot token for reading history.
+- Name it (e.g. `finops-gamification-ingestion`) and pick the same Slack workspace you used in step 2
+- Left sidebar → **OAuth & Permissions** → **Bot Token Scopes** → add `channels:history` (public channel) or `groups:history` (private channel), plus `channels:read`
+- Scroll up → button labeled **Install to Workspace** (it shows your actual workspace name, e.g. "Install to Crawlo") → Allow
+- Copy the **Bot User OAuth Token** (`xoxb-...`)
+- Invite this bot to the same channel used in step 2: `/invite @YourAppName`
+
+At this point there are two Slack apps in the workspace, serving opposite one-way purposes:
+| App | Created by | Direction | Purpose |
+|---|---|---|---|
+| AWS FinOps Agent [region] | AWS (step 2a) | Write-only | Posts reports into the channel |
+| Your ingestion app (this step) | You | Read-only | Lets this demo's Lambda read those posts back out |
+
+**Common error: `{"ok": false, "error": "not_in_channel"}`**
+
+Installing the app to the workspace does not automatically add its bot user to any channel. If a test API call returns this error, the bot hasn't actually joined the channel yet:
+- In Slack, open the channel and run `/invite @YourAppName`, or use channel name → **Integrations** tab → **Add an App**
+- If you added `channels:history`/`groups:history` *after* the first install, you must reinstall (click **Install to Workspace** again) for the new scope to take effect — adding a scope alone does not retroactively apply it
+
+**Verify what the ingestion Lambda will actually receive**
+
+Before wiring the token into this demo, confirm what a real report message looks like via the raw API (not just what's visually rendered in Slack):
+
+```bash
+curl -s "https://slack.com/api/conversations.history?channel=YOUR_CHANNEL_ID&limit=5" \
+  -H "Authorization: Bearer xoxb-YOUR-TOKEN" | python3 -m json.tool
+```
+
+Confirmed finding from testing this against a real report (August 2026 test run): **the report content is not in the `text` field.** The Agent posts using Slack Block Kit, and `text` is a truncated fallback string, e.g.:
+
+```json
+"text": "## AWS Cost Report — August 2026  **Total Spend:** $72.22 across 21 services | **Anomalies (>10%):*…"
+```
+
+The actual report — the "Top 10 Services by Spend" and "Cost Anomalies" tables, and critically the **Optimization Recommendations** list this demo's ingestion depends on — lives entirely in the message's `blocks` array as structured Block Kit elements (`header`, `table`, and `rich_text` blocks with a `rich_text_list`). Each recommendation is a `rich_text_list` item built from typed text runs, for example:
+
+```json
+{"type": "text", "text": "Stop idle RDS instance", "style": {"bold": true}},
+{"type": "text", "text": " — "},
+{"type": "text", "text": "devops-agent-eks-dev-postgres", "style": {"code": true}},
+{"type": "text", "text": " (eu-west-1) — "},
+{"type": "text", "text": "$13.91/month", "style": {"bold": true}},
+{"type": "text", "text": " | Effort: Low"}
+```
+
+This means `ingestion_handler.py`'s original approach — regex matching against `message.get('text', '')` — never had a chance to work against real reports, regardless of pattern phrasing. **This has been fixed**: `parse_finops_report()` now walks the `blocks` array directly and extracts each `rich_text_list` item under the "Optimization Recommendations" header, rather than regexing the truncated `text` field. The old text-regex logic (`FINDING_PATTERNS`, `parse_finops_report_from_text()`) is kept only as a fallback for messages that arrive with no `blocks` at all (e.g. a manually typed test message).
+
+Also observed: the message had `"reply_count": 1` with the reply posted by the same bot user, alongside a "Full interactive report attached" line in the blocks. Confirmed via `conversations.replies`: the reply is the uploaded `.html` artifact file (empty `text`, one entry in `files`), not additional report content. `conversations.history` never returns reply content on its own — reading it requires a separate `conversations.replies` call with the message's `ts` as `thread_ts`. Not required for the findings extracted above (those are already in the top-level message's `blocks`), but relevant if a future version wants to ingest the full interactive report.
+
+**Validated parsing example** (from a real report, run through the actual `parse_finops_report()` function):
+
+| Title | Service | Savings/mo | Priority | Effort |
+|---|---|---|---|---|
+| Stop idle RDS instance | AmazonRDS | $13.91 | low | Low |
+| Migrate EC2 to Graviton | AmazonEC2 | $5.78 | low | Very High |
+
+Both recommendations parsed with correct savings amount, service classification, region, and resource ID extraction (it correctly pulled `i-07c84273c3f3237b7` out of the free-text resource description).
+
+**4. Schedule the report** (natural language, in the Agent's chat — not code)
+```
+Every Monday at 9 AM, generate a cost report with top 10 services,
+anomalies over 10%, and optimization recommendations, and post it
+to #your-finops-channel.
+```
+This creates a recurring automation. Posting to Slack does not require approval (unlike Jira ticket creation). See [Task management](https://docs.aws.amazon.com/finops-agent/latest/userguide/task-management.html).
+
+**5. Note the Slack channel ID** for the ingestion configuration (right-click channel name → **View channel details**, ID is at the bottom, e.g. `C04ABCDEF12`)
 
 ## Deployment
 
@@ -135,31 +242,94 @@ This demo builds an **ownership and gamification layer** on top of [AWS FinOps A
 
 ### Post-Deployment Setup
 
-1. **Create Admin User**:
-   ```bash
-   # Get User Pool ID from deployment output
-   aws cognito-idp admin-create-user \
-     --user-pool-id <USER_POOL_ID> \
-     --username admin@example.com \
-     --user-attributes Name=email,Value=admin@example.com \
-     --temporary-password TempPass123!
-   
-   # Add to admin group
-   aws cognito-idp admin-add-user-to-group \
-     --user-pool-id <USER_POOL_ID> \
-     --username admin@example.com \
-     --group-name finops-admin
-   ```
+Run these steps in order after `deploy-all.sh`/`deploy-all.ps1` finishes. Replace `us-east-1` and the resource IDs with your own deployment's output values (`WebsiteUrl`, `UserPoolId`, `SlackSecretArn`, etc. — printed in the deployment summary, or retrievable anytime via `aws cloudformation describe-stacks --stack-name FinOpsGamificationConsole-<region> --query Stacks[0].Outputs`).
 
-2. **Configure Slack Integration** (for ingestion):
-   - Create a Slack App with `channels:history` and `files:read` permissions
-   - Store the Bot Token in Secrets Manager (created by deployment)
-   - Update the ingestion Lambda environment variable with your channel ID
+**1. Create an admin user**
 
-3. **Seed Demo Data** (optional):
-   ```powershell
-   .\scripts\seed-demo-data.ps1
-   ```
+`given_name` and `family_name` are required Cognito attributes for this user pool — omitting them fails with `InvalidParameterException`.
+
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <USER_POOL_ID> \
+  --username admin@example.com \
+  --user-attributes Name=email,Value=admin@example.com Name=given_name,Value=Admin Name=family_name,Value=User \
+  --temporary-password 'TempPass123!'
+```
+
+**2. Add the user to the admin group**
+
+```bash
+aws cognito-idp admin-add-user-to-group \
+  --user-pool-id <USER_POOL_ID> \
+  --username admin@example.com \
+  --group-name finops-admin
+```
+
+**3. Store your Slack ingestion bot token in Secrets Manager**
+
+This is the app you created in step 3 of "FinOps Agent Setup" above (`xoxb-...` token) — not the AWS-managed FinOps Agent Slack integration. Get `<SLACK_SECRET_ARN>` from the deployment output.
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id "<SLACK_SECRET_ARN>" \
+  --secret-string '{"token":"xoxb-your-real-token"}'
+```
+
+**4. Set the Slack channel ID**
+
+CDK deliberately leaves `SLACK_CHANNEL_ID` empty on the ingestion Lambda so no channel is hardcoded at deploy time. `update-function-configuration` replaces the entire `Environment.Variables` map (it does not merge), so fetch the current values first and add your channel ID to them:
+
+```bash
+REGION=us-east-1   # match your deployment region
+
+aws lambda get-function-configuration \
+  --function-name "FinOpsIngestion-$REGION" \
+  --query 'Environment.Variables' --output json > /tmp/finops-env.json
+
+python3 -c "
+import json
+env = json.load(open('/tmp/finops-env.json'))
+env['SLACK_CHANNEL_ID'] = 'C0XXXXXXXXX'  # your channel ID
+json.dump({'Variables': env}, open('/tmp/finops-env-new.json', 'w'))
+"
+
+aws lambda update-function-configuration \
+  --function-name "FinOpsIngestion-$REGION" \
+  --environment file:///tmp/finops-env-new.json
+
+rm /tmp/finops-env.json /tmp/finops-env-new.json
+```
+
+**5. Invite the ingestion bot to the Slack channel** (if not already done)
+
+In Slack: `/invite @your-ingestion-app-name` in the channel matching the ID from step 4.
+
+**6. Test ingestion manually** (don't wait for the hourly schedule)
+
+```bash
+aws lambda invoke \
+  --function-name "FinOpsIngestion-$REGION" \
+  --payload '{}' \
+  --cli-binary-format raw-in-base64-out \
+  /tmp/ingestion-response.json
+cat /tmp/ingestion-response.json
+
+aws logs tail "/aws/lambda/FinOpsIngestion-$REGION" --since 5m
+```
+
+Expect `findingsCreated` > 0 in the response if the connected Slack channel has a FinOps Agent report with at least one optimization recommendation. If you see a `"No recommendations extracted from blocks..."` warning in the logs, the report's Block Kit format has changed since this parser was last validated — see the "Verify what the ingestion Lambda will actually receive" section above for how to inspect the raw payload.
+
+**7. Confirm the finding landed in DynamoDB**
+
+```bash
+aws dynamodb scan --table-name "finops-findings-$REGION" --max-items 5
+```
+
+**8. Enable the hourly ingestion schedule** (once manual testing looks correct)
+
+```bash
+aws events enable-rule --name "finops-ingestion-schedule-$REGION"
+```
 
 ## Demo Walkthrough
 
