@@ -103,13 +103,22 @@ export class EventIngestion extends Construct {
       maxEventAge: cdk.Duration.hours(24),
     }));
 
-    // Note: scheduledChange-category events are already captured by
-    // HealthEventRule above (detailType 'AWS Health Event' with no
-    // eventTypeCategory filter). A separate rule scoped to
-    // detail.eventTypeCategory: ['scheduledChange'] would be a strict subset
-    // of that pattern and, since it would target the same Event Router Lambda,
-    // would deliver every scheduledChange event to the router twice — starting
-    // two identical Step Functions executions per event. No such rule is
-    // registered here to keep each Health event to a single investigation.
+    // Additional rule for scheduled changes specifically
+    const scheduledChangeRule = new events.Rule(this, 'ScheduledChangeRule', {
+      ruleName: 'health-event-analyzer-scheduled',
+      description: 'Captures scheduled AWS Health maintenance events',
+      eventPattern: {
+        source: ['aws.health'],
+        detailType: ['AWS Health Event'],
+        detail: {
+          eventTypeCategory: ['scheduledChange'],
+        },
+      },
+    });
+
+    scheduledChangeRule.addTarget(new targets.LambdaFunction(this.eventRouter, {
+      retryAttempts: 185,
+      maxEventAge: cdk.Duration.hours(24),
+    }));
   }
 }

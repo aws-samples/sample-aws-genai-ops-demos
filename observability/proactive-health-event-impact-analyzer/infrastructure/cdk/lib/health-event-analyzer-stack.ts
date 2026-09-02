@@ -157,19 +157,9 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       sid: 'DenyInsecureTransport',
       effect: iam.Effect.DENY,
       principals: [new iam.AnyPrincipal()],
-      // SNS resource policies don't accept the sns:* wildcard, so the topic-scoped
-      // actions are enumerated to deny any non-TLS request (Req 14.3, 4.1). Only
-      // the 8 actions valid in an SNS resource policy may be used here — actions
-      // like sns:Unsubscribe / sns:Receive are rejected by SNS at deploy time
-      // ("Policy statement action out of service scope").
       actions: [
         'sns:Publish',
         'sns:Subscribe',
-        'sns:GetTopicAttributes',
-        'sns:SetTopicAttributes',
-        'sns:ListSubscriptionsByTopic',
-        'sns:AddPermission',
-        'sns:RemovePermission',
       ],
       resources: [notification.topic.topicArn],
       conditions: {
@@ -183,9 +173,6 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       sid: 'RestrictSubscriptions',
       effect: iam.Effect.ALLOW,
       principals: [new iam.AccountPrincipal(this.account)],
-      // Only the owning account may subscribe to the topic (Req 14.4).
-      // Note: sns:Unsubscribe is NOT valid in an SNS resource policy (SNS rejects
-      // it with "action out of service scope"), so only sns:Subscribe is scoped here.
       actions: ['sns:Subscribe'],
       resources: [notification.topic.topicArn],
     }));

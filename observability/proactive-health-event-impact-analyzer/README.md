@@ -1,6 +1,4 @@
-# Proactive AWS Health Event Impact Analyzer
-
-## Use AWS DevOps Agent to triage and route AWS Health event impact
+# Use AWS DevOps Agent to triage and route AWS Health event impact
 
 > **This is a sample application** demonstrating how to build automated AWS Health event impact assessment and multi-team notification routing using AWS DevOps Agent. Use it as a reference architecture or starting point for your own implementation.
 
