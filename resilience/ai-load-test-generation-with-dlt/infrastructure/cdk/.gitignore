@@ -1,0 +1,11 @@
+# CDK
+cdk.out/
+cdk.out*
+.cdk.staging/
+# Account-specific context cache (AZ/AMI lookups) — not portable across accounts
+cdk.context.json
+
+# Python venv / caches
+.venv/
+__pycache__/
+*.pyc

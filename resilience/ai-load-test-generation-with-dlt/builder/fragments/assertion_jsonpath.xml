@@ -1,0 +1,9 @@
+              <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="ASSERT_json_{{JP_LABEL}}" enabled="true">
+                <stringProp name="JSON_PATH">{{JSON_PATH}}</stringProp>
+                <stringProp name="EXPECTED_VALUE">{{EXPECTED_VALUE}}</stringProp>
+                <boolProp name="JSONVALIDATION">true</boolProp>
+                <boolProp name="EXPECT_NULL">false</boolProp>
+                <boolProp name="INVERT">false</boolProp>
+                <boolProp name="ISREGEX">{{ISREGEX}}</boolProp>
+              </JSONPathAssertion>
+              <hashTree/>
