@@ -4,8 +4,8 @@
 # WHAT THIS DOES (pre-deploy upload model):
 #   1. resolve DLT inputs from just the DLT stack name + region
 #      (StackId, API endpoint -> execute-api ARN, scenarios bucket -> S3 ARN)
-#   2. let the operator pick the Bedrock model(s) from the profiles available
-#      in the Bedrock region (falls back to manual entry if listing fails)
+#   2. resolve the Bedrock model(s) to an inference profile that exists in the
+#      Bedrock region (model is OPTIONAL; defaults to the agent's Claude models)
 #   3. zip the agent source (git archive => tracked files, stable hash)
 #   4. ensure an S3 source bucket exists, upload the zip there
 #   5. deploy the CloudFormation stack, which builds the ARM64 image in-stack
@@ -15,11 +15,11 @@
 # inlined in the template, so the only artifact uploaded is the source zip.
 #
 # Usage (script-only, no DLT):
-#   infrastructure/cloudformation/deploy.sh          # prompts for a Bedrock model, deploys a generator agent
+#   infrastructure/cloudformation/deploy.sh          # model optional (auto-resolved), deploys a generator agent
 #
 # Usage (with DLT wired):
 #   infrastructure/cloudformation/deploy.sh --dlt-stack LaunchWizard-dlt-poc --dlt-region us-west-2
-#     # -> resolves DLT ARNs automatically, then prompts you to pick a Bedrock model
+#     # -> resolves DLT ARNs automatically; the model is optional and auto-resolved to the region
 #
 # Options:
 #   --dlt-stack NAME           (optional) DLT CloudFormation stack name; omit for
@@ -27,8 +27,8 @@
 #                              with this flag (a CloudFormation update wires it in).
 #   --dlt-region REGION        required only when --dlt-stack is given
 #   --bedrock-region REGION    Bedrock invoke region        [default: --region]
-#   --bedrock-model ID         non-interactive: primary model/profile id
-#   --bedrock-fallback ID      non-interactive: fallback model/profile id
+#   --bedrock-model ID         optional: primary model/profile id (else default, auto-resolved)
+#   --bedrock-fallback ID      optional: fallback model/profile id (else default, auto-resolved)
 #   --region REGION            agent stack region  [default: auto-detect from env/AWS config, else us-east-1]
 #   --stack-name NAME          agent stack name       [default: ai-load-test-gen]
 #   --source-bucket NAME       [default: <stack>-src-<account>-<region>]
@@ -174,131 +174,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2) Pick the Bedrock model(s). List the ACTIVE inference profiles available in
-#    the Bedrock region and let the operator choose; if listing fails (perms /
-#    unsupported) or a non-interactive run supplies --bedrock-model, use that.
-#    The chosen id(s) set BEDROCK_MODEL_PRIMARY/FALLBACK (what the agent invokes)
-#    AND, unless --bedrock-profiles is given, the IAM invoke scope.
+# 2) Bedrock model(s) — OPTIONAL, resolved exactly like the CDK path
+#    (deploy-all.sh): default to the agent's built-in models, then resolve each
+#    to a cross-region inference profile that ACTUALLY EXISTS in BEDROCK_REGION.
+#    We never fabricate a prefixed id (the Asia-Pacific prefix is `apac`, not
+#    `ap`, and the newest models ship global-only in some regions): we list the
+#    system profiles for the base model and pick deterministically — the
+#    region's own geography (us/eu/apac) first, else the global profile, else
+#    the sole match; none or ambiguous fails fast. The chosen id(s) set
+#    BEDROCK_MODEL_PRIMARY/FALLBACK (what the agent invokes) AND, unless
+#    --bedrock-profiles is given, the IAM invoke scope.
+#    https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html
 # ---------------------------------------------------------------------------
 SEL_PRIMARY=""
 SEL_FALLBACK=""
-IDS=()
-NAMES=()
 
-_have_tty() {  # true only if /dev/tty can actually be opened for reading
-  # -e is not enough: in a background job or a CI runner there is no
-  # controlling terminal, yet the /dev/tty device node still exists, so the
-  # existence test passes and the open then fails with ENXIO ("Device not
-  # configured"). Try the open instead of asking whether the file is there.
-  { : < /dev/tty; } 2>/dev/null
-}
+# CRIS geo prefix for a region — used ONLY to prefer among profiles that really
+# exist, never to construct an id. Asia-Pacific is `apac` (not `ap`); regions
+# without a dedicated geography (ca/me/af/sa/il/mx) use the global profile.
+_geo_prefix() { case "${1%%-*}" in us) echo us ;; eu) echo eu ;; ap) echo apac ;; *) echo global ;; esac; }
+# strip a leading known CRIS prefix to get the bare model name
+_base_model() { case "$1" in us.*|eu.*|apac.*|ap.*|global.*) echo "${1#*.}" ;; *) echo "$1" ;; esac; }
 
-_read_tty() {  # $1=prompt ; echoes the entered line (reads from the terminal)
-  local _ans=""
-  if _have_tty; then
-    read -r -p "$1" _ans < /dev/tty || true
+# resolve_profile <model-in> -> prints the resolved profile id on stdout; returns
+# non-zero (set -e aborts the deploy) with clear guidance when it cannot pick one.
+resolve_profile() {
+  _want="$1"; _base="$(_base_model "$_want")"; _geo="$(_geo_prefix "$BEDROCK_REGION")"
+  # every system-defined profile in BEDROCK_REGION whose id ends with the base
+  _ids="$(aws bedrock list-inference-profiles --region "$BEDROCK_REGION" \
+            --type-equals SYSTEM_DEFINED \
+            --query "inferenceProfileSummaries[?ends_with(inferenceProfileId, '${_base}')].inferenceProfileId" \
+            --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d')"
+  # 1) the region's own geography wins (deterministic where geo+global co-exist)
+  if printf '%s\n' "$_ids" | grep -Fxq "${_geo}.${_base}"; then
+    printf '%s' "${_geo}.${_base}"; return 0
   fi
-  printf '%s' "$_ans"
-}
-
-_choice_to_id() {  # $1=number ; echoes id or __INVALID__
-  local n="$1"
-  case "$n" in ''|*[!0-9]*) echo "__INVALID__"; return ;; esac
-  if [ "$n" -ge 1 ] && [ "$n" -le "${#IDS[@]}" ]; then
-    echo "${IDS[$((n-1))]}"
-  else
-    echo "__INVALID__"
+  # 2) else the global profile (its destination list is all commercial regions)
+  if printf '%s\n' "$_ids" | grep -Fxq "global.${_base}"; then
+    echo "note: no '${_geo}.' profile for '${_base}' in $BEDROCK_REGION; using 'global.${_base}'." >&2
+    printf '%s' "global.${_base}"; return 0
   fi
-}
-
-select_bedrock_models() {
-  # Full manual override: caller supplied both the IAM scope and the model id.
-  if [ -n "$BEDROCK_PROFILES" ] && [ -n "$BEDROCK_MODEL" ]; then
-    SEL_PRIMARY="$BEDROCK_MODEL"
-    SEL_FALLBACK="$BEDROCK_FALLBACK"
-    return
+  # 3) else a single unambiguous match
+  _n="$(printf '%s\n' "$_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$_n" = "1" ]; then
+    echo "note: '$_want' resolved to '$_ids' in $BEDROCK_REGION." >&2
+    printf '%s' "$_ids"; return 0
   fi
-
-  local tsv
-  tsv="$(aws bedrock list-inference-profiles --region "$BEDROCK_REGION" \
-        --query "inferenceProfileSummaries[?status=='ACTIVE'].[inferenceProfileId,inferenceProfileName]" \
-        --output text 2>/dev/null || true)"
-
-  if [ -z "$tsv" ]; then
-    echo "WARN: could not list inference profiles in $BEDROCK_REGION (permission or unsupported region)." >&2
-    if [ -n "$BEDROCK_MODEL" ]; then
-      SEL_PRIMARY="$BEDROCK_MODEL"; SEL_FALLBACK="$BEDROCK_FALLBACK"; return
+  # 4) none or ambiguous -> fail fast with guidance
+  {
+    echo "ERROR: cannot pick a single inference profile for '${_base}' in $BEDROCK_REGION."
+    if [ -z "$_ids" ]; then
+      echo "  None are offered here (or bedrock:ListInferenceProfiles is denied)."
+      echo "  Deploy in a region that offers this model, or pass --bedrock-model."
+    else
+      echo "  Multiple candidates — re-run with --bedrock-model set to one of:"
+      printf '    %s\n' $_ids
     fi
-    if ! _have_tty; then
-      echo "ERROR: listing failed and no TTY; pass --bedrock-model <id> [--bedrock-fallback <id>]." >&2
-      exit 5
-    fi
-    SEL_PRIMARY="$(_read_tty 'Enter primary model/inference-profile id: ')"
-    [ -z "$SEL_PRIMARY" ] && { echo "ERROR: primary model id is required." >&2; exit 5; }
-    SEL_FALLBACK="$(_read_tty 'Enter fallback id (Enter to reuse primary): ')"
-    return
-  fi
-
-  # Parse the tab-separated id/name rows into parallel arrays (bash 3.2 safe).
-  while IFS=$'\t' read -r _id _name; do
-    [ -z "$_id" ] && continue
-    IDS+=("$_id"); NAMES+=("$_name")
-  done <<EOF
-$tsv
-EOF
-
-  # Non-interactive: honor --bedrock-model as the primary.
-  if [ -n "$BEDROCK_MODEL" ]; then
-    SEL_PRIMARY="$BEDROCK_MODEL"; SEL_FALLBACK="$BEDROCK_FALLBACK"; return
-  fi
-  if ! _have_tty; then
-    echo "ERROR: no TTY for interactive model selection; pass --bedrock-model <id> [--bedrock-fallback <id>]." >&2
-    exit 5
-  fi
-
-  echo "" >&2
-  echo "Bedrock inference profiles available in $BEDROCK_REGION:" >&2
-  local i=1 idx
-  for idx in "${!IDS[@]}"; do
-    printf "  %3d) %-55s %s\n" "$i" "${IDS[$idx]}" "${NAMES[$idx]}" >&2
-    i=$((i+1))
-  done
-  echo "" >&2
-
-  # Primary (required, must be valid). Bounded: a prompt that can never be
-  # answered must fail the deploy, not spin. _have_tty above rules out the
-  # no-terminal case, so this bound only catches a terminal that keeps
-  # returning something unusable (closed pipe, non-numeric paste).
-  local tries=0
-  while [ "$tries" -lt 5 ]; do
-    local pn pid
-    tries=$((tries+1))
-    pn="$(_read_tty 'Select PRIMARY model number: ')"
-    pid="$(_choice_to_id "$pn")"
-    if [ "$pid" != "__INVALID__" ]; then SEL_PRIMARY="$pid"; break; fi
-    echo "  invalid selection; enter a number from the list." >&2
-  done
-  if [ -z "$SEL_PRIMARY" ]; then
-    echo "ERROR: no valid model selection after $tries attempts; pass --bedrock-model <id> [--bedrock-fallback <id>]." >&2
-    exit 5
-  fi
-
-  # Fallback (optional: Enter = reuse primary). Bounded like the primary; an
-  # exhausted count falls back to reusing the primary, which is what an empty
-  # answer means anyway, so it never blocks the deploy.
-  tries=0
-  while [ "$tries" -lt 5 ]; do
-    local fn fid
-    tries=$((tries+1))
-    fn="$(_read_tty 'Select FALLBACK model number (Enter to reuse primary): ')"
-    if [ -z "$fn" ]; then SEL_FALLBACK=""; break; fi
-    fid="$(_choice_to_id "$fn")"
-    if [ "$fid" != "__INVALID__" ]; then SEL_FALLBACK="$fid"; break; fi
-    echo "  invalid selection; enter a number from the list (or Enter)." >&2
-  done
+  } >&2
+  return 1
 }
 
-select_bedrock_models
+if [ -n "$BEDROCK_PROFILES" ] && [ -n "$BEDROCK_MODEL" ]; then
+  # advanced manual override: caller supplied BOTH the IAM scope and the model
+  # id — trust them verbatim (no resolution).
+  SEL_PRIMARY="$BEDROCK_MODEL"
+  SEL_FALLBACK="${BEDROCK_FALLBACK:-$BEDROCK_MODEL}"
+else
+  # default path — model is OPTIONAL and resolved to a real profile. A
+  # caller-supplied primary doubles as its own fallback; otherwise keep the
+  # agent's built-in opus->sonnet pairing.
+  _model_given=""; [ -n "$BEDROCK_MODEL" ] && _model_given=1
+  [ -z "$BEDROCK_MODEL" ] && BEDROCK_MODEL="anthropic.claude-opus-4-8"
+  if [ -z "$BEDROCK_FALLBACK" ]; then
+    [ -n "$_model_given" ] && BEDROCK_FALLBACK="$BEDROCK_MODEL" \
+                          || BEDROCK_FALLBACK="anthropic.claude-sonnet-5"
+  fi
+  SEL_PRIMARY="$(resolve_profile "$BEDROCK_MODEL")"
+  SEL_FALLBACK="$(resolve_profile "$BEDROCK_FALLBACK")"
+  echo "Bedrock: primary=$SEL_PRIMARY fallback=$SEL_FALLBACK (region $BEDROCK_REGION)"
+fi
 
 # Keep primary/fallback consistent with the IAM scope: an empty fallback reuses
 # the primary so the agent never falls back to a model IAM does not allow.

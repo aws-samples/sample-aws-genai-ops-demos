@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --region) REGION="$2"; shift 2 ;;
     --bedrock-region) BEDROCK_REGION="$2"; shift 2 ;;
-    --bedrock-model) BEDROCK_MODEL="$2"; shift 2 ;;
+    --bedrock-model) BEDROCK_MODEL="$2"; MODEL_GIVEN=1; shift 2 ;;
     --bedrock-fallback) BEDROCK_FALLBACK="$2"; shift 2 ;;
     --dlt-stack) DLT_STACK="$2"; shift 2 ;;
     --dlt-region) DLT_REGION="$2"; shift 2 ;;
@@ -80,8 +80,19 @@ if [ -z "$ENGINE" ]; then
 fi
 [ -z "$ENGINE" ] && { echo "no container engine (docker/finch/nerdctl) found" >&2; exit 1; }
 
+# The engine must actually be running — CDK builds the ARM64 image locally. A
+# stopped daemon otherwise surfaces as a cryptic mid-build "cannot connect to
+# the docker API" failure, so fail early with an actionable hint.
+if ! "$ENGINE" info >/dev/null 2>&1; then
+  echo "ERROR: '$ENGINE' is installed but not running." >&2
+  case "$ENGINE" in
+    finch) echo "  start it with:  finch vm start" >&2 ;;
+    *)     echo "  start the $ENGINE daemon (e.g. open Docker Desktop) and re-run." >&2 ;;
+  esac
+  exit 1
+fi
+
 [ -z "$BEDROCK_REGION" ] && BEDROCK_REGION="$REGION"
-: "${BEDROCK_MODEL:?--bedrock-model required (an inference-profile id, e.g. us.anthropic.claude-opus-4-8)}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
 # 2) DLT is optional — derive its ARNs from the stack name + region.
@@ -105,15 +116,78 @@ else
   echo "DLT not connected (script-only agent). Re-run with --dlt-stack to wire it later."
 fi
 
-# 3) Bedrock invoke scope — profile ARN + each routed foundation-model ARN (CRIS).
-[ -z "$BEDROCK_FALLBACK" ] && BEDROCK_FALLBACK="$BEDROCK_MODEL"
+# 3) Bedrock model — OPTIONAL. Default to the agent's built-in models, then
+# resolve each to a cross-region inference profile that ACTUALLY EXISTS in
+# BEDROCK_REGION. We never fabricate a prefixed id (the Asia-Pacific prefix is
+# `apac`, not `ap`, and the newest models ship global-only in some regions):
+# instead we list the system profiles for the base model in BEDROCK_REGION and
+# pick deterministically — the region's own geography (us/eu/apac) first, else
+# the global profile, else the sole match; none or ambiguous fails fast.
+# https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html
+[ -z "$BEDROCK_MODEL" ] && BEDROCK_MODEL="anthropic.claude-opus-4-8"
+if [ -z "$BEDROCK_FALLBACK" ]; then
+  # a caller-supplied primary doubles as its own fallback; otherwise keep the
+  # agent's built-in opus->sonnet pairing.
+  [ -n "${MODEL_GIVEN:-}" ] && BEDROCK_FALLBACK="$BEDROCK_MODEL" \
+                           || BEDROCK_FALLBACK="anthropic.claude-sonnet-5"
+fi
+
+# CRIS geo prefix for a region — used ONLY to prefer among profiles that really
+# exist, never to construct an id. Asia-Pacific is `apac` (not `ap`); regions
+# without a dedicated geography (ca/me/af/sa/il/mx) use the global profile.
+_geo_prefix() { case "${1%%-*}" in us) echo us ;; eu) echo eu ;; ap) echo apac ;; *) echo global ;; esac; }
+# strip a leading known CRIS prefix to get the bare model name
+_base_model() { case "$1" in us.*|eu.*|apac.*|ap.*|global.*) echo "${1#*.}" ;; *) echo "$1" ;; esac; }
+
+# resolve_profile <model-in> -> prints the resolved profile id on stdout; returns
+# non-zero (set -e aborts the deploy) with clear guidance when it cannot pick one.
+resolve_profile() {
+  _want="$1"; _base="$(_base_model "$_want")"; _geo="$(_geo_prefix "$BEDROCK_REGION")"
+  # every system-defined profile in BEDROCK_REGION whose id ends with the base
+  _ids="$(aws bedrock list-inference-profiles --region "$BEDROCK_REGION" \
+            --type-equals SYSTEM_DEFINED \
+            --query "inferenceProfileSummaries[?ends_with(inferenceProfileId, '${_base}')].inferenceProfileId" \
+            --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d')"
+  # 1) the region's own geography wins (deterministic where geo+global co-exist)
+  if printf '%s\n' "$_ids" | grep -Fxq "${_geo}.${_base}"; then
+    printf '%s' "${_geo}.${_base}"; return 0
+  fi
+  # 2) else the global profile (its destination list is all commercial regions)
+  if printf '%s\n' "$_ids" | grep -Fxq "global.${_base}"; then
+    echo "note: no '${_geo}.' profile for '${_base}' in $BEDROCK_REGION; using 'global.${_base}'." >&2
+    printf '%s' "global.${_base}"; return 0
+  fi
+  # 3) else a single unambiguous match
+  _n="$(printf '%s\n' "$_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$_n" = "1" ]; then
+    echo "note: '$_want' resolved to '$_ids' in $BEDROCK_REGION." >&2
+    printf '%s' "$_ids"; return 0
+  fi
+  # 4) none or ambiguous -> fail fast with guidance
+  {
+    echo "ERROR: cannot pick a single inference profile for '${_base}' in $BEDROCK_REGION."
+    if [ -z "$_ids" ]; then
+      echo "  None are offered here (or bedrock:ListInferenceProfiles is denied)."
+      echo "  Deploy in a region that offers this model, or pass --bedrock-model."
+    else
+      echo "  Multiple candidates — re-run with --bedrock-model set to one of:"
+      printf '    %s\n' $_ids
+    fi
+  } >&2
+  return 1
+}
+
+PRIMARY_ID="$(resolve_profile "$BEDROCK_MODEL")"
+FALLBACK_ID="$(resolve_profile "$BEDROCK_FALLBACK")"
+echo "Bedrock: primary=$PRIMARY_ID fallback=$FALLBACK_ID (region $BEDROCK_REGION)"
+
+# Invoke scope — the resolved profile ARN(s) + each routed foundation-model ARN.
 PROFILE_ARNS=""
 _add() { case ",$PROFILE_ARNS," in *",$1,"*) ;; *) PROFILE_ARNS="${PROFILE_ARNS:+$PROFILE_ARNS,}$1" ;; esac; }
-for _id in "$BEDROCK_MODEL" "$BEDROCK_FALLBACK"; do
-  [ -z "$_id" ] && continue
+for _id in "$PRIMARY_ID" "$FALLBACK_ID"; do
   _add "arn:aws:bedrock:${BEDROCK_REGION}:${ACCOUNT_ID}:inference-profile/${_id}"
   for _m in $(aws bedrock get-inference-profile --region "$BEDROCK_REGION" \
-                --inference-profile-identifier "$_id" --query 'models[].modelArn' --output text 2>/dev/null); do
+                --inference-profile-identifier "$_id" --query 'models[].modelArn' --output text); do
     _add "$_m"
   done
 done
@@ -132,8 +206,8 @@ $CDK bootstrap "aws://${ACCOUNT_ID}/${REGION}" >/dev/null 2>&1 || true
 $CDK deploy --require-approval never \
   -c region="$REGION" \
   -c bedrockRegion="$BEDROCK_REGION" \
-  -c bedrockModelPrimary="$BEDROCK_MODEL" \
-  -c bedrockModelFallback="$BEDROCK_FALLBACK" \
+  -c bedrockModelPrimary="$PRIMARY_ID" \
+  -c bedrockModelFallback="$FALLBACK_ID" \
   -c bedrockProfileArns="$PROFILE_ARNS" \
   -c dltStackName="$DLT_STACK" \
   -c dltRegion="$DLT_REGION" \
@@ -149,6 +223,10 @@ RT_ARN="$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$RE
   --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text 2>/dev/null || true)"
 SPEC_BUCKET="$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='SpecInputBucketName'].OutputValue" --output text 2>/dev/null || true)"
+if [ -z "$RT_ARN" ] || [ "$RT_ARN" = "None" ]; then
+  echo "ERROR: stack $STACK has no AgentRuntimeArn output — the deploy did not complete." >&2
+  exit 6
+fi
 echo "========================================"
 echo "  Deployment Complete!"
 echo "========================================"

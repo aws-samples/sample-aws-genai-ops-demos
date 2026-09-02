@@ -44,10 +44,9 @@ private-VPC egress mode when you need it.
   `bedrock-agentcore` resources — plus VPC/NAT/endpoints in `vpc` network mode
   (`aws sts get-caller-identity` should resolve).
 - **AWS CLI v2** and **git**.
-- **Bedrock model access** enabled for the inference profile you use (e.g.
-  `us.anthropic.claude-opus-4-8`).
 - A container engine — **Docker** (preferred), finch, or nerdctl — for the ARM64
-  image build.
+  image build. **CDK path (Method A) only** — the CloudFormation path builds the
+  image in-stack via CodeBuild and needs no local container engine.
 - Method-specific tooling: **CDK** needs Node 18+ and Python 3.9+; **CloudFormation**
   needs nothing beyond the AWS CLI (image is built in-stack by CodeBuild).
 - In `vpc` mode, first VPC use auto-creates the service-linked role
@@ -66,18 +65,22 @@ that adds the DLT env vars and DLT-scoped IAM, then rolls the runtime version).
 ### Method A — AWS CDK (`infrastructure/cdk/`)
 
 ```bash
-# script-only agent (no DLT)
-./deploy-all.sh --bedrock-model us.anthropic.claude-opus-4-8
+# script-only agent (no DLT) — model is OPTIONAL; defaults to a Claude Opus
+# profile resolved to your deploy region (no need to know the us./eu./apac. prefix)
+./deploy-all.sh
+
+# pick a model — a bare name or a full profile id; either way it is re-resolved
+# to the deploy region's inference profile
+./deploy-all.sh --bedrock-model anthropic.claude-opus-4-8
 
 # with DLT wired (DLT ARNs auto-derived from the stack outputs)
-./deploy-all.sh --bedrock-model us.anthropic.claude-opus-4-8 \
-  --dlt-stack LaunchWizard-dlt-poc --dlt-region us-west-2
+./deploy-all.sh --dlt-stack LaunchWizard-dlt-poc --dlt-region us-west-2
 
 # private-VPC mode (egress control / private targets); default is --network-mode public
-./deploy-all.sh --bedrock-model us.anthropic.claude-opus-4-8 --network-mode vpc
+./deploy-all.sh --network-mode vpc
 ```
 
-Windows: `./deploy-all.ps1 -BedrockModel us.anthropic.claude-opus-4-8 [-DltStack ... -DltRegion ...] [-NetworkMode vpc]`.
+Windows: `./deploy-all.ps1 [-BedrockModel anthropic.claude-opus-4-8] [-DltStack ... -DltRegion ...] [-NetworkMode vpc]` (all optional).
 
 CDK builds the ARM64 image with your container engine (`CDK_DOCKER`, auto-detected)
 and creates the runtime. **By default (`--network-mode public`) no VPC is created** —
@@ -88,6 +91,15 @@ Stack: `AILoadTestGen-<region>`. Teardown: `cd infrastructure/cdk &&
 (activate `.venv` first — `deploy-all.sh` installs the CDK Python deps there and
 `cdk destroy` re-synths `app.py`; no `CDK_DOCKER` needed — destroy does not
 rebuild the image; deploy auto-detects docker/finch/nerdctl).
+
+> **Before you deploy (CDK path):** your container engine must be **running** —
+> the script checks `docker`/`finch`/`nerdctl info` and stops early with a hint if
+> not (start Docker Desktop, or run `finch vm start`). `--bedrock-model` is
+> **optional**: it defaults to a Claude Opus profile and is always re-resolved to
+> the deploy region, so you don't need the `us.`/`eu.`/`apac.` prefix. If no
+> single matching inference profile exists in that region, the deploy stops and
+> lists what to pass. Both `.sh` and `.ps1` behave identically. See
+> [Supported cross-Region inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
 ### Method B — CloudFormation (`infrastructure/cloudformation/`)
 
