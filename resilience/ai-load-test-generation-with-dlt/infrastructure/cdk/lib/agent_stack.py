@@ -1,7 +1,8 @@
 """AI Load Test Generator Agent — AgentCore Runtime (CDK port).
 
-Mirrors infrastructure/cloudformation/template.yaml (CFN) but:
-- builds the ARM64 image via DockerImageAsset (no CodeBuild/ECR/source-zip/Lambda),
+This is the single deploy path (CDK). Highlights:
+- builds the ARM64 image IN THE CLOUD via CodeBuild -> ECR, triggered and waited
+  on by a custom resource — no local Docker/finch daemon is ever needed,
 - creates the VPC/NAT/endpoints via the L2 ec2.Vpc (far fewer lines),
 - keeps DLT OPTIONAL (no DLT env/IAM unless a DLT stack is wired),
 - gates X-Ray IAM behind enable_xray.
@@ -15,11 +16,10 @@ Network mode (``network_mode``) is a deploy-time choice, default ``public``:
   and reaching private/internal test targets (e.g. a private smoke target).
 Inbound is IAM SigV4 in BOTH modes — PUBLIC does not expose an inbound endpoint.
 
-Coexists with the CFN stack: the runtime is named ``ai_load_test_gen_cdk`` so it does
-not collide with the CFN stack's ``ai_load_test_gen``.
+The runtime is named ``ai_load_test_gen_cdk``.
 
-NOTE: in ``vpc`` mode only the create-new-VPC path is implemented here (the CFN's
-existing-VPC path is a TODO for the CDK port).
+NOTE: in ``vpc`` mode only the create-new-VPC path is implemented here
+(an existing-VPC path is a possible future addition).
 """
 from __future__ import annotations
 
@@ -27,16 +27,69 @@ import os
 
 import aws_cdk as cdk
 from aws_cdk import (
+    CustomResource,
     Duration,
     RemovalPolicy,
+    aws_codebuild as codebuild,
     aws_ec2 as ec2,
-    aws_ecr_assets as ecr_assets,
+    aws_ecr as ecr,
     aws_iam as iam,
+    aws_lambda as lambda_,
     aws_s3 as s3,
+    aws_s3_assets as s3_assets,
 )
 from constructs import Construct
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+# Inline Lambda that a custom resource invokes to (a) start the CodeBuild image
+# build and (b) block until it finishes, PUTting the CFN response itself. boto3
+# + urllib ship with the python3.12 runtime; kept small on purpose. Polls every
+# 15s within an 840s budget (< the 900s Lambda timeout).
+_IMAGE_BUILD_FN = r'''
+import json, time, urllib.request, boto3
+cb = boto3.client("codebuild")
+POLL, MAXW = 15, 840
+
+
+def _send(event, context, status, reason, pid):
+    body = json.dumps({
+        "Status": status, "Reason": reason,
+        "PhysicalResourceId": pid or context.log_stream_name,
+        "StackId": event["StackId"], "RequestId": event["RequestId"],
+        "LogicalResourceId": event["LogicalResourceId"], "Data": {},
+    }).encode()
+    req = urllib.request.Request(
+        event["ResponseURL"], data=body, method="PUT",
+        headers={"content-type": "", "content-length": str(len(body))})
+    urllib.request.urlopen(req, timeout=30)
+
+
+def handler(event, context):
+    rt = event["RequestType"]
+    props = event.get("ResourceProperties", {})
+    pid = event.get("PhysicalResourceId")
+    try:
+        if rt == "Delete":
+            return _send(event, context, "SUCCESS", "delete no-op", pid)
+        bid = cb.start_build(projectName=props["ProjectName"])["build"]["id"]
+        deadline = time.time() + MAXW
+        info = None
+        while time.time() < deadline:
+            time.sleep(POLL)
+            info = cb.batch_get_builds(ids=[bid])["builds"][0]
+            if info["buildStatus"] != "IN_PROGRESS":
+                break
+        else:
+            return _send(event, context, "FAILED",
+                         f"build {bid} timed out after {MAXW}s", bid)
+        st = info["buildStatus"]
+        ok = st == "SUCCEEDED"
+        _send(event, context, "SUCCESS" if ok else "FAILED",
+              f"build {bid} status {st}", bid)
+    except Exception as exc:
+        _send(event, context, "FAILED", f"{type(exc).__name__}: {exc}", pid)
+'''
 
 
 class AILoadTestGenStack(cdk.Stack):
@@ -189,21 +242,27 @@ class AILoadTestGenStack(cdk.Stack):
         )
 
         # ------------------------------------------------------------------ #
-        # Container image — DockerImageAsset (ARM64). No CodeBuild/ECR/Lambda.
-        # container_uri context skips the build (fast synth / CI / BYO image).
+        # Container image — built IN THE CLOUD by CodeBuild -> ECR (no local
+        # Docker). The agent source is uploaded as a CDK asset; a privileged
+        # ARM64 CodeBuild project runs `docker build`/`push`; a custom resource
+        # starts that build and blocks the stack until it succeeds. The image
+        # is tagged with the asset's CONTENT hash, so the tag (and therefore the
+        # runtime's ContainerUri) changes only when the agent source changes —
+        # no local daemon, no git, and rebuilds are idempotent.
+        # container_uri context still skips the whole thing (fast synth / CI).
         # ------------------------------------------------------------------ #
         image_repo = None
+        build_cr = None
         if container_uri:
             image_uri = container_uri
         else:
-            image_asset = ecr_assets.DockerImageAsset(
+            # 1) Zip + upload the agent source (content-addressed by CDK). The
+            #    exclude list keeps CDK output/venv out so the hash tracks only
+            #    the agent's own source (and the staging copy stays small).
+            source_asset = s3_assets.Asset(
                 self,
-                "AgentImage",
-                directory=_REPO_ROOT,
-                platform=ecr_assets.Platform.LINUX_ARM64,
-                # Keep the build context minimal and, critically, exclude the CDK
-                # output/venv (they live under the repo root) — otherwise the
-                # asset staging copies cdk.out into itself recursively -> ENAMETOOLONG.
+                "AgentSource",
+                path=_REPO_ROOT,
                 exclude=[
                     ".git",
                     "infrastructure",
@@ -221,8 +280,102 @@ class AILoadTestGenStack(cdk.Stack):
                     "node_modules",
                 ],
             )
-            image_uri = image_asset.image_uri
-            image_repo = image_asset.repository
+            image_tag = f"src-{source_asset.asset_hash}"
+
+            # 2) ECR repository for the built image.
+            image_repo = ecr.Repository(
+                self,
+                "AgentRepository",
+                image_scan_on_push=True,
+                empty_on_delete=True,
+                removal_policy=RemovalPolicy.DESTROY,
+            )
+            image_uri = f"{image_repo.repository_uri}:{image_tag}"
+
+            # 3) CodeBuild project — ARM64, privileged (docker), layer cache.
+            #    The cache keeps rebuilds ~1-2 min: the JMeter download + JDK/pip
+            #    layers are heavy and a cold build once overran the wait window.
+            build_project = codebuild.Project(
+                self,
+                "AgentImageBuild",
+                source=codebuild.Source.s3(
+                    bucket=source_asset.bucket,
+                    path=source_asset.s3_object_key,
+                ),
+                environment=codebuild.BuildEnvironment(
+                    build_image=codebuild.LinuxBuildImage.AMAZON_LINUX_2_ARM_3,
+                    compute_type=codebuild.ComputeType.LARGE,
+                    privileged=True,  # required for `docker build`
+                ),
+                cache=codebuild.Cache.local(
+                    codebuild.LocalCacheMode.DOCKER_LAYER,
+                    codebuild.LocalCacheMode.SOURCE,
+                ),
+                timeout=Duration.minutes(20),
+                environment_variables={
+                    "ECR_URI": codebuild.BuildEnvironmentVariable(
+                        value=image_repo.repository_uri
+                    ),
+                    "ECR_REGISTRY": codebuild.BuildEnvironmentVariable(
+                        value=f"{self.account}.dkr.ecr.{self.region}.amazonaws.com"
+                    ),
+                    "IMAGE_TAG": codebuild.BuildEnvironmentVariable(value=image_tag),
+                },
+                build_spec=codebuild.BuildSpec.from_object(
+                    {
+                        "version": "0.2",
+                        "phases": {
+                            "pre_build": {
+                                "commands": [
+                                    'aws ecr get-login-password --region "$AWS_DEFAULT_REGION"'
+                                    ' | docker login --username AWS --password-stdin "$ECR_REGISTRY"'
+                                ]
+                            },
+                            "build": {
+                                "commands": [
+                                    'docker build --platform linux/arm64 -t "$ECR_URI:$IMAGE_TAG" .'
+                                ]
+                            },
+                            "post_build": {
+                                "commands": ['docker push "$ECR_URI:$IMAGE_TAG"']
+                            },
+                        },
+                    }
+                ),
+            )
+            # CodeBuild reads the source zip and pushes to this repo.
+            source_asset.grant_read(build_project)
+            image_repo.grant_pull_push(build_project)
+
+            # 4) Custom resource: start the build and block until it finishes.
+            #    One inline Lambda both starts (StartBuild) and waits
+            #    (BatchGetBuilds); SourceHash retriggers it only when the tag
+            #    (i.e. the source) changes.
+            build_fn = lambda_.Function(
+                self,
+                "ImageBuildFunction",
+                runtime=lambda_.Runtime.PYTHON_3_12,
+                handler="index.handler",
+                timeout=Duration.seconds(900),
+                memory_size=256,
+                code=lambda_.Code.from_inline(_IMAGE_BUILD_FN),
+            )
+            build_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
+                    resources=[build_project.project_arn],
+                )
+            )
+            build_cr = CustomResource(
+                self,
+                "ImageBuild",
+                service_token=build_fn.function_arn,
+                properties={
+                    "ProjectName": build_project.project_name,
+                    "SourceHash": image_tag,
+                },
+            )
+            build_cr.node.add_dependency(build_project)
 
         # ------------------------------------------------------------------ #
         # Runtime execution role — least privilege (mirrors the CFN role).
@@ -414,6 +567,10 @@ class AILoadTestGenStack(cdk.Stack):
         # resources provided enough ordering slack to hide this, but in PUBLIC
         # mode there are none — so the dependency must be explicit.
         runtime.node.add_dependency(role)
+        # And on the image build, so the runtime is created only after the image
+        # has been pushed to ECR (skipped when a container_uri is supplied).
+        if build_cr is not None:
+            runtime.node.add_dependency(build_cr)
 
         cdk.CfnOutput(
             self,

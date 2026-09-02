@@ -53,16 +53,15 @@ identical.
 
 ## Deployment
 
-Two interchangeable IaC paths produce the same runtime:
+A single CDK path (`infrastructure/cdk/`) produces the runtime:
 
-- **CDK (canonical)** — `infrastructure/cdk/`. In `vpc` mode: `ec2.Vpc` (private
-  subnets + one NAT + interface/S3 endpoints) + a runtime-egress SG; in `public`
-  mode none of these are created. Always: a least-privilege execution role, an
-  ARM64 `DockerImageAsset` (built by docker/finch/nerdctl via `CDK_DOCKER`), and
-  the `AWS::BedrockAgentCore::Runtime` (`NetworkMode` = the chosen mode). Solution
+- In `vpc` mode: `ec2.Vpc` (private subnets + one NAT + interface/S3 endpoints) +
+  a runtime-egress SG; in `public` mode none of these are created.
+- Always: a least-privilege execution role; the ARM64 image built **in the cloud**
+  by CodeBuild → ECR (agent source uploaded as a CDK asset, a custom resource
+  starts the build and blocks until it succeeds — no local Docker); and the
+  `AWS::BedrockAgentCore::Runtime` (`NetworkMode` = the chosen mode). Solution
   adoption tracking is on the app-file stack description.
-- **CloudFormation (alternative)** — `infrastructure/cloudformation/template.yaml` + `infrastructure/cloudformation/deploy.sh`,
-  building the image in-stack via CodeBuild. Offers an interactive Bedrock picker.
 
 ## Networking & security
 

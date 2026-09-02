@@ -15,11 +15,11 @@ Context inputs (pass with `-c key=value`, or via deploy scripts):
   bedrockProfileArns     comma list: profile + FM ARNs (IAM invoke scope)
   dltStackName           DLT stack name (empty = DLT not connected)
   dltRegion              DLT stack region
-  dltApiGatewayArn       execute-api ARN scope         (derivable in deploy.sh)
+  dltApiGatewayArn       execute-api ARN scope         (derived in deploy-all.sh)
   dltScenariosBucketArn  DLT scenarios bucket ARN
   dltStackArn            DLT stack ARN (DescribeStacks scope)
   enableXray             "true" to grant X-Ray IAM (needs Transaction Search)
-  containerUri           skip DockerImageAsset build, use this image URI (CI/fast synth)
+  containerUri           skip the CodeBuild image build, use this image URI (CI/fast synth)
   networkMode            "public" (default) or "vpc". PUBLIC creates no VPC and
                          runs the runtime in AWS-managed egress; VPC places the
                          runtime ENIs in a private VPC (egress control + private

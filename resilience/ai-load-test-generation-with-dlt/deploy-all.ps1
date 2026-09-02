@@ -3,9 +3,9 @@
   Deploy the AI Load Test Generator Agent to AgentCore Runtime via AWS CDK (Windows/PowerShell).
 .DESCRIPTION
   Conformity path for sample-aws-genai-ops-demos: CDK IaC, shared prerequisites,
-  region auto-detect, user-friendly summary. Coexists with the CloudFormation
-  path (infrastructure/cloudformation/deploy.sh). DLT is OPTIONAL. The ARM64 image is built locally by
-  the detected container engine (docker/finch/nerdctl) via CDK DockerImageAsset.
+  region auto-detect, user-friendly summary. DLT is OPTIONAL. The ARM64 image is
+  built IN THE CLOUD by CodeBuild (the stack uploads the source and waits for the
+  build) — no local Docker/finch/nerdctl is ever needed.
 .EXAMPLE
   ./deploy-all.ps1 -BedrockModel us.anthropic.claude-opus-4-8 `
      -DltStack LaunchWizard-dlt-poc -DltRegion us-west-2
@@ -45,22 +45,9 @@ if (-not $Region) { $Region = $env:AWS_REGION }
 if (-not $Region) { $Region = (aws configure get region 2>$null) }
 if (-not $Region) { $Region = "us-east-1" }
 
-# Container engine auto-detect.
-$engine = $env:CONTAINER_ENGINE
-if (-not $engine) {
-  foreach ($c in @("docker", "finch", "nerdctl")) {
-    if (Get-Command $c -ErrorAction SilentlyContinue) { $engine = $c; break }
-  }
-}
-if (-not $engine) { throw "no container engine (docker/finch/nerdctl) found" }
-
-# The engine must actually be running — CDK builds the ARM64 image locally. A
-# stopped daemon otherwise surfaces as a cryptic mid-build docker API error.
-& $engine info *> $null
-if ($LASTEXITCODE -ne 0) {
-  $hint = if ($engine -eq 'finch') { 'start it with:  finch vm start' } else { "start the $engine daemon (e.g. open Docker Desktop) and re-run." }
-  throw "'$engine' is installed but not running. $hint"
-}
+# No local container engine is needed: the ARM64 image is built in the cloud by
+# CodeBuild — the CDK stack uploads the agent source, runs the build, and blocks
+# until it succeeds. Nothing here touches docker/finch/nerdctl locally.
 
 if (-not $BedrockRegion) { $BedrockRegion = $Region }
 $accountId = (aws sts get-caller-identity --query Account --output text)
@@ -146,9 +133,8 @@ python -m venv "$cdkDir/.venv"
 & "$cdkDir/.venv/Scripts/Activate.ps1"
 pip install -q -r "$cdkDir/requirements.txt"
 
-# 5) Deploy. CDK builds the image with the detected engine; bootstrap once.
+# 5) Deploy. CDK uploads the source; CodeBuild builds the ARM64 image in-cloud.
 Push-Location $cdkDir
-$env:CDK_DOCKER = $engine
 npx --yes aws-cdk@latest bootstrap "aws://$accountId/$Region" 2>$null
 npx --yes aws-cdk@latest deploy --require-approval never `
   -c region=$Region `

@@ -20,7 +20,7 @@ The core value — script generation — works with **no DLT**. DLT wiring is op
 - **Duration**: ~20 minutes (first deploy)
 - **Difficulty**: Intermediate
 - **Target Audience**: SREs, performance engineers, platform/DevOps teams
-- **Key Technologies**: Bedrock AgentCore Runtime, Amazon Bedrock (Anthropic Claude), AWS CDK / CloudFormation, VPC, (optional) AWS Distributed Load Testing
+- **Key Technologies**: Bedrock AgentCore Runtime, Amazon Bedrock (Anthropic Claude), AWS CDK, CodeBuild/ECR, VPC, (optional) AWS Distributed Load Testing
 - **Estimated Cost**: see [Cost](#cost) below
 
 ## Business Value
@@ -33,7 +33,7 @@ test" from hours to minutes, with private inbound (IAM SigV4) and an optional
 private-VPC egress mode when you need it.
 
 ## What You'll See
-1. Deploy the agent (CDK **or** CloudFormation) — `public` by default (no VPC),
+1. Deploy the agent with `./deploy-all.sh` — `public` by default (no VPC),
    or `--network-mode vpc` for a private-VPC runtime.
 2. Invoke it with an API spec (inline in the payload, or via an S3 URI).
 3. The agent parses the spec → classifies endpoints → generates a JMeter script.
@@ -44,11 +44,9 @@ private-VPC egress mode when you need it.
   `bedrock-agentcore` resources — plus VPC/NAT/endpoints in `vpc` network mode
   (`aws sts get-caller-identity` should resolve).
 - **AWS CLI v2** and **git**.
-- A container engine — **Docker** (preferred), finch, or nerdctl — for the ARM64
-  image build. **CDK path (Method A) only** — the CloudFormation path builds the
-  image in-stack via CodeBuild and needs no local container engine.
-- Method-specific tooling: **CDK** needs Node 18+ and Python 3.9+; **CloudFormation**
-  needs nothing beyond the AWS CLI (image is built in-stack by CodeBuild).
+- **CDK tooling**: Node 18+ and Python 3.9+ (for `npx aws-cdk` and the stack's
+  Python deps). **No local container engine is needed** — the ARM64 image is
+  built in the cloud by CodeBuild.
 - In `vpc` mode, first VPC use auto-creates the service-linked role
   `AWSServiceRoleForBedrockAgentCoreNetwork` (in `BedrockAgentCoreFullAccess`).
 - *(Optional)* An existing **DLT** deployment if you want to register/run tests.
@@ -57,12 +55,10 @@ private-VPC egress mode when you need it.
 
 ## Deploy
 
-Two interchangeable IaC paths produce the same runtime. **CDK is the canonical
-path**; CloudFormation is a fully-working alternative. Both keep DLT optional and
-support connecting DLT later (re-run with the DLT flags — an idempotent update
-that adds the DLT env vars and DLT-scoped IAM, then rolls the runtime version).
-
-### Method A — AWS CDK (`infrastructure/cdk/`)
+A single CDK path (`infrastructure/cdk/`) builds and deploys everything — there is
+no separate CloudFormation path. DLT stays optional and can be connected later by
+re-running with the DLT flags (an idempotent update that adds the DLT env vars and
+DLT-scoped IAM, then rolls the runtime version).
 
 ```bash
 # script-only agent (no DLT) — model is OPTIONAL; defaults to a Claude Opus
@@ -80,72 +76,52 @@ that adds the DLT env vars and DLT-scoped IAM, then rolls the runtime version).
 ./deploy-all.sh --network-mode vpc
 ```
 
-Windows: `./deploy-all.ps1 [-BedrockModel anthropic.claude-opus-4-8] [-DltStack ... -DltRegion ...] [-NetworkMode vpc]` (all optional).
+Windows: `./deploy-all.ps1 [-BedrockModel anthropic.claude-opus-4-8] [-DltStack ... -DltRegion ...] [-NetworkMode vpc]` (all optional; same behavior as `deploy-all.sh`).
 
-CDK builds the ARM64 image with your container engine (`CDK_DOCKER`, auto-detected)
-and creates the runtime. **By default (`--network-mode public`) no VPC is created** —
-the runtime uses AWS-managed egress. With `--network-mode vpc` CDK also creates the
-private VPC (NAT + interface/S3 endpoints) and a runtime-egress security group.
-Stack: `AILoadTestGen-<region>`. Teardown: `cd infrastructure/cdk &&
-. .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>`
-(activate `.venv` first — `deploy-all.sh` installs the CDK Python deps there and
-`cdk destroy` re-synths `app.py`; no `CDK_DOCKER` needed — destroy does not
-rebuild the image; deploy auto-detects docker/finch/nerdctl).
+**No local Docker/finch is needed.** The ARM64 image is built **in the cloud by
+CodeBuild**: the stack uploads the agent source (a CDK asset), a privileged ARM64
+CodeBuild project runs `docker build`/`push` to ECR, and a custom resource blocks
+the deploy until the image is pushed. The image is tagged with the source's content
+hash, so it rebuilds only when the agent source changes.
 
-> **Before you deploy (CDK path):** your container engine must be **running** —
-> the script checks `docker`/`finch`/`nerdctl info` and stops early with a hint if
-> not (start Docker Desktop, or run `finch vm start`). `--bedrock-model` is
-> **optional**: it defaults to a Claude Opus profile and is always re-resolved to
-> the deploy region, so you don't need the `us.`/`eu.`/`apac.` prefix. If no
-> single matching inference profile exists in that region, the deploy stops and
-> lists what to pass. Both `.sh` and `.ps1` behave identically. See
-> [Supported cross-Region inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+**By default (`--network-mode public`) no VPC is created** — the runtime uses
+AWS-managed egress. With `--network-mode vpc` the stack also creates the private
+VPC (NAT + interface/S3 endpoints) and a runtime-egress security group. Inbound is
+IAM SigV4 in both modes.
 
-### Method B — CloudFormation (`infrastructure/cloudformation/`)
+`--bedrock-model` is **optional**: it defaults to a Claude Opus profile and is
+always re-resolved to the deploy region, so you don't need the `us.`/`eu.`/`apac.`
+prefix. If no single matching inference profile exists in that region, the deploy
+stops and lists what to pass. Both `.sh` and `.ps1` behave identically. See
+[Supported cross-Region inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+Stack: `AILoadTestGen-<region>`. Teardown (activate `.venv` first — `deploy-all.sh`
+installs the CDK Python deps there and `cdk destroy` re-synths `app.py`):
 
 ```bash
-# script-only agent (no DLT) — model optional (auto-resolved), no local engine
-# (region auto-detected; stack name defaults to ai-load-test-gen)
-infrastructure/cloudformation/deploy.sh
-
-# with DLT wired
-infrastructure/cloudformation/deploy.sh --dlt-stack LaunchWizard-dlt-poc --dlt-region us-west-2
+cd infrastructure/cdk && . .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>
 ```
-Windows: `./deploy.ps1 [-DltStack ... -DltRegion ...] [-NetworkMode vpc]` (all optional; same behavior as `deploy.sh`).
 
-The CloudFormation path builds the image **in-stack** via CodeBuild (**no local
-container engine needed** — use this path if you don't have Docker/finch/nerdctl).
-The Bedrock model is **optional and auto-resolved to the deploy region**, exactly
-like the CDK path (override with `--bedrock-model` / `-BedrockModel`). There is no
-`aws cloudformation package` step — the build-trigger Lambda is inlined. Teardown:
-`infrastructure/cloudformation/teardown.sh` (or `teardown.ps1` on Windows) —
-auto-detects region; defaults to the `ai-load-test-gen` stack.
-
-CloudFormation `deploy.sh` flags (PowerShell `deploy.ps1` takes the same options as PascalCase parameters, e.g. `-BedrockModel`, `-NetworkMode`, `-DltStack`):
+`deploy-all.sh` flags (PowerShell `deploy-all.ps1` takes the same options as
+PascalCase parameters, e.g. `-BedrockModel`, `-NetworkMode`, `-DltStack`):
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--dlt-stack` | (optional) | DLT stack name. Omit for a script-only agent; pass it (now or later) to wire DLT. |
 | `--dlt-region` | — | Required only when `--dlt-stack` is given |
-| `--bedrock-region` | = `--region` | Region whose inference profiles are listed / invoked |
+| `--bedrock-region` | = `--region` | Region whose inference profiles are resolved / invoked |
 | `--bedrock-model` | (optional) | PRIMARY model/profile id; omit to auto-resolve a region-appropriate default |
 | `--bedrock-fallback` | (optional) | FALLBACK id; omit to auto-resolve a default |
 | `--region` | (auto-detect) | Deploy region. Defaults to `AWS_DEFAULT_REGION`/`AWS_REGION`, else `aws configure get region`, else `us-east-1` |
-| `--stack-name` | `ai-load-test-gen` | CloudFormation stack name |
 | `--network-mode public\|vpc` | `public` | Runtime network placement. `public` creates no VPC (AWS-managed egress); `vpc` creates the private VPC (NAT + endpoints + SG). Inbound is IAM SigV4 either way. |
-| `--create-vpc` | `true` | New vs existing VPC — **`vpc` mode only** |
-| `--source-bucket` | `<stack>-src-<acct>-<region>` | Reuse a specific source bucket |
 | `--enable-xray true\|false` | `false` | Opt in to X-Ray IAM perms for OTEL traces |
-| `--force-xray-without-ts` | (off) | Allow `--enable-xray true` even when Transaction Search is disabled |
-| _advanced overrides_ | — | `--dlt-api-arn` / `--dlt-bucket-arn` / `--dlt-stack-arn` / `--bedrock-profiles` skip the auto-derivation if you must supply ARNs by hand |
 
 ---
 
-## Invoke the agent (same for both methods)
+## Invoke the agent
 
-The runtime is invoked identically regardless of how it was deployed. Get the
-`AgentRuntimeArn` from the stack outputs (`AILoadTestGen-<region>` for CDK, or
-your `--stack-name` for CloudFormation), then send an `InvokeAgentRuntime` request.
+Get the `AgentRuntimeArn` from the stack outputs (`AILoadTestGen-<region>`), then
+send an `InvokeAgentRuntime` request.
 The snippets below assume you've set `REGION` (the region you deployed to) and
 `ARN` — the setup block further down shows how to derive both.
 
@@ -485,9 +461,9 @@ increase for egress control.
 - **Runtime logs** → CloudWatch Logs at `/aws/bedrock-agentcore/runtimes/<id>-DEFAULT`
   (the image runs under `opentelemetry-instrument`).
 - **X-Ray traces are opt-in.** X-Ray IAM actions cannot be resource-scoped, so they
-  are granted only on request (CloudFormation: `--enable-xray true`; CDK:
-  `-c enableXray=true`) and only make sense when **CloudWatch Transaction Search**
-  is enabled. By default X-Ray perms are omitted (least privilege, no X-Ray cost).
+  are granted only on request (`--enable-xray true`) and only make sense when
+  **CloudWatch Transaction Search** is enabled. By default X-Ray perms are omitted
+  (least privilege, no X-Ray cost).
 
 ## Least privilege (execution role)
 
@@ -518,13 +494,11 @@ down when idle; keep X-Ray off unless Transaction Search is enabled.
 
 ## Teardown
 
-- **CDK**: `cd infrastructure/cdk && . .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>`
+- `cd infrastructure/cdk && . .venv/bin/activate && npx aws-cdk@latest destroy AILoadTestGen-<region>`
   (activate `.venv` first — `deploy-all.sh` installs the CDK Python deps into
   `infrastructure/cdk/.venv`, and `cdk destroy` re-synths `app.py` with whatever
   `python3` is on `PATH`; without the venv you'll hit `ModuleNotFoundError: No
-  module named 'aws_cdk'`. No `CDK_DOCKER` needed — destroy does not rebuild the
-  image; deploy auto-detects the container engine: docker → finch → nerdctl).
-- **CloudFormation**: `infrastructure/cloudformation/teardown.sh --stack-name <name> --region <region>`.
+  module named 'aws_cdk'`).
 - Note: in **`vpc` mode**, AgentCore creates service-managed ENIs that AWS
   reclaims asynchronously (up to ~8h), so a delete can land in `DELETE_FAILED` on
   the VPC until reclaim, then a teardown re-run completes it. Hourly billing

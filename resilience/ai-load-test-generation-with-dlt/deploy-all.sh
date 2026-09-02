@@ -2,12 +2,12 @@
 # Deploy the AI Load Test Generator Agent to AgentCore Runtime via AWS CDK.
 #
 # Conformity path (sample-aws-genai-ops-demos): CDK IaC, shared prerequisites,
-# region auto-detect, user-friendly summary. Coexists with the CloudFormation
-# path (infrastructure/cloudformation/deploy.sh) — this one deploys the CDK stack `AILoadTestGen-<region>`.
+# region auto-detect, user-friendly summary. Deploys the CDK stack
+# `AILoadTestGen-<region>`.
 #
 # DLT is OPTIONAL: omit --dlt-stack for a script-only agent; pass it (now or via
-# a later re-run) to wire DLT. The image is built locally by the detected
-# container engine (docker/finch/nerdctl) via CDK's DockerImageAsset.
+# a later re-run) to wire DLT. The ARM64 image is built IN THE CLOUD by CodeBuild
+# (the stack uploads the source and waits for the build) — no local Docker/finch.
 #
 # Usage:
 #   ./deploy-all.sh --bedrock-model us.anthropic.claude-opus-4-8 \
@@ -71,26 +71,9 @@ if [ -z "$REGION" ]; then
   [ -z "$REGION" ] && REGION="us-east-1"
 fi
 
-# Container engine auto-detect (docker preferred; falls back to finch/nerdctl).
-ENGINE="${CONTAINER_ENGINE:-}"
-if [ -z "$ENGINE" ]; then
-  for c in docker finch nerdctl; do
-    command -v "$c" >/dev/null 2>&1 && ENGINE="$c" && break
-  done
-fi
-[ -z "$ENGINE" ] && { echo "no container engine (docker/finch/nerdctl) found" >&2; exit 1; }
-
-# The engine must actually be running — CDK builds the ARM64 image locally. A
-# stopped daemon otherwise surfaces as a cryptic mid-build "cannot connect to
-# the docker API" failure, so fail early with an actionable hint.
-if ! "$ENGINE" info >/dev/null 2>&1; then
-  echo "ERROR: '$ENGINE' is installed but not running." >&2
-  case "$ENGINE" in
-    finch) echo "  start it with:  finch vm start" >&2 ;;
-    *)     echo "  start the $ENGINE daemon (e.g. open Docker Desktop) and re-run." >&2 ;;
-  esac
-  exit 1
-fi
+# No local container engine is needed: the ARM64 image is built in the cloud by
+# CodeBuild — the CDK stack uploads the agent source, runs the build, and blocks
+# until it succeeds. Nothing here touches docker/finch/nerdctl locally.
 
 [ -z "$BEDROCK_REGION" ] && BEDROCK_REGION="$REGION"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -198,9 +181,8 @@ python3 -m venv "$CDK_DIR/.venv"
 . "$CDK_DIR/.venv/bin/activate"
 pip install -q -r "$CDK_DIR/requirements.txt"
 
-# 5) Deploy. CDK builds the ARM64 image with the detected engine; bootstrap once.
+# 5) Deploy. CDK uploads the source; CodeBuild builds the ARM64 image in-cloud.
 cd "$CDK_DIR"
-export CDK_DOCKER="$ENGINE"
 CDK="npx --yes aws-cdk@latest"
 $CDK bootstrap "aws://${ACCOUNT_ID}/${REGION}" >/dev/null 2>&1 || true
 $CDK deploy --require-approval never \
@@ -234,4 +216,4 @@ echo "  Runtime ARN : $RT_ARN"
 echo "  Spec bucket : $SPEC_BUCKET"
 echo "  Region      : $REGION"
 echo "  DLT wired   : $([ -n "$DLT_STACK" ] && echo yes || echo no)"
-echo "  Teardown    : cd infrastructure/cdk && CDK_DOCKER=$ENGINE npx aws-cdk@latest destroy $STACK"
+echo "  Teardown    : cd infrastructure/cdk && npx aws-cdk@latest destroy $STACK"

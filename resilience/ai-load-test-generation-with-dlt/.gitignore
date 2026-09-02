@@ -30,10 +30,6 @@ out/
 # internal IPs; must never reach a remote
 sample/*.jmx
 
-# infra build artifacts
-infrastructure/cloudformation/build/
-infrastructure/cloudformation/*.packaged.yaml
-
 # CDK
 cdk.out/
 **/cdk.out/
