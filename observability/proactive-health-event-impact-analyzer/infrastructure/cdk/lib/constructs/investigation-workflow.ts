@@ -12,7 +12,6 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
-import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -39,43 +38,38 @@ export class InvestigationWorkflow extends Construct {
   /** The Notifier Lambda's execution role ARN — used for SNS topic resource policy */
   public readonly notifierRoleArn: string;
   /** Lambda function references — exposed for composite alarm metric aggregation */
-  public readonly investigationTriggerFunction: NodejsFunction;
-  public readonly opsCenterCreatorFunction: NodejsFunction;
-  public readonly notifierFunction: NodejsFunction;
-  public readonly investigationCallbackFunction: NodejsFunction;
+  public readonly investigationTriggerFunction: lambda.Function;
+  public readonly opsCenterCreatorFunction: lambda.Function;
+  public readonly notifierFunction: lambda.Function;
+  public readonly investigationCallbackFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: InvestigationWorkflowProps) {
     super(scope, id);
-
-    const lambdaDir = path.join(__dirname, '../../lambda');
 
     // Environment-aware log retention: 90 days production, 14 days non-production
     const logRetention = props.deployEnvironment === 'production'
       ? logs.RetentionDays.THREE_MONTHS
       : logs.RetentionDays.TWO_WEEKS;
 
-    // Local esbuild bundling (esbuild is a devDependency), never Docker.
+    // Lambda code is pre-bundled by `npm run bundle` (scripts/bundle-lambdas.js),
+    // which compiles each lambda/<name>/index.ts to dist/lambda/<name>/index.js via
+    // esbuild's Node API.
     //
-    // Cross-platform note: NodejsFunction local bundling must NOT shell out to a
-    // host shell. aws-cdk-lib < 2.246.0 assembled the esbuild invocation as a
-    // command string and ran it through a shell (cmd/powershell on Windows),
-    // which fails on machines without powershell on PATH ("spawnSync
-    // powershell.exe ENOENT") and is otherwise non-deterministic across
-    // platforms. aws-cdk-lib >= 2.246.0 executes esbuild via array-based
-    // spawnSync with no shell, so bundling is deterministic on Windows, macOS,
-    // and Linux. The floor is pinned in infrastructure/cdk/package.json; do not
-    // lower it.
-    const bundlingOptions = {
-      forceDockerBundling: false,
-      externalModules: ['@aws-sdk/*'],
-    };
+    // CDK's NodejsFunction is deliberately avoided: its local esbuild path shells
+    // out to `powershell.exe` on Windows (hardcoded, with no `pwsh` fallback), so
+    // synthesis fails with "spawnSync powershell.exe ENOENT" on any machine where
+    // that executable is not on PATH — breaking both `cdk deploy` and `npm test`.
+    // Pre-bundling also matches how every other demo in this repository builds its
+    // Lambda artifacts.
+    const distDir = path.join(__dirname, '../../dist/lambda');
+    const lambdaCode = (name: string) => lambda.Code.fromAsset(path.join(distDir, name));
 
     // ─── Lambda: Investigation Trigger ────────────────────────────────────────
     // Triggers DevOps Agent investigation via HMAC-authenticated webhook
-    const investigationTrigger = new NodejsFunction(this, 'InvestigationTrigger', {
+    const investigationTrigger = new lambda.Function(this, 'InvestigationTrigger', {
       runtime: Runtime.NODEJS_24_X,
-      entry: path.join(lambdaDir, 'investigation-trigger/index.ts'),
-      handler: 'handler',
+      code: lambdaCode('investigation-trigger'),
+      handler: 'index.handler',
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {
@@ -88,7 +82,6 @@ export class InvestigationWorkflow extends Construct {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       description: 'Triggers AWS DevOps Agent investigation for a Health event (hybrid multi-account routing)',
-      bundling: bundlingOptions,
     });
 
     this.investigationTriggerFunction = investigationTrigger;
@@ -123,10 +116,10 @@ export class InvestigationWorkflow extends Construct {
 
     // ─── Lambda: OpsCenter Creator ────────────────────────────────────────────
     // Creates an OpsItem in Systems Manager OpsCenter when impact is detected
-    const opsCenterCreator = new NodejsFunction(this, 'OpsCenterCreator', {
+    const opsCenterCreator = new lambda.Function(this, 'OpsCenterCreator', {
       runtime: Runtime.NODEJS_24_X,
-      entry: path.join(lambdaDir, 'opscenter-creator/index.ts'),
-      handler: 'handler',
+      code: lambdaCode('opscenter-creator'),
+      handler: 'index.handler',
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {},
@@ -135,7 +128,6 @@ export class InvestigationWorkflow extends Construct {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       description: 'Creates OpsItem in AWS Systems Manager OpsCenter for Health event impact tracking',
-      bundling: bundlingOptions,
     });
 
     this.opsCenterCreatorFunction = opsCenterCreator;
@@ -159,10 +151,10 @@ export class InvestigationWorkflow extends Construct {
 
     // ─── Lambda: Notifier ─────────────────────────────────────────────────────
     // Routes alerts to the right teams based on investigation findings
-    const notifier = new NodejsFunction(this, 'Notifier', {
+    const notifier = new lambda.Function(this, 'Notifier', {
       runtime: Runtime.NODEJS_24_X,
-      entry: path.join(lambdaDir, 'notifier/index.ts'),
-      handler: 'handler',
+      code: lambdaCode('notifier'),
+      handler: 'index.handler',
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
       environment: {
@@ -178,7 +170,6 @@ export class InvestigationWorkflow extends Construct {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       description: 'Routes impact notifications to affected teams (with default routing fallback and OpsItem link)',
-      bundling: bundlingOptions,
     });
 
     this.notifierFunction = notifier;
@@ -422,10 +413,10 @@ export class InvestigationWorkflow extends Construct {
     // Handles DevOps Agent investigation completion events and resumes Step Functions.
     // Calls DevOps Agent API (ListJournalRecords) to retrieve investigation findings
     // and correlate the callback with our workflow via healthEventArn.
-    const investigationCallback = new NodejsFunction(this, 'InvestigationCallback', {
+    const investigationCallback = new lambda.Function(this, 'InvestigationCallback', {
       runtime: Runtime.NODEJS_24_X,
-      entry: path.join(lambdaDir, 'investigation-callback/index.ts'),
-      handler: 'handler',
+      code: lambdaCode('investigation-callback'),
+      handler: 'index.handler',
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       environment: {
@@ -435,12 +426,10 @@ export class InvestigationWorkflow extends Construct {
         retention: logRetention,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
+      // @aws-sdk/client-devops-agent is NOT in the Lambda runtime, so it is bundled
+      // into this function's artifact — see the per-function `external` list in
+      // scripts/bundle-lambdas.js.
       description: 'Handles DevOps Agent investigation completion, retrieves findings via API, and resumes Step Functions',
-      bundling: {
-        forceDockerBundling: false,
-        // @aws-sdk/client-devops-agent is NOT in Lambda runtime — must be bundled
-        externalModules: ['@aws-sdk/client-dynamodb', '@aws-sdk/client-sfn'],
-      },
     });
 
     this.stateMachine.grantTaskResponse(investigationCallback);

@@ -1833,6 +1833,14 @@ async function deployCdk(state: SetupState): Promise<void> {
   execSync('npm install --silent', { cwd: cdkDir, encoding: 'utf-8', stdio: 'pipe' });
   success('Dependencies installed');
 
+  // Pre-bundle the TypeScript Lambda handlers into dist/lambda/<name>/index.js.
+  // The CDK stacks reference those directories via Code.fromAsset, so this must
+  // run before any synth/deploy. Bundling uses esbuild's Node API (no shell), which
+  // is why this works identically on Windows, macOS, and Linux.
+  info('Bundling Lambda functions...');
+  execSync('npm run bundle', { cwd: cdkDir, encoding: 'utf-8', stdio: 'pipe' });
+  success('Lambda functions bundled');
+
   // Bootstrap (idempotent)
   info('Bootstrapping CDK environment...');
   try {

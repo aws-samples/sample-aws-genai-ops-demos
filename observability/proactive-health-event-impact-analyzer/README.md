@@ -103,10 +103,16 @@ npx ts-node scripts/cleanup.ts
 ```bash
 cd infrastructure/cdk
 npm install
+npm run bundle   # compiles the TypeScript Lambda handlers into dist/lambda/
 npx cdk deploy HealthEventAnalyzerStack-$AWS_REGION \
   --parameters DevOpsAgentWebhookUrl=YOUR_URL \
   --no-cli-pager --require-approval broadening
 ```
+
+> **Note**: `npm run bundle` is required before any manual `cdk synth`/`cdk deploy`. The
+> CDK stacks reference pre-built Lambda artifacts in `dist/lambda/`, so synthesis fails
+> with a missing-asset error if you skip it. The setup wizard and `deploy-all` scripts
+> run this step automatically, and `npm test` / `npm run build` run it via npm pre-hooks.
 
 Secrets (webhook secret, Slack URL, MS Teams URL) are stored in **SSM Parameter Store SecureString** — not passed as CloudFormation parameters. For manual deployment, create them before deploying:
 
@@ -204,13 +210,15 @@ Cost optimization: All resources use on-demand/pay-per-request pricing. No idle 
 ├── infrastructure/cdk/          # AWS CDK infrastructure (TypeScript)
 │   ├── bin/app.ts              # CDK app entry point
 │   ├── lib/                    # Stack and construct definitions
+│   ├── scripts/
+│   │   └── bundle-lambdas.js   # esbuild pre-compile → dist/lambda/<name>/index.js
 │   └── lambda/                 # Lambda function source code
 │       ├── event-router/       # Normalizes Health events → starts workflow
 │       ├── investigation-trigger/  # HMAC webhook to DevOps Agent
 │       ├── investigation-callback/ # Handles agent completion
 │       ├── opscenter-creator/  # Creates OpsItem in Systems Manager OpsCenter
-│       ├── notifier/           # Routes notifications to teams
-│       └── default-contact-resolver/ # AWS Account alternate contacts
+│       └── notifier/           # Routes notifications to teams (incl. default
+│                               # routing via AWS Account alternate contacts)
 ├── devops-agent-skill/         # DevOps Agent custom skill definition
 ├── scripts/                    # Setup wizard and utility scripts
 ├── events/                     # Sample events for testing

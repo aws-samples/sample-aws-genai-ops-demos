@@ -9,8 +9,7 @@ import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
-import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import { Runtime, Function as LambdaFunction } from 'aws-cdk-lib/aws-lambda';
+import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -23,7 +22,7 @@ export interface EventIngestionProps {
 }
 
 export class EventIngestion extends Construct {
-  public readonly eventRouter: NodejsFunction;
+  public readonly eventRouter: lambda.Function;
 
   constructor(scope: Construct, id: string, props: EventIngestionProps) {
     super(scope, id);
@@ -33,11 +32,17 @@ export class EventIngestion extends Construct {
       ? logs.RetentionDays.THREE_MONTHS
       : logs.RetentionDays.TWO_WEEKS;
 
-    // Event Router Lambda — parses Health events and starts the workflow
-    this.eventRouter = new NodejsFunction(this, 'EventRouter', {
+    // Event Router Lambda — parses Health events and starts the workflow.
+    //
+    // Code is pre-bundled by `npm run bundle` (scripts/bundle-lambdas.js) rather
+    // than by CDK's NodejsFunction: that construct's local esbuild path shells out
+    // to `powershell.exe` on Windows and fails wherever it is not on PATH. Every
+    // other demo in this repository uses lambda.Function + Code.fromAsset for the
+    // same reason.
+    this.eventRouter = new lambda.Function(this, 'EventRouter', {
       runtime: Runtime.NODEJS_24_X,
-      entry: path.join(__dirname, '../../lambda/event-router/index.ts'),
-      handler: 'handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../dist/lambda/event-router')),
+      handler: 'index.handler',
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {
@@ -48,10 +53,6 @@ export class EventIngestion extends Construct {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       description: 'Routes AWS Health events to the investigation workflow',
-      bundling: {
-        forceDockerBundling: false,
-        externalModules: ['@aws-sdk/*'],
-      },
     });
 
     // ─── Dead Letter Queue for Event Router async invocation failures ────────

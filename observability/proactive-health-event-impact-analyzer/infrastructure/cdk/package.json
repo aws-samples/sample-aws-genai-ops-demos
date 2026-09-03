@@ -6,9 +6,12 @@
     "proactive-health-event-analyzer": "bin/app.js"
   },
   "scripts": {
+    "bundle": "node scripts/bundle-lambdas.js",
     "build": "tsc",
+    "prebuild": "npm run bundle",
     "watch": "tsc -w",
     "test": "jest",
+    "pretest": "npm run bundle",
     "cdk": "cdk",
     "lint": "eslint . --ext .ts"
   },

@@ -15,6 +15,30 @@ import * as path from 'path';
 
 const WIZARD_PATH = path.resolve(__dirname, '../scripts/setup-wizard.ts');
 
+/**
+ * Extracts a top-level function's source text from the wizard.
+ *
+ * Slices from the function declaration to whichever comes first: the next
+ * top-level function declaration, the trailing `main().catch(...)` bootstrap, or
+ * end of file. Previously these assertions used a fixed 4000-character window,
+ * which silently truncated the body whenever the function grew — causing
+ * unrelated assertions to fail on content that was still present.
+ */
+function extractFunctionSource(source: string, declaration: string): string {
+  const startIdx = source.indexOf(declaration);
+  if (startIdx === -1) return '';
+
+  const searchFrom = startIdx + declaration.length;
+  const boundaries = [
+    source.indexOf('\nasync function ', searchFrom),
+    source.indexOf('\nfunction ', searchFrom),
+    source.indexOf('\nmain().catch(', searchFrom),
+  ].filter((idx) => idx !== -1);
+
+  const endIdx = boundaries.length > 0 ? Math.min(...boundaries) : source.length;
+  return source.slice(startIdx, endIdx);
+}
+
 describe('setup-wizard production readiness', () => {
   let wizardSource: string;
 
@@ -219,26 +243,23 @@ describe('setup-wizard production readiness', () => {
   describe('deployCdk function resilience', () => {
     it('deployCdk throws errors instead of calling process.exit', () => {
       // Find the deployCdk function
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
       // Get the function body (until next top-level function or end of file)
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).not.toContain('process.exit');
       expect(fnBody).toContain("throw new Error");
     });
 
     it('deployCdk uses --require-approval broadening', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).toContain('--require-approval=broadening');
       expect(fnBody).not.toContain('--require-approval never');
     });
 
     it('deployCdk stores secrets in SSM SecureString before deploying', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).toContain('putSsmSecureString');
       expect(fnBody).toContain('webhook-secret');
       expect(fnBody).toContain('slack-webhook-url');
@@ -246,9 +267,8 @@ describe('setup-wizard production readiness', () => {
     });
 
     it('deployCdk does not pass secrets as CloudFormation parameters', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).not.toContain('--parameters DevOpsAgentWebhookSecret');
       expect(fnBody).not.toContain('--parameters SlackWebhookUrl');
       expect(fnBody).not.toContain('--parameters MsTeamsWebhookUrl');
