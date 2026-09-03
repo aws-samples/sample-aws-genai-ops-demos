@@ -48,6 +48,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed component descriptions and
 
 ## Prerequisites
 
+- Deploy in a Region where AWS DevOps Agent is generally available. The setup
+  probes the DevOps Agent API in your resolved Region, but the API can respond
+  in Regions where the service is not yet fully launched (no console support).
+  **As of today, deploy only to a Region listed in the official
+  [AWS DevOps Agent supported Regions](https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html)**
+  to get full functionality including the DevOps Agent console.
 - AWS account with permissions to create IAM roles, Lambda, Step Functions, DynamoDB, SNS, and SSM resources
 - AWS CLI v2.34.20+ installed and authenticated (`aws sts get-caller-identity` should work)
 - Node.js 24+ and npm installed (Lambda functions run on Node.js 24)

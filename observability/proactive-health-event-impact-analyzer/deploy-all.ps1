@@ -105,13 +105,13 @@ Write-Host "========================================" -ForegroundColor Cyan
 if (-not $SkipSetup) {
     # Use shared prerequisites if available (monorepo), otherwise inline checks.
     # The shared script validates the AWS CLI, credentials, region, and — via
-    # -RequiredService agentcore — that AWS DevOps Agent (AgentCore) is actually
-    # reachable in the resolved region, then sets $global:AWS_REGION / AWS_ACCOUNT_ID
-    # / AWS_ARN. The wizard reuses those instead of re-checking, so prerequisites
-    # are validated exactly once.
+    # -RequiredService devops-agent — that AWS DevOps Agent (service principal
+    # aidevops) is actually reachable in the resolved region, then sets
+    # $global:AWS_REGION / AWS_ACCOUNT_ID / AWS_ARN. The wizard reuses those
+    # instead of re-checking, so prerequisites are validated exactly once.
     $sharedPrereqs = Join-Path $ScriptDir "..\..\shared\scripts\check-prerequisites.ps1"
     if (Test-Path $sharedPrereqs) {
-        & $sharedPrereqs -RequiredService "agentcore" -MinAwsCliVersion "2.34.20"
+        & $sharedPrereqs -RequiredService "devops-agent" -MinAwsCliVersion "2.34.20"
         $region = $global:AWS_REGION
         # Hand the validated context to the wizard so it does not re-run these checks.
         $env:AWS_REGION = $global:AWS_REGION

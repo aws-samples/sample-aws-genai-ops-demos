@@ -290,21 +290,23 @@ const SSM_PARAM_JIRA_SITE_URL = '/health-analyzer/jira/siteUrl';
 
 // ─── Region Resolution ──────────────────────────────────────────────────────
 
-// The wizard does NOT hardcode a region shortlist. AWS DevOps Agent (AgentCore)
+// The wizard does NOT hardcode a region shortlist. AWS DevOps Agent region
 // availability shifts over time, so a static list rots and is inaccurate. Instead
 // we resolve the region exactly like the shared deploy scripts and the shared
 // prerequisites check do — environment first, then the AWS CLI's configured
 // region, then a safe default — and let the shared prerequisites check
-// (`check-prerequisites --required-service agentcore`) prove the service is
-// actually reachable in that region by calling it. When invoked through the
+// (`check-prerequisites --required-service devops-agent`) prove AWS DevOps Agent
+// is actually reachable in that region by calling it. When invoked through the
 // shared deploy scripts the region is already resolved and exported as
 // AWS_REGION, so this simply picks it up.
 const DEFAULT_REGION = 'us-east-1';
 
 function resolveRegion(explicit?: string): string {
   if (explicit) return explicit;
-  if (process.env.AWS_REGION) return process.env.AWS_REGION;
+  // Precedence matches the shared scripts / repo convention: AWS_DEFAULT_REGION
+  // takes priority over AWS_REGION, then the AWS CLI's configured region.
   if (process.env.AWS_DEFAULT_REGION) return process.env.AWS_DEFAULT_REGION;
+  if (process.env.AWS_REGION) return process.env.AWS_REGION;
   try {
     const cliRegion = execSync('aws configure get region', { encoding: 'utf-8' }).trim();
     if (cliRegion) return cliRegion;
@@ -440,10 +442,10 @@ async function main(): Promise<void> {
 
   // No hardcoded region shortlist: resolve from the environment / AWS CLI config
   // (the shared deploy scripts export AWS_REGION after the shared prerequisites
-  // check). The shared prerequisites check proves AgentCore is reachable in this region.
+  // check). The shared prerequisites check proves AWS DevOps Agent is reachable in this region.
   state.region = resolveRegion(args.region);
   success(`Region: ${state.region}`);
-  info('(from --region, environment, or AWS CLI config; AgentCore availability is verified during prerequisites)');
+  info('(from --region, environment, or AWS CLI config; DevOps Agent availability is verified during prerequisites)');
   recordStep('Resolve Region', 'succeeded');
 
   // ─── Step 1: Prerequisites ──────────────────────────────────────────────
@@ -451,7 +453,7 @@ async function main(): Promise<void> {
 
   // When launched via the shared deploy scripts, the shared prerequisites
   // script has already validated the AWS CLI (incl. version), credentials,
-  // region, and AgentCore availability, and exported the identity. Reuse that
+  // region, and DevOps Agent availability, and exported the identity. Reuse that
   // instead of re-running the same checks. Only the CDK availability check is
   // wizard-specific (the shared script does not cover it). When the wizard is
   // run standalone (no exported context), fall back to the full checks.
@@ -460,7 +462,7 @@ async function main(): Promise<void> {
   const prerequisitesOk = await runStep('Check prerequisites', async () => {
     if (sharedPrereqsRan) {
       state.accountId = process.env.AWS_ACCOUNT_ID!;
-      success('Prerequisites already validated by shared check (AWS CLI, credentials, region, AgentCore)');
+      success('Prerequisites already validated by shared check (AWS CLI, credentials, region, DevOps Agent)');
       info(`Account: ${state.accountId} (${process.env.AWS_ARN})`);
     } else {
       try {

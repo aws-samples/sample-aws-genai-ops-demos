@@ -119,13 +119,14 @@ echo "========================================"
 if [ "$SKIP_SETUP" = false ]; then
     # Use shared prerequisites if available (monorepo), otherwise inline checks.
     # The shared script validates the AWS CLI, credentials, region, and — via
-    # --required-service agentcore — that AWS DevOps Agent (AgentCore) is actually
-    # reachable in the resolved region (it calls bedrock-agentcore-control), then
-    # exports AWS_REGION / AWS_ACCOUNT_ID / AWS_ARN. The wizard reuses those exports
-    # instead of re-checking, so prerequisites are validated exactly once.
+    # --required-service devops-agent — that AWS DevOps Agent (service principal
+    # aidevops) is actually reachable in the resolved region (it calls
+    # `aws devops-agent list-agent-spaces`), then exports AWS_REGION /
+    # AWS_ACCOUNT_ID / AWS_ARN. The wizard reuses those exports instead of
+    # re-checking, so prerequisites are validated exactly once.
     SHARED_PREREQS="$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh"
     if [ -f "$SHARED_PREREQS" ]; then
-        source "$SHARED_PREREQS" --required-service agentcore --min-aws-cli-version 2.34.20
+        source "$SHARED_PREREQS" --required-service devops-agent --min-aws-cli-version 2.34.20
         region=$AWS_REGION
         # Hand the validated context to the wizard so it does not re-run these checks.
         export AWS_REGION AWS_ACCOUNT_ID AWS_ARN
