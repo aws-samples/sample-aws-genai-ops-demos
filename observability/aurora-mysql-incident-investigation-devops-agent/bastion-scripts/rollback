@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Roll back an injected scenario. Run ON the bastion (via sudo).
+set -uo pipefail
+source "$(dirname "$0")/lib.sh"
+
+SCENARIO="${1:-}"
+stop_load() {
+  pkill -f "SELECT SLEEP(1800)" 2>/dev/null || true
+  pkill -f "BENCHMARK" 2>/dev/null || true
+}
+
+case "$SCENARIO" in
+  connection-storm|cpu-spike|deadlock|memory-pressure|replica-lag)
+    echo "Rolling back $SCENARIO..."
+    kill_scenario "$SCENARIO"
+    stop_load
+    echo "Done."
+    ;;
+  failover)
+    echo "Failover self-heals — no rollback needed. Roles have already swapped."
+    ;;
+  all)
+    for s in connection-storm cpu-spike deadlock memory-pressure replica-lag; do
+      kill_scenario "$s"
+    done
+    stop_load
+    echo "All scenarios stopped."
+    ;;
+  *)
+    echo "Usage: rollback <connection-storm|cpu-spike|deadlock|memory-pressure|replica-lag|all>"
+    exit 1
+    ;;
+esac
