@@ -19,15 +19,10 @@ This repository contains deployable code samples demonstrating how generative AI
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
 | SaaS Status MCP Server for AWS DevOps Agent | Observability | Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more) — so investigations stop chasing internal infrastructure when the outage is upstream | [observability/saas-status-mcp/](observability/saas-status-mcp/README.md) |
 | AWS Feature Relevance Notification System | Observability | AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates | [observability/aws-feature-relevance-notification-system/](observability/aws-feature-relevance-notification-system/README.md) |
+| Proactive AWS Health Event Impact Analyzer | Observability | Use AWS DevOps Agent to triage AWS Health events, assess blast radius from application topology, and route multi-team notifications (email, Slack, MS Teams, Jira) automatically | [observability/proactive-health-event-impact-analyzer/](observability/proactive-health-event-impact-analyzer/README.md) |
 | AI Incident Response Playbook Builder | Security | Analyze AWS architecture and generate tailored IR playbooks with MITRE ATT&CK mapping, SSM Automation documents, and step-by-step response procedures | [security/ai-incident-response-playbook-builder/](security/ai-incident-response-playbook-builder/README.md) |
 | AI Permission Boundary Generator | Security | Analyze CloudTrail logs for IAM roles/users, identify unused permissions, and generate least-privilege permission boundaries as ready-to-deploy CDK/CloudFormation resources | [security/ai-permission-boundary-generator/](security/ai-permission-boundary-generator/README.md) |
 | IAM Security Assistant | Security | Conversational IAM security assistant that queries Security Hub findings, analyzes role usage via CloudTrail, generates least-privilege policies, and assesses blast radius — all read-only, with exportable remediation artifacts | [security/ai-iam-access-analyzer-assistant/](security/ai-iam-access-analyzer-assistant/README.md) |
-
-## Roadmap (Coming Soon)
-
-| Demo Name | Pillar | Description | Status |
-|-----------|--------|-------------|--------|
-| AWS Health and Support Case Analyzer | Resilience | AI-powered analysis of AWS Health events and Support Cases with intelligent categorization and actionable recommendations | Planned |
 
 ## Repository Structure
 
@@ -46,6 +41,7 @@ observability/
 ├── aws-feature-relevance-notification-system/
 ├── aws-site-to-site-vpn-tunnel-investigation-devops-agent/
 ├── eks-investigation-devops-agent/
+├── proactive-health-event-impact-analyzer/
 └── saas-status-mcp/
 resilience/
 └── ai-chaos-engineering-with-fis/
