@@ -288,16 +288,31 @@ const SSM_PARAM_JIRA_PROJECT_KEY = '/health-analyzer/jira/projectKey';
 const SSM_PARAM_JIRA_ISSUE_TYPE = '/health-analyzer/jira/issueType';
 const SSM_PARAM_JIRA_SITE_URL = '/health-analyzer/jira/siteUrl';
 
-// ─── Supported Regions ──────────────────────────────────────────────────────
+// ─── Region Resolution ──────────────────────────────────────────────────────
 
-const SUPPORTED_REGIONS = [
-  'us-east-1',
-  'us-west-2',
-  'ap-southeast-2',
-  'ap-northeast-1',
-  'eu-central-1',
-  'eu-west-1',
-];
+// The wizard does NOT hardcode a region shortlist. AWS DevOps Agent (AgentCore)
+// availability shifts over time, so a static list rots and is inaccurate. Instead
+// we resolve the region exactly like the shared deploy scripts and the shared
+// prerequisites check do — environment first, then the AWS CLI's configured
+// region, then a safe default — and let the shared prerequisites check
+// (`check-prerequisites --required-service agentcore`) prove the service is
+// actually reachable in that region by calling it. When invoked through the
+// shared deploy scripts the region is already resolved and exported as
+// AWS_REGION, so this simply picks it up.
+const DEFAULT_REGION = 'us-east-1';
+
+function resolveRegion(explicit?: string): string {
+  if (explicit) return explicit;
+  if (process.env.AWS_REGION) return process.env.AWS_REGION;
+  if (process.env.AWS_DEFAULT_REGION) return process.env.AWS_DEFAULT_REGION;
+  try {
+    const cliRegion = execSync('aws configure get region', { encoding: 'utf-8' }).trim();
+    if (cliRegion) return cliRegion;
+  } catch {
+    // No configured region — fall through to the default.
+  }
+  return DEFAULT_REGION;
+}
 
 // ─── AWS CLI version requirements ───────────────────────────────────────────
 
@@ -420,53 +435,70 @@ async function main(): Promise<void> {
     jiraMcpAssociationId: '',
   };
 
-  // ─── Step 0: Select Region (always first) ───────────────────────────────
-  step(0, 'Select Target AWS Region');
+  // ─── Step 0: Resolve Target AWS Region (always first) ───────────────────
+  step(0, 'Resolve Target AWS Region');
 
-  info('DevOps Agent is available in these regions:');
-  const regionIdx = await askChoice('Which region do you want to deploy in?', SUPPORTED_REGIONS);
-  state.region = SUPPORTED_REGIONS[regionIdx];
+  // No hardcoded region shortlist: resolve from the environment / AWS CLI config
+  // (the shared deploy scripts export AWS_REGION after the shared prerequisites
+  // check). The shared prerequisites check proves AgentCore is reachable in this region.
+  state.region = resolveRegion(args.region);
   success(`Region: ${state.region}`);
-  recordStep('Select Region', 'succeeded');
+  info('(from --region, environment, or AWS CLI config; AgentCore availability is verified during prerequisites)');
+  recordStep('Resolve Region', 'succeeded');
 
   // ─── Step 1: Prerequisites ──────────────────────────────────────────────
   step(1, 'Checking prerequisites');
 
+  // When launched via the shared deploy scripts, the shared prerequisites
+  // script has already validated the AWS CLI (incl. version), credentials,
+  // region, and AgentCore availability, and exported the identity. Reuse that
+  // instead of re-running the same checks. Only the CDK availability check is
+  // wizard-specific (the shared script does not cover it). When the wizard is
+  // run standalone (no exported context), fall back to the full checks.
   let aborted = false;
+  const sharedPrereqsRan = Boolean(process.env.AWS_ACCOUNT_ID && process.env.AWS_ARN);
   const prerequisitesOk = await runStep('Check prerequisites', async () => {
-    try {
-      exec('aws --version', true);
-      success('AWS CLI installed');
-    } catch {
-      throw new Error('AWS CLI not found. Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html');
-    }
-
-    const cliVersion = getAwsCliVersion();
-    if (!cliVersion) {
-      warn(`Could not parse AWS CLI version output. Continuing, but ${MIN_AWS_CLI_VERSION}+ is required for 'aws devops-agent'.`);
-    } else if (compareVersions(cliVersion, MIN_AWS_CLI_VERSION) < 0) {
-      throw new Error(
-        `AWS CLI ${cliVersion} is too old. The 'aws devops-agent' command requires ${MIN_AWS_CLI_VERSION} or newer. ` +
-        'Upgrade: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html'
-      );
+    if (sharedPrereqsRan) {
+      state.accountId = process.env.AWS_ACCOUNT_ID!;
+      success('Prerequisites already validated by shared check (AWS CLI, credentials, region, AgentCore)');
+      info(`Account: ${state.accountId} (${process.env.AWS_ARN})`);
     } else {
-      success(`AWS CLI ${cliVersion} (>= ${MIN_AWS_CLI_VERSION} required for devops-agent)`);
+      try {
+        exec('aws --version', true);
+        success('AWS CLI installed');
+      } catch {
+        throw new Error('AWS CLI not found. Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html');
+      }
+
+      const cliVersion = getAwsCliVersion();
+      if (!cliVersion) {
+        warn(`Could not parse AWS CLI version output. Continuing, but ${MIN_AWS_CLI_VERSION}+ is required for 'aws devops-agent'.`);
+      } else if (compareVersions(cliVersion, MIN_AWS_CLI_VERSION) < 0) {
+        throw new Error(
+          `AWS CLI ${cliVersion} is too old. The 'aws devops-agent' command requires ${MIN_AWS_CLI_VERSION} or newer. ` +
+          'Upgrade: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html'
+        );
+      } else {
+        success(`AWS CLI ${cliVersion} (>= ${MIN_AWS_CLI_VERSION} required for devops-agent)`);
+      }
+
+      try {
+        const identity = execJson('aws sts get-caller-identity --no-cli-pager');
+        state.accountId = identity.Account;
+        success(`Authenticated as: ${identity.Arn}`);
+        info(`Account: ${state.accountId}`);
+      } catch {
+        throw new Error('AWS credentials not configured or session expired. Run: aws sso login');
+      }
     }
 
+    // CDK availability is not covered by the shared prerequisites script, so it
+    // is always checked here.
     try {
       exec('npx cdk --version', true);
       success('AWS CDK available');
     } catch {
       throw new Error('AWS CDK not found. Install it: npm install -g aws-cdk');
-    }
-
-    try {
-      const identity = execJson('aws sts get-caller-identity --no-cli-pager');
-      state.accountId = identity.Account;
-      success(`Authenticated as: ${identity.Arn}`);
-      info(`Account: ${state.accountId}`);
-    } catch {
-      throw new Error('AWS credentials not configured or session expired. Run: aws sso login');
     }
   });
 
@@ -733,24 +765,11 @@ async function runJiraOnly(args: CliOptions): Promise<void> {
   }
 
   // ─── Step 1: Region ─────────────────────────────────────────────────────
-  step(1, 'Select AWS Region');
+  step(1, 'Resolve AWS Region');
 
-  if (args.region) {
-    if (!SUPPORTED_REGIONS.includes(args.region)) {
-      console.error(`❌ Region '${args.region}' is not in the supported list: ${SUPPORTED_REGIONS.join(', ')}`);
-      rl.close();
-      return;
-    }
-    state.region = args.region;
-    success(`Region: ${state.region} (from --region)`);
-  } else {
-    const regionIdx = await askChoice(
-      'Which region is your existing deployment in?',
-      SUPPORTED_REGIONS
-    );
-    state.region = SUPPORTED_REGIONS[regionIdx];
-    success(`Region: ${state.region}`);
-  }
+  // No hardcoded shortlist — resolve from --region, environment, or AWS CLI config.
+  state.region = resolveRegion(args.region);
+  success(`Region: ${state.region}${args.region ? ' (from --region)' : ''}`);
 
   // ─── Step 2: Pick the existing Agent Space ──────────────────────────────
   step(2, 'Select existing DevOps Agent Space');
@@ -842,102 +861,114 @@ async function createAgentSpace(state: SetupState): Promise<void> {
 }
 
 async function ensureIamRoles(state: SetupState): Promise<void> {
-  // Check if AgentSpace role exists
+  // Trust policies are region-scoped via the aws:SourceArn condition
+  // (arn:aws:aidevops:<region>:...:agentspace/*). If a role was created in a
+  // previous run for a DIFFERENT region than the one now selected, reusing it
+  // as-is makes associate-service fail with "Invalid STS role configuration ...
+  // Verify the role's trust policy" — because the assuming agent space's ARN
+  // (in the current region) doesn't match the stale condition. So we always
+  // (re)apply the trust policy for the current region: create-role when the
+  // role is missing, update-assume-role-policy when it already exists. This is
+  // idempotent and self-heals a region change across runs.
+  const spaceTrust = {
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Service: 'aidevops.amazonaws.com' },
+      Action: 'sts:AssumeRole',
+      Condition: {
+        StringEquals: { 'aws:SourceAccount': state.accountId },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+      },
+    }],
+  };
+  const webappTrust = {
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Service: 'aidevops.amazonaws.com' },
+      Action: ['sts:AssumeRole', 'sts:TagSession'],
+      Condition: {
+        StringEquals: { 'aws:SourceAccount': state.accountId },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+      },
+    }],
+  };
+
   const spaceRoleExists = checkRoleExists('DevOpsAgentRole-AgentSpace');
   const webappRoleExists = checkRoleExists('DevOpsAgentRole-WebappAdmin');
 
-  if (spaceRoleExists && webappRoleExists) {
-    success('IAM roles already exist (DevOpsAgentRole-AgentSpace, DevOpsAgentRole-WebappAdmin)');
-    return;
-  }
-
-  info('Creating IAM roles for DevOps Agent...');
-
-  if (!spaceRoleExists) {
-    // Create AgentSpace role — use file:// to avoid shell quoting issues on Windows
-    const spaceTrustFile = writeTempJson('space-trust', {
-      Version: '2012-10-17',
-      Statement: [{
-        Effect: 'Allow',
-        Principal: { Service: 'aidevops.amazonaws.com' },
-        Action: 'sts:AssumeRole',
-        Condition: {
-          StringEquals: { 'aws:SourceAccount': state.accountId },
-          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
-        },
-      }],
-    });
-
-    try {
+  // ─── AgentSpace role ──────────────────────────────────────────────────────
+  const spaceTrustFile = writeTempJson('space-trust', spaceTrust);
+  try {
+    if (spaceRoleExists) {
+      exec(
+        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-document file://${spaceTrustFile} --no-cli-pager`,
+        true
+      );
+      success(`Updated trust policy: DevOpsAgentRole-AgentSpace (region ${state.region})`);
+    } else {
+      info('Creating IAM role: DevOpsAgentRole-AgentSpace...');
       exec(
         `aws iam create-role --role-name DevOpsAgentRole-AgentSpace --assume-role-policy-document file://${spaceTrustFile} --no-cli-pager`,
         true
       );
-    } finally {
-      tryUnlink(spaceTrustFile);
+      success('Created role: DevOpsAgentRole-AgentSpace');
     }
-
-    exec(
-      'aws iam attach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager',
-      true
-    );
-
-    // Additional policy for Resource Explorer SLR
-    const additionalPolicyFile = writeTempJson('space-slr-policy', {
-      Version: '2012-10-17',
-      Statement: [{
-        Sid: 'AllowCreateServiceLinkedRoles',
-        Effect: 'Allow',
-        Action: ['iam:CreateServiceLinkedRole'],
-        Resource: [`arn:aws:iam::${state.accountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer`],
-      }],
-    });
-
-    try {
-      exec(
-        `aws iam put-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles --policy-document file://${additionalPolicyFile} --no-cli-pager`,
-        true
-      );
-    } finally {
-      tryUnlink(additionalPolicyFile);
-    }
-
-    success('Created role: DevOpsAgentRole-AgentSpace');
+  } finally {
+    tryUnlink(spaceTrustFile);
   }
 
-  if (!webappRoleExists) {
-    // Create WebappAdmin role — use file:// to avoid shell quoting issues on Windows
-    const webappTrustFile = writeTempJson('webapp-trust', {
-      Version: '2012-10-17',
-      Statement: [{
-        Effect: 'Allow',
-        Principal: { Service: 'aidevops.amazonaws.com' },
-        Action: ['sts:AssumeRole', 'sts:TagSession'],
-        Condition: {
-          StringEquals: { 'aws:SourceAccount': state.accountId },
-          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
-        },
-      }],
-    });
+  // Attach managed + inline policies (idempotent — safe to re-run)
+  exec(
+    'aws iam attach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager',
+    true
+  );
+  const additionalPolicyFile = writeTempJson('space-slr-policy', {
+    Version: '2012-10-17',
+    Statement: [{
+      Sid: 'AllowCreateServiceLinkedRoles',
+      Effect: 'Allow',
+      Action: ['iam:CreateServiceLinkedRole'],
+      Resource: [`arn:aws:iam::${state.accountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer`],
+    }],
+  });
+  try {
+    exec(
+      `aws iam put-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles --policy-document file://${additionalPolicyFile} --no-cli-pager`,
+      true
+    );
+  } finally {
+    tryUnlink(additionalPolicyFile);
+  }
 
-    try {
+  // ─── WebappAdmin role ─────────────────────────────────────────────────────
+  const webappTrustFile = writeTempJson('webapp-trust', webappTrust);
+  try {
+    if (webappRoleExists) {
+      exec(
+        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-document file://${webappTrustFile} --no-cli-pager`,
+        true
+      );
+      success(`Updated trust policy: DevOpsAgentRole-WebappAdmin (region ${state.region})`);
+    } else {
+      info('Creating IAM role: DevOpsAgentRole-WebappAdmin...');
       exec(
         `aws iam create-role --role-name DevOpsAgentRole-WebappAdmin --assume-role-policy-document file://${webappTrustFile} --no-cli-pager`,
         true
       );
-    } finally {
-      tryUnlink(webappTrustFile);
+      success('Created role: DevOpsAgentRole-WebappAdmin');
     }
-
-    exec(
-      'aws iam attach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager',
-      true
-    );
-
-    success('Created role: DevOpsAgentRole-WebappAdmin');
+  } finally {
+    tryUnlink(webappTrustFile);
   }
 
-  // Wait for IAM propagation
+  exec(
+    'aws iam attach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager',
+    true
+  );
+
+  // Wait for IAM propagation (create AND update both need time to reach STS)
   info('Waiting for IAM role propagation (10s)...');
   await new Promise((resolve) => setTimeout(resolve, 10000));
 }
@@ -979,9 +1010,32 @@ async function ensureAccountAssociation(state: SetupState): Promise<void> {
 
   let result: any;
   try {
-    result = execJson(
-      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.region} --no-cli-pager`
-    );
+    // associate-service assumes DevOpsAgentRole-AgentSpace. IAM role/trust-policy
+    // changes are eventually consistent, so a freshly created (or just-updated)
+    // role can still fail STS assume-role with "Invalid STS role configuration ...
+    // Verify the role's trust policy" for a short window after creation. Retry
+    // with backoff so the step succeeds once propagation completes instead of
+    // forcing the user to manually retry.
+    const maxAttempts = 6;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        result = execJson(
+          `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.region} --no-cli-pager`
+        );
+        break;
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err);
+        const isTransientTrust =
+          /Invalid STS role configuration/i.test(msg) ||
+          /Verify the role's trust policy/i.test(msg);
+        if (!isTransientTrust || attempt === maxAttempts) {
+          throw err;
+        }
+        const delaySec = attempt * 10; // 10s, 20s, 30s, ...
+        warn(`Association not ready yet (IAM propagation). Retrying in ${delaySec}s (attempt ${attempt}/${maxAttempts - 1})...`);
+        await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+      }
+    }
   } finally {
     tryUnlink(configFile);
   }

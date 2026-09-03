@@ -103,11 +103,20 @@ Write-Host "  Deployment Script" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 if (-not $SkipSetup) {
-    # Use shared prerequisites if available (monorepo), otherwise inline checks
+    # Use shared prerequisites if available (monorepo), otherwise inline checks.
+    # The shared script validates the AWS CLI, credentials, region, and — via
+    # -RequiredService agentcore — that AWS DevOps Agent (AgentCore) is actually
+    # reachable in the resolved region, then sets $global:AWS_REGION / AWS_ACCOUNT_ID
+    # / AWS_ARN. The wizard reuses those instead of re-checking, so prerequisites
+    # are validated exactly once.
     $sharedPrereqs = Join-Path $ScriptDir "..\..\shared\scripts\check-prerequisites.ps1"
     if (Test-Path $sharedPrereqs) {
-        & $sharedPrereqs -RequiredService "bedrock" -MinAwsCliVersion "2.34.20"
+        & $sharedPrereqs -RequiredService "agentcore" -MinAwsCliVersion "2.34.20"
         $region = $global:AWS_REGION
+        # Hand the validated context to the wizard so it does not re-run these checks.
+        $env:AWS_REGION = $global:AWS_REGION
+        $env:AWS_ACCOUNT_ID = $global:AWS_ACCOUNT_ID
+        $env:AWS_ARN = $global:AWS_ARN
     } else {
         $region = Test-Prerequisites
     }
@@ -147,9 +156,9 @@ Write-Host "Launching interactive setup wizard..." -ForegroundColor Cyan
 Write-Host "The wizard will guide you through DevOps Agent configuration and CDK deployment." -ForegroundColor Gray
 Write-Host ""
 
-Push-Location $ScriptDir
+Push-Location (Join-Path $ScriptDir "scripts")
 try {
-    npx ts-node scripts/setup-wizard.ts
+    npx ts-node setup-wizard.ts
     $wizardExitCode = $LASTEXITCODE
 } finally {
     Pop-Location

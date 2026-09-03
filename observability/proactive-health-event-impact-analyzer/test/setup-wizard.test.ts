@@ -22,26 +22,37 @@ describe('setup-wizard production readiness', () => {
     wizardSource = fs.readFileSync(WIZARD_PATH, 'utf-8');
   });
 
-  describe('Requirement 16.2: Region prompt before deployment', () => {
-    it('prompts for region as the first step (Step 0) in the main flow', () => {
-      // The region selection should be Step 0, before any prerequisites or deployment
+  describe('Requirement 16.2: Region resolved before deployment', () => {
+    it('resolves the region as the first step (Step 0) in the main flow', () => {
+      // Region is established as Step 0, before any prerequisites or deployment.
+      // Per review feedback the wizard no longer prompts from a hardcoded region
+      // shortlist; it resolves the region from the environment / AWS CLI config
+      // and lets the shared prerequisites check verify AgentCore availability.
       const regionStepMatch = wizardSource.match(
-        /step\(0,\s*['"`]Select Target AWS Region['"`]\)/
+        /step\(0,\s*['"`]Resolve Target AWS Region['"`]\)/
       );
       expect(regionStepMatch).not.toBeNull();
     });
 
-    it('region selection occurs before CDK deployment step in source order', () => {
-      const regionPromptIdx = wizardSource.indexOf("'Select Target AWS Region'");
+    it('does not hardcode a region shortlist', () => {
+      // The old SUPPORTED_REGIONS picker rotted and was inaccurate; it must not
+      // return. Availability is proven at runtime by the shared prerequisites
+      // check (check-prerequisites --required-service agentcore).
+      expect(wizardSource).not.toContain('SUPPORTED_REGIONS');
+      expect(wizardSource).toContain('function resolveRegion');
+    });
+
+    it('region resolution occurs before CDK deployment step in source order', () => {
+      const regionPromptIdx = wizardSource.indexOf("'Resolve Target AWS Region'");
       const cdkDeployIdx = wizardSource.indexOf("'CDK Deployment'");
       expect(regionPromptIdx).toBeGreaterThan(-1);
       expect(cdkDeployIdx).toBeGreaterThan(-1);
       expect(regionPromptIdx).toBeLessThan(cdkDeployIdx);
     });
 
-    it('region selection occurs before any DevOps Agent API calls', () => {
-      // In the main flow, region is selected first (Step 0), prerequisites are Step 1
-      const regionStepIdx = wizardSource.indexOf("step(0, 'Select Target AWS Region')");
+    it('region resolution occurs before any DevOps Agent API calls', () => {
+      // In the main flow, region is resolved first (Step 0), prerequisites are Step 1
+      const regionStepIdx = wizardSource.indexOf("step(0, 'Resolve Target AWS Region')");
       const prerequisitesIdx = wizardSource.indexOf("step(1, 'Checking prerequisites')");
       expect(regionStepIdx).toBeGreaterThan(-1);
       expect(prerequisitesIdx).toBeGreaterThan(-1);
