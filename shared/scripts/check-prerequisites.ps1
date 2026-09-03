@@ -166,6 +166,21 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             }
             Write-Host "      OK: AgentCore Browser Tool is available in $currentRegion" -ForegroundColor Green
         }
+        "devops-agent" {
+            # Probe the actual AWS DevOps Agent service (aidevops) in this region.
+            # A region with no reachable aidevops endpoint fails at endpoint
+            # resolution and we stop here. Probing the live service avoids a
+            # hardcoded region list, which rots and would reject regions where the
+            # service is already reachable ahead of the docs. (Different service
+            # from Bedrock AgentCore, which the "agentcore" case probes.)
+            $null = aws devops-agent list-agent-spaces --region $currentRegion --no-cli-pager 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "      ERROR: AWS DevOps Agent is not available in region: $currentRegion" -ForegroundColor Red
+                Write-Host "      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html" -ForegroundColor Gray
+                exit 1
+            }
+            Write-Host "      OK: AWS DevOps Agent is available in $currentRegion" -ForegroundColor Green
+        }
         "nova-act" {
             $null = aws nova-act list-workflow-definitions --region $currentRegion 2>&1
             if ($LASTEXITCODE -ne 0) {

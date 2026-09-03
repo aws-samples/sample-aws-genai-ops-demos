@@ -222,6 +222,22 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             fi
             echo -e "\033[0;32m      ✓ AgentCore Browser Tool is available in $CURRENT_REGION\033[0m"
             ;;
+        "devops-agent")
+            # Probe the actual AWS DevOps Agent service (aidevops) in this region.
+            # A region with no reachable aidevops endpoint fails at endpoint
+            # resolution and we stop here. Probing the live service avoids a
+            # hardcoded region list, which rots and would reject regions where the
+            # service is already reachable ahead of the docs. (This is a different
+            # service from Bedrock AgentCore, which the "agentcore" case probes.)
+            if ! aws devops-agent list-agent-spaces --region "$CURRENT_REGION" --no-cli-pager > /dev/null 2>&1; then
+                echo -e "\033[0;31m      ❌ AWS DevOps Agent is not available in region: $CURRENT_REGION\033[0m"
+                echo -e ""
+                echo -e "\033[0;90m      For supported regions, see:\033[0m"
+                echo -e "\033[0;90m      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html\033[0m"
+                exit 1
+            fi
+            echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $CURRENT_REGION\033[0m"
+            ;;
         "nova-act")
             if ! aws nova-act list-workflow-definitions --region "$CURRENT_REGION" > /dev/null 2>&1; then
                 echo -e "\033[0;31m      ❌ Amazon Nova Act is not available in region: $CURRENT_REGION\033[0m"
