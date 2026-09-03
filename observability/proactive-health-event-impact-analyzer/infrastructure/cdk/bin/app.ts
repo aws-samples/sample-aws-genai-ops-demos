@@ -31,7 +31,7 @@ function getRegion(): string {
 const region = getRegion();
 
 const stack = new HealthEventAnalyzerStack(app, `HealthEventAnalyzerStack-${region}`, {
-  description: 'Proactive Health Event Impact Analyzer - GenAI-powered AWS Health event correlation and team notification (uksb-do9bhieqqh)(tag:health-event-analyzer,resilience)',
+  description: 'Proactive Health Event Impact Analyzer - GenAI-powered AWS Health event correlation and team notification (uksb-do9bhieqqh)(tag:health-event-analyzer,observability)',
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
