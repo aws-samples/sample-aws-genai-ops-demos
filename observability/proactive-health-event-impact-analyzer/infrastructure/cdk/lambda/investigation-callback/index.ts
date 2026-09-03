@@ -8,9 +8,14 @@ import {
 
 const dynamoClient = new DynamoDBClient({});
 const sfnClient = new SFNClient({});
-const devOpsAgentClient = new DevOpsAgentClient({});
+// The Agent Space (and therefore the aidevops endpoint we query for journal
+// records) may live in a different Region than this Lambda. DEVOPS_AGENT_REGION is
+// set by CDK to the resolved Agent Space region; when it is absent the SDK falls
+// back to the Lambda's own Region, which is correct for same-region deployments.
+const devOpsAgentClient = new DevOpsAgentClient(
+  process.env.DEVOPS_AGENT_REGION ? { region: process.env.DEVOPS_AGENT_REGION } : {}
+);
 const TASK_TOKEN_TABLE = process.env.TASK_TOKEN_TABLE!;
-const AWS_REGION = process.env.AWS_REGION || 'eu-west-1';
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
 

@@ -187,10 +187,44 @@ if [ -z "$REGION_FROM_ENV" ] && [ -z "$REGION_FROM_CLI" ]; then
 fi
 echo -e "\033[0;90m      Target region: $CURRENT_REGION\033[0m"
 
+# ─── AWS DevOps Agent region resolution ──────────────────────────────────────
+# An Agent Space is a regional resource and AWS DevOps Agent is available in a
+# subset of AWS Regions. Resolution is opt-in and deliberately simple:
+#
+#   1. DEVOPS_AGENT_REGION — explicit override, wins outright
+#   2. the resolved deploy region — same-region default
+#
+# Same-region is the default because an Agent Space discovers and monitors
+# resources across ALL Regions of an associated account. Splitting the two is
+# therefore only needed when the deploy Region cannot host an Agent Space, or
+# for data-residency / console-availability reasons.
+#
+# No hardcoded Region list lives here: the "devops-agent" service check below
+# probes the live API instead, so a Region stays usable the moment the service
+# reaches it. See shared/README.md ("AWS DevOps Agent Region") for the full
+# convention and its caveats.
+#
+# IMPORTANT: this script is *sourced* by most demos, so any assignment lands in the
+# caller's shell. The resolved value is therefore held in an internal variable and
+# published as DEVOPS_AGENT_REGION only when the caller actually asked for the
+# devops-agent check (see the export block at the end). Demos that do their own
+# `${DEVOPS_AGENT_REGION:-<default>}` defaulting must keep seeing it unset.
+_DEVOPS_AGENT_REGION_EFFECTIVE="${DEVOPS_AGENT_REGION:-$CURRENT_REGION}"
+if [ "$_DEVOPS_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+    echo -e "\033[0;36m      ℹ DevOps Agent region overridden: $_DEVOPS_AGENT_REGION_EFFECTIVE (deploy region: $CURRENT_REGION)\033[0m"
+fi
+
 # Check specific AWS service availability (if specified)
 if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
-    echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $CURRENT_REGION...\033[0m"
-    
+    # DevOps Agent is probed in the Agent Space region (which may differ from the
+    # deploy region); every other service is probed in the deploy region.
+    if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent" ]; then
+        SERVICE_CHECK_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
+    else
+        SERVICE_CHECK_REGION="$CURRENT_REGION"
+    fi
+    echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $SERVICE_CHECK_REGION...\033[0m"
+
     case "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" in
         "bedrock")
             if ! aws bedrock list-foundation-models --region "$CURRENT_REGION" --no-cli-pager > /dev/null 2>&1; then
@@ -223,20 +257,28 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             echo -e "\033[0;32m      ✓ AgentCore Browser Tool is available in $CURRENT_REGION\033[0m"
             ;;
         "devops-agent")
-            # Probe the actual AWS DevOps Agent service (aidevops) in this region.
-            # A region with no reachable aidevops endpoint fails at endpoint
-            # resolution and we stop here. Probing the live service avoids a
-            # hardcoded region list, which rots and would reject regions where the
+            # Probe the actual AWS DevOps Agent service (aidevops) in the Agent
+            # Space region. A region with no reachable aidevops endpoint fails at
+            # endpoint resolution and we stop here. Probing the live service avoids
+            # a hardcoded region list, which rots and would reject regions where the
             # service is already reachable ahead of the docs. (This is a different
             # service from Bedrock AgentCore, which the "agentcore" case probes.)
-            if ! aws devops-agent list-agent-spaces --region "$CURRENT_REGION" --no-cli-pager > /dev/null 2>&1; then
-                echo -e "\033[0;31m      ❌ AWS DevOps Agent is not available in region: $CURRENT_REGION\033[0m"
+            if ! aws devops-agent list-agent-spaces --region "$_DEVOPS_AGENT_REGION_EFFECTIVE" --no-cli-pager > /dev/null 2>&1; then
+                echo -e "\033[0;31m      ❌ AWS DevOps Agent is not available in region: $_DEVOPS_AGENT_REGION_EFFECTIVE\033[0m"
                 echo -e ""
-                echo -e "\033[0;90m      For supported regions, see:\033[0m"
+                echo -e "\033[0;33m      Pin the Agent Space to a supported Region and re-run:\033[0m"
+                echo -e "\033[0;36m        export DEVOPS_AGENT_REGION=<supported-region>\033[0m"
+                echo -e ""
+                echo -e "\033[0;90m      An Agent Space monitors resources in ALL Regions of an associated\033[0m"
+                echo -e "\033[0;90m      account, so it does not need to live in your deploy Region.\033[0m"
                 echo -e "\033[0;90m      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html\033[0m"
                 exit 1
             fi
-            echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $CURRENT_REGION\033[0m"
+            if [ "$_DEVOPS_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+                echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $_DEVOPS_AGENT_REGION_EFFECTIVE (Agent Space region)\033[0m"
+            else
+                echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $_DEVOPS_AGENT_REGION_EFFECTIVE\033[0m"
+            fi
             ;;
         "nova-act")
             if ! aws nova-act list-workflow-definitions --region "$CURRENT_REGION" > /dev/null 2>&1; then
@@ -270,3 +312,15 @@ echo -e "\033[0;36mReady to proceed with demo deployment.\033[0m"
 export AWS_ACCOUNT_ID="$ACCOUNT_ID"
 export AWS_REGION="$CURRENT_REGION"
 export AWS_ARN="$ARN"
+# Agent Space region for AWS DevOps Agent demos — equals $AWS_REGION unless
+# DEVOPS_AGENT_REGION was set by the caller.
+#
+# Published ONLY when the caller requested the devops-agent check. This script is
+# sourced, so unconditionally setting this name would pre-empt a demo's own
+# `${DEVOPS_AGENT_REGION:-<default>}` defaulting and silently relocate its Agent
+# Space. Demos that want the resolved value ask for the check; demos that manage
+# the variable themselves keep seeing it unset.
+if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent" ]; then
+    export DEVOPS_AGENT_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
+fi
+unset _DEVOPS_AGENT_REGION_EFFECTIVE

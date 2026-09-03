@@ -121,23 +121,58 @@ if ($versionMatch) {
 # Check AWS region configuration
 Write-Host "`nChecking AWS region configuration..." -ForegroundColor Yellow
 
+# Precedence matches shared/utils/aws-utils.* and the repo convention:
+#   AWS_DEFAULT_REGION -> AWS_REGION -> aws configure get region
+# (No us-east-1 fallback here: an unset region is a hard error so the user never
+# deploys somewhere they did not choose.)
 $currentRegion = $env:AWS_DEFAULT_REGION
+if ([string]::IsNullOrEmpty($currentRegion)) {
+    $currentRegion = $env:AWS_REGION
+}
 if ([string]::IsNullOrEmpty($currentRegion)) {
     $currentRegion = aws configure get region 2>$null
 }
 
 if ([string]::IsNullOrEmpty($currentRegion)) {
     Write-Host "      ERROR: No AWS region configured" -ForegroundColor Red
-    Write-Host "      Please configure your AWS region:" -ForegroundColor Yellow
-    Write-Host "        aws configure set region YOUR-REGION" -ForegroundColor Cyan
+    Write-Host "      Please configure your AWS region using one of:" -ForegroundColor Yellow
+    Write-Host '        $env:AWS_REGION = "<your-region>"' -ForegroundColor Cyan
+    Write-Host '        $env:AWS_DEFAULT_REGION = "<your-region>"' -ForegroundColor Cyan
+    Write-Host "        aws configure set region <your-region>" -ForegroundColor Cyan
     exit 1
 }
 
 Write-Host "      OK: Region configured: $currentRegion" -ForegroundColor Green
 
+# ─── AWS DevOps Agent region resolution ──────────────────────────────────────
+# An Agent Space is a regional resource and AWS DevOps Agent is available in a
+# subset of AWS Regions. Resolution is opt-in and deliberately simple:
+#
+#   1. DEVOPS_AGENT_REGION — explicit override, wins outright
+#   2. the resolved deploy region — same-region default
+#
+# Same-region is the default because an Agent Space discovers and monitors
+# resources across ALL Regions of an associated account. Splitting the two is
+# therefore only needed when the deploy Region cannot host an Agent Space, or
+# for data-residency / console-availability reasons.
+#
+# No hardcoded Region list lives here: the "devops-agent" service check below
+# probes the live API instead, so a Region stays usable the moment the service
+# reaches it. See shared/README.md ("AWS DevOps Agent Region") for the full
+# convention and its caveats.
+$devOpsAgentRegion = $env:DEVOPS_AGENT_REGION
+if ([string]::IsNullOrEmpty($devOpsAgentRegion)) {
+    $devOpsAgentRegion = $currentRegion
+} elseif ($devOpsAgentRegion -ne $currentRegion) {
+    Write-Host "      INFO: DevOps Agent region overridden: $devOpsAgentRegion (deploy region: $currentRegion)" -ForegroundColor Cyan
+}
+
 # Check specific AWS service availability (if specified)
 if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) {
-    Write-Host "`nChecking $RequiredService availability in $currentRegion..." -ForegroundColor Yellow
+    # DevOps Agent is probed in the Agent Space region (which may differ from the
+    # deploy region); every other service is probed in the deploy region.
+    $serviceCheckRegion = if ($RequiredService.ToLower() -eq "devops-agent") { $devOpsAgentRegion } else { $currentRegion }
+    Write-Host "`nChecking $RequiredService availability in $serviceCheckRegion..." -ForegroundColor Yellow
     switch ($RequiredService.ToLower()) {
         "bedrock" {
             $null = aws bedrock list-foundation-models --region $currentRegion --max-results 1 2>&1
@@ -167,19 +202,29 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             Write-Host "      OK: AgentCore Browser Tool is available in $currentRegion" -ForegroundColor Green
         }
         "devops-agent" {
-            # Probe the actual AWS DevOps Agent service (aidevops) in this region.
-            # A region with no reachable aidevops endpoint fails at endpoint
-            # resolution and we stop here. Probing the live service avoids a
-            # hardcoded region list, which rots and would reject regions where the
+            # Probe the actual AWS DevOps Agent service (aidevops) in the Agent
+            # Space region. A region with no reachable aidevops endpoint fails at
+            # endpoint resolution and we stop here. Probing the live service avoids
+            # a hardcoded region list, which rots and would reject regions where the
             # service is already reachable ahead of the docs. (Different service
             # from Bedrock AgentCore, which the "agentcore" case probes.)
-            $null = aws devops-agent list-agent-spaces --region $currentRegion --no-cli-pager 2>&1
+            $null = aws devops-agent list-agent-spaces --region $devOpsAgentRegion --no-cli-pager 2>&1
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "      ERROR: AWS DevOps Agent is not available in region: $currentRegion" -ForegroundColor Red
+                Write-Host "      ERROR: AWS DevOps Agent is not available in region: $devOpsAgentRegion" -ForegroundColor Red
+                Write-Host "" -ForegroundColor Red
+                Write-Host "      Pin the Agent Space to a supported Region and re-run:" -ForegroundColor Yellow
+                Write-Host '        $env:DEVOPS_AGENT_REGION = "<supported-region>"' -ForegroundColor Cyan
+                Write-Host "" -ForegroundColor Yellow
+                Write-Host "      An Agent Space monitors resources in ALL Regions of an associated" -ForegroundColor Gray
+                Write-Host "      account, so it does not need to live in your deploy Region." -ForegroundColor Gray
                 Write-Host "      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html" -ForegroundColor Gray
                 exit 1
             }
-            Write-Host "      OK: AWS DevOps Agent is available in $currentRegion" -ForegroundColor Green
+            if ($devOpsAgentRegion -ne $currentRegion) {
+                Write-Host "      OK: AWS DevOps Agent is available in $devOpsAgentRegion (Agent Space region)" -ForegroundColor Green
+            } else {
+                Write-Host "      OK: AWS DevOps Agent is available in $devOpsAgentRegion" -ForegroundColor Green
+            }
         }
         "nova-act" {
             $null = aws nova-act list-workflow-definitions --region $currentRegion 2>&1
@@ -210,3 +255,12 @@ Write-Host "Ready to proceed with demo deployment." -ForegroundColor Cyan
 $global:AWS_ACCOUNT_ID = $accountId
 $global:AWS_REGION = $currentRegion
 $global:AWS_ARN = $arn
+# Agent Space region for AWS DevOps Agent demos — equals $global:AWS_REGION unless
+# DEVOPS_AGENT_REGION was set by the caller.
+#
+# Published ONLY when the caller requested the devops-agent check, mirroring the
+# Bash version. Demos that manage $env:DEVOPS_AGENT_REGION themselves (applying their
+# own default) must not have it decided for them here.
+if ($RequiredService.ToLower() -eq "devops-agent") {
+    $global:DEVOPS_AGENT_REGION = $devOpsAgentRegion
+}

@@ -59,6 +59,24 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed component descriptions and
 - Node.js 24+ and npm installed (Lambda functions run on Node.js 24)
 - An active [CloudTrail trail](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-create-a-trail-using-the-console-first-time.html) capturing management events in the deployment region
 
+### Regions
+
+By default everything — the CDK stack *and* the DevOps Agent Space — deploys to your **current region**, resolved from your AWS config. Nothing to set.
+
+To place the Agent Space in a different region, set `DEVOPS_AGENT_REGION` before deploying:
+
+```powershell
+$env:DEVOPS_AGENT_REGION = "eu-west-1"   # Agent Space here; stack stays in your current region
+```
+
+```bash
+export DEVOPS_AGENT_REGION=eu-west-1
+```
+
+An Agent Space monitors resources across *all* regions of an associated account, so it does not need to sit with your stack. See [shared/README.md](../../shared/README.md#aws-devops-agent-region) for the full convention.
+
+> **⚠️ Splitting the regions breaks the callback step.** `aws.aidevops` publishes investigation-completion events in the Agent Space region, but the EventBridge rule that resumes Step Functions lives in the deploy region — and EventBridge does not cross regions on its own. Keep both the same unless you have set up cross-region event forwarding. The wizard warns you when it detects a split.
+
 The [setup wizard](#deployment) handles everything else automatically:
 - Creates the DevOps Agent Space and configures topology discovery
 - Creates IAM roles with correct trust policies
@@ -107,6 +125,9 @@ npm run bundle   # compiles the TypeScript Lambda handlers into dist/lambda/
 npx cdk deploy HealthEventAnalyzerStack-$AWS_REGION \
   --parameters DevOpsAgentWebhookUrl=YOUR_URL \
   --no-cli-pager --require-approval broadening
+
+# Only if the Agent Space is in a different region than the stack:
+#   --parameters DevOpsAgentRegion=eu-west-1
 ```
 
 > **Note**: `npm run bundle` is required before any manual `cdk synth`/`cdk deploy`. The

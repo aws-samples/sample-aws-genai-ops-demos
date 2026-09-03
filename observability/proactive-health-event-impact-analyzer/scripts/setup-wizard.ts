@@ -211,7 +211,14 @@ function displayCompletionSummary(): void {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 interface SetupState {
+  /** Deploy region — where the CDK stack (Lambda, Step Functions, DynamoDB, …) lives. */
   region: string;
+  /**
+   * Agent Space region — where the AWS DevOps Agent Agent Space lives.
+   * Equals `region` unless DEVOPS_AGENT_REGION is set.
+   * See shared/README.md ("AWS DevOps Agent Region").
+   */
+  agentRegion: string;
   accountId: string;
   agentSpaceId: string;
   agentSpaceName: string;
@@ -314,6 +321,25 @@ function resolveRegion(explicit?: string): string {
     // No configured region — fall through to the default.
   }
   return DEFAULT_REGION;
+}
+
+/**
+ * Resolves the Agent Space region, which may differ from the deploy region.
+ *
+ *   1. DEVOPS_AGENT_REGION — explicit override, wins outright
+ *   2. the deploy region — same-region default
+ *
+ * Same-region is the default because an Agent Space monitors resources across ALL
+ * Regions of an associated account, so splitting is only needed when the deploy
+ * Region cannot host an Agent Space (or for data-residency / console reasons).
+ * The shared prerequisites check resolves this identically and exports
+ * DEVOPS_AGENT_REGION, so when launched via deploy-all this just picks it up.
+ * See shared/README.md ("AWS DevOps Agent Region").
+ */
+function resolveAgentRegion(deployRegion: string): string {
+  const override = process.env.DEVOPS_AGENT_REGION;
+  if (override && override.trim()) return override.trim();
+  return deployRegion;
 }
 
 // ─── AWS CLI version requirements ───────────────────────────────────────────
@@ -419,6 +445,7 @@ async function main(): Promise<void> {
 
   const state: SetupState = {
     region: '',
+    agentRegion: '',
     accountId: '',
     agentSpaceId: '',
     agentSpaceName: '',
@@ -444,8 +471,23 @@ async function main(): Promise<void> {
   // (the shared deploy scripts export AWS_REGION after the shared prerequisites
   // check). The shared prerequisites check proves AWS DevOps Agent is reachable in this region.
   state.region = resolveRegion(args.region);
+  state.agentRegion = resolveAgentRegion(state.region);
   success(`Region: ${state.region}`);
   info('(from --region, environment, or AWS CLI config; DevOps Agent availability is verified during prerequisites)');
+
+  if (state.agentRegion !== state.region) {
+    success(`Agent Space region: ${state.agentRegion} (from DEVOPS_AGENT_REGION)`);
+    // Investigation-completion events are published by aws.aidevops in the Agent
+    // Space region, but the EventBridge rule that resumes Step Functions is created
+    // in the deploy region. EventBridge does not deliver across Regions on its own,
+    // so a split deployment needs the events forwarded (cross-Region event bus
+    // target) before the callback path can complete.
+    warn('Split-region deployment: DevOps Agent setup will target ' +
+      `${state.agentRegion}, but investigation-completion events are published there ` +
+      `and the callback rule lives in ${state.region}.`);
+    warn('EventBridge does not deliver cross-Region automatically — forward ' +
+      'aws.aidevops events to the deploy region, or keep both regions the same.');
+  }
   recordStep('Resolve Region', 'succeeded');
 
   // ─── Step 1: Prerequisites ──────────────────────────────────────────────
@@ -516,7 +558,7 @@ async function main(): Promise<void> {
 
   const spaceOk = await runStep('DevOps Agent Space', async () => {
     const existingSpaces = execJson(
-      `aws devops-agent list-agent-spaces --region ${state.region} --no-cli-pager`
+      `aws devops-agent list-agent-spaces --region ${state.agentRegion} --no-cli-pager`
     );
 
     if (existingSpaces.agentSpaces && existingSpaces.agentSpaces.length > 0) {
@@ -625,6 +667,9 @@ async function main(): Promise<void> {
 
   console.log('\n  Configuration summary:');
   console.log(`    Region:          ${state.region}`);
+  if (state.agentRegion !== state.region) {
+    console.log(`    Agent Space rgn: ${state.agentRegion}`);
+  }
   console.log(`    Account:         ${state.accountId}`);
   console.log(`    Agent Space:     ${state.agentSpaceName} (${state.agentSpaceId})`);
   console.log(`    Webhook URL:     ${state.webhookUrl ? state.webhookUrl.substring(0, 60) + '...' : '(not set)'}`);
@@ -699,7 +744,7 @@ async function main(): Promise<void> {
     }
     console.log(`       Step Functions: https://${state.region}.console.aws.amazon.com/states/home?region=${state.region}`);
     console.log(`       OpsCenter:     https://${state.region}.console.aws.amazon.com/systems-manager/opsitems?region=${state.region}`);
-    console.log(`       DevOps Agent:  https://${state.region}.console.aws.amazon.com/aidevops/home?region=${state.region}#/agent-spaces/${state.agentSpaceId}`);
+    console.log(`       DevOps Agent:  https://${state.agentRegion}.console.aws.amazon.com/aidevops/home?region=${state.agentRegion}#/agent-spaces/${state.agentSpaceId}`);
     console.log('');
   }
 
@@ -737,6 +782,7 @@ async function runJiraOnly(args: CliOptions): Promise<void> {
 
   const state: SetupState = {
     region: '',
+    agentRegion: '',
     accountId: '',
     agentSpaceId: '',
     agentSpaceName: '',
@@ -771,7 +817,11 @@ async function runJiraOnly(args: CliOptions): Promise<void> {
 
   // No hardcoded shortlist — resolve from --region, environment, or AWS CLI config.
   state.region = resolveRegion(args.region);
+  state.agentRegion = resolveAgentRegion(state.region);
   success(`Region: ${state.region}${args.region ? ' (from --region)' : ''}`);
+  if (state.agentRegion !== state.region) {
+    success(`Agent Space region: ${state.agentRegion} (from DEVOPS_AGENT_REGION)`);
+  }
 
   // ─── Step 2: Pick the existing Agent Space ──────────────────────────────
   step(2, 'Select existing DevOps Agent Space');
@@ -812,7 +862,7 @@ async function pickExistingAgentSpace(state: SetupState, preselectedId?: string)
   let spaces: any;
   try {
     spaces = execJson(
-      `aws devops-agent list-agent-spaces --region ${state.region} --no-cli-pager`
+      `aws devops-agent list-agent-spaces --region ${state.agentRegion} --no-cli-pager`
     );
   } catch (error: any) {
     throw new Error(`Could not list Agent Spaces: ${error.message || error}`);
@@ -854,7 +904,7 @@ async function createAgentSpace(state: SetupState): Promise<void> {
 
   info('Creating Agent Space...');
   const result = execJson(
-    `aws devops-agent create-agent-space --name "${name}" --description "${description}" --region ${state.region} --no-cli-pager`
+    `aws devops-agent create-agent-space --name "${name}" --description "${description}" --region ${state.agentRegion} --no-cli-pager`
   );
 
   state.agentSpaceId = result.agentSpace.agentSpaceId;
@@ -880,7 +930,7 @@ async function ensureIamRoles(state: SetupState): Promise<void> {
       Action: 'sts:AssumeRole',
       Condition: {
         StringEquals: { 'aws:SourceAccount': state.accountId },
-        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.agentRegion}:${state.accountId}:agentspace/*` },
       },
     }],
   };
@@ -892,7 +942,7 @@ async function ensureIamRoles(state: SetupState): Promise<void> {
       Action: ['sts:AssumeRole', 'sts:TagSession'],
       Condition: {
         StringEquals: { 'aws:SourceAccount': state.accountId },
-        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.region}:${state.accountId}:agentspace/*` },
+        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.agentRegion}:${state.accountId}:agentspace/*` },
       },
     }],
   };
@@ -908,7 +958,7 @@ async function ensureIamRoles(state: SetupState): Promise<void> {
         `aws iam update-assume-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-document file://${spaceTrustFile} --no-cli-pager`,
         true
       );
-      success(`Updated trust policy: DevOpsAgentRole-AgentSpace (region ${state.region})`);
+      success(`Updated trust policy: DevOpsAgentRole-AgentSpace (region ${state.agentRegion})`);
     } else {
       info('Creating IAM role: DevOpsAgentRole-AgentSpace...');
       exec(
@@ -952,7 +1002,7 @@ async function ensureIamRoles(state: SetupState): Promise<void> {
         `aws iam update-assume-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-document file://${webappTrustFile} --no-cli-pager`,
         true
       );
-      success(`Updated trust policy: DevOpsAgentRole-WebappAdmin (region ${state.region})`);
+      success(`Updated trust policy: DevOpsAgentRole-WebappAdmin (region ${state.agentRegion})`);
     } else {
       info('Creating IAM role: DevOpsAgentRole-WebappAdmin...');
       exec(
@@ -987,7 +1037,7 @@ function checkRoleExists(roleName: string): boolean {
 async function ensureAccountAssociation(state: SetupState): Promise<void> {
   // Check existing associations
   const associations = execJson(
-    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.region} --no-cli-pager`
+    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
   );
 
   const awsAssociation = associations.associations?.find(
@@ -1022,7 +1072,7 @@ async function ensureAccountAssociation(state: SetupState): Promise<void> {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         result = execJson(
-          `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.region} --no-cli-pager`
+          `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.agentRegion} --no-cli-pager`
         );
         break;
       } catch (err: any) {
@@ -1049,7 +1099,7 @@ async function ensureAccountAssociation(state: SetupState): Promise<void> {
 async function ensureWebhook(state: SetupState): Promise<void> {
   // Check existing associations for eventChannel webhooks
   const associations = execJson(
-    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.region} --no-cli-pager`
+    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
   );
 
   // Look for existing eventChannel associations and their webhooks
@@ -1065,7 +1115,7 @@ async function ensureWebhook(state: SetupState): Promise<void> {
     let existingUrl: string | undefined;
     try {
       const webhooks = execJson(
-        `aws devops-agent list-webhooks --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.region} --no-cli-pager`
+        `aws devops-agent list-webhooks --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.agentRegion} --no-cli-pager`
       );
       existingUrl = webhooks.webhooks?.[0]?.webhookUrl;
     } catch {
@@ -1117,7 +1167,7 @@ async function ensureWebhook(state: SetupState): Promise<void> {
 
       info(`Disassociating existing eventChannel (${assoc.associationId})...`);
       exec(
-        `aws devops-agent disassociate-service --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.region} --no-cli-pager`,
+        `aws devops-agent disassociate-service --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.agentRegion} --no-cli-pager`,
         true
       );
       success('Old eventChannel association removed.');
@@ -1134,13 +1184,13 @@ async function ensureWebhook(state: SetupState): Promise<void> {
   const serviceDetailsFile = writeTempJson('event-channel-details', { eventChannel: {} });
   try {
     const registerResult = execJson(
-      `aws devops-agent register-service --service eventChannel --service-details file://${serviceDetailsFile} --region ${state.region} --no-cli-pager`
+      `aws devops-agent register-service --service eventChannel --service-details file://${serviceDetailsFile} --region ${state.agentRegion} --no-cli-pager`
     );
     serviceId = registerResult.serviceId;
   } catch (error: any) {
     // Service might already be registered, try to find it
     const services = execJson(
-      `aws devops-agent list-services --region ${state.region} --no-cli-pager`
+      `aws devops-agent list-services --region ${state.agentRegion} --no-cli-pager`
     );
     const eventChannelService = services.services?.find((s: any) => s.serviceType === 'eventChannel');
     if (eventChannelService) {
@@ -1157,7 +1207,7 @@ async function ensureWebhook(state: SetupState): Promise<void> {
   let result: any;
   try {
     result = execJson(
-      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id ${serviceId} --configuration file://${eventChannelConfigFile} --region ${state.region} --no-cli-pager`
+      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id ${serviceId} --configuration file://${eventChannelConfigFile} --region ${state.agentRegion} --no-cli-pager`
     );
   } finally {
     tryUnlink(eventChannelConfigFile);
@@ -1217,7 +1267,7 @@ function tryRecoverSecretFromDeployedStack(state: SetupState): string | undefine
 async function ensureOperatorApp(state: SetupState): Promise<void> {
   try {
     const operatorApp = execJson(
-      `aws devops-agent get-operator-app --agent-space-id ${state.agentSpaceId} --region ${state.region} --no-cli-pager`
+      `aws devops-agent get-operator-app --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
     );
     if (operatorApp) {
       success('Operator app already enabled');
@@ -1230,7 +1280,7 @@ async function ensureOperatorApp(state: SetupState): Promise<void> {
 
   info('Enabling operator app...');
   exec(
-    `aws devops-agent enable-operator-app --agent-space-id ${state.agentSpaceId} --auth-flow iam --operator-app-role-arn "arn:aws:iam::${state.accountId}:role/DevOpsAgentRole-WebappAdmin" --region ${state.region} --no-cli-pager`,
+    `aws devops-agent enable-operator-app --agent-space-id ${state.agentSpaceId} --auth-flow iam --operator-app-role-arn "arn:aws:iam::${state.accountId}:role/DevOpsAgentRole-WebappAdmin" --region ${state.agentRegion} --no-cli-pager`,
     true
   );
   state.operatorAppEnabled = true;
@@ -1270,7 +1320,7 @@ async function ensureJiraMcp(state: SetupState, toolsOverride?: string[]): Promi
 
   // Detect existing registration up front so we can drive the prompts
   // (reuse vs. rotate) and decide whether to ask for credentials.
-  const existing = findExistingJiraMcpRegistration(state.region);
+  const existing = findExistingJiraMcpRegistration(state.agentRegion);
   let reusing = false;
   if (existing) {
     info(`Found existing MCP registration: ${ATLASSIAN_MCP_NAME} (${existing.serviceId})`);
@@ -1282,10 +1332,10 @@ async function ensureJiraMcp(state: SetupState, toolsOverride?: string[]): Promi
       state.jiraMcpServiceId = existing.serviceId;
     } else {
       info('Deregistering existing Jira MCP server to rotate credentials...');
-      await disassociateAllJiraMcp(state.region, existing.serviceId);
+      await disassociateAllJiraMcp(state.agentRegion, existing.serviceId);
       try {
         exec(
-          `aws devops-agent deregister-service --service-id ${existing.serviceId} --region ${state.region} --no-cli-pager`,
+          `aws devops-agent deregister-service --service-id ${existing.serviceId} --region ${state.agentRegion} --no-cli-pager`,
           true
         );
         success('Old registration removed');
@@ -1421,7 +1471,7 @@ async function ensureJiraMcp(state: SetupState, toolsOverride?: string[]): Promi
     const tmpFile = writeTempJson('register-mcpserver', registerPayload);
     try {
       const result = execJson(
-        `aws devops-agent register-service --service mcpserver --name "${ATLASSIAN_MCP_NAME}" --service-details file://${tmpFile} --region ${state.region} --no-cli-pager`
+        `aws devops-agent register-service --service mcpserver --name "${ATLASSIAN_MCP_NAME}" --service-details file://${tmpFile} --region ${state.agentRegion} --no-cli-pager`
       );
       if (!result.serviceId) {
         throw new Error(
@@ -1445,7 +1495,7 @@ async function ensureJiraMcp(state: SetupState, toolsOverride?: string[]): Promi
   const associateTmp = writeTempJson('associate-mcpserver', associatePayload);
   try {
     const result = execJson(
-      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id ${state.jiraMcpServiceId} --configuration file://${associateTmp} --region ${state.region} --no-cli-pager`
+      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id ${state.jiraMcpServiceId} --configuration file://${associateTmp} --region ${state.agentRegion} --no-cli-pager`
     );
     state.jiraMcpAssociationId = result.association?.associationId || '';
     success(
@@ -1882,6 +1932,9 @@ async function deployCdk(state: SetupState): Promise<void> {
   const stackName = `HealthEventAnalyzerStack-${state.region}`;
   const params: string[] = [
     `--parameters DevOpsAgentWebhookUrl=${state.webhookUrl}`,
+    // Tells the stack where the Agent Space lives so the callback Lambda targets the
+    // right aidevops endpoint and its IAM policy is scoped to the right Region.
+    `--parameters DevOpsAgentRegion=${state.agentRegion}`,
   ];
 
   if (state.notificationEmail) {

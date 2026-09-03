@@ -21,6 +21,13 @@ export interface InvestigationWorkflowProps {
   teamsTable: dynamodb.ITable;
   agentSpacesTable: dynamodb.ITable;
   devOpsAgentWebhookUrl: string;
+  /**
+   * Region hosting the DevOps Agent Agent Space. May differ from the stack region:
+   * the service is only available in a subset of Regions, and an Agent Space monitors
+   * resources across ALL Regions of an associated account. Used for the aidevops
+   * client region and IAM resource scoping in the callback Lambda.
+   */
+  devOpsAgentRegion: string;
   /** SSM Parameter Store name for the webhook HMAC secret */
   webhookSecretParamName: string;
   /** SSM Parameter Store name for the Slack webhook URL */
@@ -421,6 +428,9 @@ export class InvestigationWorkflow extends Construct {
       memorySize: 512,
       environment: {
         TASK_TOKEN_TABLE: '', // Set below
+        // The aidevops endpoint lives in the Agent Space region, which may differ
+        // from this Lambda's own region — the SDK client must target it explicitly.
+        DEVOPS_AGENT_REGION: props.devOpsAgentRegion,
       },
       logGroup: new logs.LogGroup(this, 'InvestigationCallbackLogs', {
         retention: logRetention,
@@ -439,7 +449,8 @@ export class InvestigationWorkflow extends Construct {
     investigationCallback.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['aidevops:ListJournalRecords'],
-      resources: [`arn:aws:aidevops:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:agentspace/*`],
+      // Scoped to the Agent Space region, which may differ from the stack region.
+      resources: [`arn:aws:aidevops:${props.devOpsAgentRegion}:${cdk.Stack.of(this).account}:agentspace/*`],
     }));
 
     // ─── DynamoDB: Task Token Table ───────────────────────────────────────────

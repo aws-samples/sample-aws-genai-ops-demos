@@ -44,6 +44,27 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       description: 'AWS DevOps Agent webhook URL for triggering investigations',
     });
 
+    // Region hosting the DevOps Agent Agent Space. Defaults to this stack's region
+    // (same-region deployment); set it when the Agent Space lives elsewhere — the
+    // service is only available in a subset of Regions, and an Agent Space monitors
+    // resources across ALL Regions of an associated account, so it need not sit in
+    // the deploy Region. The setup wizard passes the value it resolved from
+    // DEVOPS_AGENT_REGION. See shared/README.md ("AWS DevOps Agent Region").
+    const devOpsAgentRegion = new cdk.CfnParameter(this, 'DevOpsAgentRegion', {
+      type: 'String',
+      description: 'Region hosting the DevOps Agent Agent Space (defaults to the stack region)',
+      default: '',
+    });
+
+    // Empty parameter means "same region as the stack".
+    const resolvedDevOpsAgentRegion = cdk.Fn.conditionIf(
+      new cdk.CfnCondition(this, 'HasDevOpsAgentRegion', {
+        expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(devOpsAgentRegion.valueAsString, '')),
+      }).logicalId,
+      devOpsAgentRegion.valueAsString,
+      this.region,
+    ).toString();
+
     // SSM Parameter Store paths for secrets (actual SecureString values are
     // created externally by the setup wizard — CDK just references the paths
     // in Lambda environment variables and grants read permissions)
@@ -64,6 +85,7 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       teamsTable: notification.teamsTable,
       agentSpacesTable: notification.agentSpacesTable,
       devOpsAgentWebhookUrl: devOpsAgentWebhookUrl.valueAsString,
+      devOpsAgentRegion: resolvedDevOpsAgentRegion,
       webhookSecretParamName,
       slackWebhookParamName,
       msTeamsWebhookParamName,
