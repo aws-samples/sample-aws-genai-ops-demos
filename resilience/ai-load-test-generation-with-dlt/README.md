@@ -489,7 +489,28 @@ negligible S3/ECR storage. This is the cheapest way to run the demo.
 endpoints** (~\$7/mo each, ×~5) on top of the above. A demo of a few hours is a few
 USD, dominated by NAT + endpoints.
 
-**Optimization:** default to `public` unless you need private egress/targets; tear
+**Per cycle:** roughly **\$2–5** in Bedrock inference for one end-to-end cycle
+(parse a spec, classify endpoints, build a script, smoke it, register the
+scenario, run the load, interpret the results). Inference dominates; the DLT run
+itself is Fargate task time and is comparatively small.
+
+Costs vary a lot with the shape of the work. A cycle is a tool loop, not a
+two-message chat: the model is re-invoked once per tool call and each invocation
+resends the conversation so far, so anything that lengthens the loop moves the
+bill — the number of endpoints in scope, the size of the spec, how large the
+generated script grows, how many smoke-and-fix iterations it takes, and how long
+you poll a run. A wide scope on a large spec can be several times the figure
+above.
+
+Two settings matter here. Prompt caching is on by default
+(`CacheConfig(strategy="auto")` in `agent.py`), which is what makes the repeated
+resends cheap; there is no storage charge for it, only a per-token cache-write
+and a much lower cache-read rate. And the model is a straight swap — Sonnet 5
+lists well below Opus for both input and output, and held every safety gate in
+our testing: `--bedrock-model us.anthropic.claude-sonnet-5`.
+
+**Optimization:** default to `public` unless you need private egress/targets; scope
+the test to the endpoints you actually care about rather than the whole spec; tear
 down when idle; keep X-Ray off unless Transaction Search is enabled.
 
 ## Teardown

@@ -42,7 +42,7 @@ def build_agent():
     """Construct the Strands agent. Tools are registered in tools/ (prompt 3);
     until then the agent runs conversation-only."""
     from strands import Agent
-    from strands.models import BedrockModel
+    from strands.models import BedrockModel, CacheConfig
 
     if not BEDROCK_REGION:
         raise RuntimeError(
@@ -54,6 +54,10 @@ def build_agent():
     model = BedrockModel(
         model_id=MODEL_PRIMARY,
         region_name=BEDROCK_REGION,
+        # A cycle here is a long tool loop, not a chat: the model is re-invoked
+        # once per tool call and every invocation resends the conversation so
+        # far. "auto" caches the history, not just the static prefix.
+        cache_config=CacheConfig(strategy="auto"),
     )
 
     tools = []
