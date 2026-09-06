@@ -502,12 +502,13 @@ generated script grows, how many smoke-and-fix iterations it takes, and how long
 you poll a run. A wide scope on a large spec can be several times the figure
 above.
 
-Two settings matter here. Prompt caching is on by default
+Two settings move it more than anything else. Prompt caching is on by default
 (`CacheConfig(strategy="auto")` in `agent.py`), which is what makes the repeated
 resends cheap; there is no storage charge for it, only a per-token cache-write
-and a much lower cache-read rate. And the model is a straight swap — Sonnet 5
-lists well below Opus for both input and output, and held every safety gate in
-our testing: `--bedrock-model us.anthropic.claude-sonnet-5`.
+and a much lower cache-read rate. And the model is a straight swap: Sonnet 5 held
+every safety gate in our testing — `--bedrock-model us.anthropic.claude-sonnet-5`.
+For scale: one measured cycle over two endpoints at 5 VUs came to **\$2.32** in
+inference on the default model, and **\$0.48** on Sonnet 5.
 
 **Optimization:** default to `public` unless you need private egress/targets; scope
 the test to the endpoints you actually care about rather than the whole spec; tear
