@@ -160,6 +160,65 @@ def main() -> int:
         check(not r["ok"] and "discover_dlt_config" in r["error"],
               f"{name} before discovery is refused")
 
+    print("run timing (no clock for the model to guess with)")
+    import datetime as dt
+    from tools.dlt_tools import _DLT_OVERHEAD_S, _parse_dlt_time, _run_timing
+
+    # DLT sends "2026-09-04 06:03:19" — no separator, no zone, value is UTC.
+    # fromisoformat would leave it naive and silently compare as local time.
+    t = _parse_dlt_time("2026-09-04 06:03:19")
+    check(t is not None and t.tzinfo == dt.timezone.utc and t.hour == 6,
+          "a DLT timestamp is parsed as UTC, not local time")
+    check(_parse_dlt_time(None) is None and _parse_dlt_time("nope") is None,
+          "an unparseable timestamp yields None rather than raising")
+
+    def body(started_ago: int, **over) -> dict:
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+            seconds=started_ago)
+        return {"startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+                "testScenario": {"execution": [{"ramp-up": "15s",
+                                                "hold-for": "60s"}]},
+                **over}
+
+    tm = _run_timing(body(30))
+    check(tm["expected_seconds"] == 15 + 60 + _DLT_OVERHEAD_S,
+          "expected_seconds is ramp-up + hold-for + measured overhead")
+    check(28 <= tm["elapsed_seconds"] <= 32,
+          f"elapsed_seconds comes from startTime (got {tm.get('elapsed_seconds')})")
+    check(tm["remaining_seconds"] == tm["expected_seconds"] - tm["elapsed_seconds"],
+          "remaining_seconds is the difference, not a guess")
+
+    # The load shape comes from the API response, never from _registered: a run
+    # longer than the idle timeout is polled by a fresh process with no state.
+    from tools import dlt_tools as dltm
+    check(not dltm._registered,
+          "run timing is derived without anything registered in this process")
+
+    over = _run_timing(body(9999))
+    check(over["remaining_seconds"] == 0,
+          "an overrun run clamps remaining to zero instead of going negative")
+
+    # Absent is not zero. A missing field must stay missing so the model has
+    # nothing to round off into a confident number.
+    check("elapsed_seconds" not in _run_timing({"status": "queued"}),
+          "a run that has not started reports no elapsed time at all")
+    no_shape = _run_timing({"startTime": "2026-09-04 06:03:19"})
+    check("elapsed_seconds" in no_shape and "expected_seconds" not in no_shape,
+          "elapsed is still reported when the load shape is unavailable")
+    check("expected_seconds" not in _run_timing(
+              body(30, testScenario={"execution": [{"ramp-up": "15x",
+                                                    "hold-for": "60s"}]})),
+          "an unparseable duration drops expected rather than assuming seconds")
+
+    done = _run_timing({"startTime": "2026-09-04 06:03:19",
+                        "endTime": "2026-09-04 06:06:58"})
+    check(done["elapsed_seconds"] == 219,
+          "a finished run measures to endTime, not to now")
+
+    check("Twenty to thirty seconds" not in poll_test_status.tool_spec[
+              "description"],
+          "the unfollowable polling-interval instruction is gone")
+
     print("multi-engine dispatch")
     r12 = call(validate_script, script_path="/nonexistent.xyz")
     check(not r12["ok"] and "unknown script type" in r12["error"],

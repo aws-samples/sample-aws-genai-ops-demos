@@ -17,8 +17,10 @@ documented shape returned three different 400s. Key facts baked in:
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 
 import boto3
@@ -34,6 +36,67 @@ ROOT = Path(__file__).resolve().parent.parent
 # saveOnly flipped — per the verified API shape.
 _config: dict = {}
 _registered: dict[str, dict] = {}
+
+# Wall-clock overhead a run carries on top of ramp-up + hold-for: Fargate task
+# provisioning (~90s) plus teardown and result aggregation (~60s). Measured
+# across all 11 past runs of this deployment (endTime - startTime - load):
+# 113..165s, mean 150s, with no meaningful correlation to load length or
+# engine. 180 is the observed maximum rounded up on purpose — an optimistic
+# estimate is what makes the agent report a healthy run as "stuck".
+_DLT_OVERHEAD_S = 180
+
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _secs(value) -> int | None:
+    """Taurus duration ("15s", "2m") to seconds. None if unparseable."""
+    m = re.fullmatch(r"\s*(\d+)\s*([smhd]?)\s*", str(value))
+    if not m:
+        return None
+    return int(m.group(1)) * _DURATION_UNITS[m.group(2) or "s"]
+
+
+def _parse_dlt_time(value) -> dt.datetime | None:
+    """DLT timestamps arrive as "2026-09-04 06:03:19" — no separator, no zone,
+    but the value is UTC (cross-checked against the CloudWatch log line for the
+    same run). fromisoformat parses it too, yet leaves it tz-naive, which then
+    compares as local time; that is a 9-hour error for a KST developer and only
+    looks correct because the container runs in UTC. Tag it explicitly."""
+    try:
+        return dt.datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=dt.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_timing(body: dict) -> dict:
+    """Elapsed/expected/remaining seconds for a run, derived only from the
+    GET /scenarios/{id} response — never from _registered. A load longer than
+    the AgentCore idle timeout outlives the microVM that registered it, so the
+    session that asks for results is often a fresh process with empty state.
+
+    Any field that cannot be derived is omitted rather than guessed: the point
+    of these numbers is to stop the model inventing them.
+    """
+    out: dict = {}
+    started = _parse_dlt_time(body.get("startTime"))
+    if started is None:
+        return out
+    ended = _parse_dlt_time(body.get("endTime"))
+    now = dt.datetime.now(dt.timezone.utc)
+    out["elapsed_seconds"] = int(((ended or now) - started).total_seconds())
+
+    execution = (body.get("testScenario") or {}).get("execution") or []
+    if isinstance(execution, list):
+        execution = execution[0] if execution else {}
+    if isinstance(execution, dict):
+        ramp_up, hold_for = _secs(execution.get("ramp-up")), _secs(
+            execution.get("hold-for"))
+        if ramp_up is not None and hold_for is not None:
+            out["expected_seconds"] = ramp_up + hold_for + _DLT_OVERHEAD_S
+            out["remaining_seconds"] = max(
+                0, out["expected_seconds"] - out["elapsed_seconds"])
+    return out
 
 
 def _ok(**fields) -> str:
@@ -340,21 +403,30 @@ def run_scenario(test_id: str, approval_summary: str) -> str:
 
 @tool
 def poll_test_status(test_id: str) -> str:
-    """Read a test's status once. Never block and poll — one read per call.
+    """Read a test's status once. One read per call — this never blocks.
 
     The states go queued, provisioning (about 90s), running, complete. Even a
     40-second load run takes over three minutes end to end (3m16s measured).
-    Account for that overhead before telling anyone it is nearly done. Twenty to
-    thirty seconds is a sensible gap between reads.
+    Account for that overhead before telling anyone it is nearly done.
+
+    You have no clock, so quote elapsed_seconds and remaining_seconds and never
+    estimate the passage of time from how many times you have called this. If
+    remaining_seconds is above zero the run is not late, however many reads it
+    took to get here. Do not wait for completion by calling this repeatedly:
+    say what the numbers say, tell the caller when to ask again, and end the
+    turn. Reading again in the same turn cannot make the run finish sooner.
 
     Args:
         test_id: the scenario ID to read
 
     Returns:
         JSON: {ok, status, task_failure_count, complete_tasks, start_time,
-        end_time}. If the status is complete but task_failure_count > 0, do not
-        report completion — some tasks died, so the metrics do not reflect the
-        load that was planned.
+        end_time, elapsed_seconds, expected_seconds, remaining_seconds}. The
+        three timing fields are omitted when the run has not started or the API
+        did not report its load shape — an omitted field is not a zero, and it
+        is never something to fill in by guessing. If the status is complete but
+        task_failure_count > 0, do not report completion — some tasks died, so
+        the metrics do not reflect the load that was planned.
     """
     if not _config:
         return _err("run discover_dlt_config first")
@@ -367,7 +439,8 @@ def poll_test_status(test_id: str) -> str:
                task_failure_count=body.get("taskFailureCount", 0),
                complete_tasks=body.get("completeTasks"),
                start_time=body.get("startTime"),
-               end_time=body.get("endTime"))
+               end_time=body.get("endTime"),
+               **_run_timing(body if isinstance(body, dict) else {}))
 
 
 @tool

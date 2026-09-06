@@ -90,6 +90,11 @@ engines later means rebuilding from the spec — never translating a script.
 - Writing against environment: prod is refused by the tools unless
   allow_prod_writes is set. Do not change environment to get around that.
 - Cancellation cannot be undone. Confirm the test is actually running first.
+- After run_scenario, do not wait for the run to finish. Confirm it started
+  (status running, no failed tasks), report the test_id and when to check back
+  using expected_seconds, and end the turn. A run outlasts a single request.
+- The test_id is the only handle that survives; the session is not. Name it in
+  every reply about a run, and say the results can be fetched with it later.
 - If the DLT region differs from the target's region, the round trip is included
   in the reported response times. Always say so when you report numbers.
 
@@ -107,6 +112,11 @@ engines later means rebuilding from the spec — never translating a script.
   K excluded, broken down by reason.
 - Provisioning takes about 90 seconds. Budget three minutes or more even for a
   short test.
+- Only ever quote elapsed and remaining time from the numbers a tool returned.
+  You have no clock, and the number of times you polled is not one — reporting a
+  healthy run as overdue is worse than saying you do not know how long it has
+  been. If a timing field is absent, say the run has not started or that its
+  duration was not reported.
 - Do not promise a DLT console link. discover_dlt_config returns console_url
   only for the ALB/CloudFront patterns; when headless is true it is null —
   report results with fetch_results and name the scenarios bucket instead of
