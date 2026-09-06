@@ -260,8 +260,9 @@ registered, and the approval summary it showed you. That state is keyed by
 starts from scratch. Ids must be at least 33 characters.
 
 Session state lives in the runtime's per-session microVM. It survives between
-invocations but is discarded when the session ends (15 min idle, or 8 h max), so
-finish a test run in one sitting.
+invocations but is discarded when the session ends (15 min idle, or 8 h max) — so
+build and register in one sitting. A run itself is not tied to the session: its
+test id is enough to fetch results from a fresh one.
 
 ```bash
 SESSION="session-$(uuidgen | tr -d -)0"
@@ -278,7 +279,7 @@ JSON
 }
 ```
 
-### Worked example — spec to load test in five turns
+### Worked example — spec to load test in three turns
 
 This is a real session, with the target host and bucket replaced by placeholders.
 It uses `sample-data/swagger-unified.json` (staged to `s3://$BUCKET/swagger.json`
@@ -368,55 +369,44 @@ the guard records the decision, it cannot make it for you.
 
 ```bash
 say 'Approved. I have read the summary above — prod target, 10 VUs, 30s ramp-up,
-5 min hold, 50/50 read-only. Run it now. Do not block-poll; just start it and
-report the run status.'
+5 min hold, 50/50 read-only. Run it now, then give me the results.'
 ```
 
-```
-🚀 Load test started.
-Test ID: concert-read-path   Status: queued   Started: 2026-01-01 12:00:00 UTC
-Lifecycle: queued → provisioning (~90s) → running → complete (~7 min wall-clock).
-```
-
-**4. Check on it.** Ask for a single read rather than letting it poll in a loop —
-polling inside one turn just burns model tokens waiting.
-
-```bash
-sleep 150 && say 'Status check please. Single read, no block-polling.'
-```
+This turn does not come back until the run is over — about 8.5 minutes here. It
+waits inside `poll_test_status` rather than asking you to check again, then
+reports per-endpoint numbers, whether the split and the correlation actually
+worked, and what the numbers do **not** prove.
 
 ```
-Status: running — provisioning is done, load is actively being generated.
-Task failures so far: 0
-```
-
-**5. Get the results.** It reports per-endpoint numbers, checks the split and the
-correlation actually worked, and says what the numbers do **not** prove.
-
-```bash
-sleep 330 && say 'Status check again. If it is complete, fetch the results and
-interpret them. Verify the 50/50 split and the setup seeding as you said you would.'
-```
-
-```
-✅ Test complete — task_failure_count = 0. Load phase 325s.
+✅ Test complete — task_failure_count = 0, 0 failed samples of 2,219.
 
 Setup seeding ✅  TX_Seed_ConcertId: succ = 10, fail = 0 — one seed per VU; no
 detail request ran against the EXTRACT_FAILED sentinel.
 
 50/50 split ✅
-TX_List_Concerts        1,086   49.7%
-TX_Get_Concert_Detail   1,098   50.3%
+TX_List_Concerts        1,106   50.1%
+TX_Get_Concert_Detail   1,103   49.9%
 
-Aggregate: avg 0.181s, p50 0.176s, p95 0.188s, p99 0.344s.
-0 errors across 2,194 samples.
+Aggregate: avg 0.176s, p50 0.171s, p95 0.178s, p99 0.334s.
 
 Caveats: these are DLT client-side metrics only — they say what the client saw,
-not why. Separating server latency from network needs CloudWatch/X-Ray on the
-service side.
+not why. DLT ran in us-east-2 against an ap-northeast-2 target, so ~170ms of
+round trip is in every figure above. Separating server latency from network
+needs CloudWatch/X-Ray on the service side.
+
+Handle: concert-read-path — reusable to re-fetch these results later.
 ```
 
-Three things to know before you copy this.
+Four things to know before you copy this.
+
+**A long run needs a second turn, a short one does not.** `poll_test_status` can
+wait inside the call — a sleep there costs nothing, while asking the model to read
+the status again costs a full round trip of the whole conversation. That is why the
+walkthrough above gets results in one turn instead of a `sleep && ask` loop. But
+AgentCore kills a synchronous request at 15 minutes, so waiting is capped and only
+offered while the run has under 10 minutes left. Past that the agent hands back the
+test id and you collect the results whenever you like — the id works from a fresh
+session, so nothing depends on the first one still being alive.
 
 **Which numbers are baked into the script, and which are not.** Turn 1 states the
 load profile for convenience, but only *scope* and *ratio* actually end up in the
@@ -489,26 +479,33 @@ negligible S3/ECR storage. This is the cheapest way to run the demo.
 endpoints** (~\$7/mo each, ×~5) on top of the above. A demo of a few hours is a few
 USD, dominated by NAT + endpoints.
 
-**Per cycle:** roughly **\$2–5** in Bedrock inference for one end-to-end cycle
-(parse a spec, classify endpoints, build a script, smoke it, register the
-scenario, run the load, interpret the results). Inference dominates; the DLT run
-itself is Fargate task time and is comparatively small.
+**Per cycle:** on the order of **\$1** in Bedrock inference for one end-to-end
+cycle (parse a spec, classify endpoints, build a script, smoke it, register the
+scenario, run the load, interpret the results) — treat that as an order of
+magnitude, not a quote. What you actually pay depends on your environment and on
+what you asked for. Inference dominates; the DLT run itself is Fargate task time
+and is comparatively small.
 
 Costs vary a lot with the shape of the work. A cycle is a tool loop, not a
 two-message chat: the model is re-invoked once per tool call and each invocation
 resends the conversation so far, so anything that lengthens the loop moves the
 bill — the number of endpoints in scope, the size of the spec, how large the
-generated script grows, how many smoke-and-fix iterations it takes, and how long
-you poll a run. A wide scope on a large spec can be several times the figure
-above.
+generated script grows, and how many smoke-and-fix iterations it takes. A wide
+scope on a large spec can be several times the figure above.
+
+One thing that does *not* move it is the load itself. Two cycles over the same two
+endpoints — 5 VUs for 1 minute, and 10 VUs for 5 minutes — cost the same, even
+though the second generated nine times the requests and took eight minutes longer.
+Waiting for a run happens inside a tool call, where a sleep costs nothing; only a
+model round trip costs tokens. So a longer or heavier test is not a more expensive
+one; a broader scope is.
 
 Two settings move it more than anything else. Prompt caching is on by default
 (`CacheConfig(strategy="auto")` in `agent.py`), which is what makes the repeated
 resends cheap; there is no storage charge for it, only a per-token cache-write
-and a much lower cache-read rate. And the model is a straight swap: Sonnet 5 held
-every safety gate in our testing — `--bedrock-model us.anthropic.claude-sonnet-5`.
-For scale: one measured cycle over two endpoints at 5 VUs came to **\$2.32** in
-inference on the default model, and **\$0.48** on Sonnet 5.
+and a much lower cache-read rate. And the model is a straight swap: on the same
+walkthrough Sonnet 5 held every safety gate, waited out the run the same way, and
+came to half the inference cost — `--bedrock-model us.anthropic.claude-sonnet-5`.
 
 **Optimization:** default to `public` unless you need private egress/targets; scope
 the test to the endpoints you actually care about rather than the whole spec; tear
@@ -582,14 +579,14 @@ Plain scripts, no pytest, no AWS calls, no Bedrock calls:
 
 ```bash
 python3 builder/tests/test_spec_input.py        # 52 checks
-python3 builder/tests/test_builder.py           # 52 checks
-python3 builder/tests/test_script_builders.py   # 35 checks
+python3 builder/tests/test_builder.py           # 59 checks
+python3 builder/tests/test_script_builders.py   # 37 checks
 python3 builder/tests/test_taurus.py            # pass/fail, no count
 python3 test/test_agent_smoke.py                # 17 checks
-python3 test/test_tools.py                      # 42 checks
+python3 test/test_tools.py                      # 61 checks
 ```
 
-198 checks total. Each script prints `N passed, M failed` and exits non-zero on
+226 checks total. Each script prints `N passed, M failed` and exits non-zero on
 failure.
 
 | File | Proves |
@@ -599,7 +596,7 @@ failure.
 | `builder/tests/test_script_builders.py` | the k6 and Locust builders, generated scripts also executed |
 | `builder/tests/test_taurus.py` | Taurus — and therefore DLT — redistributes its own concurrency in proportion to `ThreadGroup.num_threads`, so per-endpoint load ratios survive the DLT hand-off |
 | `test/test_agent_smoke.py` | `agent.py` wiring: prompt loading, model resolution, clean imports |
-| `test/test_tools.py` | the `@tool` contract the model depends on, and the DLT safety gates (approval required, `saveOnly` on registration) without calling AWS |
+| `test/test_tools.py` | the `@tool` contract the model depends on, the DLT safety gates (approval required, `saveOnly` on registration), and the run-timing arithmetic a status read hands the model — including that a figure it cannot derive is left out rather than reported as zero. No AWS calls |
 
 ### Prerequisites
 

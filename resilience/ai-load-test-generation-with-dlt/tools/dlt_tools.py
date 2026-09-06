@@ -21,6 +21,7 @@ import datetime as dt
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import boto3
@@ -43,7 +44,31 @@ _registered: dict[str, dict] = {}
 # 113..165s, mean 150s, with no meaningful correlation to load length or
 # engine. 180 is the observed maximum rounded up on purpose — an optimistic
 # estimate is what makes the agent report a healthy run as "stuck".
+#
+# Those runs were all one Fargate task in one Region, so a deployment placing
+# many tasks, or a different Region, can overrun this. Underestimating is safe
+# by construction: status always comes from the API, so the run still reports
+# itself as running and the caller is simply asked again — the estimate only
+# decides how long a wait may last and when to suggest checking back, never
+# whether the run is healthy. A deployment that consistently overruns can read
+# its own figure off the `history` in a GET /scenarios/{id} response, which
+# carries startTime, endTime and the execution block for every past run.
 _DLT_OVERHEAD_S = 180
+
+# States a run does not leave, so waiting past one is pointless.
+_TERMINAL_STATES = ("complete", "cancelled", "failed")
+
+# poll_test_status may wait inside the call instead of returning and being asked
+# again, because a model round trip costs ~20k tokens and passes no more time
+# than one blocking call does. The ceiling is per call: the model can call again
+# if the run is still going, and each call re-derives its budget from the run's
+# own remaining time. _WAIT_OFFER_MAX keeps a long run out of the wait path
+# entirely — AgentCore kills a synchronous request at 15 minutes, so a 30-minute
+# load has to be collected in a later turn no matter what.
+_WAIT_CAP = 240        # max seconds one call may block
+_WAIT_GAP = 15         # seconds between in-call DLT reads (free; not model calls)
+_WAIT_GRACE = 30       # slack past expected completion, for overhead variance
+_WAIT_OFFER_MAX = 600  # refuse to wait when the run has longer than this left
 
 _DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -402,8 +427,8 @@ def run_scenario(test_id: str, approval_summary: str) -> str:
 
 
 @tool
-def poll_test_status(test_id: str) -> str:
-    """Read a test's status once. One read per call — this never blocks.
+def poll_test_status(test_id: str, wait_seconds: int = 0) -> str:
+    """Read a test's status, optionally waiting inside this call for it to end.
 
     The states go queued, provisioning (about 90s), running, complete. Even a
     40-second load run takes over three minutes end to end (3m16s measured).
@@ -412,35 +437,86 @@ def poll_test_status(test_id: str) -> str:
     You have no clock, so quote elapsed_seconds and remaining_seconds and never
     estimate the passage of time from how many times you have called this. If
     remaining_seconds is above zero the run is not late, however many reads it
-    took to get here. Do not wait for completion by calling this repeatedly:
-    say what the numbers say, tell the caller when to ask again, and end the
-    turn. Reading again in the same turn cannot make the run finish sooner.
+    took to get here. Reaching zero is not a fault either — it is an estimate
+    running out, and the expected overhead is calibrated on one deployment, so
+    heavier task counts legitimately exceed it. Status is the only authority on
+    whether a run is healthy: while it says running, say so and ask the caller
+    back, and never volunteer cancelling on the strength of the estimate alone.
+    Never wait by calling this repeatedly — that costs a full model round trip
+    per read and passes no more time than one call does. Use wait_seconds
+    instead, or say what the numbers say and end the turn.
 
     Args:
         test_id: the scenario ID to read
+        wait_seconds: how long this call may wait for the run to end, in
+            seconds. 0 (the default) reads once and returns immediately — use
+            that when you need the status right now, such as before cancelling,
+            or when you are reporting progress and ending the turn. Pass a value
+            whenever the caller is waiting on the result and remaining_seconds is
+            600 or less; the wait ends the moment the run does. One call absorbs
+            at most 240 seconds, so calling again while the run is unfinished is
+            the intended way to cover a longer wait — the total can only ever
+            reach the run's own remaining time. Waiting is declined outright
+            above 600 seconds remaining, because a synchronous AgentCore request
+            dies at 15 minutes; that run has to be collected in a later turn.
 
     Returns:
         JSON: {ok, status, task_failure_count, complete_tasks, start_time,
-        end_time, elapsed_seconds, expected_seconds, remaining_seconds}. The
-        three timing fields are omitted when the run has not started or the API
-        did not report its load shape — an omitted field is not a zero, and it
-        is never something to fill in by guessing. If the status is complete but
-        task_failure_count > 0, do not report completion — some tasks died, so
-        the metrics do not reflect the load that was planned.
+        end_time, elapsed_seconds, expected_seconds, remaining_seconds,
+        waited_seconds}. The timing fields are omitted when the run has not
+        started or the API did not report its load shape — an omitted field is
+        not a zero, and it is never something to fill in by guessing. If the
+        status is complete but task_failure_count > 0, do not report completion
+        — some tasks died, so the metrics do not reflect the load that was
+        planned.
     """
     if not _config:
         return _err("run discover_dlt_config first")
-    code, body = _sigv4_call(
-        "GET", f"{_config['api_endpoint']}/scenarios/{test_id}",
-        _config["api_region"])
+
+    url = f"{_config['api_endpoint']}/scenarios/{test_id}"
+
+    def read() -> tuple[int, dict | str, dict]:
+        code, body = _sigv4_call("GET", url, _config["api_region"])
+        return code, body, _run_timing(body if isinstance(body, dict) else {})
+
+    code, body, timing = read()
     if code != 200:
         return _err(f"status query failed ({code})", response=body)
+
+    # How long this call may block is derived from the run itself rather than
+    # from a counter of previous calls. A counter would keep accumulating across
+    # turns and eventually refuse a legitimate check; the run's own remaining
+    # time cannot, and it bounds total waiting to roughly the time the run has
+    # left however many times this is called. Reads themselves are never
+    # refused: cancel_test needs one to confirm a runaway run is live.
+    remaining = timing.get("remaining_seconds")
+    budget = 0.0
+    if wait_seconds > 0 and remaining is not None and remaining <= _WAIT_OFFER_MAX:
+        budget = min(float(wait_seconds), float(_WAIT_CAP), remaining + _WAIT_GRACE)
+
+    waited = 0.0
+    if budget > 0:
+        deadline = time.monotonic() + budget
+        # Polling DLT from in here is an HTTPS GET, not a model round trip, so
+        # the gap costs nothing and only bounds how stale the answer can be.
+        while body.get("status") not in _TERMINAL_STATES:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            time.sleep(min(float(_WAIT_GAP), left))
+            code, next_body, next_timing = read()
+            if code != 200:
+                break  # keep the last good read rather than failing the call
+            body, timing = next_body, next_timing
+        waited = round(time.monotonic() - (deadline - budget), 1)
+
     return _ok(status=body.get("status"),
                task_failure_count=body.get("taskFailureCount", 0),
                complete_tasks=body.get("completeTasks"),
                start_time=body.get("startTime"),
                end_time=body.get("endTime"),
-               **_run_timing(body if isinstance(body, dict) else {}))
+               waited_seconds=waited,
+               **timing)
 
 
 @tool

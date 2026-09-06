@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -218,6 +219,62 @@ def main() -> int:
     check("Twenty to thirty seconds" not in poll_test_status.tool_spec[
               "description"],
           "the unfollowable polling-interval instruction is gone")
+
+    print("in-call waiting (a sleep costs no tokens; a re-read costs a round trip)")
+    # Stub the DLT call so the wait path runs without AWS or real time: the run
+    # reports `running` for the first few reads, then `complete`.
+    reads: list[float] = []
+    slept: list[float] = []
+
+    def fake_call(method, url, region, body=None):
+        reads.append(time.monotonic())
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=200)
+        return 200, {
+            "status": "complete" if len(reads) >= 3 else "running",
+            "taskFailureCount": 0,
+            "startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+            "testScenario": {"execution": [{"ramp-up": "15s", "hold-for": "60s"}]},
+        }
+
+    real_call, real_sleep, real_cfg = dltm._sigv4_call, time.sleep, dict(dltm._config)
+    dltm._sigv4_call = fake_call
+    time.sleep = lambda s: slept.append(s)
+    dltm._config = {"api_endpoint": "https://example.invalid", "api_region": "us-east-2"}
+    try:
+        r = call(poll_test_status, test_id="t")
+        check(r["ok"] and len(reads) == 1 and not slept,
+              "the default reads once and never sleeps (cancel needs a fast read)")
+
+        reads.clear(); slept.clear()
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["status"] == "complete" and len(reads) == 3,
+              "waiting re-reads inside the one call until the run is terminal")
+        check(slept == [dltm._WAIT_GAP, dltm._WAIT_GAP],
+              f"it sleeps between reads, not between model calls (got {slept})")
+        check("waited_seconds" in r,
+              "the call reports how long it waited rather than leaving it implied")
+
+        # A run with more than _WAIT_OFFER_MAX left cannot be waited out inside
+        # one AgentCore request, so the wait path is declined -- but the read
+        # still succeeds, which is what keeps cancel_test reachable.
+        reads.clear(); slept.clear()
+        long_started = dt.datetime.now(dt.timezone.utc)
+
+        def long_run(method, url, region, body=None):
+            reads.append(time.monotonic())
+            return 200, {"status": "running", "taskFailureCount": 0,
+                         "startTime": long_started.strftime("%Y-%m-%d %H:%M:%S"),
+                         "testScenario": {"execution": [{"ramp-up": "30s",
+                                                         "hold-for": "40m"}]}}
+
+        dltm._sigv4_call = long_run
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["ok"] and r["status"] == "running" and not slept,
+              "a run too long to wait out still returns its status, unrefused")
+        check(r["remaining_seconds"] > dltm._WAIT_OFFER_MAX and len(reads) == 1,
+              "no waiting happens when the run outlasts a single request")
+    finally:
+        dltm._sigv4_call, time.sleep, dltm._config = real_call, real_sleep, real_cfg
 
     print("multi-engine dispatch")
     r12 = call(validate_script, script_path="/nonexistent.xyz")
