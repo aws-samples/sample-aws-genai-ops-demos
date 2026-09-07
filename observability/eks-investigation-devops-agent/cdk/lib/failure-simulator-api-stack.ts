@@ -118,7 +118,7 @@ export class FailureSimulatorApiStack extends cdk.Stack {
     // -----------------------------------------------------------------------
     const simulatorLambda = new lambda.Function(this, 'FailureSimulatorLambda', {
       functionName: `${projectName}-${environment}-failure-simulator`,
-      runtime: lambda.Runtime.PYTHON_3_13,
+      runtime: lambda.Runtime.PYTHON_3_14,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'failure-simulator-api')),
       layers: [kubectlLayer],

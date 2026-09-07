@@ -18,10 +18,15 @@ export interface DevOpsAgentStackProps extends cdk.StackProps {
   environment: string;
   projectName: string;
   eksClusterName: string;
-  /** Webhook URL — empty string on first deploy (before webhook is generated) */
+  /** Webhook URL returned by the Agent Space stack. */
   webhookUrl: string;
-  /** Webhook HMAC secret — empty string on first deploy */
-  webhookSecret: string;
+  /**
+   * ARN of the Secrets Manager secret holding the webhook HMAC key. The value
+   * never passes through CDK context or CloudFormation outputs.
+   */
+  webhookSecretArn: string;
+  /** Region containing webhookSecretArn (normally the Agent Space region). */
+  webhookSecretRegion: string;
   criticalAlarmsTopicArn: string;
 }
 
@@ -36,21 +41,30 @@ export class DevOpsAgentStack extends cdk.Stack {
       projectName,
       eksClusterName,
       webhookUrl,
-      webhookSecret,
+      webhookSecretArn,
+      webhookSecretRegion,
       criticalAlarmsTopicArn,
     } = props;
 
     // -----------------------------------------------------------------------
-    // Secrets Manager secret for webhook HMAC key
-    // On first deploy webhookSecret may be empty — use a placeholder.
-    // The deploy script will redeploy with the real secret after the user
-    // generates the webhook in the DevOps Agent console.
+    // Import the webhook secret created by DevOpsAgentSpaceStack.
+    //
+    // The secret may live in a different region than this stack. IAM grants are
+    // global, and the trigger Lambda explicitly creates its Secrets Manager SDK
+    // client in webhookSecretRegion. The HMAC value never enters this stack's
+    // parameters, context, environment variables, or CloudFormation template.
     // -----------------------------------------------------------------------
-    const devOpsAgentSecret = new secretsmanager.Secret(this, 'DevOpsAgentSecret', {
-      secretName: `${projectName}-${environment}/devops-agent-webhook-secret`,
-      description: 'DevOps Agent webhook HMAC secret key',
-      secretStringValue: cdk.SecretValue.unsafePlainText(webhookSecret || 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE'),
-    });
+    const devOpsAgentSecret = webhookSecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(
+          this,
+          'ImportedDevOpsAgentSecret',
+          webhookSecretArn,
+        )
+      : secretsmanager.Secret.fromSecretNameV2(
+          this,
+          'UnconfiguredDevOpsAgentSecret',
+          `${projectName}-${environment}/NOT_CONFIGURED`,
+        );
 
     // -----------------------------------------------------------------------
     // SNS Topic for DevOps Agent triggers
@@ -82,7 +96,7 @@ export class DevOpsAgentStack extends cdk.Stack {
     // -----------------------------------------------------------------------
     const triggerLambda = new lambda.Function(this, 'DevOpsAgentTriggerLambda', {
       functionName: `${projectName}-${environment}-devops-trigger`,
-      runtime: lambda.Runtime.PYTHON_3_12,
+      runtime: lambda.Runtime.PYTHON_3_14,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'devops-agent-trigger')),
       role: lambdaRole,
@@ -91,6 +105,7 @@ export class DevOpsAgentStack extends cdk.Stack {
         EKS_CLUSTER_NAME: eksClusterName,
         WEBHOOK_URL: webhookUrl || 'NOT_CONFIGURED',
         SECRET_ARN: devOpsAgentSecret.secretArn,
+        SECRET_REGION: webhookSecretRegion,
         AWS_REGION_NAME: cdk.Aws.REGION,
       },
     });
@@ -125,6 +140,11 @@ export class DevOpsAgentStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'LambdaFunctionArn', {
       description: 'Lambda function ARN',
       value: triggerLambda.functionArn,
+    });
+
+    new cdk.CfnOutput(this, 'AgentSpaceRegion', {
+      description: 'Region containing the CDK-managed DevOps Agent Agent Space and webhook secret',
+      value: webhookSecretRegion,
     });
   }
 }

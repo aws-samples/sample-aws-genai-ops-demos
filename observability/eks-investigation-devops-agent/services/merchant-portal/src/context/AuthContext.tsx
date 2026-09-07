@@ -11,7 +11,7 @@ interface AuthContextType {
   user: AuthUser | null
   isAuthenticated: boolean
   isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   getAccessToken: () => Promise<string | null>
 }
@@ -37,13 +37,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function login(email: string, password: string) {
-    const result = await signIn({ username: email, password })
+  async function login(username: string, password: string) {
+    const result = await signIn({ username, password })
     if (result.isSignedIn) {
       const currentUser = await getCurrentUser()
       setUser(currentUser)
     } else {
-      throw new Error('Sign in not completed')
+      throw new Error(`Sign in requires another step: ${result.nextStep.signInStep}`)
     }
   }
 

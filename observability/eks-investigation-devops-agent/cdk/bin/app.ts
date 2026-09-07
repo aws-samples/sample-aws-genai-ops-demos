@@ -9,6 +9,7 @@ import { PipelineStack } from '../lib/pipeline-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 import { MonitoringStack } from '../lib/monitoring-stack';
 import { DevOpsAgentStack } from '../lib/devops-agent-stack';
+import { DevOpsAgentSpaceStack } from '../lib/devops-agent-space-stack';
 import { FailureSimulatorApiStack } from '../lib/failure-simulator-api-stack';
 
 // ---------------------------------------------------------------------------
@@ -48,7 +49,7 @@ const eksNodeDesiredCapacity = Number(app.node.tryGetContext('eksNodeDesiredCapa
 // Keep the kubectl layer in failure-simulator-api-stack.ts in step with this.
 const eksKubernetesVersion = app.node.tryGetContext('eksKubernetesVersion') ?? '1.36';
 const devOpsAgentWebhookUrl = app.node.tryGetContext('devOpsAgentWebhookUrl') ?? '';
-const devOpsAgentWebhookSecret = app.node.tryGetContext('devOpsAgentWebhookSecret') ?? '';
+const devOpsAgentWebhookSecretArn = app.node.tryGetContext('devOpsAgentWebhookSecretArn') ?? '';
 const apiGatewayEndpoint = app.node.tryGetContext('apiGatewayEndpoint') ?? '';
 
 const env: cdk.Environment = { region };
@@ -113,23 +114,36 @@ const monitoringStack = new MonitoringStack(app, `DevOpsAgentEksMonitoring-${reg
   description: 'DevOps Agent EKS Demo Monitoring Stack',
 });
 
+// DevOpsAgentSpaceStack — the Agent Space itself (roles, operator app, AWS
+// association, eventChannel webhook). Deploys to the DevOps Agent region,
+// which may differ from the infra region (`devOpsAgentRegion` context; the
+// deploy scripts resolve it via DEVOPS_AGENT_REGION, defaulting to the infra
+// region). Deployed FIRST by deploy-all: its outputs (webhook URL + secret)
+// feed the DevOpsAgentStack below.
+const devOpsAgentRegion = app.node.tryGetContext('devOpsAgentRegion') || region;
+new DevOpsAgentSpaceStack(app, `DevOpsAgentEksAgentSpace-${devOpsAgentRegion}`, {
+  env: { region: devOpsAgentRegion },
+  environment,
+  projectName,
+  description: 'DevOps Agent EKS Demo Agent Space Stack (Agent Space, IAM roles, operator app, webhook)',
+});
+
 // DevOpsAgentStack — trigger Lambda + SNS + Secrets Manager (infra region)
-// The Agent Space itself is created by scripts/setup-devops-agent.ps1 in the
-// DevOps Agent region (e.g. us-east-1) via native AWS CLI — not via CDK,
-// because AWS::DevOpsAgent resources are only available in supported regions.
 const devOpsAgentStack = new DevOpsAgentStack(app, `DevOpsAgentEksDevOpsAgent-${region}`, {
   env,
   environment,
   projectName,
   eksClusterName: computeStack.clusterName,
   webhookUrl: devOpsAgentWebhookUrl,
-  webhookSecret: devOpsAgentWebhookSecret,
+  webhookSecretArn: devOpsAgentWebhookSecretArn,
+  webhookSecretRegion: devOpsAgentRegion,
   criticalAlarmsTopicArn: monitoringStack.criticalAlarmsTopicArn,
   description: 'DevOps Agent EKS Demo DevOps Agent Stack',
 });
 
 // FailureSimulatorApiStack — Lambda-based failure simulator API (outside EKS cluster)
-// agentSpaceId comes from context (set by deploy script after setup-devops-agent creates it)
+// Agent Space ID comes from the DevOpsAgentSpaceStack output, passed as context
+// by the two-stage deployment script.
 const failureSimulatorApiStack = new FailureSimulatorApiStack(app, `DevOpsAgentEksFailureSimulatorApi-${region}`, {
   env,
   environment,
@@ -139,7 +153,7 @@ const failureSimulatorApiStack = new FailureSimulatorApiStack(app, `DevOpsAgentE
   eksSecurityGroup: networkStack.eksSecurityGroup,
   eksClusterName: computeStack.clusterName,
   alarmName: `${projectName}-${environment}-database-connection-errors`,
-  devOpsAgentRegion: app.node.tryGetContext('devOpsAgentRegion') || 'us-east-1',
+  devOpsAgentRegion,
   devOpsAgentSpaceId: app.node.tryGetContext('devOpsAgentSpaceId') || '',
   description: 'DevOps Agent EKS Demo Failure Simulator API Stack',
 });

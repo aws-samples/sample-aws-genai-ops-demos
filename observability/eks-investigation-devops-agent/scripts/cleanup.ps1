@@ -25,6 +25,20 @@ $env:AWS_REGION = $REGION
 
 $ACCOUNT_ID = aws sts get-caller-identity --query Account --output text
 
+# Resolve the Agent Space region before the infrastructure stacks are deleted.
+# The deployment publishes it from DevOpsAgentStack; an explicit env override wins.
+$DEVOPS_AGENT_REGION = $env:DEVOPS_AGENT_REGION
+if (-not $DEVOPS_AGENT_REGION) {
+    $DEVOPS_AGENT_REGION = aws cloudformation describe-stacks `
+        --stack-name "DevOpsAgentEksDevOpsAgent-${REGION}" `
+        --region $REGION `
+        --query "Stacks[0].Outputs[?OutputKey=='AgentSpaceRegion'].OutputValue" `
+        --output text --no-cli-pager 2>$null
+}
+if (-not $DEVOPS_AGENT_REGION -or $DEVOPS_AGENT_REGION -eq "None") {
+    $DEVOPS_AGENT_REGION = $REGION
+}
+
 Write-Host "============================================"
 Write-Host "DevOps Agent EKS Demo - Cleanup"
 Write-Host "============================================"
@@ -307,15 +321,6 @@ foreach ($stack in $STACK_DELETE_ORDER) {
     }
 }
 
-# Fallback: try deleting legacy CloudFormation root stack if it exists
-$rootStackExists = aws cloudformation describe-stacks --stack-name $PROJECT_NAME 2>$null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Deleting legacy root stack $PROJECT_NAME..."
-    aws cloudformation delete-stack --stack-name $PROJECT_NAME
-    aws cloudformation wait stack-delete-complete --stack-name $PROJECT_NAME 2>$null
-    Write-Host "  ✓ Root stack deleted" -ForegroundColor Green
-}
-
 Write-Host ""
 Write-Host "[10/14] Cleaning up remaining S3 buckets (if any survived stack deletion)..." -ForegroundColor Cyan
 foreach ($bucket in $BUCKETS) {
@@ -331,7 +336,7 @@ foreach ($bucket in $BUCKETS) {
 Write-Host ""
 Write-Host "[11/14] Cleaning up any orphaned stacks in DELETE_FAILED state..." -ForegroundColor Cyan
 $allFailedStacks = @()
-# Check for both legacy CloudFormation and CDK stack name patterns
+# Match both the project-name prefix and the CDK stack name pattern
 foreach ($pattern in @($PROJECT_NAME, "DevOpsAgentEks")) {
     $found = aws cloudformation list-stacks --stack-status-filter DELETE_FAILED `
         --query "StackSummaries[?contains(StackName,'${pattern}')].StackName" --output text 2>$null
@@ -429,70 +434,20 @@ if ($LASTEXITCODE -eq 0) {
 
 Write-Host ""
 Write-Host "[14/14] Cleaning up DevOps Agent resources..." -ForegroundColor Cyan
-$DEVOPS_AGENT_REGION = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
+$AGENT_SPACE_STACK = "DevOpsAgentEksAgentSpace-${DEVOPS_AGENT_REGION}"
 
-# Delete only the Agent Space matching our project name (not all spaces in the account)
-$AGENT_SPACE_ID = aws devops-agent list-agent-spaces `
+# CloudFormation owns the Agent Space, IAM roles, operator app, AWS association,
+# eventChannel webhook, and webhook secret.
+$managedStackStatus = aws cloudformation describe-stacks `
+    --stack-name $AGENT_SPACE_STACK `
     --region $DEVOPS_AGENT_REGION `
-    --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" `
+    --query "Stacks[0].StackStatus" `
     --output text --no-cli-pager 2>$null
-
-if ($AGENT_SPACE_ID -and $AGENT_SPACE_ID.Trim() -and $AGENT_SPACE_ID -ne "None") {
-    Write-Host "  Deleting Agent Space $AGENT_SPACE_ID ($PROJECT_NAME)..."
-    # Remove associations first
-    $ASSOC_IDS = aws devops-agent list-associations `
-        --agent-space-id $AGENT_SPACE_ID `
-        --region $DEVOPS_AGENT_REGION `
-        --query "associations[*].associationId" `
-        --output text --no-cli-pager 2>$null
-    if ($ASSOC_IDS -and $ASSOC_IDS.Trim() -and $ASSOC_IDS -ne "None") {
-        foreach ($assocId in $ASSOC_IDS.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
-            Write-Host "    Removing association $assocId..."
-            aws devops-agent disassociate-service `
-                --agent-space-id $AGENT_SPACE_ID `
-                --association-id $assocId `
-                --region $DEVOPS_AGENT_REGION `
-                --no-cli-pager 2>$null
-        }
-    }
-    aws devops-agent delete-agent-space `
-        --agent-space-id $AGENT_SPACE_ID `
-        --region $DEVOPS_AGENT_REGION `
-        --no-cli-pager 2>$null
-    Write-Host "  ✓ Agent Space $AGENT_SPACE_ID deleted" -ForegroundColor Green
-} else {
-    Write-Host "  - No Agent Space named '$PROJECT_NAME' found" -ForegroundColor Yellow
-}
-
-# Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)
-foreach ($roleName in @(
-    "${PROJECT_NAME}-AgentSpaceRole",
-    "${PROJECT_NAME}-OperatorRole",
-    "${PROJECT_NAME}-${ENVIRONMENT}-AgentSpaceRole",
-    "${PROJECT_NAME}-${ENVIRONMENT}-OperatorRole"
-)) {
-    $roleCheck = aws iam get-role --role-name $roleName 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  Deleting IAM role $roleName..."
-        # Detach managed policies
-        $policies = aws iam list-attached-role-policies --role-name $roleName --query "AttachedPolicies[*].PolicyArn" --output text 2>$null
-        if ($policies -and $policies.Trim() -and $policies -ne "None") {
-            foreach ($policyArn in $policies.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
-                aws iam detach-role-policy --role-name $roleName --policy-arn $policyArn 2>$null
-            }
-        }
-        # Delete inline policies
-        $inlinePolicies = aws iam list-role-policies --role-name $roleName --query "PolicyNames[*]" --output text 2>$null
-        if ($inlinePolicies -and $inlinePolicies.Trim() -and $inlinePolicies -ne "None") {
-            foreach ($policyName in $inlinePolicies.Split("`t", [System.StringSplitOptions]::RemoveEmptyEntries)) {
-                aws iam delete-role-policy --role-name $roleName --policy-name $policyName 2>$null
-            }
-        }
-        aws iam delete-role --role-name $roleName 2>$null
-        Write-Host "  ✓ $roleName deleted" -ForegroundColor Green
-    } else {
-        Write-Host "  - $roleName not found, skipping" -ForegroundColor Yellow
-    }
+if ($LASTEXITCODE -eq 0 -and $managedStackStatus -and $managedStackStatus -ne "DELETE_COMPLETE") {
+    Write-Host "  Deleting CDK-managed Agent Space stack $AGENT_SPACE_STACK ($managedStackStatus)..."
+    aws cloudformation delete-stack --stack-name $AGENT_SPACE_STACK --region $DEVOPS_AGENT_REGION --no-cli-pager
+    aws cloudformation wait stack-delete-complete --stack-name $AGENT_SPACE_STACK --region $DEVOPS_AGENT_REGION --no-cli-pager
+    Write-Host "  ✓ CDK-managed Agent Space resources deleted" -ForegroundColor Green
 }
 
 Write-Host ""

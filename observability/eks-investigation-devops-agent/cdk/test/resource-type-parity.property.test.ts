@@ -17,6 +17,7 @@ import { AuthStack } from '../lib/auth-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 import { MonitoringStack } from '../lib/monitoring-stack';
 import { DevOpsAgentStack } from '../lib/devops-agent-stack';
+import { DevOpsAgentSpaceStack } from '../lib/devops-agent-space-stack';
 
 /**
  * Reference resource types extracted from the original CloudFormation YAML
@@ -78,12 +79,20 @@ const YAML_RESOURCE_TYPES: Record<string, string[]> = {
     'AWS::CloudWatch::Alarm',
   ],
   devopsAgent: [
-    'AWS::SecretsManager::Secret',
     'AWS::SNS::Topic',
     'AWS::IAM::Role',
     'AWS::Lambda::Function',
     'AWS::SNS::Subscription',
     'AWS::Lambda::Permission',
+  ],
+  // Agent Space ownership moved from the imperative CLI setup into this stack.
+  // It also owns the webhook secret formerly created by DevOpsAgentStack.
+  agentSpace: [
+    'AWS::DevOpsAgent::AgentSpace',
+    'AWS::DevOpsAgent::Association',
+    'AWS::SecretsManager::Secret',
+    'AWS::IAM::Role',
+    'AWS::Lambda::Function',
   ],
 };
 
@@ -133,8 +142,12 @@ function synthesizeAll(env: string, arch: string) {
     env: cdkEnv, environment: env, projectName,
     eksClusterName: compute.clusterName,
     webhookUrl: 'https://example.com/webhook',
-    webhookSecret: 'test-secret',
+    webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-AbCdEf',
+    webhookSecretRegion: 'us-east-1',
     criticalAlarmsTopicArn: monitoring.criticalAlarmsTopicArn,
+  });
+  const agentSpace = new DevOpsAgentSpaceStack(app, `DevOpsAgentEksAgentSpace-${region}`, {
+    env: cdkEnv, environment: env, projectName,
   });
 
   return {
@@ -146,6 +159,7 @@ function synthesizeAll(env: string, arch: string) {
     frontend: Template.fromStack(frontend),
     monitoring: Template.fromStack(monitoring),
     devopsAgent: Template.fromStack(devops),
+    agentSpace: Template.fromStack(agentSpace),
   };
 }
 

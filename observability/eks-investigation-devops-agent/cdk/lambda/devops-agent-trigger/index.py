@@ -13,8 +13,22 @@ logger.setLevel(logging.INFO)
 
 
 def get_secret():
-    """Retrieve webhook secret from Secrets Manager"""
-    client = boto3.client('secretsmanager')
+    """Retrieve webhook secret from its owning region in Secrets Manager.
+
+    The webhook HMAC secret is created and stored in the DevOps Agent Space
+    region (the region the Agent Space stack deploys to). That region can differ
+    from where this trigger Lambda runs: the Agent Space may be pinned to a
+    specific region via DEVOPS_AGENT_REGION while the rest of the demo
+    infrastructure deploys to the caller's default region.
+
+    SECRET_REGION carries the Agent Space region so this Lambda reads the secret
+    from where it actually lives. It falls back to AWS_REGION (this Lambda's own
+    region) for the common same-region case, where the env var is unset.
+    """
+    client = boto3.client(
+        'secretsmanager',
+        region_name=os.environ.get('SECRET_REGION') or os.environ.get('AWS_REGION'),
+    )
     response = client.get_secret_value(SecretId=os.environ['SECRET_ARN'])
     return response['SecretString']
 

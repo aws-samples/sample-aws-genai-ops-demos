@@ -30,7 +30,7 @@ Write-Host ""
 # Prerequisites
 # ---------------------------------------------------------------------------
 Write-Host "[prereqs] Running prerequisites check..." -ForegroundColor Yellow
-& "$PSScriptRoot\..\..\shared\scripts\check-prerequisites.ps1" -RequireCDK -RequireKubectl -SkipServiceCheck -MinAwsCliVersion "2.34.21"
+& "$PSScriptRoot\..\..\shared\scripts\check-prerequisites.ps1" -RequireCDK -RequireKubectl -RequiredService "devops-agent" -MinAwsCliVersion "2.34.21"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 Write-Host ""
 
@@ -43,35 +43,20 @@ Write-Host "Environment: $Environment"
 Write-Host ""
 
 # ---------------------------------------------------------------------------
-# DevOps Agent setup (Agent Space + webhook)
+# DevOps Agent region
 # ---------------------------------------------------------------------------
-# Agent Space is created via CLI in the DevOps Agent region (e.g. us-east-1)
-# because AWS::DevOpsAgent CloudFormation resources are not available in all regions.
-if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
-    & "$PSScriptRoot\scripts\setup-devops-agent.ps1" -AgentSpaceName $ProjectName
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: DevOps Agent setup failed." -ForegroundColor Red
-        exit 1
-    }
-}
+# The shared prerequisites script resolves this as:
+#   DEVOPS_AGENT_REGION override -> current deployment region.
+# DevOpsAgentSpaceStack creates the Agent Space, IAM roles, operator app, AWS
+# monitor association, and generic webhook in this region after npm install.
+$DevOpsAgentRegion = $global:DEVOPS_AGENT_REGION
+$AgentSpaceStackName = "DevOpsAgentEksAgentSpace-$DevOpsAgentRegion"
+$DevOpsWebhookUrl = ""
+$DevOpsWebhookSecretArn = ""
+$DevOpsAgentSpaceId = ""
 
-if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
-    Write-Host ""
-    Write-Host "ERROR: DevOps Agent webhook URL and secret are required." -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Either provide them as environment variables before running this script:"
-    Write-Host '  $env:DEVOPS_AGENT_WEBHOOK_URL = "https://..."'
-    Write-Host '  $env:DEVOPS_AGENT_WEBHOOK_SECRET = "..."'
-    Write-Host "  .\deploy-all.ps1"
-    Write-Host ""
-    exit 1
-}
-
-$DevOpsWebhookUrl = $env:DEVOPS_AGENT_WEBHOOK_URL
-$DevOpsWebhookSecret = $env:DEVOPS_AGENT_WEBHOOK_SECRET
-$DevOpsAgentSpaceId = $env:DEVOPS_AGENT_SPACE_ID ?? ''
-$DevOpsAgentRegion = $env:DEVOPS_AGENT_REGION ?? 'us-east-1'
-Write-Host "DevOps Agent webhook: CONFIGURED" -ForegroundColor Green
+Write-Host "DevOps Agent region: $DevOpsAgentRegion"
+Write-Host "DevOps Agent setup:  CDK-managed" -ForegroundColor Green
 Write-Host ""
 
 # EKS node architecture — override via EKS_ARCHITECTURE env var, default arm64
@@ -119,38 +104,77 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# The Agent Space stack may deploy to a different region and needs its own CDK
+# bootstrap environment.
+if ($DevOpsAgentRegion -ne $AWS_REGION) {
+    aws ssm get-parameter --name /cdk-bootstrap/hnb659fds/version --region $DevOpsAgentRegion --output text 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "ERROR: CDK is not bootstrapped in DevOps Agent region $DevOpsAgentRegion." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Run this once, then re-run deploy-all.ps1:"
+        Write-Host "  npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$DevOpsAgentRegion"
+        Write-Host ""
+        exit 1
+    }
+}
+
 # =============================================================================
 # STEP 1: Install CDK dependencies and create S3 bucket for CodeBuild sources
 # =============================================================================
 Write-Host "[1/9] Installing CDK dependencies and preparing S3 bucket..." -ForegroundColor Cyan
 $BUCKET_NAME = "$ProjectName-cfn-templates-$AWS_ACCOUNT_ID"
-aws s3 mb "s3://$BUCKET_NAME" --region $AWS_REGION 2>$null
-
-# Verify the bucket lives in the target region. S3 bucket names are globally
-# unique, so if a previous deploy attempt created this bucket in a different
-# region the 'mb' above silently no-ops. CodeBuild refuses cross-region source
-# downloads and would fail ~18s into the first build (DOWNLOAD_SOURCE phase)
-# with a BucketRegionError. Fail fast here with an actionable message.
-#
-# Also handles the case where 'mb' failed for another reason (e.g., S3 name
-# cooldown after a recent DeleteBucket) so we abort instead of marching into
-# the CDK deploy with a bucket that doesn't exist.
+# Create the bucket when absent. S3 bucket names are globally coordinated, so a
+# recent delete/create of the same name can return OperationAborted while the
+# namespace change propagates. Retry only that transient error; surface every
+# other CreateBucket failure immediately (permissions, ownership, invalid name).
 $BucketLocationRaw = (aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>&1) -join "`n"
 $BucketLocationExit = $LASTEXITCODE
 
+if ($BucketLocationExit -ne 0 -and $BucketLocationRaw -match 'NoSuchBucket') {
+    $bucketCreated = $false
+    $lastCreateError = ""
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        Write-Host "  Creating S3 bucket $BUCKET_NAME (attempt $attempt/6)..."
+        $createOutput = (aws s3 mb "s3://$BUCKET_NAME" --region $AWS_REGION 2>&1) -join "`n"
+        $createExit = $LASTEXITCODE
+        if ($createExit -eq 0 -or $createOutput -match 'BucketAlreadyOwnedByYou') {
+            $bucketCreated = $true
+            break
+        }
+
+        $lastCreateError = $createOutput
+        if ($createOutput -match 'OperationAborted' -and $attempt -lt 6) {
+            $delay = [Math]::Min(5 * [Math]::Pow(2, $attempt - 1), 60)
+            Write-Host "  S3 is still propagating a previous operation; retrying in $delay seconds..." -ForegroundColor Yellow
+            Start-Sleep -Seconds $delay
+            continue
+        }
+
+        Write-Host ""
+        Write-Host "ERROR: Failed to create S3 bucket '$BUCKET_NAME'." -ForegroundColor Red
+        Write-Host "  $createOutput"
+        exit 1
+    }
+
+    if (-not $bucketCreated) {
+        Write-Host ""
+        Write-Host "ERROR: S3 still reports a conflicting operation for '$BUCKET_NAME' after 6 attempts." -ForegroundColor Red
+        Write-Host "  $lastCreateError"
+        Write-Host "Wait a few minutes for S3's global bucket namespace to settle, then rerun deploy-all.ps1." -ForegroundColor Yellow
+        exit 1
+    }
+
+    # Verify the newly-created bucket and capture its actual region.
+    $BucketLocationRaw = (aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>&1) -join "`n"
+    $BucketLocationExit = $LASTEXITCODE
+}
+
 if ($BucketLocationExit -ne 0) {
     Write-Host ""
-    Write-Host "ERROR: Could not verify S3 bucket '$BUCKET_NAME'." -ForegroundColor Red
-    Write-Host ""
+    Write-Host "ERROR: Could not access S3 bucket '$BUCKET_NAME'." -ForegroundColor Red
     Write-Host "  $BucketLocationRaw"
-    Write-Host ""
-    if ($BucketLocationRaw -match 'NoSuchBucket') {
-        Write-Host "The bucket does not exist. 'aws s3 mb' above likely failed silently."
-        Write-Host "A common cause is the S3 name-reuse cooldown after a recent DeleteBucket"
-        Write-Host "(can take several minutes). Wait a bit and re-run deploy-all.ps1, or try:"
-        Write-Host "  aws s3 mb s3://$BUCKET_NAME --region $AWS_REGION"
-    }
-    Write-Host ""
+    Write-Host "Check s3:GetBucketLocation permission and whether the globally unique bucket name is owned by this account." -ForegroundColor Yellow
     exit 1
 }
 
@@ -173,8 +197,62 @@ if ($BucketLocation -ne $AWS_REGION) {
     exit 1
 }
 
-Push-Location cdk; npm install; Pop-Location
+Push-Location cdk
+try {
+    npm install
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "CDK build / Lambda bundling failed" }
+} finally {
+    Pop-Location
+}
 Write-Host "  done."
+Write-Host ""
+
+# =============================================================================
+# CDK: Agent Space + IAM + operator app + AWS association + webhook
+# =============================================================================
+Write-Host "[agent] Deploying DevOps Agent Space stack in $DevOpsAgentRegion..." -ForegroundColor Cyan
+
+Push-Location cdk
+try {
+    npx cdk deploy $AgentSpaceStackName `
+        -c "environment=$Environment" `
+        -c "projectName=$ProjectName" `
+        -c "devOpsAgentRegion=$DevOpsAgentRegion" `
+        --require-approval never `
+        --no-cli-pager
+    if ($LASTEXITCODE -ne 0) { throw "Agent Space stack deployment failed" }
+} finally {
+    Pop-Location
+}
+
+# The webhook secret value never enters this script. The custom resource writes it
+# directly to Secrets Manager; only its ARN is passed to the infra stack.
+$DevOpsWebhookUrl = aws cloudformation describe-stacks `
+    --stack-name $AgentSpaceStackName `
+    --region $DevOpsAgentRegion `
+    --query "Stacks[0].Outputs[?OutputKey=='WebhookUrl'].OutputValue" `
+    --output text --no-cli-pager
+$DevOpsWebhookSecretArn = aws cloudformation describe-stacks `
+    --stack-name $AgentSpaceStackName `
+    --region $DevOpsAgentRegion `
+    --query "Stacks[0].Outputs[?OutputKey=='WebhookSecretArn'].OutputValue" `
+    --output text --no-cli-pager
+$DevOpsAgentSpaceId = aws cloudformation describe-stacks `
+    --stack-name $AgentSpaceStackName `
+    --region $DevOpsAgentRegion `
+    --query "Stacks[0].Outputs[?OutputKey=='AgentSpaceId'].OutputValue" `
+    --output text --no-cli-pager
+
+if (-not $DevOpsWebhookUrl -or $DevOpsWebhookUrl -eq "None" -or
+    -not $DevOpsWebhookSecretArn -or $DevOpsWebhookSecretArn -eq "None" -or
+    -not $DevOpsAgentSpaceId -or $DevOpsAgentSpaceId -eq "None") {
+    Write-Host "ERROR: Agent Space stack did not return all required outputs." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  Agent Space: $DevOpsAgentSpaceId" -ForegroundColor Green
+Write-Host "  Webhook:     configured (HMAC secret remains in Secrets Manager)" -ForegroundColor Green
 Write-Host ""
 
 # =============================================================================
@@ -192,14 +270,19 @@ $cdkArgs = @(
     "-c", "eksNodeDesiredCapacity=2",
     "-c", "eksKubernetesVersion=$EksKubernetesVersion",
     "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
-    "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",
+    "-c", "devOpsAgentWebhookSecretArn=$DevOpsWebhookSecretArn",
     "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
     "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
     "--require-approval", "never",
     "--no-cli-pager"
 )
 & $cdkArgs[0] $cdkArgs[1..($cdkArgs.Length-1)]
+$cdkDeployExit = $LASTEXITCODE
 Pop-Location
+if ($cdkDeployExit -ne 0) {
+    Write-Host "  ERROR: CDK infrastructure deployment failed; stopping before post-deploy configuration." -ForegroundColor Red
+    exit $cdkDeployExit
+}
 Write-Host "  Infrastructure deployed."
 Write-Host ""
 
@@ -635,90 +718,38 @@ $USER_POOL_ID = aws cloudformation describe-stacks `
     --output text `
     --region $AWS_REGION
 
-$COGNITO_SUB = ""
-if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
-    Write-Host "  User Pool ID: $USER_POOL_ID"
-    $DEMO_USERNAME = "demo-merchant-1"
-    $DEMO_EMAIL = "demo@helios-electronics.com"
-    $DEMO_PASSWORD = "DemoPass2026!"
-    # MERCHANT_ID will be set to COGNITO_SUB after we retrieve it.
-    # The payment-processor uses the JWT sub directly as merchant_id FK,
-    # so the merchants.id column MUST equal the Cognito sub UUID.
+$CLIENT_ID = aws cloudformation describe-stacks `
+    --stack-name "DevOpsAgentEksAuth-$AWS_REGION" `
+    --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" `
+    --output text `
+    --region $AWS_REGION
 
-    # Check if user already exists
-    # NOTE: $LASTEXITCODE is unreliable with 2>$null in PowerShell.
-    # Instead, capture stderr via 2>&1 and check for error text.
-    $userExists = $false
-    $userCheck = aws cognito-idp admin-get-user `
-        --user-pool-id $USER_POOL_ID `
-        --username $DEMO_USERNAME `
-        --no-cli-pager 2>&1
-    if ($userCheck -notmatch "UserNotFoundException") { $userExists = $true }
-
-    if (-not $userExists) {
-        Write-Host "  Creating Cognito user '$DEMO_USERNAME'..."
-        aws cognito-idp admin-create-user `
-            --user-pool-id $USER_POOL_ID `
-            --username $DEMO_USERNAME `
-            --user-attributes Name=email,Value=$DEMO_EMAIL Name=email_verified,Value=true `
-            --temporary-password $DEMO_PASSWORD `
-            --message-action SUPPRESS --no-cli-pager | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: Failed to create Cognito user '$DEMO_USERNAME'." -ForegroundColor Red
-            exit 1
-        }
-
-        aws cognito-idp admin-set-user-password `
-            --user-pool-id $USER_POOL_ID `
-            --username $DEMO_USERNAME `
-            --password $DEMO_PASSWORD `
-            --permanent --no-cli-pager | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: Failed to set permanent password for '$DEMO_USERNAME'." -ForegroundColor Red
-            exit 1
-        }
-        Write-Host "  Cognito user created."
-    } else {
-        Write-Host "  Cognito user '$DEMO_USERNAME' already exists."
-        # Ensure password is set correctly (handles redeployments)
-        aws cognito-idp admin-set-user-password `
-            --user-pool-id $USER_POOL_ID `
-            --username $DEMO_USERNAME `
-            --password $DEMO_PASSWORD `
-            --permanent 2>$null | Out-Null
-    }
-
-    # Capture the Cognito sub UUID (this is what appears in JWT access tokens)
-    $COGNITO_SUB = aws cognito-idp admin-get-user `
-        --user-pool-id $USER_POOL_ID `
-        --username $DEMO_USERNAME `
-        --query "UserAttributes[?Name=='sub'].Value" `
-        --output text `
-        --region $AWS_REGION
-    Write-Host "  Cognito sub: $COGNITO_SUB"
-} else {
-    Write-Host "  WARNING: Could not find Cognito User Pool ID." -ForegroundColor Yellow
+if (-not $USER_POOL_ID -or $USER_POOL_ID -eq "None" -or
+    -not $CLIENT_ID -or $CLIENT_ID -eq "None") {
+    Write-Host "  ERROR: Could not resolve Cognito User Pool or app client outputs." -ForegroundColor Red
+    exit 1
 }
 
-# Fallback if we couldn't get the sub
+Write-Host "  User Pool ID: $USER_POOL_ID"
+try {
+    $COGNITO_SUB = & "$PSScriptRoot\scripts\configure-demo-user.ps1" `
+        -UserPoolId $USER_POOL_ID `
+        -ClientId $CLIENT_ID `
+        -Region $AWS_REGION
+} catch {
+    Write-Host "  ERROR: Demo Cognito user provisioning failed: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 if (-not $COGNITO_SUB) {
-    $COGNITO_SUB = "demo-merchant-1"
-    Write-Host "  WARNING: Using username as cognito_sub fallback." -ForegroundColor Yellow
+    Write-Host "  ERROR: Demo Cognito user provisioning returned no sub UUID." -ForegroundColor Red
+    exit 1
 }
+Write-Host "  Cognito sub: $COGNITO_SUB"
 
-# The payment-processor uses the JWT sub directly as merchant_id,
-# so merchants.id MUST equal the Cognito sub UUID.
+# The payment-processor uses the JWT sub directly as merchant_id, so the merchant
+# primary key seeded below must equal this UUID. custom:merchant_id is immutable;
+# the merchant gateway intentionally falls back to the token sub.
 $MERCHANT_ID = $COGNITO_SUB
-
-# Update the custom:merchant_id attribute now that we have the real sub
-if ($USER_POOL_ID -and $USER_POOL_ID -ne "None") {
-    aws cognito-idp admin-update-user-attributes `
-        --user-pool-id $USER_POOL_ID `
-        --username $DEMO_USERNAME `
-        --user-attributes Name=custom:merchant_id,Value=$MERCHANT_ID `
-        --region $AWS_REGION 2>$null | Out-Null
-    Write-Host "  Updated custom:merchant_id to $MERCHANT_ID"
-}
 
 # --- 7b: Run database migrations and seed with the real Cognito sub ---
 
@@ -984,14 +1015,19 @@ if ($NLB_HOSTNAME) {
         "-c", "eksKubernetesVersion=$EksKubernetesVersion",
         "-c", "apiGatewayEndpoint=$NLB_HOSTNAME",
         "-c", "devOpsAgentWebhookUrl=$DevOpsWebhookUrl",
-        "-c", "devOpsAgentWebhookSecret=$DevOpsWebhookSecret",
+        "-c", "devOpsAgentWebhookSecretArn=$DevOpsWebhookSecretArn",
         "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
         "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
         "--require-approval", "never",
         "--no-cli-pager"
     )
     & $cdkArgs[0] $cdkArgs[1..($cdkArgs.Length-1)]
+    $frontendDeployExit = $LASTEXITCODE
     Pop-Location
+    if ($frontendDeployExit -ne 0) {
+        Write-Host "  ERROR: Frontend stack update failed." -ForegroundColor Red
+        exit $frontendDeployExit
+    }
     Write-Host "  CloudFront updated with API origin."
 } else {
     Write-Host "  WARNING: Skipping CloudFront API origin (NLB hostname not available)." -ForegroundColor Yellow
@@ -1053,12 +1089,29 @@ $S3_BUCKET = "$ProjectName-$Environment-merchant-portal-$AWS_ACCOUNT_ID"
 
 Write-Host "  Uploading to S3..."
 aws s3 sync services/merchant-portal/dist/ "s3://$S3_BUCKET/" --delete --region $AWS_REGION
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ERROR: Frontend upload failed." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "  Invalidating CloudFront cache..."
-aws cloudfront create-invalidation `
+$invalidationId = aws cloudfront create-invalidation `
     --distribution-id $DISTRIBUTION_ID `
-    --paths "/*" | Out-Null
-Write-Host "  Frontend deployed."
+    --paths "/*" `
+    --query "Invalidation.Id" `
+    --output text
+if ($LASTEXITCODE -ne 0 -or -not $invalidationId -or $invalidationId -eq 'None') {
+    Write-Host "  ERROR: CloudFront invalidation failed." -ForegroundColor Red
+    exit 1
+}
+aws cloudfront wait invalidation-completed `
+    --distribution-id $DISTRIBUTION_ID `
+    --id $invalidationId
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ERROR: CloudFront invalidation did not complete." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  Frontend deployed and cache invalidated."
 Write-Host ""
 
 # =============================================================================

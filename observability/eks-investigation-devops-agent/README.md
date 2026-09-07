@@ -40,7 +40,7 @@ The platform has three layers:
 
 - **Application Layer** — CloudFront serves the React portal from S3 and routes API traffic through an NLB to three microservices running on EKS (Merchant Gateway, Payment Processor, Webhook Service), backed by RDS PostgreSQL and SQS for async webhook delivery.
 - **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → AWS DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis.
-- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (9 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
+- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (10 stacks, including the Agent Space) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture documentation including network design, security model, and data flows.
 
@@ -48,7 +48,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 
 - **AWS CLI v2.34.21+** with configured credentials and default region
 - kubectl v1.36+
-- Node.js 20+ with npm
+- Node.js 20+ with npm (the project installs its pinned CDK CLI automatically)
 - `zip` utility
 - Git
 - **CDK bootstrap** — the target account + region must be bootstrapped before running the deploy script. If you've never deployed CDK to this account/region pair, run:
@@ -70,28 +70,33 @@ cd sample-aws-genai-ops-demos/observability/eks-investigation-devops-agent
 
 ### 2. Deploy
 
-> **⚠️ Interactive step required during deployment:** The script will pause and ask you to generate a DevOps Agent webhook from the AWS console. Have a browser ready — the script prints the exact console URL to open.
+The deployment is zero-touch: CDK creates the Agent Space, IAM roles, operator app,
+AWS account association, and generic webhook. The webhook HMAC secret is written
+directly to Secrets Manager and never appears in shell variables, CDK context, or
+CloudFormation outputs.
 
-> **Two regions, set them both.** The deploy uses two independent region variables:
->
-> - `AWS_REGION` — where the CDK stacks (EKS, RDS, CloudFront, etc.) are deployed. If unset, the AWS CLI falls back to `aws configure get region`, which may not be what you want.
-> - `DEVOPS_AGENT_REGION` — where the DevOps Agent Space is created. Defaults to `us-east-1` because `AWS::DevOpsAgent` resources are not available in every region.
->
-> For a same-region deployment (example: Ireland):
-> ```bash
-> # Bash
-> export AWS_REGION=eu-west-1
-> export AWS_DEFAULT_REGION=eu-west-1
-> export DEVOPS_AGENT_REGION=eu-west-1
-> bash deploy-all.sh
-> ```
-> ```powershell
-> # PowerShell
-> $env:AWS_REGION = "eu-west-1"
-> $env:AWS_DEFAULT_REGION = "eu-west-1"
-> $env:DEVOPS_AGENT_REGION = "eu-west-1"
-> .\deploy-all.ps1
-> ```
+By default the Agent Space deploys to the current region with the other stacks. To
+place it elsewhere, set `DEVOPS_AGENT_REGION` before deploying:
+
+```powershell
+$env:DEVOPS_AGENT_REGION = "eu-west-1"
+```
+
+```bash
+export DEVOPS_AGENT_REGION=eu-west-1
+```
+
+When you set `DEVOPS_AGENT_REGION`, the Agent Space and its webhook HMAC secret are
+created in that region, while the rest of the demo (including the trigger Lambda that
+signs and forwards CloudWatch alarms to the webhook) stays in the infrastructure
+region. The Lambda therefore has to read the secret from the Agent Space region, not
+its own. CDK passes that region to the Lambda as the `SECRET_REGION` environment
+variable so it builds its Secrets Manager client against the right region. You never
+set `SECRET_REGION` yourself: the deployment derives it from the Agent Space region,
+and when the two regions are the same (the default) the Lambda simply falls back to
+its own `AWS_REGION`.
+
+The Agent Space region must be CDK-bootstrapped as well as the infrastructure region.
 
 ```bash
 # macOS / Linux
@@ -102,9 +107,9 @@ bash deploy-all.sh
 ```
 
 The deployment script:
-1. Creates the DevOps Agent Space, IAM roles, Operator Access, and account association (in the DevOps Agent region)
-2. Prompts for the webhook URL and secret (generated in the DevOps Agent console)
-3. Deploys 9 CDK stacks (EKS, RDS, CloudFront, monitoring, etc.) in current region
+1. Deploys the CDK-managed Agent Space (roles, operator app, AWS association, webhook)
+2. Reads its URL, secret ARN, and Agent Space ID from CloudFormation outputs
+3. Deploys the EKS, RDS, CloudFront, monitoring, and integration stacks
 4. Builds 3 container images via CodeBuild
 5. Applies Kubernetes manifests and seeds the database
 6. Builds and deploys the React frontend
@@ -274,7 +279,8 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `DevOpsAgentEksAuth-{region}` | Auth | Cognito User Pool with custom attributes |
 | `DevOpsAgentEksFrontend-{region}` | Frontend | CloudFront distribution, S3 bucket with OAC |
 | `DevOpsAgentEksMonitoring-{region}` | Observability | CloudWatch log groups, metric filters, alarms, SNS topic |
-| `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook, Secrets Manager |
+| `DevOpsAgentEksAgentSpace-{agent-region}` | Agent onboarding | Agent Space, IAM roles, operator app, AWS association, webhook + secret |
+| `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook (secret imported by ARN) |
 | `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab API | API Gateway, Lambda (kubectl), DynamoDB (timers) |
 
 ## Project Structure
@@ -282,9 +288,15 @@ All stack IDs include the region suffix for multi-region deployment support.
 ```
 ├── deploy-all.sh / .ps1              # One-command deployment
 ├── cdk/
-│   ├── bin/app.ts                    # CDK entry point (9 stacks, region-suffixed)
-│   ├── lib/                          # Stack definitions
+│   ├── bin/app.ts                    # CDK entry point (10 stacks, region-suffixed)
+│   ├── lib/
+│   │   ├── constructs/
+│   │   │   └── devops-agent-space.ts # Reusable Agent Space construct
+│   │   ├── devops-agent-space-stack.ts # Thin regional stack wrapper
+│   │   └── ...                       # Other stack definitions
+│   ├── scripts/bundle-lambdas.js     # Cross-platform custom-resource bundling
 │   └── lambda/
+│       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
 │       ├── devops-agent-trigger/     # Alarm → webhook Lambda
 │       └── failure-simulator-api/    # Lab API Lambda (inject/rollback/status/usage/logs)
 ├── k8s/                              # Kubernetes manifests (Kustomize)
@@ -296,7 +308,6 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   ├── payment-processor/            # Java 21 + Spring Boot 3.5 (EKS)
 │   └── webhook-service/              # Node.js 20 + TypeScript (EKS)
 ├── scripts/
-│   ├── setup-devops-agent.sh / .ps1  # Agent Space + IAM + webhook setup (6 steps)
 │   └── cleanup.sh / .ps1             # Delete all resources
 └── docs/
     ├── ARCHITECTURE.md               # Full architecture documentation
@@ -335,8 +346,8 @@ All costs approximate, based on `us-east-1` pricing.
 | **504** Gateway Timeout | Backend pods not running | Check: `kubectl get pods -n payment-demo` |
 | **500** on payment | DB credential mismatch | Check logs: `kubectl logs -l app.kubernetes.io/name=payment-processor -n payment-demo --tail=50` |
 | CloudFront returns **403** | S3/OAC misconfigured | Re-run deployment |
-| Agent Space not found | CLI too old | Upgrade AWS CLI to >= 2.34.21 |
-| Investigation shows "no AWS account access" | Missing association | Re-run `.\scripts\setup-devops-agent.ps1` |
+| Agent Space stack fails | Region unsupported or CDK not bootstrapped | Read the error and bootstrap the Agent Space region (`npx cdk bootstrap aws://<account-id>/<agent-region>`) |
+| Investigation shows "no AWS account access" | AWS monitor association is invalid | Re-deploy `DevOpsAgentEksAgentSpace-<agent-region>`; CloudFormation owns and validates the association |
 | CDK fails with **`SSM parameter /cdk-bootstrap/hnb659fds/version not found`** | Account/region is not CDK-bootstrapped | Run `npx cdk bootstrap aws://<account-id>/<region>` once, then re-run `deploy-all.sh` |
 | CDK bootstrap "S3 bucket already exists" | Broken CDK bootstrap stack | Run `npx cdk bootstrap --force` or delete the orphaned S3 bucket `cdk-hnb659fds-assets-*` and re-bootstrap. See [CDK bootstrap troubleshooting](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-troubleshoot.html) |
 | Deploy targeted the wrong region | `AWS_REGION` unset, so CLI fell back to `aws configure get region` | `export AWS_REGION=<intended-region>` and `export AWS_DEFAULT_REGION=<same>` before running the script |
@@ -344,18 +355,23 @@ All costs approximate, based on `us-east-1` pricing.
 
 ## Recreating the Agent Space
 
-To start fresh with a clean Agent Space (e.g., for A/B testing skills):
+The Agent Space and webhook are CloudFormation-owned. To rotate the webhook and start
+with a clean space, destroy only its stack and rerun the main deployment:
 
 ```powershell
-# Delete the old space
-aws devops-agent delete-agent-space --agent-space-id <space-id> --region us-east-1
-
-# Re-run setup — creates new space, prompts for webhook, updates deployed Lambdas
-.\scripts\setup-devops-agent.ps1          # PowerShell
-bash scripts/setup-devops-agent.sh        # Bash
+$agentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { aws configure get region }
+npx cdk destroy "DevOpsAgentEksAgentSpace-$agentRegion" -c "devOpsAgentRegion=$agentRegion"
+.\deploy-all.ps1
 ```
 
-The setup script detects the deployed demo and live-updates Lambda env vars and Secrets Manager — no CDK redeploy needed.
+```bash
+agent_region="${DEVOPS_AGENT_REGION:-$(aws configure get region)}"
+npx cdk destroy "DevOpsAgentEksAgentSpace-$agent_region" -c "devOpsAgentRegion=$agent_region"
+bash deploy-all.sh
+```
+
+Destroying the stack disassociates the webhook, deletes the Agent Space and roles, and
+removes the Secrets Manager secret. The next deploy creates a new webhook automatically.
 
 ## Cleanup
 

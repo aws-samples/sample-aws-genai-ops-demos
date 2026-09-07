@@ -82,7 +82,8 @@ function synthesizeAll(env: string, arch: string) {
     env: cdkEnv, environment: env, projectName,
     eksClusterName: compute.clusterName,
     webhookUrl: 'https://example.com/webhook',
-    webhookSecret: 'test-secret',
+    webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-AbCdEf',
+    webhookSecretRegion: 'us-east-1',
     criticalAlarmsTopicArn: monitoring.criticalAlarmsTopicArn,
   });
 
