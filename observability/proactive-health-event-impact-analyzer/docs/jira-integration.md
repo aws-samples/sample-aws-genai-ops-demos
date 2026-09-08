@@ -159,11 +159,13 @@ If this is your **first** wizard run (no deployment yet), run the full flow:
 npx ts-node scripts/setup-wizard.ts
 ```
 
-Step 7 ("Atlassian Jira integration") is the new opt-in step.
+The Atlassian Jira integration is the final, opt-in step — it runs after
+the CDK deployment step, since it needs the Agent Space that step just
+created.
 
 If you've **already deployed** and just want to add the Jira integration
-to an existing Agent Space, use the focused flag — it skips IAM, webhook,
-operator app, notification channels, and the CDK deploy:
+to an existing Agent Space, use the focused flag — it skips prerequisites,
+notification channels, and the CDK deploy entirely:
 
 ```bash
 npx ts-node scripts/setup-wizard.ts --jira-only

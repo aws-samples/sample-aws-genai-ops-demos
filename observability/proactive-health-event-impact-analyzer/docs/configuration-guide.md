@@ -12,7 +12,7 @@ The solution is production-hardened with the following security and operational 
 | Feature | Detail |
 |---------|--------|
 | **IAM least-privilege** | All policies scoped to specific resource ARNs; no wildcards where deterministic |
-| **Secrets management** | All secrets in SSM Parameter Store SecureString; fetched at runtime with 5-min cache |
+| **Secrets management** | DevOps Agent webhook secret in a CDK-managed Secrets Manager secret (written once by a provisioning custom resource); Slack/MS Teams webhook URLs in SSM Parameter Store SecureString — both fetched at runtime with 5-min cache, neither is a CloudFormation parameter |
 | **Encryption at rest** | DynamoDB (AWS owned key), SNS (KMS `alias/aws/sns`), CloudWatch Logs (AES-256) |
 | **Encryption in transit** | SNS topic denies non-SSL transport (`aws:SecureTransport` condition) |
 | **Dead letter queues** | 3 SQS DLQs for event-driven Lambdas (14-day retention, CloudWatch alarms) |
@@ -33,48 +33,38 @@ npx cdk deploy ... -c environment=staging      # 14-day logs, DESTROY, no deleti
 
 ## DevOps Agent Setup
 
-This solution relies on AWS DevOps Agent's topology for workload discovery — no manual workload configuration needed.
+This solution relies on AWS DevOps Agent's topology for workload discovery — no manual workload configuration needed. The Agent Space itself, its IAM roles, account association, operator app, and webhook are provisioned automatically by the `DevOpsAgentSpaceStack` CDK stack when you run the [setup wizard](../README.md#deployment) — there is no console setup for any of that. See [ARCHITECTURE.md](../ARCHITECTURE.md#aws-devops-agent-provisioning) for how the stack works, including why the webhook still needs a Lambda-backed custom resource.
 
-### Step 1: Create an Agent Space
+### Topology Discovery
 
-1. Open the [AWS DevOps Agent console](https://console.aws.amazon.com/devopsagent)
-2. Create a new Agent Space
-3. Connect your AWS account(s) for resource discovery
-
-### Step 2: Wait for Topology Discovery
-
-DevOps Agent automatically discovers resources through:
+Once the Agent Space and its AWS account association exist, DevOps Agent automatically discovers resources through:
 
 - **CloudFormation stacks** — all resources deployed via CloudFormation/CDK
 - **Resource Explorer** — tagged resources not in CloudFormation (enable Resource Explorer in your account)
 
-The initial topology scan takes a few minutes. You can verify it's complete in the Topology page of the Operator Web App.
+The initial topology scan takes a few minutes after deployment. You can verify it's complete in the Topology page of the Operator Web App.
 
-### Step 3: Configure a Generic Webhook
+### EventBridge Integration
 
-1. In your Agent Space, go to **Capabilities** → **Webhook**
-2. Click **Generate webhook** (creates HMAC credentials)
-3. Save the **webhook URL** and **HMAC secret** — you won't be able to retrieve the secret again
-4. The setup wizard stores the HMAC secret in SSM Parameter Store SecureString at `/health-analyzer/{env}/webhook-secret`
+DevOps Agent automatically sends events to the default EventBridge bus when investigations complete. No additional configuration needed — the main CDK stack creates the rule to capture `aws.aidevops` events.
 
-### Step 4: Verify EventBridge Integration
+## Deployment Configuration
 
-DevOps Agent automatically sends events to the default EventBridge bus when investigations complete. No additional configuration needed — the CDK stack creates the rule to capture `aws.aidevops` events.
+The DevOps Agent webhook URL and Secrets Manager secret ARN are **CDK context values**, not CloudFormation parameters — the setup wizard reads them from `DevOpsAgentSpaceStack`'s outputs and passes them with `-c devOpsAgentWebhookUrl=... -c devOpsAgentWebhookSecretArn=...` when it deploys the main stack (see the [manual deployment steps](../README.md#manual-cdk-deployment) if you're not using the wizard).
 
-## Deployment Parameters
-
-| Parameter | Required | Default | Description |
+| CDK Parameter/Context | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `DevOpsAgentWebhookUrl` | Yes | — | Generic webhook URL from DevOps Agent |
-| `NotificationEmail` | No | (empty) | Email for SNS notifications |
+| `NotificationEmail` (CFN parameter) | No | (empty) | Email for SNS notifications |
+| `devOpsAgentWebhookUrl` (context) | Yes | — | Generic webhook URL, from `DevOpsAgentSpaceStack`'s `WebhookUrl` output |
+| `devOpsAgentWebhookSecretArn` (context) | Yes | — | Secrets Manager ARN, from `DevOpsAgentSpaceStack`'s `WebhookSecretArn` output |
+| `devOpsAgentRegion` (context) | No | stack's own region | Region hosting the Agent Space, if different |
 
-### Secrets in SSM Parameter Store
+### Slack/MS Teams Secrets in SSM Parameter Store
 
-Secrets are **no longer passed as CloudFormation parameters**. They are stored in SSM Parameter Store SecureString and fetched by Lambda functions at runtime with caching (5-minute TTL).
+The DevOps Agent webhook secret is **not** an SSM parameter — it's a Secrets Manager secret managed entirely by CDK (see above). The Slack and MS Teams webhook URLs are still SSM Parameter Store SecureStrings, fetched by the Notifier Lambda at runtime with caching (5-minute TTL):
 
 | SSM Parameter Path | Consumer | Description |
 |---|---|---|
-| `/health-analyzer/{env}/webhook-secret` | Investigation Trigger Lambda | DevOps Agent HMAC secret |
 | `/health-analyzer/{env}/slack-webhook-url` | Notifier Lambda | Slack incoming webhook URL |
 | `/health-analyzer/{env}/msteams-webhook-url` | Notifier Lambda | MS Teams webhook URL |
 
@@ -83,15 +73,13 @@ Where `{env}` is `production` or `staging` based on the CDK context variable.
 The setup wizard creates these parameters automatically. For manual deployments:
 
 ```bash
-aws ssm put-parameter --name "/health-analyzer/production/webhook-secret" \
-  --type SecureString --value "YOUR_HMAC_SECRET" --overwrite
 aws ssm put-parameter --name "/health-analyzer/production/slack-webhook-url" \
   --type SecureString --value "https://hooks.slack.com/..." --overwrite
 aws ssm put-parameter --name "/health-analyzer/production/msteams-webhook-url" \
   --type SecureString --value "https://..." --overwrite
 ```
 
-> **Security**: Lambda environment variables contain only the SSM parameter *name* (path), never the secret value itself. IAM permissions are scoped to the specific parameter ARNs each Lambda needs.
+> **Security**: Lambda environment variables contain only the SSM parameter *name* (path) or Secrets Manager *ARN*, never a secret value itself. IAM permissions are scoped to the specific parameter/secret ARNs each Lambda needs.
 
 ## How Topology Replaces Static Config
 
@@ -188,7 +176,7 @@ Extend the `infrastructure/cdk/lambda/notifier/index.ts` to add:
 
 ### Jira (via DevOps Agent MCP Server)
 
-The DevOps Agent can auto-file Jira tickets when it detects MEDIUM+ impact. This is configured via the setup wizard (Step 7) or the `--jira-only` flag. The agent uses the Atlassian Rovo MCP Server to create and comment on tickets.
+The DevOps Agent can auto-file Jira tickets when it detects MEDIUM+ impact. This is configured via the setup wizard (the Atlassian Jira step, which runs after the CDK deployment step since it needs the deployed Agent Space) or the `--jira-only` flag. The agent uses the Atlassian Rovo MCP Server to create and comment on tickets.
 
 - Routing config (project key, issue type, site URL) stored in SSM: `/health-analyzer/jira/*`
 - Tickets are created only for severity ≥ MEDIUM

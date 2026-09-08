@@ -6,11 +6,12 @@
 #   .\deploy-all.ps1 -SkipSetup   # Skip prerequisites, run wizard only
 #
 # The setup wizard handles:
-#   1. DevOps Agent Space creation and configuration
-#   2. IAM roles for topology discovery
-#   3. Webhook generation for investigation triggers
-#   4. Notification channel configuration (email, Slack, MS Teams)
-#   5. CDK stack deployment
+#   1. Notification channel configuration (email, Slack, MS Teams)
+#   2. Deploying the DevOps Agent Space stack (Agent Space, IAM roles,
+#      operator app, AWS account association, and the webhook — all via
+#      CDK L1 constructs; see ARCHITECTURE.md) and reading back its outputs
+#   3. Deploying the main CDK stack with those outputs as context
+#   4. (Optional) Atlassian Jira MCP integration, once the Agent Space exists
 
 param(
     [switch]$SkipSetup

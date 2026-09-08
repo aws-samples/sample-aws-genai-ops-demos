@@ -61,6 +61,15 @@ const FUNCTIONS = [
     name: 'investigation-callback',
     external: ['@aws-sdk/client-dynamodb', '@aws-sdk/client-sfn'],
   },
+  {
+    // Backs the CfnCustomResource in lib/constructs/devops-agent-space.ts.
+    // Neither @aws-sdk/client-devops-agent (too new for the bundled runtime
+    // SDK) nor @aws-sdk/client-secrets-manager is marked external here, so
+    // both are bundled in full — no assumption is made about what the
+    // Lambda Node.js 24 runtime's SDK snapshot happens to include.
+    name: 'devops-agent-webhook-provisioner',
+    external: [],
+  },
 ];
 
 /** Matches the Node.js 24 Lambda runtime configured on every function. */

@@ -166,13 +166,26 @@ describe('setup-wizard production readiness', () => {
     });
 
     it('uses runStep for major wizard steps in main flow', () => {
-      // The main flow should use runStep for key steps
+      // The main flow should use runStep for key steps. DevOps Agent Space
+      // creation, IAM roles, the account association, and the webhook used
+      // to each be separate imperative runStep-wrapped steps here — they are
+      // now provisioned declaratively by CDK (DevOpsAgentSpaceStack) as part
+      // of the single 'CDK Deployment' step below.
       expect(wizardSource).toContain("runStep('Check prerequisites'");
-      expect(wizardSource).toContain("runStep('DevOps Agent Space'");
-      expect(wizardSource).toContain("runStep('IAM Roles'");
-      expect(wizardSource).toContain("runStep('Account Association'");
-      expect(wizardSource).toContain("runStep('Webhook Configuration'");
       expect(wizardSource).toContain("runStep('CDK Deployment'");
+      expect(wizardSource).toContain("runStep('Jira Integration'");
+      expect(wizardSource).not.toContain("runStep('DevOps Agent Space'");
+      expect(wizardSource).not.toContain("runStep('IAM Roles'");
+      expect(wizardSource).not.toContain("runStep('Account Association'");
+      expect(wizardSource).not.toContain("runStep('Webhook Configuration'");
+    });
+
+    it('Jira integration runs after the CDK deployment step (Agent Space must exist first)', () => {
+      const cdkDeployIdx = wizardSource.indexOf("runStep('CDK Deployment'");
+      const jiraIdx = wizardSource.indexOf("runStep('Jira Integration'");
+      expect(cdkDeployIdx).toBeGreaterThan(-1);
+      expect(jiraIdx).toBeGreaterThan(-1);
+      expect(cdkDeployIdx).toBeLessThan(jiraIdx);
     });
   });
 
@@ -257,13 +270,31 @@ describe('setup-wizard production readiness', () => {
       expect(fnBody).not.toContain('--require-approval never');
     });
 
-    it('deployCdk stores secrets in SSM SecureString before deploying', () => {
+    it('deployCdk stores the Slack/MS Teams secrets in SSM SecureString before deploying the main stack', () => {
       const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
       expect(fnBody).not.toBe('');
       expect(fnBody).toContain('putSsmSecureString');
-      expect(fnBody).toContain('webhook-secret');
       expect(fnBody).toContain('slack-webhook-url');
       expect(fnBody).toContain('msteams-webhook-url');
+    });
+
+    it('deployCdk does NOT store the DevOps Agent webhook secret via SSM (it is Secrets Manager now)', () => {
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
+      expect(fnBody).not.toContain('webhook-secret');
+      expect(fnBody).not.toContain('DEVOPS_AGENT_WEBHOOK_SECRET');
+    });
+
+    it('deployCdk reads the Agent Space stack outputs (AgentSpaceId, WebhookUrl, WebhookSecretArn) instead of driving the AWS CLI directly', () => {
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
+      expect(fnBody).toContain('describeStackOutput');
+      expect(fnBody).toContain("'AgentSpaceId'");
+      expect(fnBody).toContain("'WebhookUrl'");
+      expect(fnBody).toContain("'WebhookSecretArn'");
+      expect(fnBody).toContain('devOpsAgentWebhookSecretArn=');
+      expect(fnBody).not.toContain('aws devops-agent create-agent-space');
+      expect(fnBody).not.toContain('aws devops-agent associate-service');
     });
 
     it('deployCdk does not pass secrets as CloudFormation parameters', () => {

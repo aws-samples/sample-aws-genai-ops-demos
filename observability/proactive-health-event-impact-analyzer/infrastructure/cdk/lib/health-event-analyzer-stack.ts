@@ -11,11 +11,28 @@ import { Notification } from './constructs/notification';
 export const VALID_ENVIRONMENTS = ['production', 'staging'] as const;
 export type Environment = typeof VALID_ENVIRONMENTS[number];
 
+export interface HealthEventAnalyzerStackProps extends cdk.StackProps {
+  /** DevOps Agent webhook URL, from the DevOpsAgentSpaceStack output (via CDK context). */
+  devOpsAgentWebhookUrl: string;
+  /**
+   * ARN of the Secrets Manager secret holding the webhook HMAC secret, from the
+   * DevOpsAgentSpaceStack output (via CDK context). Empty string on a bare
+   * synth/test before the Agent Space stack has ever been deployed.
+   */
+  devOpsAgentWebhookSecretArn: string;
+  /**
+   * Region hosting the DevOps Agent Agent Space. Defaults to this stack's own
+   * region when not supplied — an Agent Space monitors resources across ALL
+   * Regions of an associated account, so it need not sit in the deploy Region.
+   */
+  devOpsAgentRegion?: string;
+}
+
 export class HealthEventAnalyzerStack extends cdk.Stack {
   /** The resolved deployment environment (production or staging) for this stack */
   public readonly deployEnvironment: Environment;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: HealthEventAnalyzerStackProps) {
     super(scope, id, props);
 
     // Environment configuration
@@ -39,37 +56,27 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       default: '',
     });
 
-    const devOpsAgentWebhookUrl = new cdk.CfnParameter(this, 'DevOpsAgentWebhookUrl', {
-      type: 'String',
-      description: 'AWS DevOps Agent webhook URL for triggering investigations',
-    });
+    // DevOps Agent webhook URL and Secrets Manager ARN, sourced from the
+    // DevOpsAgentSpaceStack's outputs. These are CDK context values (resolved
+    // and passed by scripts/setup-wizard.ts via `--context` after reading the
+    // Agent Space stack's outputs with `aws cloudformation describe-stacks`),
+    // not CloudFormation parameters — the Agent Space stack itself is now
+    // CDK-managed, so there is no longer a manual value for an operator to
+    // paste in at deploy time.
+    const devOpsAgentWebhookUrl = props.devOpsAgentWebhookUrl;
+    const devOpsAgentWebhookSecretArn = props.devOpsAgentWebhookSecretArn;
 
     // Region hosting the DevOps Agent Agent Space. Defaults to this stack's region
-    // (same-region deployment); set it when the Agent Space lives elsewhere — the
+    // (same-region deployment); differs when the Agent Space lives elsewhere — the
     // service is only available in a subset of Regions, and an Agent Space monitors
     // resources across ALL Regions of an associated account, so it need not sit in
-    // the deploy Region. The setup wizard passes the value it resolved from
-    // DEVOPS_AGENT_REGION. See shared/README.md ("AWS DevOps Agent Region").
-    const devOpsAgentRegion = new cdk.CfnParameter(this, 'DevOpsAgentRegion', {
-      type: 'String',
-      description: 'Region hosting the DevOps Agent Agent Space (defaults to the stack region)',
-      default: '',
-    });
+    // the deploy Region. See shared/README.md ("AWS DevOps Agent Region").
+    const resolvedDevOpsAgentRegion = props.devOpsAgentRegion || this.region;
 
-    // Empty parameter means "same region as the stack".
-    const resolvedDevOpsAgentRegion = cdk.Fn.conditionIf(
-      new cdk.CfnCondition(this, 'HasDevOpsAgentRegion', {
-        expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(devOpsAgentRegion.valueAsString, '')),
-      }).logicalId,
-      devOpsAgentRegion.valueAsString,
-      this.region,
-    ).toString();
-
-    // SSM Parameter Store paths for secrets (actual SecureString values are
-    // created externally by the setup wizard — CDK just references the paths
-    // in Lambda environment variables and grants read permissions)
+    // SSM Parameter Store paths for the Slack/MS Teams webhook secrets. These
+    // remain plain SSM SecureStrings set by the setup wizard — unrelated to the
+    // DevOps Agent webhook secret above, which now lives in Secrets Manager.
     const ssmParamPrefix = `/health-analyzer/${this.deployEnvironment}`;
-    const webhookSecretParamName = `${ssmParamPrefix}/webhook-secret`;
     const slackWebhookParamName = `${ssmParamPrefix}/slack-webhook-url`;
     const msTeamsWebhookParamName = `${ssmParamPrefix}/msteams-webhook-url`;
 
@@ -84,9 +91,9 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       notificationTopic: notification.topic,
       teamsTable: notification.teamsTable,
       agentSpacesTable: notification.agentSpacesTable,
-      devOpsAgentWebhookUrl: devOpsAgentWebhookUrl.valueAsString,
+      devOpsAgentWebhookUrl,
       devOpsAgentRegion: resolvedDevOpsAgentRegion,
-      webhookSecretParamName,
+      devOpsAgentWebhookSecretArn,
       slackWebhookParamName,
       msTeamsWebhookParamName,
       deployEnvironment: this.deployEnvironment,
