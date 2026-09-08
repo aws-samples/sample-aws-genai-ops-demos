@@ -16,7 +16,7 @@ import Input from '@cloudscape-design/components/input';
 import Textarea from '@cloudscape-design/components/textarea';
 import DatePicker from '@cloudscape-design/components/date-picker';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
-import { getDeprecations, createActionPlan, DeprecationItem } from '../api';
+import { getDeprecations, createActionPlan, DeprecationItem, DEPRECATION_STATUSES } from '../api';
 
 const ITEMS_PER_PAGE = 50;
 
@@ -33,7 +33,11 @@ export default function Deprecations() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filterText, setFilterText] = useState('');
-  const [statusFilter, setStatusFilter] = useState<any>({ value: 'all' });
+  // Default to lifecycle concerns only (issue #98, E7). 'deprecations' shows
+  // deprecated/extended_support/end_of_life/end_of_support_date and hides
+  // 'supported'/'unknown' inventory rows that account discovery writes into
+  // the same table. 'all' remains available for transparency.
+  const [statusFilter, setStatusFilter] = useState<any>({ label: 'Deprecations only', value: 'deprecations' });
   const [currentPageIndex, setCurrentPageIndex] = useState(1);
   
   // Selection and modal state
@@ -84,7 +88,10 @@ export default function Deprecations() {
     }
 
     // Status filter
-    if (statusFilter.value !== 'all') {
+    if (statusFilter.value === 'deprecations') {
+      // Only actual lifecycle concerns; exclude supported/unknown inventory.
+      filtered = filtered.filter(item => DEPRECATION_STATUSES.includes(item.status));
+    } else if (statusFilter.value !== 'all') {
       filtered = filtered.filter(item => item.status === statusFilter.value);
     }
 
@@ -175,6 +182,10 @@ export default function Deprecations() {
   );
 
   const getStatusIndicator = (status: string) => {
+    // issue #98, E8: map each status to a meaningful indicator color.
+    // Note Cloudscape's <StatusIndicator> defaults to type="success" (green)
+    // when no type is given, so 'unknown' must be explicitly neutral rather
+    // than falling through to the default.
     switch (status) {
       case 'deprecated':
         return <StatusIndicator type="warning">Deprecated</StatusIndicator>;
@@ -184,8 +195,12 @@ export default function Deprecations() {
         return <StatusIndicator type="error">End of Life</StatusIndicator>;
       case 'end_of_support_date':
         return <StatusIndicator type="warning">End of Support Date</StatusIndicator>;
+      case 'supported':
+        return <StatusIndicator type="success">Supported</StatusIndicator>;
+      case 'unknown':
+        return <StatusIndicator type="pending">Unknown</StatusIndicator>;
       default:
-        return <StatusIndicator>{status}</StatusIndicator>;
+        return <StatusIndicator type="pending">{status}</StatusIndicator>;
     }
   };
 
@@ -286,7 +301,9 @@ export default function Deprecations() {
               if (total && total > 0) {
                 return (
                   <SpaceBetween size="xxxs">
-                    <Badge color={item.status === 'supported' ? 'green' : 'red'}>{total} resource{total > 1 ? 's' : ''}</Badge>
+                    {/* issue #98, E8: a resource *count* carries no severity, so
+                        the badge is neutral regardless of the item's status. */}
+                    <Badge color="grey">{total} resource{total > 1 ? 's' : ''}</Badge>
                     {affected && (
                       <Box variant="small" color="text-body-secondary">
                         {affected}
@@ -332,10 +349,12 @@ export default function Deprecations() {
               selectedOption={statusFilter}
               onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
               options={[
+                { label: 'Deprecations only', value: 'deprecations' },
                 { label: 'All Statuses', value: 'all' },
                 { label: 'Deprecated', value: 'deprecated' },
                 { label: 'Extended Support', value: 'extended_support' },
                 { label: 'End of Life', value: 'end_of_life' },
+                { label: 'End of Support Date', value: 'end_of_support_date' },
               ]}
               selectedAriaLabel="Selected"
             />

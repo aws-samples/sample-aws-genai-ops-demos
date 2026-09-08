@@ -26,10 +26,31 @@ export interface ServiceConfig {
   last_extraction_duration?: number;  // Duration in seconds
 }
 
+// Statuses the backend can actually store. The extraction pipeline emits
+// deprecated / extended_support / end_of_life / end_of_support_date (see
+// categorize_item_status), and account discovery can also write supported /
+// unknown inventory rows into the same table.
+export type LifecycleStatus =
+  | 'deprecated'
+  | 'extended_support'
+  | 'end_of_life'
+  | 'end_of_support_date'
+  | 'supported'
+  | 'unknown';
+
+// Statuses that represent an actual lifecycle concern (shown on the
+// Deprecations page). Excludes 'supported'/'unknown' inventory rows.
+export const DEPRECATION_STATUSES: LifecycleStatus[] = [
+  'deprecated',
+  'extended_support',
+  'end_of_life',
+  'end_of_support_date',
+];
+
 export interface DeprecationItem {
   service_name: string;
   item_id: string;
-  status: 'deprecated' | 'extended_support' | 'end_of_life';
+  status: LifecycleStatus;
   source_url: string;
   extraction_date: string;
   last_verified: string;
