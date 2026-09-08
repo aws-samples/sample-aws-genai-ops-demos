@@ -15,7 +15,7 @@ When AWS Health publishes an event — scheduled maintenance, operational issues
 | **Duration** | 20 minutes (deployment) |
 | **Difficulty** | Intermediate |
 | **Target Audience** | SREs, Platform Engineers, DevOps Engineers |
-| **Key Technologies** | AWS DevOps Agent, Step Functions, EventBridge, Lambda, DynamoDB, SNS, Systems Manager OpsCenter |
+| **Key Technologies** | AWS DevOps Agent, Step Functions, EventBridge, Lambda, DynamoDB, SNS, Secrets Manager, Systems Manager OpsCenter |
 | **Estimated Cost** | ~$5-15/month (varies with event volume) |
 
 ## Architecture
@@ -54,7 +54,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed component descriptions and
   **As of today, deploy only to a Region listed in the official
   [AWS DevOps Agent supported Regions](https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html)**
   to get full functionality including the DevOps Agent console.
-- AWS account with permissions to create IAM roles, Lambda, Step Functions, DynamoDB, SNS, and SSM resources
+- AWS account with permissions to create IAM roles, Lambda, Step Functions, DynamoDB, SNS, SSM, Secrets Manager, and AWS DevOps Agent (`AWS::DevOpsAgent::*`) resources
 - AWS CLI v2.34.20+ installed and authenticated (`aws sts get-caller-identity` should work)
 - Node.js 24+ and npm installed (Lambda functions run on Node.js 24)
 - An active [CloudTrail trail](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-create-a-trail-using-the-console-first-time.html) capturing management events in the deployment region
@@ -110,6 +110,26 @@ Steps 3–5 handle notification and Jira secrets: Slack/MS Teams webhook URLs go
 to SSM Parameter Store SecureString; the DevOps Agent webhook secret is
 written directly to Secrets Manager by CDK and never passes through this
 script.
+
+### Upgrading from an Older, CLI-Based Deployment
+
+Earlier versions of this sample created the Agent Space, its IAM roles, the
+account association, and the webhook with direct `aws devops-agent` CLI calls
+from the wizard. If you deployed with one of those versions, re-running the
+current wizard **creates a brand-new Agent Space** (CDK-managed) rather than
+adopting your existing one — `AWS::DevOpsAgent::AgentSpace` has no import
+mechanism, and the DevOps Agent API allows duplicate names, so the deploy
+won't fail, it'll just leave you with two Agent Spaces both named
+`health-event-analyzer`.
+
+After confirming the new stack works (test with a sample event — see
+[Testing](#testing) below), clean up the old, now-unused resources:
+- The old Agent Space (`aws devops-agent list-agent-spaces --region <region>`
+  to find its ID, then disassociate its services and delete it)
+- The old fixed-name IAM roles `DevOpsAgentRole-AgentSpace` and
+  `DevOpsAgentRole-WebappAdmin` (the new roles are project-prefixed —
+  `health-event-analyzer-AgentSpaceRole` / `-OperatorRole` — so there's no
+  naming conflict, but the old ones are now orphaned)
 
 ### Cleanup
 
@@ -248,11 +268,12 @@ See [docs/multi-account-setup.md](./docs/multi-account-setup.md) for the full mu
 
 | Service | Monthly Cost | Notes |
 |---------|-------------|-------|
-| Lambda | ~$1-3 | 5 functions, invoked per Health event |
+| Lambda | ~$1-3 | 5 functions invoked per Health event, plus a 6th (webhook provisioner) that only runs once per deploy/destroy — negligible cost |
 | Step Functions | ~$1 | Standard workflow, ~100 executions/month |
 | DynamoDB | ~$1 | On-demand, three tables with minimal storage |
 | EventBridge | ~$0.50 | Rule evaluations |
 | SNS | ~$0.50 | Email notifications |
+| Secrets Manager | ~$0.40 | One secret for the DevOps Agent webhook HMAC key |
 | Systems Manager OpsCenter | ~$0 | Free tier covers typical usage |
 | DevOps Agent | Included | Part of AWS DevOps Agent pricing |
 | **Total** | **~$5-15/month** | Varies with Health event volume |
@@ -325,13 +346,16 @@ This triggers the full flow: Event Router → Step Functions → DevOps Agent �
 | File | Scenario |
 |------|----------|
 | `events/sample-health-event.json` | EC2 scheduled maintenance |
+| `events/test-invoke-event.json` | Minimal EC2 scheduled maintenance (quick smoke test) |
 | `events/test-lambda-deprecation-event.json` | Lambda runtime EOL |
+| `events/test-lambda-nodejs20-lifecycle-event.json` | Lambda Node.js 20 planned lifecycle event |
 | `events/test-sfn-deprecation-event.json` | Step Functions deprecation |
 | `events/test-iam-admin-deprecation-event.json` | IAM admin role enforcement |
 | `events/test-security-event.json` | IAM overly permissive policies |
 | `events/test-lambda-throttle-event.json` | Lambda throttling |
 | `events/test-stepfunctions-issue-event.json` | Step Functions API errors |
 | `events/test-rds-ca-expiry-event.json` | RDS CA certificate expiry |
+| `events/test-opscenter-payload.json` | Direct OpsCenter Creator Lambda payload (not an Event Router event — invoke that function directly to test OpsItem creation in isolation) |
 
 ## Contributing
 
