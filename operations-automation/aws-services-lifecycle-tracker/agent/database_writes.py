@@ -150,15 +150,22 @@ def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -
         if field not in item or item[field] is None or item[field] == '':
             errors.append(f"Missing required field: {field}")
     
-    # Validate status field (case-insensitive)
-    status = item.get('status', 'deprecated')
-    if isinstance(status, str):
-        status = status.lower()  # Normalize to lowercase
-        item['status'] = status  # Update the item with normalized status
-    
+    # Normalize the status field (case-insensitive) WITHOUT rejecting free-text.
+    #
+    # The LLM returns natural-language statuses scraped from AWS docs (e.g.
+    # "end of support", "current"), none of which are in the strict allow-list.
+    # Rejecting them here skipped every item (issue #98, E1). The stored status
+    # is not this raw value anyway: store_deprecation_data() derives the real
+    # status from lifecycle dates via categorize_item_status(). So we only
+    # normalize a status that is already valid and leave the rest to the
+    # date-based categorizer instead of failing validation.
     allowed_statuses = ['deprecated', 'end_of_life', 'extended_support', 'end_of_support_date']
-    if status not in allowed_statuses:
-        errors.append(f"Invalid status '{status}'. Must be one of: {allowed_statuses}")
+    status = item.get('status', 'deprecated')
+    if isinstance(status, str) and status.lower() in allowed_statuses:
+        # Keep an already-valid status normalized to lowercase.
+        item['status'] = status.lower()
+    # Free-text or missing statuses are intentionally not an error here; the
+    # date-based categorizer is the single source of truth for the stored value.
     
     return (len(errors) == 0, errors)
 
@@ -271,7 +278,10 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
             except Exception as item_error:
                 errors.append(f"Error storing item {item.get('name', 'unknown')}: {str(item_error)}")
         
-        # Success only if at least one item was stored or updated
+        # Success means data was actually persisted, not merely that the run
+        # did not throw (issue #98, E2). update_service_metadata() scores the
+        # per-service success rate on this value, so gating on stored/updated
+        # counts keeps the reported success rate consistent with reality.
         success = (stored_count + updated_count) > 0
         
         return {

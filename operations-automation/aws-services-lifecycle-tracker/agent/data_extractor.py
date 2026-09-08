@@ -487,7 +487,12 @@ Return JSON format:
                 }
             ],
             "inferenceConfig": {
-                "maxTokens": 4000,
+                # issue #98, E4: 4000 tokens truncated the JSON for services with
+                # large tables (e.g. ECS ~44 items), producing invalid JSON and
+                # losing the whole batch. Nova 2 Lite supports up to 64K output
+                # tokens; 16000 gives ample headroom for the largest tables while
+                # staying well under the model limit.
+                "maxTokens": 16000,
                 "temperature": 0.1,
                 "topP": 0.9
             }

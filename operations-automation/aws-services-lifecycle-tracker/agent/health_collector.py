@@ -52,13 +52,18 @@ class HealthCollector:
         errors: List[str] = []
         events: List[dict] = []
 
-        # Build filter parameters
+        # Build filter parameters.
+        #
+        # NOTE (issue #98, E3): the Health API caps `filter.services` at 10
+        # entries, so passing all tracked services (32+) raises a
+        # ValidationException on every poll. We therefore do NOT send a
+        # `services` filter to the API and instead filter the results
+        # client-side (see _matches_service_filter below). This mirrors the
+        # existing pattern in _describe_event_details, which batches ARNs by 10
+        # to respect a similar per-call limit.
         filter_params: Dict[str, Any] = {
             'eventStatusCodes': ['open', 'upcoming', 'closed']
         }
-
-        if service_filter:
-            filter_params['services'] = service_filter
 
         # Describe events with pagination
         try:
@@ -74,6 +79,14 @@ class HealthCollector:
                 'errors': errors,
                 'events': []
             }
+
+        # Filter client-side against the tracked services (health_event_mapping
+        # codes). When no filter is provided, keep everything.
+        if service_filter:
+            raw_events = [
+                e for e in raw_events
+                if self._matches_service_filter(e.get('service'), service_filter)
+            ]
 
         events_collected = len(raw_events)
         logger.info(f"Collected {events_collected} health events")
@@ -283,6 +296,29 @@ class HealthCollector:
         }
 
         return formatted
+
+    @staticmethod
+    def _matches_service_filter(event_service: Optional[str], service_filter: List[str]) -> bool:
+        """
+        Return True if a Health event's service matches one of the tracked
+        services, compared case-insensitively.
+
+        The Health API returns `service` as an uppercase code (e.g. 'ECS',
+        'NEPTUNE'), which corresponds to the `health_event_mapping` values in
+        the service configs. Used for client-side filtering because the API's
+        `filter.services` parameter is capped at 10 entries (issue #98, E3).
+
+        Args:
+            event_service: The event's `service` value from the Health API.
+            service_filter: Tracked service codes (from health_event_mapping).
+
+        Returns:
+            True if the event should be kept, False otherwise.
+        """
+        if not event_service:
+            return False
+        allowed = {s.upper() for s in service_filter if s}
+        return event_service.upper() in allowed
 
     @staticmethod
     def _format_datetime(dt) -> str:

@@ -85,6 +85,17 @@ def list_services() -> dict:
             response = config_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
             services.extend(response.get('Items', []))
         
+        # Exclude internal control rows (issue #98 follow-up): the config table
+        # also stores non-service bookkeeping items with '_'-prefixed keys
+        # (e.g. _health_collection_failures, _health_collection_disabled,
+        # _health_collection_lock) written by health_monitoring.py and
+        # concurrency_lock.py. These must not surface in the Services UI. This
+        # mirrors the same guard used in main._handle_collect_health_events.
+        services = [
+            s for s in services
+            if not str(s.get('service_name', '')).startswith('_')
+        ]
+        
         services = convert_decimals(services)
         return {'services': services}
     except Exception as e:
@@ -143,6 +154,12 @@ def get_metrics() -> dict:
     try:
         services_response = config_table.scan()
         services = services_response.get('Items', [])
+        # Exclude internal control rows ('_'-prefixed keys) so dashboard counts
+        # reflect real services only, consistent with list_services (#98 follow-up).
+        services = [
+            s for s in services
+            if not str(s.get('service_name', '')).startswith('_')
+        ]
         total_services = len(services)
         enabled_services = sum(1 for s in services if s.get('enabled', False))
         
