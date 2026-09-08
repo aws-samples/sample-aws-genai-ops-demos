@@ -25,7 +25,13 @@ HEALTH_DISABLED_KEY = "_health_collection_disabled"
 CONSECUTIVE_FAILURE_THRESHOLD = 3
 
 # CloudWatch metric details
-METRIC_NAMESPACE = "AWSLifecycleTracker"
+# NOTE (issue #98, E5): the namespace MUST match the IAM condition on
+# cloudwatch:PutMetricData in cdk/lib/infra-stack.ts, which restricts the
+# runtime role to cloudwatch:namespace = "bedrock-agentcore". A mismatched
+# namespace makes every PutMetricData call fail with AccessDenied. The metric
+# name stays descriptive so the failure metric remains unambiguous within the
+# namespace.
+METRIC_NAMESPACE = "bedrock-agentcore"
 METRIC_NAME = "HealthCollectionConsecutiveFailures"
 
 
