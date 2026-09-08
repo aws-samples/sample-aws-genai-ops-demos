@@ -3,13 +3,16 @@
  * Setup Wizard — Proactive Health Event Impact Analyzer
  *
  * Interactive guided deployment that:
- * 1. Checks prerequisites (AWS CLI, CDK, credentials)
- * 2. Creates IAM roles for DevOps Agent (if needed)
- * 3. Creates or selects a DevOps Agent Space
- * 4. Associates the AWS account for topology discovery
- * 5. Creates or selects a webhook (eventChannel)
- * 6. Enables the operator app
- * 7. Deploys the CDK stack with all parameters
+ * 1. Resolves the target AWS region (and Agent Space region, if split)
+ * 2. Checks prerequisites (AWS CLI, CDK, credentials)
+ * 3. Collects optional notification channel settings (email, Slack, MS Teams)
+ * 4. Deploys DevOpsAgentSpaceStack (Agent Space, IAM roles, operator app, AWS
+ *    account association, and the eventChannel webhook — all via CDK L1
+ *    constructs, see infrastructure/cdk/lib/constructs/devops-agent-space.ts),
+ *    then deploys the main stack with that stack's outputs threaded through
+ *    as CDK context
+ * 5. (Optional) Registers the Atlassian Jira MCP server and associates it
+ *    with the now-deployed Agent Space
  *
  * Usage: npx ts-node scripts/setup-wizard.ts
  */
@@ -220,12 +223,19 @@ interface SetupState {
    */
   agentRegion: string;
   accountId: string;
+  /** Agent Space name/ID — now created by DevOpsAgentSpaceStack (CDK-managed), read back after that stack deploys. */
   agentSpaceId: string;
   agentSpaceName: string;
-  associationId: string;
+  /** Generic webhook URL, read back from DevOpsAgentSpaceStack's WebhookUrl output. */
   webhookUrl: string;
-  webhookSecret: string;
-  operatorAppEnabled: boolean;
+  /**
+   * ARN of the Secrets Manager secret holding the webhook HMAC secret, read
+   * back from DevOpsAgentSpaceStack's WebhookSecretArn output. The wizard
+   * never sees the secret value itself — the custom resource inside that
+   * stack writes it directly to Secrets Manager (see
+   * infrastructure/cdk/lib/constructs/devops-agent-space.ts).
+   */
+  webhookSecretArn: string;
   notificationEmail: string;
   slackWebhookUrl: string;
   msTeamsWebhookUrl: string;
@@ -449,10 +459,8 @@ async function main(): Promise<void> {
     accountId: '',
     agentSpaceId: '',
     agentSpaceName: '',
-    associationId: '',
     webhookUrl: '',
-    webhookSecret: '',
-    operatorAppEnabled: false,
+    webhookSecretArn: '',
     notificationEmail: '',
     slackWebhookUrl: '',
     msTeamsWebhookUrl: '',
@@ -553,98 +561,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ─── Step 2: DevOps Agent Space ─────────────────────────────────────────
-  step(2, 'DevOps Agent Space');
-
-  const spaceOk = await runStep('DevOps Agent Space', async () => {
-    const existingSpaces = execJson(
-      `aws devops-agent list-agent-spaces --region ${state.agentRegion} --no-cli-pager`
-    );
-
-    if (existingSpaces.agentSpaces && existingSpaces.agentSpaces.length > 0) {
-      const useExisting = await askYesNo(
-        `Found ${existingSpaces.agentSpaces.length} existing Agent Space(s). Use one of them?`
-      );
-
-      if (useExisting) {
-        const spaceOptions = existingSpaces.agentSpaces.map(
-          (s: any) => `${s.name} (${s.agentSpaceId})`
-        );
-        const spaceIdx = await askChoice('Select an Agent Space:', spaceOptions);
-        state.agentSpaceId = existingSpaces.agentSpaces[spaceIdx].agentSpaceId;
-        state.agentSpaceName = existingSpaces.agentSpaces[spaceIdx].name;
-        success(`Using existing space: ${state.agentSpaceName}`);
-      } else {
-        await createAgentSpace(state);
-      }
-    } else {
-      info('No existing Agent Spaces found. Creating a new one...');
-      await createAgentSpace(state);
-    }
-  });
-
-  if (!spaceOk && stepResults[stepResults.length - 1]?.status === 'failed') {
-    aborted = true;
-    displayCompletionSummary();
-    rl.close();
-    return;
-  }
-
-  // ─── Step 3: IAM Roles ──────────────────────────────────────────────────
-  step(3, 'IAM Roles for DevOps Agent');
-
-  const iamOk = await runStep('IAM Roles', async () => {
-    await ensureIamRoles(state);
-  });
-  if (!iamOk && stepResults[stepResults.length - 1]?.status === 'failed') {
-    aborted = true;
-    displayCompletionSummary();
-    rl.close();
-    return;
-  }
-
-  // ─── Step 4: AWS Account Association ────────────────────────────────────
-  step(4, 'AWS Account Association (topology discovery)');
-
-  const assocOk = await runStep('Account Association', async () => {
-    await ensureAccountAssociation(state);
-  });
-  if (!assocOk && stepResults[stepResults.length - 1]?.status === 'failed') {
-    aborted = true;
-    displayCompletionSummary();
-    rl.close();
-    return;
-  }
-
-  // ─── Step 5: Webhook ────────────────────────────────────────────────────
-  step(5, 'Webhook Configuration');
-
-  const webhookOk = await runStep('Webhook Configuration', async () => {
-    await ensureWebhook(state);
-  });
-  if (!webhookOk && stepResults[stepResults.length - 1]?.status === 'failed') {
-    aborted = true;
-    displayCompletionSummary();
-    rl.close();
-    return;
-  }
-
-  // ─── Step 6: Operator App ───────────────────────────────────────────────
-  step(6, 'Operator App');
-
-  await runStep('Operator App', async () => {
-    await ensureOperatorApp(state);
-  });
-
-  // ─── Step 7: Atlassian Jira (optional) ──────────────────────────────────
-  step(7, 'Atlassian Jira integration (optional)');
-
-  await runStep('Jira Integration', async () => {
-    await ensureJiraMcp(state, args.jiraTools);
-  });
-
-  // ─── Step 8: Notification Channels (optional) ───────────────────────────
-  step(8, 'Notification Channels (optional)');
+  // ─── Step 2: Notification Channels (optional) ───────────────────────────
+  // Collected before the deploy since these are plain prompts with no AWS
+  // dependency — unlike the DevOps Agent Space, IAM roles, account
+  // association, operator app, and webhook, which used to be separate manual
+  // steps here but are now provisioned entirely by CDK (DevOpsAgentSpaceStack,
+  // deployed as part of Step 3 below).
+  step(2, 'Notification Channels (optional)');
 
   const wantEmail = await askYesNo('Configure email notifications?', false);
   if (wantEmail) {
@@ -662,8 +585,12 @@ async function main(): Promise<void> {
   }
   recordStep('Notification Channels', 'succeeded');
 
-  // ─── Step 9: CDK Bootstrap & Deploy ─────────────────────────────────────
-  step(9, 'CDK Deployment');
+  // ─── Step 3: CDK Bootstrap & Deploy ─────────────────────────────────────
+  // Deploys DevOpsAgentSpaceStack (Agent Space, IAM roles, operator app, AWS
+  // account association, and the eventChannel webhook — see
+  // infrastructure/cdk/lib/constructs/devops-agent-space.ts) and then the main
+  // stack, wiring the Agent Space stack's outputs through as CDK context.
+  step(3, 'CDK Deployment (DevOps Agent Space + main stack)');
 
   console.log('\n  Configuration summary:');
   console.log(`    Region:          ${state.region}`);
@@ -671,30 +598,39 @@ async function main(): Promise<void> {
     console.log(`    Agent Space rgn: ${state.agentRegion}`);
   }
   console.log(`    Account:         ${state.accountId}`);
-  console.log(`    Agent Space:     ${state.agentSpaceName} (${state.agentSpaceId})`);
-  console.log(`    Webhook URL:     ${state.webhookUrl ? state.webhookUrl.substring(0, 60) + '...' : '(not set)'}`);
   console.log(`    Email:           ${state.notificationEmail || '(none)'}`);
   console.log(`    Slack:           ${state.slackWebhookUrl ? 'configured' : '(none)'}`);
   console.log(`    MS Teams:        ${state.msTeamsWebhookUrl ? 'configured' : '(none)'}`);
-  console.log(
-    `    Jira:            ${
-      state.jiraEnabled
-        ? `${state.jiraSiteUrl} → ${state.jiraProjectKey} (${state.jiraIssueType})`
-        : '(none)'
-    }`
-  );
+  console.log('');
+  info('The DevOps Agent Space, IAM roles, account association, operator app,');
+  info('and webhook are provisioned by CDK below — no manual AWS CLI steps.');
 
   const proceed = await askYesNo('\n  Proceed with deployment?');
   if (!proceed) {
-    console.log('\n  Deployment cancelled. Your DevOps Agent setup is preserved.');
+    console.log('\n  Deployment cancelled.');
     recordStep('CDK Deployment', 'skipped', 'User cancelled');
     displayCompletionSummary();
     rl.close();
     return;
   }
 
-  await runStep('CDK Deployment', async () => {
+  const deployOk = await runStep('CDK Deployment', async () => {
     await deployCdk(state);
+  });
+  if (!deployOk && stepResults[stepResults.length - 1]?.status === 'failed') {
+    aborted = true;
+    displayCompletionSummary();
+    rl.close();
+    return;
+  }
+
+  // ─── Step 4: Atlassian Jira (optional) ───────────────────────────────────
+  // Runs after the deploy above: the Agent Space (state.agentSpaceId) only
+  // exists once DevOpsAgentSpaceStack has actually been deployed.
+  step(4, 'Atlassian Jira integration (optional)');
+
+  await runStep('Jira Integration', async () => {
+    await ensureJiraMcp(state, args.jiraTools);
   });
 
   // ─── Done ───────────────────────────────────────────────────────────────
@@ -786,10 +722,8 @@ async function runJiraOnly(args: CliOptions): Promise<void> {
     accountId: '',
     agentSpaceId: '',
     agentSpaceName: '',
-    associationId: '',
     webhookUrl: '',
-    webhookSecret: '',
-    operatorAppEnabled: false,
+    webhookSecretArn: '',
     notificationEmail: '',
     slackWebhookUrl: '',
     msTeamsWebhookUrl: '',
@@ -898,394 +832,15 @@ async function pickExistingAgentSpace(state: SetupState, preselectedId?: string)
   success(`Using Agent Space: ${state.agentSpaceName}`);
 }
 
-async function createAgentSpace(state: SetupState): Promise<void> {
-  const name = await ask('  Agent Space name [health-event-analyzer]: ') || 'health-event-analyzer';
-  const description = await ask('  Description [Health Event Impact Analyzer]: ') || 'Health Event Impact Analyzer';
-
-  info('Creating Agent Space...');
-  const result = execJson(
-    `aws devops-agent create-agent-space --name "${name}" --description "${description}" --region ${state.agentRegion} --no-cli-pager`
-  );
-
-  state.agentSpaceId = result.agentSpace.agentSpaceId;
-  state.agentSpaceName = result.agentSpace.name;
-  success(`Agent Space created: ${state.agentSpaceName} (${state.agentSpaceId})`);
-}
-
-async function ensureIamRoles(state: SetupState): Promise<void> {
-  // Trust policies are region-scoped via the aws:SourceArn condition
-  // (arn:aws:aidevops:<region>:...:agentspace/*). If a role was created in a
-  // previous run for a DIFFERENT region than the one now selected, reusing it
-  // as-is makes associate-service fail with "Invalid STS role configuration ...
-  // Verify the role's trust policy" — because the assuming agent space's ARN
-  // (in the current region) doesn't match the stale condition. So we always
-  // (re)apply the trust policy for the current region: create-role when the
-  // role is missing, update-assume-role-policy when it already exists. This is
-  // idempotent and self-heals a region change across runs.
-  const spaceTrust = {
-    Version: '2012-10-17',
-    Statement: [{
-      Effect: 'Allow',
-      Principal: { Service: 'aidevops.amazonaws.com' },
-      Action: 'sts:AssumeRole',
-      Condition: {
-        StringEquals: { 'aws:SourceAccount': state.accountId },
-        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.agentRegion}:${state.accountId}:agentspace/*` },
-      },
-    }],
-  };
-  const webappTrust = {
-    Version: '2012-10-17',
-    Statement: [{
-      Effect: 'Allow',
-      Principal: { Service: 'aidevops.amazonaws.com' },
-      Action: ['sts:AssumeRole', 'sts:TagSession'],
-      Condition: {
-        StringEquals: { 'aws:SourceAccount': state.accountId },
-        ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${state.agentRegion}:${state.accountId}:agentspace/*` },
-      },
-    }],
-  };
-
-  const spaceRoleExists = checkRoleExists('DevOpsAgentRole-AgentSpace');
-  const webappRoleExists = checkRoleExists('DevOpsAgentRole-WebappAdmin');
-
-  // ─── AgentSpace role ──────────────────────────────────────────────────────
-  const spaceTrustFile = writeTempJson('space-trust', spaceTrust);
-  try {
-    if (spaceRoleExists) {
-      exec(
-        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-document file://${spaceTrustFile} --no-cli-pager`,
-        true
-      );
-      success(`Updated trust policy: DevOpsAgentRole-AgentSpace (region ${state.agentRegion})`);
-    } else {
-      info('Creating IAM role: DevOpsAgentRole-AgentSpace...');
-      exec(
-        `aws iam create-role --role-name DevOpsAgentRole-AgentSpace --assume-role-policy-document file://${spaceTrustFile} --no-cli-pager`,
-        true
-      );
-      success('Created role: DevOpsAgentRole-AgentSpace');
-    }
-  } finally {
-    tryUnlink(spaceTrustFile);
-  }
-
-  // Attach managed + inline policies (idempotent — safe to re-run)
-  exec(
-    'aws iam attach-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-arn arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy --no-cli-pager',
-    true
-  );
-  const additionalPolicyFile = writeTempJson('space-slr-policy', {
-    Version: '2012-10-17',
-    Statement: [{
-      Sid: 'AllowCreateServiceLinkedRoles',
-      Effect: 'Allow',
-      Action: ['iam:CreateServiceLinkedRole'],
-      Resource: [`arn:aws:iam::${state.accountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer`],
-    }],
-  });
-  try {
-    exec(
-      `aws iam put-role-policy --role-name DevOpsAgentRole-AgentSpace --policy-name AllowCreateServiceLinkedRoles --policy-document file://${additionalPolicyFile} --no-cli-pager`,
-      true
-    );
-  } finally {
-    tryUnlink(additionalPolicyFile);
-  }
-
-  // ─── WebappAdmin role ─────────────────────────────────────────────────────
-  const webappTrustFile = writeTempJson('webapp-trust', webappTrust);
-  try {
-    if (webappRoleExists) {
-      exec(
-        `aws iam update-assume-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-document file://${webappTrustFile} --no-cli-pager`,
-        true
-      );
-      success(`Updated trust policy: DevOpsAgentRole-WebappAdmin (region ${state.agentRegion})`);
-    } else {
-      info('Creating IAM role: DevOpsAgentRole-WebappAdmin...');
-      exec(
-        `aws iam create-role --role-name DevOpsAgentRole-WebappAdmin --assume-role-policy-document file://${webappTrustFile} --no-cli-pager`,
-        true
-      );
-      success('Created role: DevOpsAgentRole-WebappAdmin');
-    }
-  } finally {
-    tryUnlink(webappTrustFile);
-  }
-
-  exec(
-    'aws iam attach-role-policy --role-name DevOpsAgentRole-WebappAdmin --policy-arn arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy --no-cli-pager',
-    true
-  );
-
-  // Wait for IAM propagation (create AND update both need time to reach STS)
-  info('Waiting for IAM role propagation (10s)...');
-  await new Promise((resolve) => setTimeout(resolve, 10000));
-}
-
-function checkRoleExists(roleName: string): boolean {
-  try {
-    exec(`aws iam get-role --role-name ${roleName} --no-cli-pager`, true);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureAccountAssociation(state: SetupState): Promise<void> {
-  // Check existing associations
-  const associations = execJson(
-    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
-  );
-
-  const awsAssociation = associations.associations?.find(
-    (a: any) => a.configuration?.aws?.accountId === state.accountId
-  );
-
-  if (awsAssociation) {
-    state.associationId = awsAssociation.associationId;
-    success(`Account ${state.accountId} already associated (${state.associationId})`);
-    return;
-  }
-
-  info(`Associating account ${state.accountId} for topology discovery...`);
-
-  const configFile = writeTempJson('assoc-config', {
-    aws: {
-      assumableRoleArn: `arn:aws:iam::${state.accountId}:role/DevOpsAgentRole-AgentSpace`,
-      accountId: state.accountId,
-      accountType: 'monitor',
-    },
-  });
-
-  let result: any;
-  try {
-    // associate-service assumes DevOpsAgentRole-AgentSpace. IAM role/trust-policy
-    // changes are eventually consistent, so a freshly created (or just-updated)
-    // role can still fail STS assume-role with "Invalid STS role configuration ...
-    // Verify the role's trust policy" for a short window after creation. Retry
-    // with backoff so the step succeeds once propagation completes instead of
-    // forcing the user to manually retry.
-    const maxAttempts = 6;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        result = execJson(
-          `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id aws --configuration file://${configFile} --region ${state.agentRegion} --no-cli-pager`
-        );
-        break;
-      } catch (err: any) {
-        const msg = String(err?.stderr || err?.message || err);
-        const isTransientTrust =
-          /Invalid STS role configuration/i.test(msg) ||
-          /Verify the role's trust policy/i.test(msg);
-        if (!isTransientTrust || attempt === maxAttempts) {
-          throw err;
-        }
-        const delaySec = attempt * 10; // 10s, 20s, 30s, ...
-        warn(`Association not ready yet (IAM propagation). Retrying in ${delaySec}s (attempt ${attempt}/${maxAttempts - 1})...`);
-        await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
-      }
-    }
-  } finally {
-    tryUnlink(configFile);
-  }
-
-  state.associationId = result.association.associationId;
-  success(`Account associated: ${state.associationId} (status: ${result.association.status})`);
-}
-
-async function ensureWebhook(state: SetupState): Promise<void> {
-  // Check existing associations for eventChannel webhooks
-  const associations = execJson(
-    `aws devops-agent list-associations --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
-  );
-
-  // Look for existing eventChannel associations and their webhooks
-  const eventChannelAssociations = associations.associations?.filter(
-    (a: any) => a.configuration?.eventChannel !== undefined
-  ) || [];
-
-  if (eventChannelAssociations.length > 0) {
-    // The DevOps Agent service allows only ONE eventChannel association per
-    // AgentSpace. We must either reuse it or rotate it (disassociate + recreate).
-    const assoc = eventChannelAssociations[0];
-
-    let existingUrl: string | undefined;
-    try {
-      const webhooks = execJson(
-        `aws devops-agent list-webhooks --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.agentRegion} --no-cli-pager`
-      );
-      existingUrl = webhooks.webhooks?.[0]?.webhookUrl;
-    } catch {
-      // list-webhooks failed; treat as no usable webhook found.
-    }
-
-    if (existingUrl) {
-      info(`Found existing eventChannel webhook: ${existingUrl.substring(0, 60)}...`);
-
-      const choices = [
-        'Reuse the existing webhook (I have or can recover the HMAC secret)',
-        'Rotate it: delete this association and create a fresh one (new URL + new secret)',
-      ];
-      const choice = await askChoice('How do you want to proceed?', choices);
-
-      if (choice === 0) {
-        state.webhookUrl = existingUrl;
-        const recovered = tryRecoverSecretFromDeployedStack(state);
-        if (recovered) {
-          state.webhookSecret = recovered;
-          success('Recovered HMAC secret from a previously deployed stack.');
-          return;
-        }
-
-        warn('AWS does not expose the HMAC secret after creation. It is only returned once');
-        warn('by associate-service. Look in any of these places for the previous value:');
-        console.log('    • The DEVOPS_AGENT_WEBHOOK_SECRET env var on the InvestigationTrigger Lambda');
-        console.log('    • The CloudFormation parameter DevOpsAgentWebhookSecret on a previous deployment');
-        console.log('    • Wherever you stored it during the prior setup (password manager / SSM / etc.)');
-        console.log('  If it is truly lost, re-run this wizard and choose "Rotate" instead.');
-        const provided = await ask('  Paste the existing HMAC secret (or leave blank to abort): ');
-        if (!provided) {
-          throw new Error('Cannot continue without the existing webhook secret. Re-run and choose "Rotate" to generate a new one.');
-        }
-        state.webhookSecret = provided;
-        success(`Using existing webhook: ${state.webhookUrl.substring(0, 60)}...`);
-        return;
-      }
-
-      // Rotate path: disassociate the existing eventChannel, then fall through
-      // to the create branch below.
-      const confirmRotate = await askYesNo(
-        `  Confirm: delete the existing eventChannel association ${assoc.associationId} and generate a new webhook?`,
-        false
-      );
-      if (!confirmRotate) {
-        throw new Error('Rotation cancelled. Re-run the wizard when ready.');
-      }
-
-      info(`Disassociating existing eventChannel (${assoc.associationId})...`);
-      exec(
-        `aws devops-agent disassociate-service --agent-space-id ${state.agentSpaceId} --association-id ${assoc.associationId} --region ${state.agentRegion} --no-cli-pager`,
-        true
-      );
-      success('Old eventChannel association removed.');
-      // Brief pause to let the deletion settle before recreating.
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-  }
-
-  // Create a new webhook via eventChannel
-  info('Creating a new generic webhook...');
-
-  // First, register the eventChannel service
-  let serviceId: string;
-  const serviceDetailsFile = writeTempJson('event-channel-details', { eventChannel: {} });
-  try {
-    const registerResult = execJson(
-      `aws devops-agent register-service --service eventChannel --service-details file://${serviceDetailsFile} --region ${state.agentRegion} --no-cli-pager`
-    );
-    serviceId = registerResult.serviceId;
-  } catch (error: any) {
-    // Service might already be registered, try to find it
-    const services = execJson(
-      `aws devops-agent list-services --region ${state.agentRegion} --no-cli-pager`
-    );
-    const eventChannelService = services.services?.find((s: any) => s.serviceType === 'eventChannel');
-    if (eventChannelService) {
-      serviceId = eventChannelService.serviceId;
-    } else {
-      throw new Error('Failed to register eventChannel service');
-    }
-  } finally {
-    tryUnlink(serviceDetailsFile);
-  }
-
-  // Associate the eventChannel to generate the webhook
-  const eventChannelConfigFile = writeTempJson('event-channel-config', { eventChannel: {} });
-  let result: any;
-  try {
-    result = execJson(
-      `aws devops-agent associate-service --agent-space-id ${state.agentSpaceId} --service-id ${serviceId} --configuration file://${eventChannelConfigFile} --region ${state.agentRegion} --no-cli-pager`
-    );
-  } finally {
-    tryUnlink(eventChannelConfigFile);
-  }
-
-  if (result.webhook) {
-    state.webhookUrl = result.webhook.webhookUrl;
-    state.webhookSecret = result.webhook.webhookSecret;
-    success(`Webhook created: ${state.webhookUrl}`);
-    info(`Secret: ${state.webhookSecret.substring(0, 10)}... (stored securely for deployment)`);
-  } else {
-    throw new Error('Webhook was not generated in the association response');
-  }
-}
-
-/**
- * Best-effort recovery of the HMAC secret from a previously deployed
- * HealthEventAnalyzerStack-<region>. The wizard's CDK stack stores the secret
- * as a Lambda environment variable (DEVOPS_AGENT_WEBHOOK_SECRET) on the
- * InvestigationTrigger function. The CFN parameter is `noEcho`, so this is
- * the only place it is recoverable.
- *
- * Returns the secret string on success, or undefined if it can't be recovered
- * (e.g. stack not deployed yet, function not found, missing env var).
- */
-function tryRecoverSecretFromDeployedStack(state: SetupState): string | undefined {
-  const stackName = `HealthEventAnalyzerStack-${state.region}`;
-  let stackResources: any[];
-  try {
-    const resp = execJson(
-      `aws cloudformation list-stack-resources --stack-name ${stackName} --region ${state.region} --no-cli-pager`
-    );
-    stackResources = resp.StackResourceSummaries || [];
-  } catch {
-    return undefined;
-  }
-
-  const triggerLambda = stackResources.find(
-    (r: any) =>
-      r.ResourceType === 'AWS::Lambda::Function' &&
-      typeof r.LogicalResourceId === 'string' &&
-      r.LogicalResourceId.includes('InvestigationTrigger')
-  );
-  if (!triggerLambda?.PhysicalResourceId) return undefined;
-
-  try {
-    const fn = execJson(
-      `aws lambda get-function-configuration --function-name ${triggerLambda.PhysicalResourceId} --region ${state.region} --no-cli-pager`
-    );
-    const secret = fn?.Environment?.Variables?.DEVOPS_AGENT_WEBHOOK_SECRET;
-    return typeof secret === 'string' && secret.length > 0 ? secret : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function ensureOperatorApp(state: SetupState): Promise<void> {
-  try {
-    const operatorApp = execJson(
-      `aws devops-agent get-operator-app --agent-space-id ${state.agentSpaceId} --region ${state.agentRegion} --no-cli-pager`
-    );
-    if (operatorApp) {
-      success('Operator app already enabled');
-      state.operatorAppEnabled = true;
-      return;
-    }
-  } catch {
-    // Not enabled yet
-  }
-
-  info('Enabling operator app...');
-  exec(
-    `aws devops-agent enable-operator-app --agent-space-id ${state.agentSpaceId} --auth-flow iam --operator-app-role-arn "arn:aws:iam::${state.accountId}:role/DevOpsAgentRole-WebappAdmin" --region ${state.agentRegion} --no-cli-pager`,
-    true
-  );
-  state.operatorAppEnabled = true;
-  success('Operator app enabled (IAM auth)');
-}
+// Agent Space creation, IAM role provisioning, the AWS account association,
+// the eventChannel webhook, and the operator app used to each be a separate
+// imperative step here (createAgentSpace, ensureIamRoles, checkRoleExists,
+// ensureAccountAssociation, ensureWebhook, tryRecoverSecretFromDeployedStack,
+// ensureOperatorApp). They are now all provisioned declaratively by CDK's
+// DevOpsAgentSpaceStack (see infrastructure/cdk/lib/devops-agent-space-stack.ts
+// and lib/constructs/devops-agent-space.ts), driven from deployCdk() below.
+// pickExistingAgentSpace above is kept only for --jira-only, which attaches
+// Jira to an already-deployed Agent Space without re-running a deploy.
 
 // ─── Atlassian Jira MCP integration ─────────────────────────────────────────
 
@@ -1891,64 +1446,66 @@ async function deployCdk(state: SetupState): Promise<void> {
   execSync('npm run bundle', { cwd: cdkDir, encoding: 'utf-8', stdio: 'pipe' });
   success('Lambda functions bundled');
 
-  // Bootstrap (idempotent)
-  info('Bootstrapping CDK environment...');
-  try {
-    const bootstrapOutput = execSync(
-      `npx cdk bootstrap aws://${state.accountId}/${state.region}`,
-      { cwd: cdkDir, encoding: 'utf-8', stdio: 'pipe', env: { ...process.env, AWS_REGION: state.region, AWS_DEFAULT_REGION: state.region, CDK_DEFAULT_REGION: state.region, CDK_DEFAULT_ACCOUNT: state.accountId } }
-    );
-    // Check if output contains success indicators
-    if (bootstrapOutput.includes('already bootstrapped') || bootstrapOutput.includes('Bootstrapping environment') || bootstrapOutput.includes('✅')) {
-      success('CDK environment bootstrapped');
-    } else {
-      success('CDK environment bootstrapped');
-    }
-  } catch (bootstrapError: any) {
-    const errMsg = bootstrapError?.stderr || bootstrapError?.stdout || bootstrapError?.message || '';
-    // "already bootstrapped" or "No changes" are fine — anything else is a real failure
-    if (errMsg.includes('already bootstrapped') || errMsg.includes('No changes')) {
-      success('CDK environment already bootstrapped');
-    } else {
-      warn(`CDK bootstrap failed — retrying with explicit environment...`);
-      // Retry with explicit --trust and --cloudformation-execution-policies
-      try {
-        execSync(
-          `npx cdk bootstrap aws://${state.accountId}/${state.region} --trust ${state.accountId} --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess`,
-          { cwd: cdkDir, encoding: 'utf-8', stdio: 'inherit', env: { ...process.env, AWS_REGION: state.region, AWS_DEFAULT_REGION: state.region, CDK_DEFAULT_REGION: state.region, CDK_DEFAULT_ACCOUNT: state.accountId } }
-        );
-        success('CDK environment bootstrapped (retry succeeded)');
-      } catch (retryError: any) {
-        throw new Error(
-          `CDK bootstrap failed for aws://${state.accountId}/${state.region}. ` +
-          `Run manually: npx cdk bootstrap aws://${state.accountId}/${state.region}\n` +
-          `Error: ${retryError?.stderr || retryError?.message || retryError}`
-        );
-      }
-    }
+  // Bootstrap both regions (idempotent). The Agent Space region can differ
+  // from the deploy region (DEVOPS_AGENT_REGION) and needs its own CDK
+  // bootstrap when it does.
+  bootstrapRegion(cdkDir, state.accountId, state.region);
+  if (state.agentRegion !== state.region) {
+    bootstrapRegion(cdkDir, state.accountId, state.agentRegion);
   }
 
-  // Build deploy command — enforce --require-approval broadening for production safety
+  const agentSpaceStackName = `HealthEventAnalyzerAgentSpace-${state.agentRegion}`;
   const stackName = `HealthEventAnalyzerStack-${state.region}`;
-  const params: string[] = [
-    `--parameters DevOpsAgentWebhookUrl=${state.webhookUrl}`,
-    // Tells the stack where the Agent Space lives so the callback Lambda targets the
-    // right aidevops endpoint and its IAM policy is scoped to the right Region.
-    `--parameters DevOpsAgentRegion=${state.agentRegion}`,
-  ];
 
+  // ─── Stage 1: DevOps Agent Space stack ──────────────────────────────────
+  // Creates the Agent Space, IAM roles, operator app, AWS account
+  // association, and the eventChannel webhook. The webhook's HMAC secret is
+  // written by a custom resource directly into Secrets Manager — it never
+  // enters this script, CloudFormation state, or any CLI output (see
+  // infrastructure/cdk/lib/constructs/devops-agent-space.ts).
+  info(`Deploying DevOps Agent Space stack: ${agentSpaceStackName}`);
+  console.log('');
+  try {
+    execSync(
+      `npx cdk deploy ${agentSpaceStackName} -c devOpsAgentRegion=${state.agentRegion} --require-approval=broadening`,
+      {
+        cwd: cdkDir,
+        encoding: 'utf-8',
+        stdio: 'inherit',
+        env: { ...process.env, AWS_REGION: state.agentRegion, AWS_DEFAULT_REGION: state.agentRegion },
+      }
+    );
+    success(`Agent Space stack deployed: ${agentSpaceStackName}`);
+  } catch {
+    throw new Error(`CDK deployment failed for stack ${agentSpaceStackName}. Check the output above for details.`);
+  }
+
+  state.agentSpaceId = describeStackOutput(agentSpaceStackName, state.agentRegion, 'AgentSpaceId');
+  state.webhookUrl = describeStackOutput(agentSpaceStackName, state.agentRegion, 'WebhookUrl');
+  state.webhookSecretArn = describeStackOutput(agentSpaceStackName, state.agentRegion, 'WebhookSecretArn');
+  state.agentSpaceName = 'health-event-analyzer';
+
+  if (!state.agentSpaceId || !state.webhookUrl || !state.webhookSecretArn) {
+    throw new Error(
+      `Agent Space stack ${agentSpaceStackName} did not return all required outputs ` +
+      '(AgentSpaceId, WebhookUrl, WebhookSecretArn). Check the CloudFormation console.'
+    );
+  }
+  success(`Agent Space: ${state.agentSpaceId}`);
+  info('Webhook: configured (HMAC secret stored directly in Secrets Manager; never seen by this script)');
+
+  // ─── Stage 2: main stack ────────────────────────────────────────────────
+  const params: string[] = [];
   if (state.notificationEmail) {
     params.push(`--parameters NotificationEmail=${state.notificationEmail}`);
   }
 
-  // Store secrets in SSM Parameter Store SecureString (not as CFn parameters)
+  // Slack/MS Teams webhook secrets remain plain SSM Parameter Store
+  // SecureStrings — unrelated to the DevOps Agent webhook secret above, which
+  // now lives in Secrets Manager and is never handled here.
   const ssmPrefix = `/health-analyzer/production`;
-  info('Storing secrets in SSM Parameter Store...');
-
-  if (state.webhookSecret) {
-    putSsmSecureString(state.region, `${ssmPrefix}/webhook-secret`, state.webhookSecret,
-      'DevOps Agent HMAC webhook secret');
-    success(`SSM: ${ssmPrefix}/webhook-secret`);
+  if (state.slackWebhookUrl || state.msTeamsWebhookUrl) {
+    info('Storing Slack/MS Teams secrets in SSM Parameter Store...');
   }
   if (state.slackWebhookUrl) {
     putSsmSecureString(state.region, `${ssmPrefix}/slack-webhook-url`, state.slackWebhookUrl,
@@ -1963,8 +1520,14 @@ async function deployCdk(state: SetupState): Promise<void> {
 
   const deployCmd = [
     'npx cdk deploy',
-    '--all',
+    stackName,
     ...params,
+    // The Agent Space stack's outputs, threaded through as CDK context — the
+    // main stack has no CloudFormation parameter for these anymore (see
+    // infrastructure/cdk/lib/health-event-analyzer-stack.ts).
+    `-c devOpsAgentWebhookUrl=${state.webhookUrl}`,
+    `-c devOpsAgentWebhookSecretArn=${state.webhookSecretArn}`,
+    `-c devOpsAgentRegion=${state.agentRegion}`,
     '--require-approval=broadening',
   ].join(' ');
 
@@ -1994,6 +1557,57 @@ async function deployCdk(state: SetupState): Promise<void> {
     }
   } catch {
     // Non-critical
+  }
+}
+
+/** Bootstraps a single region/account (idempotent), retrying once with an
+ * explicit trust/execution-policy set if the plain bootstrap call fails. */
+function bootstrapRegion(cdkDir: string, accountId: string, region: string): void {
+  info(`Bootstrapping CDK environment (${region})...`);
+  try {
+    execSync(
+      `npx cdk bootstrap aws://${accountId}/${region}`,
+      { cwd: cdkDir, encoding: 'utf-8', stdio: 'pipe', env: { ...process.env, AWS_REGION: region, AWS_DEFAULT_REGION: region, CDK_DEFAULT_REGION: region, CDK_DEFAULT_ACCOUNT: accountId } }
+    );
+    success(`CDK environment bootstrapped (${region})`);
+  } catch (bootstrapError: any) {
+    const errMsg = bootstrapError?.stderr || bootstrapError?.stdout || bootstrapError?.message || '';
+    // "already bootstrapped" or "No changes" are fine — anything else is a real failure
+    if (errMsg.includes('already bootstrapped') || errMsg.includes('No changes')) {
+      success(`CDK environment already bootstrapped (${region})`);
+    } else {
+      warn(`CDK bootstrap failed in ${region} — retrying with explicit environment...`);
+      try {
+        execSync(
+          `npx cdk bootstrap aws://${accountId}/${region} --trust ${accountId} --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess`,
+          { cwd: cdkDir, encoding: 'utf-8', stdio: 'inherit', env: { ...process.env, AWS_REGION: region, AWS_DEFAULT_REGION: region, CDK_DEFAULT_REGION: region, CDK_DEFAULT_ACCOUNT: accountId } }
+        );
+        success(`CDK environment bootstrapped (retry succeeded, ${region})`);
+      } catch (retryError: any) {
+        throw new Error(
+          `CDK bootstrap failed for aws://${accountId}/${region}. ` +
+          `Run manually: npx cdk bootstrap aws://${accountId}/${region}\n` +
+          `Error: ${retryError?.stderr || retryError?.message || retryError}`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Reads a single CloudFormation stack output value via the AWS CLI. Returns
+ * an empty string when the stack, output key, or CLI call is unavailable —
+ * callers decide whether that's fatal.
+ */
+function describeStackOutput(stackName: string, region: string, outputKey: string): string {
+  try {
+    const value = exec(
+      `aws cloudformation describe-stacks --stack-name ${stackName} --region ${region} --query "Stacks[0].Outputs[?OutputKey=='${outputKey}'].OutputValue" --output text --no-cli-pager`,
+      true
+    );
+    return value === 'None' ? '' : value;
+  } catch {
+    return '';
   }
 }
 

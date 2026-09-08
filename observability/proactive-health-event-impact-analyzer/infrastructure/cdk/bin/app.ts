@@ -4,9 +4,16 @@ import { execSync } from 'child_process';
 import * as cdk from 'aws-cdk-lib';
 import { AwsSolutionsChecks, NagSuppressions } from 'cdk-nag';
 import { HealthEventAnalyzerStack } from '../lib/health-event-analyzer-stack';
+import { DevOpsAgentSpaceStack } from '../lib/devops-agent-space-stack';
 import { ProductionValidationAspect } from '../lib/aspects/production-validation';
 
 const app = new cdk.App();
+
+// Deployment environment — read here (not only inside HealthEventAnalyzerStack)
+// so DevOpsAgentSpaceStack, instantiated first, can size its log retention to
+// match the same 90d/14d rule the repo-wide ProductionValidationAspect enforces
+// below. HealthEventAnalyzerStack still validates this against VALID_ENVIRONMENTS.
+const environment = app.node.tryGetContext('environment') ?? 'production';
 
 // Region detection — priority order (matches shared/utils/aws-utils pattern):
 // 1. Environment variable (temporary override)
@@ -30,12 +37,39 @@ function getRegion(): string {
 
 const region = getRegion();
 
+// ─── DevOps Agent Space region ────────────────────────────────────────────────
+// May differ from the infra region — an Agent Space monitors resources across
+// ALL regions of the associated account, so it does not need to live with the
+// rest of the stack. Resolved from CDK context (`devOpsAgentRegion`), which
+// scripts/setup-wizard.ts sets from DEVOPS_AGENT_REGION before synthesizing.
+// See shared/README.md ("AWS DevOps Agent Region").
+const devOpsAgentRegion = app.node.tryGetContext('devOpsAgentRegion') || region;
+
+// DevOpsAgentSpaceStack — the Agent Space itself (roles, operator app, AWS
+// monitor association, eventChannel webhook). Deployed FIRST by the setup
+// wizard: its outputs (webhook URL + Secrets Manager ARN) are read back via
+// `aws cloudformation describe-stacks` and fed into the main stack below as
+// context. This replaces the imperative `aws devops-agent` CLI flow the
+// wizard used to drive by hand.
+const agentSpaceStack = new DevOpsAgentSpaceStack(app, `HealthEventAnalyzerAgentSpace-${devOpsAgentRegion}`, {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: devOpsAgentRegion,
+  },
+  projectName: 'health-event-analyzer',
+  deployEnvironment: environment,
+  description: 'Proactive Health Event Impact Analyzer - DevOps Agent Space stack (Agent Space, IAM roles, operator app, webhook)',
+});
+
 const stack = new HealthEventAnalyzerStack(app, `HealthEventAnalyzerStack-${region}`, {
   description: 'Proactive Health Event Impact Analyzer - GenAI-powered AWS Health event correlation and team notification (uksb-do9bhieqqh)(tag:health-event-analyzer,observability)',
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
   },
+  devOpsAgentWebhookUrl: app.node.tryGetContext('devOpsAgentWebhookUrl') ?? '',
+  devOpsAgentWebhookSecretArn: app.node.tryGetContext('devOpsAgentWebhookSecretArn') ?? '',
+  devOpsAgentRegion,
 });
 
 // ─── CDK Nag: AWS Solutions rule pack (Requirement 15.2) ──────────────────────
@@ -76,5 +110,25 @@ NagSuppressions.addStackSuppressions(stack, [
   {
     id: 'AwsSolutions-SQS4',
     reason: 'SQS dead letter queues receive messages from Lambda async invocation failures via internal AWS service integration. SSL enforcement on these DLQs is not applicable as messages are published by the Lambda service, not user-initiated API calls.',
+  },
+], true);
+
+// ─── CDK Nag Suppressions — DevOps Agent Space stack ───────────────────────────
+NagSuppressions.addStackSuppressions(agentSpaceStack, [
+  {
+    id: 'AwsSolutions-IAM4',
+    reason: 'AIDevOpsAgentAccessPolicy and AIDevOpsOperatorAppAccessPolicy are AWS managed policies published specifically for AWS DevOps Agent — there is no customer-managed equivalent, and AWS documents these as the required grant for the service to assume a monitoring/operator role. AWSLambdaBasicExecutionRole on the webhook provisioner Lambda is the standard CDK-generated execution role for CloudWatch Logs access.',
+  },
+  {
+    id: 'AwsSolutions-IAM5',
+    reason: 'Wildcards are required: the aidevops:RegisterService/ListServices/AssociateService/DisassociateService/ListAssociations calls the webhook provisioner Lambda makes are account-level APIs with no resource-level ARN in their request (RegisterService especially has no space/service id yet to scope to); iam:CreateServiceLinkedRole is scoped to the aws-service-role/* path, which is the finest grain IAM supports for SLR creation; and the Secrets Manager grantWrite() on the webhook secret appends AWS\'s own wildcard version suffix to an otherwise fully-scoped secret ARN.',
+  },
+  {
+    id: 'AwsSolutions-L1',
+    reason: 'Lambda runtime NODEJS_24_X is the latest LTS runtime. CDK Nag may not yet recognize it as the latest if its rule set lags behind AWS runtime releases.',
+  },
+  {
+    id: 'AwsSolutions-SMG4',
+    reason: 'This secret holds the DevOps Agent webhook HMAC key, written exactly once by the provisioning custom resource from AssociateService\'s one-time response and read only via GetSecretValue. There is no DevOps Agent rotation API for this value — the only way to rotate it is to replace the association (delete + recreate the webhook), which the custom resource already does on any property change. Automatic Secrets Manager rotation would silently desynchronize the stored value from the live webhook.',
   },
 ], true);

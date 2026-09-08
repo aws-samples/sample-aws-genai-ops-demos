@@ -3,12 +3,19 @@ import * as https from 'https';
 import * as url from 'url';
 import { DynamoDBClient, PutItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { SSMClient, GetParametersCommand } from '@aws-sdk/client-ssm';
-import { getSecret } from '../lib/secrets-cache';
+import { getSecretFromSecretsManager } from '../lib/secrets-manager-cache';
 
 const dynamoClient = new DynamoDBClient({});
 const ssmClient = new SSMClient({});
 const DEFAULT_WEBHOOK_URL = process.env.DEVOPS_AGENT_WEBHOOK_URL!;
-const WEBHOOK_SECRET_PARAM_NAME = process.env.WEBHOOK_SECRET_PARAM_NAME!;
+// The webhook HMAC secret is provisioned by the CDK-managed DevOpsAgentSpace
+// construct into Secrets Manager (see lib/constructs/devops-agent-space.ts) —
+// it never passes through CloudFormation, so this Lambda reads it directly by
+// ARN. The secret may live in a different region than this function (an
+// Agent Space can be deployed to a different region than the main stack),
+// hence the separate region env var.
+const WEBHOOK_SECRET_ARN = process.env.WEBHOOK_SECRET_ARN!;
+const WEBHOOK_SECRET_REGION = process.env.WEBHOOK_SECRET_REGION || process.env.AWS_REGION!;
 const TASK_TOKEN_TABLE = process.env.TASK_TOKEN_TABLE!;
 const AGENT_SPACES_TABLE = process.env.AGENT_SPACES_TABLE || '';
 
@@ -149,8 +156,8 @@ export const handler = async (event: TriggerInput): Promise<void> => {
  * while supporting per-account overrides for teams that need isolation.
  */
 async function resolveAgentSpace(sourceAccountId?: string): Promise<AgentSpaceConfig> {
-  // Retrieve the default webhook secret from SSM via the cached secrets module
-  const defaultSecret = await getSecret(WEBHOOK_SECRET_PARAM_NAME);
+  // Retrieve the default webhook secret from Secrets Manager via the cached module
+  const defaultSecret = await getSecretFromSecretsManager(WEBHOOK_SECRET_ARN, WEBHOOK_SECRET_REGION);
 
   // If no agent spaces table configured or no source account, use default
   if (!AGENT_SPACES_TABLE || !sourceAccountId) {

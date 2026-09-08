@@ -11,10 +11,16 @@ function createTestApp(environment?: string): cdk.App {
   return new cdk.App({ context });
 }
 
-// Helper to create a stack with proper env for synthesis
+// Helper to create a stack with proper env for synthesis. The DevOps Agent
+// webhook URL/secret ARN are now supplied via typed props (populated by CDK
+// context in the real app — see bin/app.ts) instead of CloudFormation
+// parameters, since the Agent Space that produces them is now CDK-managed
+// (DevOpsAgentSpaceStack) rather than pasted in by hand.
 function createTestStack(app: cdk.App, id: string): HealthEventAnalyzerStack {
   return new HealthEventAnalyzerStack(app, id, {
     env: { account: '123456789012', region: 'us-east-1' },
+    devOpsAgentWebhookUrl: 'https://example.com/webhook',
+    devOpsAgentWebhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
   });
 }
 
@@ -149,14 +155,26 @@ describe('HealthEventAnalyzerStack', () => {
     template.hasOutput('StateMachineArn', {});
   });
 
-  test('has required parameters for DevOps Agent', () => {
-    template.hasParameter('DevOpsAgentWebhookUrl', {
-      Type: 'String',
+  test('DevOps Agent webhook URL flows to the Investigation Trigger Lambda (no CloudFormation parameter)', () => {
+    // The webhook URL is now a typed stack prop sourced from CDK context
+    // (populated by scripts/setup-wizard.ts after reading the CDK-managed
+    // DevOpsAgentSpaceStack's outputs) rather than a CloudFormation parameter
+    // an operator pastes in by hand.
+    const params = template.findParameters('*');
+    expect(Object.keys(params)).not.toContain('DevOpsAgentWebhookUrl');
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
+      Environment: {
+        Variables: Match.objectLike({
+          DEVOPS_AGENT_WEBHOOK_URL: 'https://example.com/webhook',
+        }),
+      },
     });
   });
 });
 
-describe('HealthEventAnalyzerStack - SSM Parameter Store Secrets', () => {
+describe('HealthEventAnalyzerStack - Secrets Manager and SSM Parameter Store Secrets', () => {
   let template: Template;
 
   beforeAll(() => {
@@ -174,12 +192,17 @@ describe('HealthEventAnalyzerStack - SSM Parameter Store Secrets', () => {
     expect(paramNames).not.toContain('MsTeamsWebhookUrl');
   });
 
-  test('Investigation Trigger Lambda has WEBHOOK_SECRET_PARAM_NAME env var with SSM path (not value)', () => {
+  test('Investigation Trigger Lambda has WEBHOOK_SECRET_ARN and WEBHOOK_SECRET_REGION env vars (not the secret value)', () => {
+    // The DevOps Agent webhook secret is now provisioned by the CDK-managed
+    // DevOpsAgentSpaceStack directly into Secrets Manager (see
+    // lib/constructs/devops-agent-space.ts) — the Lambda gets only the ARN
+    // and region, and reads the value at runtime via getSecretFromSecretsManager.
     template.hasResourceProperties('AWS::Lambda::Function', {
       Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
       Environment: {
         Variables: Match.objectLike({
-          WEBHOOK_SECRET_PARAM_NAME: '/health-analyzer/production/webhook-secret',
+          WEBHOOK_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
+          WEBHOOK_SECRET_REGION: 'us-east-1',
         }),
       },
     });
@@ -233,17 +256,14 @@ describe('HealthEventAnalyzerStack - SSM Parameter Store Secrets', () => {
     }
   });
 
-  test('Investigation Trigger Lambda has ssm:GetParameter scoped to webhook-secret ARN', () => {
+  test('Investigation Trigger Lambda has secretsmanager:GetSecretValue scoped to the webhook secret ARN', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
-            Sid: 'ReadWebhookSecret',
-            Action: 'ssm:GetParameter',
+            Action: Match.arrayWith(['secretsmanager:GetSecretValue']),
             Effect: 'Allow',
-            Resource: {
-              'Fn::Join': Match.anyValue(),
-            },
+            Resource: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
           }),
         ]),
       },
@@ -264,19 +284,10 @@ describe('HealthEventAnalyzerStack - SSM Parameter Store Secrets', () => {
     });
   });
 
-  test('SSM parameter paths use environment prefix for staging', () => {
+  test('SSM parameter paths use environment prefix for staging (Slack/MS Teams; webhook secret is Secrets Manager, not SSM)', () => {
     const app = createTestApp('staging');
     const stack = createTestStack(app, 'StagingSSMStack');
     const stagingTemplate = Template.fromStack(stack);
-
-    stagingTemplate.hasResourceProperties('AWS::Lambda::Function', {
-      Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
-      Environment: {
-        Variables: Match.objectLike({
-          WEBHOOK_SECRET_PARAM_NAME: '/health-analyzer/staging/webhook-secret',
-        }),
-      },
-    });
 
     stagingTemplate.hasResourceProperties('AWS::Lambda::Function', {
       Description: Match.stringLikeRegexp('Routes impact notifications to affected teams'),
@@ -1526,19 +1537,40 @@ describe('HealthEventAnalyzerStack - No Hardcoded Secrets (Requirement 2.6)', ()
     }
   });
 
-  test('no Lambda environment variables contain webhook URL values (only parameter names) (Req 2.6)', () => {
+  test('no Lambda environment variables contain secret-bearing webhook URL values (only parameter names/ARNs) (Req 2.6)', () => {
     const lambdas = template.findResources('AWS::Lambda::Function');
+
+    // DEVOPS_AGENT_WEBHOOK_URL is intentionally excluded: it is the public
+    // endpoint the trigger Lambda POSTs to, not a secret — the sensitive part
+    // is the separate HMAC signing secret, which lives in Secrets Manager
+    // (WEBHOOK_SECRET_ARN, not the value itself) and is checked below.
+    const nonSecretUrlEnvVars = ['DEVOPS_AGENT_WEBHOOK_URL'];
 
     for (const [, resource] of Object.entries(lambdas)) {
       const envVars = (resource as any).Properties?.Environment?.Variables ?? {};
       for (const [key, value] of Object.entries(envVars)) {
+        if (nonSecretUrlEnvVars.includes(key)) continue;
         if (typeof value === 'string') {
-          // Values should be SSM parameter paths, not actual URLs
+          // Values should be SSM parameter paths / Secrets Manager ARNs, not actual URLs
           expect(value).not.toMatch(/^https?:\/\//);
           // Should not look like a secret/token
           expect(value).not.toMatch(/^(sk-|xoxb-|Bearer )/);
         }
       }
+    }
+  });
+
+  test('WEBHOOK_SECRET_ARN env var is an ARN, never the secret value itself (Req 2.6)', () => {
+    const lambdas = template.findResources('AWS::Lambda::Function', {
+      Properties: {
+        Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
+      },
+    });
+    for (const [, resource] of Object.entries(lambdas)) {
+      const envVars = (resource as any).Properties?.Environment?.Variables ?? {};
+      const secretArn = envVars.WEBHOOK_SECRET_ARN;
+      expect(typeof secretArn).toBe('string');
+      expect(secretArn).toMatch(/^arn:aws:secretsmanager:/);
     }
   });
 
@@ -1600,7 +1632,34 @@ describe('HealthEventAnalyzerStack - SSM GetParameter Scoping (Requirement 2.5 -
     expect(ssmGetParamStatements).toBeGreaterThanOrEqual(2);
   });
 
-  test('Investigation Trigger ssm:GetParameter resource contains webhook-secret path', () => {
+  test('Investigation Trigger ssm:GetParameter resource contains the Jira routing config path (not the webhook secret — that is Secrets Manager now)', () => {
+    const policies = template.findResources('AWS::IAM::Policy');
+    const policyValues = Object.values(policies);
+
+    let foundJiraConfigGrant = false;
+
+    for (const policy of policyValues) {
+      const statements = policy.Properties?.PolicyDocument?.Statement;
+      if (!Array.isArray(statements)) continue;
+      for (const stmt of statements) {
+        if (stmt.Sid === 'ReadJiraRoutingConfig') {
+          foundJiraConfigGrant = true;
+          const resources = Array.isArray(stmt.Resource) ? stmt.Resource : [stmt.Resource];
+          for (const resource of resources) {
+            if (resource?.['Fn::Join']) {
+              const joinParts = resource['Fn::Join'][1];
+              const joinedStr = joinParts.filter((p: any) => typeof p === 'string').join('');
+              expect(joinedStr).toContain('/health-analyzer/jira/');
+            }
+          }
+        }
+      }
+    }
+
+    expect(foundJiraConfigGrant).toBe(true);
+  });
+
+  test('Investigation Trigger has secretsmanager:GetSecretValue scoped to the webhook secret ARN (not SSM)', () => {
     const policies = template.findResources('AWS::IAM::Policy');
     const policyValues = Object.values(policies);
 
@@ -1610,16 +1669,9 @@ describe('HealthEventAnalyzerStack - SSM GetParameter Scoping (Requirement 2.5 -
       const statements = policy.Properties?.PolicyDocument?.Statement;
       if (!Array.isArray(statements)) continue;
       for (const stmt of statements) {
-        if (stmt.Sid === 'ReadWebhookSecret' && stmt.Action === 'ssm:GetParameter') {
+        const actions = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
+        if (actions.includes('secretsmanager:GetSecretValue') && stmt.Resource === 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123') {
           foundWebhookSecretGrant = true;
-          // The resource should be a Fn::Join that builds the ARN
-          const resource = stmt.Resource;
-          if (resource?.['Fn::Join']) {
-            const joinParts = resource['Fn::Join'][1];
-            const joinedStr = joinParts.filter((p: any) => typeof p === 'string').join('');
-            expect(joinedStr).toContain('/health-analyzer/');
-            expect(joinedStr).toContain('webhook-secret');
-          }
         }
       }
     }
@@ -1967,23 +2019,25 @@ describe('HealthEventAnalyzerStack - Environment-Specific Configuration Differen
     }
   });
 
-  test('SSM parameter paths differ between production and staging', () => {
-    // Production uses /health-analyzer/production/... paths
+  test('SSM parameter paths differ between production and staging (Notifier); the webhook secret ARN is environment-agnostic', () => {
+    // The DevOps Agent webhook secret now comes from Secrets Manager via a
+    // typed prop (see the DevOpsAgentSpaceStack), not an environment-prefixed
+    // SSM path, so it is identical across environments in this test — the
+    // real environment-prefixed paths that remain are Slack/MS Teams (SSM).
     prodTemplate.hasResourceProperties('AWS::Lambda::Function', {
-      Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
+      Description: Match.stringLikeRegexp('Routes impact notifications to affected teams'),
       Environment: {
         Variables: Match.objectLike({
-          WEBHOOK_SECRET_PARAM_NAME: '/health-analyzer/production/webhook-secret',
+          SLACK_WEBHOOK_PARAM_NAME: '/health-analyzer/production/slack-webhook-url',
         }),
       },
     });
 
-    // Staging uses /health-analyzer/staging/... paths
     stagingTemplate.hasResourceProperties('AWS::Lambda::Function', {
-      Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
+      Description: Match.stringLikeRegexp('Routes impact notifications to affected teams'),
       Environment: {
         Variables: Match.objectLike({
-          WEBHOOK_SECRET_PARAM_NAME: '/health-analyzer/staging/webhook-secret',
+          SLACK_WEBHOOK_PARAM_NAME: '/health-analyzer/staging/slack-webhook-url',
         }),
       },
     });

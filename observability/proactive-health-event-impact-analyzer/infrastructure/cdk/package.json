@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-devops-agent": "^3.1053.0",
+    "@aws-sdk/client-secrets-manager": "^3.1053.0",
     "aws-cdk-lib": "^2.246.0",
     "cdk-nag": "^2.38.2",
     "constructs": "^10.3.0",

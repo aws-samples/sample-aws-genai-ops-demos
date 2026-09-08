@@ -3,6 +3,9 @@
  * Tests correlation extraction, link generation, category mapping, and severity mapping.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 describe('Investigation Callback — Correlation', () => {
   // Simulate the extractCorrelationKey logic
   function extractTag(text: string, prefix: string): string | null {
@@ -419,17 +422,34 @@ describe('Investigation Trigger — Exponential Backoff Calculation', () => {
   });
 });
 
-describe('Investigation Trigger — Secrets Cache Integration', () => {
-  test('uses WEBHOOK_SECRET_PARAM_NAME env var (not DEVOPS_AGENT_WEBHOOK_SECRET)', () => {
-    // Verify that the Lambda reads the SSM parameter name from the env var
-    // and uses getSecret() to fetch the actual value at runtime.
-    // This is a design verification test — the actual integration is tested
-    // via the CDK assertion tests that verify the environment variable name.
-    const envVarName = 'WEBHOOK_SECRET_PARAM_NAME';
-    const envVarValue = '/health-analyzer/production/webhook-secret';
+describe('Investigation Trigger — Secrets Manager Integration', () => {
+  // The DevOps Agent webhook secret now lives in Secrets Manager (provisioned
+  // by the CDK-managed DevOpsAgentSpaceStack — see
+  // infrastructure/cdk/lib/constructs/devops-agent-space.ts), not SSM
+  // Parameter Store. The Lambda reads it via WEBHOOK_SECRET_ARN +
+  // WEBHOOK_SECRET_REGION and getSecretFromSecretsManager(), never
+  // WEBHOOK_SECRET_PARAM_NAME/getSecret() for this value. Slack/MS Teams
+  // webhook secrets are unaffected and remain SSM SecureStrings.
+  const investigationTriggerSource = fs.readFileSync(
+    path.resolve(__dirname, '../infrastructure/cdk/lambda/investigation-trigger/index.ts'),
+    'utf-8'
+  );
 
-    // The env var should be an SSM parameter path, not a secret value
-    expect(envVarValue).toMatch(/^\/health-analyzer\//);
-    expect(envVarValue).not.toMatch(/^[a-zA-Z0-9+/=]{20,}$/); // Not a base64 secret
+  test('reads the webhook secret via getSecretFromSecretsManager, not getSecret (SSM)', () => {
+    expect(investigationTriggerSource).toContain('getSecretFromSecretsManager');
+    expect(investigationTriggerSource).toContain('WEBHOOK_SECRET_ARN');
+    expect(investigationTriggerSource).toContain('WEBHOOK_SECRET_REGION');
+  });
+
+  test('does not reference the retired SSM-based webhook secret env var or plaintext secret env var', () => {
+    expect(investigationTriggerSource).not.toContain('WEBHOOK_SECRET_PARAM_NAME');
+    expect(investigationTriggerSource).not.toContain('DEVOPS_AGENT_WEBHOOK_SECRET');
+  });
+
+  test('still uses SSM getParameters for the unrelated Jira routing config', () => {
+    // Confirms the Jira config path (unrelated to this migration) was left
+    // on SSM Parameter Store, not accidentally moved to Secrets Manager too.
+    expect(investigationTriggerSource).toContain('GetParametersCommand');
+    expect(investigationTriggerSource).toContain('/health-analyzer/jira/');
   });
 });

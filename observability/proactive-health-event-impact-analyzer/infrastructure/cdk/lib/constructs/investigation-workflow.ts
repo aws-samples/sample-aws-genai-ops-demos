@@ -12,6 +12,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -25,11 +26,19 @@ export interface InvestigationWorkflowProps {
    * Region hosting the DevOps Agent Agent Space. May differ from the stack region:
    * the service is only available in a subset of Regions, and an Agent Space monitors
    * resources across ALL Regions of an associated account. Used for the aidevops
-   * client region and IAM resource scoping in the callback Lambda.
+   * client region, the webhook secret's region, and IAM resource scoping in the
+   * callback Lambda.
    */
   devOpsAgentRegion: string;
-  /** SSM Parameter Store name for the webhook HMAC secret */
-  webhookSecretParamName: string;
+  /**
+   * ARN of the Secrets Manager secret holding the DevOps Agent webhook HMAC
+   * secret. Provisioned by the CDK-managed DevOpsAgentSpaceStack (see
+   * lib/devops-agent-space-stack.ts) — the value never passes through
+   * CloudFormation. Empty string when not yet configured (e.g. a bare
+   * `cdk synth` / `npm test` with no context supplied), in which case a
+   * placeholder secret name is imported instead so synthesis still succeeds.
+   */
+  devOpsAgentWebhookSecretArn: string;
   /** SSM Parameter Store name for the Slack webhook URL */
   slackWebhookParamName: string;
   /** SSM Parameter Store name for the MS Teams webhook URL */
@@ -71,6 +80,27 @@ export class InvestigationWorkflow extends Construct {
     const distDir = path.join(__dirname, '../../dist/lambda');
     const lambdaCode = (name: string) => lambda.Code.fromAsset(path.join(distDir, name));
 
+    // Import the webhook secret provisioned by DevOpsAgentSpaceStack. The secret
+    // may live in a different region than this stack (an Agent Space can be
+    // deployed to a different region — see props.devOpsAgentRegion), so the
+    // trigger Lambda below is given that region explicitly and creates its own
+    // Secrets Manager client scoped to it. When no ARN is supplied yet (e.g. a
+    // bare `cdk synth`/`npm test` before the Agent Space stack has ever been
+    // deployed), a placeholder secret name is imported instead so synthesis
+    // still succeeds — the deployed Lambda will simply fail to read it until a
+    // real ARN is passed.
+    const devOpsAgentWebhookSecret = props.devOpsAgentWebhookSecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(
+          this,
+          'ImportedDevOpsAgentWebhookSecret',
+          props.devOpsAgentWebhookSecretArn,
+        )
+      : secretsmanager.Secret.fromSecretNameV2(
+          this,
+          'UnconfiguredDevOpsAgentWebhookSecret',
+          `health-event-analyzer-${props.deployEnvironment}/NOT_CONFIGURED`,
+        );
+
     // ─── Lambda: Investigation Trigger ────────────────────────────────────────
     // Triggers DevOps Agent investigation via HMAC-authenticated webhook
     const investigationTrigger = new lambda.Function(this, 'InvestigationTrigger', {
@@ -81,7 +111,8 @@ export class InvestigationWorkflow extends Construct {
       memorySize: 256,
       environment: {
         DEVOPS_AGENT_WEBHOOK_URL: props.devOpsAgentWebhookUrl,
-        WEBHOOK_SECRET_PARAM_NAME: props.webhookSecretParamName,
+        WEBHOOK_SECRET_ARN: devOpsAgentWebhookSecret.secretArn,
+        WEBHOOK_SECRET_REGION: props.devOpsAgentRegion,
         AGENT_SPACES_TABLE: props.agentSpacesTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'InvestigationTriggerLogs', {
@@ -96,15 +127,8 @@ export class InvestigationWorkflow extends Construct {
     // Grant read access to agent spaces routing table
     props.agentSpacesTable.grantReadData(investigationTrigger);
 
-    // Grant read access to the webhook secret in SSM Parameter Store
-    investigationTrigger.addToRolePolicy(new iam.PolicyStatement({
-      sid: 'ReadWebhookSecret',
-      effect: iam.Effect.ALLOW,
-      actions: ['ssm:GetParameter'],
-      resources: [
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter${props.webhookSecretParamName}`,
-      ],
-    }));
+    // Grant read access to the webhook secret in Secrets Manager
+    devOpsAgentWebhookSecret.grantRead(investigationTrigger);
 
     // Grant read access to the optional Jira routing config in SSM Parameter
     // Store. The trigger Lambda inlines these values into the prompt sent to
