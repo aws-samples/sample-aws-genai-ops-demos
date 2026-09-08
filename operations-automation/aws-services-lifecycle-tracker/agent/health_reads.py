@@ -45,29 +45,29 @@ def convert_decimals(obj):
 
 def list_health_events(filters: Optional[Dict[str, str]] = None) -> dict:
     """
-    Liste les événements Health avec filtres optionnels.
+    List Health events with optional filters.
 
-    Filtres supportés:
-        - service: nom du service (utilise le GSI service-index)
+    Supported filters:
+        - service: service name (uses the service-index GSI)
         - event_type_category: issue | accountNotification | scheduledChange
-        - status_code: open | closed | upcoming (utilise le GSI status-index)
+        - status_code: open | closed | upcoming (uses the status-index GSI)
         - severity: critical | high | medium | low
 
-    Stratégie de requête:
-        - Si filtre 'service' fourni → query sur GSI service-index
-        - Si filtre 'status_code' fourni (sans service) → query sur GSI status-index
-        - Sinon → scan de la table complète
-        - Les autres filtres sont appliqués en post-filtrage côté client
+    Query strategy:
+        - If 'service' filter provided → query the service-index GSI
+        - If 'status_code' filter provided (without service) → query the status-index GSI
+        - Otherwise → scan the full table
+        - Any remaining filters are applied client-side in post-processing
 
     FUTURE: Move to API Gateway + Lambda
     Cost: Currently uses AgentCore (~$0.001/request)
     Future: API Gateway + Lambda (~$0.0000002/request)
 
     Args:
-        filters: Dictionnaire de filtres optionnels.
+        filters: Dictionary of optional filters.
 
     Returns:
-        dict avec clé 'events' (liste d'événements) ou 'error' en cas d'échec.
+        dict with an 'events' key (list of events) or 'error' on failure.
     """
     try:
         filters = filters or {}
@@ -95,19 +95,19 @@ def list_health_events(filters: Optional[Dict[str, str]] = None) -> dict:
 
 def get_health_event(event_arn: str) -> dict:
     """
-    Récupère un événement Health spécifique par son ARN.
+    Retrieve a specific Health event by its ARN.
 
-    L'ARN est la partition key de la table. Comme la sort key
-    (event_type_category) n'est pas fournie, on utilise une query
-    sur la partition key seule pour récupérer l'événement.
+    The ARN is the table's partition key. Because the sort key
+    (event_type_category) is not provided, a query on the partition key
+    alone is used to retrieve the event.
 
     FUTURE: Move to API Gateway + Lambda
 
     Args:
-        event_arn: L'ARN unique de l'événement Health.
+        event_arn: The unique ARN of the Health event.
 
     Returns:
-        dict avec clé 'event' (détails de l'événement) ou 'error' en cas d'échec.
+        dict with an 'event' key (event details) or 'error' on failure.
     """
     try:
         if not event_arn:
@@ -131,20 +131,20 @@ def get_health_event(event_arn: str) -> dict:
 
 def get_health_summary() -> dict:
     """
-    Retourne un résumé des événements Health actifs par service et catégorie.
+    Return a summary of active Health events by service and category.
 
-    Calcule:
-        - Nombre total d'événements actifs (status_code != 'closed')
-        - Répartition par service (service_name)
-        - Répartition par catégorie (event_type_category)
-        - Répartition par sévérité (severity)
+    Computes:
+        - Total number of active events (status_code != 'closed')
+        - Breakdown by service (service_name)
+        - Breakdown by category (event_type_category)
+        - Breakdown by severity (severity)
 
     FUTURE: Move to API Gateway + Lambda
     Used by: Dashboard Health Panel in UI
 
     Returns:
-        dict avec clé 'summary' contenant les métriques agrégées,
-        ou 'error' en cas d'échec.
+        dict with a 'summary' key containing the aggregated metrics,
+        or 'error' on failure.
     """
     try:
         # Scan all events (could optimize with status-index for active only)

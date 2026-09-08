@@ -86,7 +86,7 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
       }
     });
 
-    // Schedule pour la collecte Health (toutes les 5 minutes)
+    // Schedule for Health collection (every 5 minutes)
     const healthSchedule = new scheduler.CfnSchedule(this, 'HealthCollectionSchedule', {
       name: 'aws-health-events-collection',
       description: 'Poll AWS Health API every 5 minutes',

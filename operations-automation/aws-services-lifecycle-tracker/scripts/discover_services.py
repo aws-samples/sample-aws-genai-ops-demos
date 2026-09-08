@@ -269,7 +269,7 @@ def discover_lifecycle_pages() -> list[dict]:
     that publish lifecycle/deprecation information.
 
     Returns:
-        Liste de candidats : {service_name, url, lifecycle_type, category, description}
+        List of candidates: {service_name, url, lifecycle_type, category, description}
         lifecycle_type: runtime_versions | engine_versions | platform_versions |
                        ml_models | protocol_versions
     """
