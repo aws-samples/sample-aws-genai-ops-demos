@@ -8,8 +8,13 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Button from '@cloudscape-design/components/button';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Popover from '@cloudscape-design/components/popover';
-import { getDashboardMetrics, triggerExtraction, discoverAccountResources, DashboardMetrics } from '../api';
+import { getDashboardMetrics, startRefreshAll, getRefreshStatus, discoverAccountResources, DashboardMetrics } from '../api';
 import HealthPanel from '../components/HealthPanel';
+
+// sessionStorage key for the in-flight Refresh All execution ARN. The batch
+// runs server-side in Step Functions; this only lets the UI re-attach to it
+// after a page navigation or reload.
+const REFRESH_ARN_KEY = 'lifecycle-refresh-execution-arn';
 
 // Services covered by Discovery (account scan)
 const DISCOVERY_SERVICES = [
@@ -46,14 +51,24 @@ export default function Dashboard() {
   
   // Polling state
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isPollingRef = useRef(false);
 
   useEffect(() => {
     loadMetrics();
-    
-    // Cleanup polling on unmount
+
+    // Re-attach to an in-flight Refresh All (e.g. after navigating away and
+    // back). The execution itself runs server-side and is unaffected.
+    const inFlightArn = sessionStorage.getItem(REFRESH_ARN_KEY);
+    if (inFlightArn) {
+      setExtracting(true);
+      pollExecution(inFlightArn);
+    }
+
+    // Cleanup polling on unmount (stops observing only - never the batch)
     return () => {
-      stopPolling();
+      if (pollingIntervalRef.current) {
+        clearTimeout(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
     };
   }, []);
 
@@ -76,90 +91,105 @@ export default function Dashboard() {
     }
   };
 
-  const startPolling = () => {
-    if (isPollingRef.current) return; // Already polling
-    
-    isPollingRef.current = true;
-    let pollCount = 0;
-    const maxPolls = 18; // 18 polls * 5 seconds = 90 seconds max
-    
-    const poll = async () => {
-      pollCount++;
-      console.log(`Polling attempt ${pollCount}/${maxPolls}`);
-      
-      try {
-        await loadMetrics(false); // Don't show loading spinner during polling
-      } catch (error) {
-        console.error('Error during polling:', error);
+  // Observe a server-side Refresh All execution until it reaches a terminal
+  // state. Polling is passive: stopping it (unmount) never affects the batch.
+  const pollExecution = async (executionArn: string, consecutiveErrors = 0) => {
+    try {
+      const execution = await getRefreshStatus(executionArn);
+
+      if (execution.status === 'RUNNING' || execution.status === 'PENDING_REDRIVE') {
+        loadMetrics(false); // refresh counts while the batch progresses
+        pollingIntervalRef.current = setTimeout(() => pollExecution(executionArn), 5000);
+        return;
       }
-      
-      if (pollCount < maxPolls) {
-        pollingIntervalRef.current = setTimeout(poll, 5000); // Poll every 5 seconds
+
+      // Terminal state reached
+      sessionStorage.removeItem(REFRESH_ARN_KEY);
+      setExtracting(false);
+      await loadMetrics(false);
+
+      if (execution.status === 'SUCCEEDED') {
+        const summary = execution.summary;
+        if (summary && summary.failed.length > 0) {
+          setFlashbarItems([{
+            type: 'warning',
+            dismissible: true,
+            dismissLabel: 'Dismiss',
+            onDismiss: () => setFlashbarItems([]),
+            content: `Refresh finished: ${summary.succeeded}/${summary.total} services succeeded. Failed: ${summary.failed.map(f => f.service).join(', ')}`,
+            id: `refresh-partial-${Date.now()}`
+          }]);
+        } else {
+          setFlashbarItems([{
+            type: 'success',
+            dismissible: true,
+            dismissLabel: 'Dismiss',
+            onDismiss: () => setFlashbarItems([]),
+            content: summary
+              ? `Refresh complete: all ${summary.total} services refreshed successfully.`
+              : 'Refresh completed successfully.',
+            id: `refresh-success-${Date.now()}`
+          }]);
+        }
       } else {
-        // Polling complete
-        stopPolling();
+        setFlashbarItems([{
+          type: 'error',
+          dismissible: true,
+          dismissLabel: 'Dismiss',
+          onDismiss: () => setFlashbarItems([]),
+          content: `Refresh ended with status ${execution.status}. Check the Step Functions console for details.`,
+          id: `refresh-failed-${Date.now()}`
+        }]);
       }
-    };
-    
-    // Start first poll after 1 seconds
-    pollingIntervalRef.current = setTimeout(poll, 1000);
-  };
-  
-  const stopPolling = () => {
-    if (pollingIntervalRef.current) {
-      clearTimeout(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
+    } catch (error: any) {
+      // Transient describe failure - keep observing (up to 3 in a row)
+      console.error('Error polling refresh execution:', error);
+      if (consecutiveErrors < 3) {
+        pollingIntervalRef.current = setTimeout(() => pollExecution(executionArn, consecutiveErrors + 1), 5000);
+      } else {
+        setExtracting(false);
+        setFlashbarItems([{
+          type: 'warning',
+          dismissible: true,
+          dismissLabel: 'Dismiss',
+          onDismiss: () => setFlashbarItems([]),
+          content: 'Lost track of the refresh progress, but the batch keeps running server-side. Reload the page to re-attach.',
+          id: `refresh-poll-error-${Date.now()}`
+        }]);
+      }
     }
-    isPollingRef.current = false;
   };
 
   const handleExtractAll = async () => {
     try {
       setExtracting(true);
-      
-      // Show initial notification
+
+      // Fire-and-forget: start (or adopt) the server-side batch
+      const { executionArn, alreadyRunning } = await startRefreshAll();
+      sessionStorage.setItem(REFRESH_ARN_KEY, executionArn);
+
       setFlashbarItems([{
         type: 'info',
         dismissible: true,
         dismissLabel: 'Dismiss',
         onDismiss: () => setFlashbarItems([]),
-        content: 'Starting extraction for all services. This will take about 60-90 seconds. Metrics will update in real-time',
+        content: alreadyRunning
+          ? 'A refresh is already in progress - showing its status.'
+          : 'Refresh started for all enabled services. It runs server-side, so you can navigate away - progress resumes when you return.',
         id: `extract-all-${Date.now()}`
       }]);
-      
-      // Start the extraction (this will take ~51 seconds)
-      const extractionPromise = triggerExtraction('all');
-      
-      // Start polling immediately to show progress
-      startPolling();
-      
-      // Wait for extraction to complete
-      await extractionPromise;
-      
-      console.log('Extraction completed successfully');
-      
-      // Show immediate completion message when extraction finishes
-      setFlashbarItems(prev => [{
-        type: 'success',
-        dismissible: true,
-        dismissLabel: 'Dismiss',
-        onDismiss: () => setFlashbarItems(prev => prev.filter(item => item.id !== 'extraction-finished')),
-        content: 'Extraction completed successfully!',
-        id: 'extraction-finished'
-      }, ...prev]);
-      
+
+      pollExecution(executionArn);
     } catch (err: any) {
-      stopPolling(); // Stop polling on error
+      setExtracting(false);
       setFlashbarItems([{
         type: 'error',
         dismissible: true,
         dismissLabel: 'Dismiss',
         onDismiss: () => setFlashbarItems([]),
-        content: `Failed to trigger extraction: ${err.message}`,
+        content: `Failed to start refresh: ${err.message}`,
         id: `error-${Date.now()}`
       }]);
-    } finally {
-      setExtracting(false);
     }
   };
 

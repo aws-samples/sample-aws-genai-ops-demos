@@ -1,5 +1,11 @@
 // API service for AWS Services Lifecycle Tracker Admin UI
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
+import {
+  SFNClient,
+  StartExecutionCommand,
+  DescribeExecutionCommand,
+  ListExecutionsCommand,
+} from '@aws-sdk/client-sfn';
 import { CognitoIdentityClient } from '@aws-sdk/client-cognito-identity';
 import { fromCognitoIdentityPool } from '@aws-sdk/credential-provider-cognito-identity';
 import { getIdToken } from './auth';
@@ -8,6 +14,7 @@ const region = (import.meta as any).env?.VITE_REGION || 'us-east-1';
 const agentRuntimeArn = (import.meta as any).env?.VITE_AGENT_RUNTIME_ARN;
 const identityPoolId = (import.meta as any).env?.VITE_IDENTITY_POOL_ID;
 const userPoolId = (import.meta as any).env?.VITE_USER_POOL_ID;
+const stateMachineArn = (import.meta as any).env?.VITE_STATE_MACHINE_ARN;
 
 // Types
 export interface ServiceConfig {
@@ -221,6 +228,86 @@ export const triggerExtraction = async (serviceNames: string | string[]): Promis
   return {
     total: servicesToExtract.length,
     results
+  };
+};
+
+// --- Refresh All orchestration (Step Functions) ---
+// The "Refresh All" batch runs server-side in the fixed-name state machine
+// deployed by the Scheduler stack. The UI only starts and observes the
+// execution (same direct-SDK-call-with-Cognito-IAM pattern as the agent
+// invocations above), so closing the browser tab never kills the batch.
+
+export interface RefreshSummary {
+  total: number;
+  succeeded: number;
+  failed: Array<{ service: string; error?: string }>;
+}
+
+export interface RefreshExecutionStatus {
+  executionArn: string;
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED' | 'PENDING_REDRIVE';
+  startDate?: Date;
+  stopDate?: Date;
+  // Present on SUCCEEDED: the Summarize state's output
+  summary?: RefreshSummary;
+}
+
+const getSfnClient = async (): Promise<SFNClient> => {
+  const credentials = await getAwsCredentials();
+  return new SFNClient({ region, credentials });
+};
+
+// Start a Refresh All batch. If one is already running, adopt it instead of
+// starting a second one (the backend tolerates overlap, but surfacing the
+// in-flight run is the better UX).
+export const startRefreshAll = async (): Promise<{ executionArn: string; alreadyRunning: boolean }> => {
+  if (!stateMachineArn) {
+    throw new Error('Refresh state machine not configured (VITE_STATE_MACHINE_ARN missing) - redeploy the frontend');
+  }
+
+  const client = await getSfnClient();
+
+  const running = await client.send(new ListExecutionsCommand({
+    stateMachineArn,
+    statusFilter: 'RUNNING',
+    maxResults: 1,
+  }));
+
+  if (running.executions && running.executions.length > 0) {
+    return { executionArn: running.executions[0].executionArn!, alreadyRunning: true };
+  }
+
+  const started = await client.send(new StartExecutionCommand({
+    stateMachineArn,
+    input: JSON.stringify({ refresh_origin: 'manual' }),
+  }));
+
+  return { executionArn: started.executionArn!, alreadyRunning: false };
+};
+
+// Poll the status of a Refresh All execution.
+export const getRefreshStatus = async (executionArn: string): Promise<RefreshExecutionStatus> => {
+  const client = await getSfnClient();
+  const result = await client.send(new DescribeExecutionCommand({ executionArn }));
+
+  let summary: RefreshSummary | undefined;
+  if (result.status === 'SUCCEEDED' && result.output) {
+    try {
+      const parsed = JSON.parse(result.output);
+      if (typeof parsed?.total === 'number') {
+        summary = parsed as RefreshSummary;
+      }
+    } catch {
+      // Output not parseable - status alone is still useful
+    }
+  }
+
+  return {
+    executionArn,
+    status: (result.status as RefreshExecutionStatus['status']) || 'RUNNING',
+    startDate: result.startDate,
+    stopDate: result.stopDate,
+    summary,
   };
 };
 

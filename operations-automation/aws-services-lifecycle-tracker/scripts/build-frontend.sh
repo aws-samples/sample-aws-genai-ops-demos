@@ -15,11 +15,18 @@ if [ -z "$USER_POOL_ID" ] || [ -z "$USER_POOL_CLIENT_ID" ] || [ -z "$IDENTITY_PO
     exit 1
 fi
 
+# Derive the Refresh All state machine ARN from its fixed name (deployed by
+# the Scheduler stack). Derived rather than read from stack outputs because
+# the frontend builds before the Scheduler stack deploys on a first install.
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+STATE_MACHINE_ARN="arn:aws:states:${REGION}:${ACCOUNT_ID}:stateMachine:aws-services-lifecycle-refresh-all"
+
 echo "Building frontend with:"
 echo "  User Pool ID: $USER_POOL_ID"
 echo "  User Pool Client ID: $USER_POOL_CLIENT_ID"
 echo "  Identity Pool ID: $IDENTITY_POOL_ID"
 echo "  Agent Runtime ARN: $AGENT_RUNTIME_ARN"
+echo "  State Machine ARN: $STATE_MACHINE_ARN"
 echo "  Region: $REGION"
 
 # Set environment variables for build
@@ -27,6 +34,7 @@ export VITE_USER_POOL_ID="$USER_POOL_ID"
 export VITE_USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID"
 export VITE_IDENTITY_POOL_ID="$IDENTITY_POOL_ID"
 export VITE_AGENT_RUNTIME_ARN="$AGENT_RUNTIME_ARN"
+export VITE_STATE_MACHINE_ARN="$STATE_MACHINE_ARN"
 export VITE_REGION="$REGION"
 
 # Build frontend

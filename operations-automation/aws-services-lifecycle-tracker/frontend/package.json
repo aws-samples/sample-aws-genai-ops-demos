@@ -10,6 +10,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.0.0",
     "@aws-sdk/client-cognito-identity": "^3.0.0",
+    "@aws-sdk/client-sfn": "^3.0.0",
     "@aws-sdk/credential-provider-cognito-identity": "^3.0.0",
     "@cloudscape-design/chat-components": "^1.0.67",
     "@cloudscape-design/components": "^3.0.1109",
