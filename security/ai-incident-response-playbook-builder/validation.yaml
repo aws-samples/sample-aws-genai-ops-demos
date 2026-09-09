@@ -1,29 +1,55 @@
-# validation.yaml — tells the demo-cdk-validation workflow how to deploy, verify, and tear
-# down this demo. See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)")
-# for the full schema.
+# validation.yaml — security/ai-incident-response-playbook-builder
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)") for the schema.
 
-# The demo's OWN deploy command (argv), run from the demo folder.
+# The demo's own deploy command, run zero-arg exactly as the README's Quick Start shows.
+# build-playbooks.sh's argument parser has no required flag -- every variable defaults
+# (OUTPUT_FORMAT="both", MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0", REGION=""
+# [resolved dynamically], OUTPUT_DIR="./output", SKIP_SETUP=false) -- so the bare command is
+# valid. Note this runs the FULL pipeline under `set -e` (CDK deploy -> discovery ->
+# Bedrock generation -> output assembly -> S3 upload), not just the CDK deploy -- a failed
+# Bedrock call fails deploy_command itself, independent of the verify step below.
 deploy_command: ["./build-playbooks.sh"]
 
-# Teardown command (argv), run from destroy_subdir (below).
+# Runs `npx cdk destroy` directly, bypassing build-playbooks.sh and shared/scripts/deploy-cdk.sh
+# entirely -- see pythonpath_repo_root below for why that matters here.
 destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
-
-# Subdir under the demo folder to run destroy from.
 destroy_subdir: "infrastructure/cdk"
 
-# CloudFormation stack to confirm deployed and later confirm destroyed.
-# Matches infrastructure/cdk/app.py: PlaybookBuilderStack-{region}.
+# infrastructure/cdk/app.py: PlaybookBuilderStack(app, f"PlaybookBuilderStack-{region}", ...)
+# Cross-checked against build-playbooks.sh's own bucket lookup:
+# STACK_NAME="PlaybookBuilderStack-$REGION". Both agree.
 stacks: ["PlaybookBuilderStack-us-west-2"]
 
-# Region the demo deploys to.
+# Pinned, not left to the ambient region. build-playbooks.sh hardcodes
+# MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0" -- a "us."-prefixed cross-region
+# inference profile. If the runner's ambient region isn't a "us-*" region, that Bedrock
+# invoke fails to resolve the profile, which fails deploy_command itself (see above).
+# us-west-2 keeps the deploy region's geography aligned with the hardcoded model prefix.
 region: "us-west-2"
 
-# deterministic: this demo's generation phase depends on Bedrock Claude model access being
-# manually enabled in the account, which CI can't drive. The reliable signal is that the
-# stack (one S3 bucket) deploys and destroys cleanly.
+# Two things make "does it really work" undrivable by a deterministic check alone:
+# (1) the generation phase needs Claude model access manually enabled in Bedrock for the
+#     account -- a one-time external console action CI cannot perform itself; (2) grading
+#     whether the *generated playbooks* are good is a qualitative judgment, not something
+#     a deterministic script can assess. The reliable, driveable signal is that the one
+#     stack (an S3 output bucket) reaches *_COMPLETE on deploy and is confirmed gone on destroy.
 verify: "deterministic"
 
+# Explicit even though it matches the schema default -- it is load-bearing for this demo.
+# infrastructure/cdk/app.py has `from shared.utils import get_region`. On the DEPLOY path
+# this is a non-issue: shared/scripts/deploy-cdk.sh (called by build-playbooks.sh) sets
+# `export PYTHONPATH="$REPO_ROOT"` itself before invoking `cdk deploy`, so deploy_command
+# is self-sufficient. But the DESTROY step above calls `npx cdk destroy` directly, which
+# re-synths app.py (cdk.json: "app": "python3 app.py") with no PYTHONPATH of its own --
+# without this flag, that import fails with `ModuleNotFoundError: No module named 'shared'`
+# and destroy fails even though deploy succeeded.
+pythonpath_repo_root: true
+
 notes: >
-  Deploys one S3 bucket via CDK; build-playbooks.sh then runs discovery + Bedrock generation
-  locally. Needs Claude model access enabled in the account for the generation phase. Zero
+  Deploys one S3 bucket (ir-playbooks-{account}-{region}) via CDK; build-playbooks.sh then
+  runs discovery + Bedrock generation + S3 upload locally under `set -e`, so the whole
+  pipeline (not just the CDK deploy) must succeed for deploy_command to report success.
+  Needs Claude model access enabled in the account's Bedrock console before running. Region
+  is pinned to us-west-2 to match the script's hardcoded "us."-prefixed default model ID;
+  overriding to a non-"us-*" region would additionally require passing --model-id. Zero
   required args.
