@@ -381,6 +381,13 @@ def handle_api_action(action: str, payload: dict) -> dict:
     if action == 'list_services':
         return list_services()
     
+    elif action == 'list_enabled_service_names':
+        # Lightweight name-only listing for the Refresh All state machine's
+        # ResolveServices step (issue #126). Returns just the enabled service
+        # names so the Step Functions state payload stays small compared to
+        # the full list_services configs.
+        return {'services': get_all_enabled_services()}
+    
     elif action == 'list_deprecations':
         filters = payload.get('filters', {})
         return list_deprecations(filters)

@@ -27,8 +27,10 @@ else
     echo -e "\033[0;90m      Placeholder already exists, skipping...\033[0m"
 fi
 
-# Get region for stack names
-region=$(aws configure get region)
+# Get region for stack names. Same precedence as shared/scripts/deploy-cdk.sh
+# (AWS_REGION -> AWS_DEFAULT_REGION -> aws configure get region) so the region
+# encoded in stack names always matches the region stacks are deployed into.
+region="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region)}}"
 
 # Deploy infrastructure stack
 echo -e "\n\033[0;33mDeploying infrastructure stack...\033[0m"
