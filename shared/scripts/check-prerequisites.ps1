@@ -175,7 +175,11 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
     Write-Host "`nChecking $RequiredService availability in $serviceCheckRegion..." -ForegroundColor Yellow
     switch ($RequiredService.ToLower()) {
         "bedrock" {
-            $null = aws bedrock list-foundation-models --region $currentRegion --max-results 1 2>&1
+            # NOTE: `aws bedrock list-foundation-models` does NOT support --max-results;
+            # passing it makes the CLI exit non-zero ("Unknown options"), which this check
+            # would misreport as Bedrock being unavailable in the region. Mirrors the bash
+            # twin, which calls the command without it.
+            $null = aws bedrock list-foundation-models --region $currentRegion 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "      ERROR: Amazon Bedrock is not available in region: $currentRegion" -ForegroundColor Red
                 Write-Host "      https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html" -ForegroundColor Gray
