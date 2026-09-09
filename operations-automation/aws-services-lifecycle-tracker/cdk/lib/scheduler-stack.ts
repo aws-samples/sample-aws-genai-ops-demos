@@ -4,6 +4,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 
 export interface SchedulerStackProps extends cdk.StackProps {
@@ -157,12 +159,41 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
       definitionBody: sfn.DefinitionBody.fromString(JSON.stringify(refreshDefinition)),
     });
 
+    // Completion notifications (#126). The old in-agent SNS summary
+    // (send_extraction_notification) only fired from the monolithic batch
+    // path, which the schedule convergence retires — Map branches use the
+    // single-service path, which never notified. Replace it with a native,
+    // zero-Lambda EventBridge rule on execution completion; as a bonus this
+    // now also notifies for manual batches, which previously never did.
+    new events.Rule(this, 'RefreshAllCompletionRule', {
+      description: 'Notify on Refresh All orchestration completion (#126)',
+      eventPattern: {
+        source: ['aws.states'],
+        detailType: ['Step Functions Execution Status Change'],
+        detail: {
+          status: ['SUCCEEDED', 'FAILED', 'TIMED_OUT'],
+          stateMachineArn: [refreshStateMachine.stateMachineArn],
+        },
+      },
+      targets: [
+        new targets.SnsTopic(this.notificationTopic, {
+          message: events.RuleTargetInput.fromText(
+            `AWS Services Lifecycle Tracker - Refresh All execution ${events.EventField.fromPath('$.detail.status')}\n` +
+            `Execution: ${events.EventField.fromPath('$.detail.executionArn')}\n` +
+            `Summary: ${events.EventField.fromPath('$.detail.output')}`
+          ),
+        }),
+      ],
+    });
+
     // Create IAM role for EventBridge Scheduler to invoke AgentCore
     const schedulerRole = new iam.Role(this, 'SchedulerAgentCoreRole', {
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
       inlinePolicies: {
         InvokeAgentCore: new iam.PolicyDocument({
           statements: [
+            // Health schedule still invokes the runtime directly (single
+            // short call, no fan-out need — spec R5/D6).
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
@@ -173,6 +204,13 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
                 props.agentRuntimeArn,
                 `${props.agentRuntimeArn}/*`
               ]
+            }),
+            // Weekly extraction schedule starts the Refresh All state machine
+            // instead of invoking the runtime monolithically (#126).
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ['states:StartExecution'],
+              resources: [refreshStateMachine.stateMachineArn]
             }),
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
@@ -194,13 +232,15 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
         mode: 'OFF'
       },
       target: {
-        arn: `arn:aws:scheduler:::aws-sdk:bedrockagentcore:invokeAgentRuntime`,
+        // #126: start the Refresh All state machine instead of invoking the
+        // runtime monolithically — the weekly run and the UI's manual
+        // "Refresh All" now share one orchestration path (spec R4/D6),
+        // gaining per-service retries and failure isolation.
+        arn: `arn:aws:scheduler:::aws-sdk:sfn:startExecution`,
         roleArn: schedulerRole.roleArn,
         input: JSON.stringify({
-          AgentRuntimeArn: props.agentRuntimeArn,
-          Payload: JSON.stringify({
-            services: 'all',
-            force_refresh: true,
+          StateMachineArn: refreshStateMachine.stateMachineArn,
+          Input: JSON.stringify({
             refresh_origin: 'Auto'
           })
         }),
