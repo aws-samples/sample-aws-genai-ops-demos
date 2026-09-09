@@ -88,6 +88,33 @@ export class AuthStack extends cdk.Stack {
                         }),
                     ],
                 }),
+                // Refresh All orchestration (#126): the frontend starts and
+                // observes the Step Functions batch directly (same
+                // direct-SDK-call pattern as InvokeAgentRuntime above). ARNs
+                // are derived from the state machine's fixed name so the Auth
+                // stack (deployed before the Scheduler stack) needs no
+                // cross-stack reference.
+                RefreshOrchestrationAccess: new iam.PolicyDocument({
+                    statements: [
+                        new iam.PolicyStatement({
+                            effect: iam.Effect.ALLOW,
+                            actions: [
+                                'states:StartExecution',
+                                'states:ListExecutions',
+                            ],
+                            resources: [
+                                `arn:aws:states:${this.region}:${this.account}:stateMachine:aws-services-lifecycle-refresh-all`,
+                            ],
+                        }),
+                        new iam.PolicyStatement({
+                            effect: iam.Effect.ALLOW,
+                            actions: ['states:DescribeExecution'],
+                            resources: [
+                                `arn:aws:states:${this.region}:${this.account}:execution:aws-services-lifecycle-refresh-all:*`,
+                            ],
+                        }),
+                    ],
+                }),
                 BedrockAgentCoreAccess: new iam.PolicyDocument({
                     statements: [
                         new iam.PolicyStatement({
