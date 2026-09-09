@@ -167,10 +167,12 @@ into your demo folder and edit the values.
 | Key | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `deploy_command` | list | ✅ | — | The demo's own deploy command argv, run from the demo folder (e.g. `["./deploy-all.sh"]`) |
+| `setup_commands` | list of lists | ❌ | — | Command argv(s) run from the demo folder **before** `deploy_command`, to establish prerequisites the deploy path can't be trusted to establish itself (see "Python CDK demos" below) |
 | `destroy_command` | list | ❌ | `["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]` | Teardown command argv |
 | `destroy_subdir` | string | ❌ | `"infrastructure/cdk"` | Subdirectory (under the demo folder) to run the destroy command from |
 | `stacks` | list | ✅ (for deterministic verify) | — | CloudFormation stack name(s) to confirm deployed, then confirm destroyed. Use the region-suffixed stack IDs already required elsewhere in this guide |
 | `region` | string | ❌ | ambient region | Region the demo deploys to |
+| `pythonpath_repo_root` | bool | ❌ | `false` | Set `true` when the CDK `app.py` imports the repo's `shared/` package, so the direct-`cdk destroy` path (which bypasses the shared scripts) can still import `shared` — see "Python CDK demos" below |
 | `verify` | string | ❌ | `"deterministic"` | `"deterministic"` or `"agent"` — see below |
 | `notes` | string | ❌ | — | Gotchas for maintainers (e.g. "needs Bedrock Claude access enabled") |
 
@@ -187,6 +189,49 @@ into your demo folder and edit the values.
 
   > **Note:** `agent` verification is a planned capability. Until it exists, `verify: agent`
   > falls back to the same deterministic deploy/destroy check as above.
+
+### Python CDK demos: declare your own deps (failure-derived)
+
+If a demo deploys via the shared `shared/scripts/deploy-cdk.sh`, add a `setup_commands`
+entry installing the demo's own `infrastructure/cdk/requirements.txt` **before**
+`deploy_command` runs:
+
+```yaml
+setup_commands:
+  - ["pip", "install", "-r", "infrastructure/cdk/requirements.txt"]
+```
+
+This is **not** redundant with the shared script's own install. That script installs the
+Python CDK deps under `set +e` with both attempts silenced:
+
+```bash
+set +e
+pip3 install -r requirements.txt -q 2>/dev/null
+if [ $? -ne 0 ]; then
+    pip3 install -r requirements.txt -q --break-system-packages 2>/dev/null
+fi
+set -e
+...
+echo -e "...OK: Python CDK dependencies installed"
+```
+
+Because both `pip3` attempts pipe stderr to `/dev/null` and the block runs under `set +e`,
+a failed install is invisible and non-fatal — the script prints `OK: Python CDK
+dependencies installed` and proceeds to `cdk deploy` regardless. On a clean runner that
+leaves `aws_cdk` uninstalled, and `cdk deploy` (which synths via `python3 app.py`) then
+fails with `ModuleNotFoundError: No module named 'aws_cdk'`.
+
+This is **failure-derived knowledge**: you cannot infer it by reading the demo, because the
+script reports success even when the install failed. It surfaces only by running the deploy
+on a clean runner. So the dependency must be **declared** in `setup_commands` rather than
+assumed to be handled by the deploy path.
+
+Relatedly, set `pythonpath_repo_root: true` for any demo whose CDK `app.py` imports the
+repo's `shared/` package (e.g. `from shared.utils import get_region`). The deploy path is
+fine — `deploy-cdk.sh` exports `PYTHONPATH="$REPO_ROOT"` before `cdk deploy` — but the
+`destroy` step runs `npx cdk destroy` directly, bypassing the shared scripts, and re-synths
+`app.py` with no `PYTHONPATH`; without the flag that import fails with `ModuleNotFoundError:
+No module named 'shared'` and destroy fails even though deploy succeeded.
 
 ### Example
 
