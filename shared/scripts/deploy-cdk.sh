@@ -92,13 +92,33 @@ if [ -f "requirements.txt" ]; then
     # `cdk deploy` -> `python3 app.py`, which then died with `ModuleNotFoundError: No module
     # named 'aws_cdk'`. That made a broken install look like a success on a clean runner.
     #
-    # First try a normal install; if that fails (e.g. PEP 668 "externally-managed
-    # environment"), retry with --break-system-packages. Only if BOTH fail do we abort --
-    # and we surface the second attempt's stderr so the real error is visible.
+    # Try a normal install. If it fails, we do NOT silently force it through.
+    #
+    # A common failure is PEP 668 ("externally-managed-environment"): the OS marks the
+    # system Python as owned by its package manager and pip refuses to install into it.
+    # The old code auto-retried with --break-system-packages, which overrides that guard
+    # and mutates the user's SYSTEM Python -- a surprising, out-of-scope, and on some
+    # distros genuinely damaging side effect for a customer just trying the demo. The
+    # safe default is to STOP and tell the user to use a virtual environment (which is
+    # exactly what PEP 668 is steering them toward). The --break-system-packages bypass
+    # remains available ONLY when the user explicitly opts in via the env var below --
+    # intended for throwaway/ephemeral environments such as CI runners.
     if ! pip3 install -r requirements.txt -q; then
-        echo -e "\033[0;33m      First pip install failed; retrying with --break-system-packages...\033[0m"
-        if ! pip3 install -r requirements.txt -q --break-system-packages; then
-            echo -e "\033[0;31m      ERROR: Failed to install Python CDK dependencies (requirements.txt)\033[0m"
+        if [ "${DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES:-}" = "1" ]; then
+            echo -e "\033[0;33m      Normal pip install failed; DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES=1 set,\033[0m"
+            echo -e "\033[0;33m      retrying with --break-system-packages (mutates the system Python)...\033[0m"
+            if ! pip3 install -r requirements.txt -q --break-system-packages; then
+                echo -e "\033[0;31m      ERROR: Failed to install Python CDK dependencies (requirements.txt)\033[0m"
+                exit 1
+            fi
+        else
+            echo -e "\033[0;31m      ERROR: Failed to install Python CDK dependencies (requirements.txt).\033[0m"
+            echo -e "\033[0;33m      If this is an 'externally-managed-environment' (PEP 668) error, do NOT force it\033[0m"
+            echo -e "\033[0;33m      into your system Python. Create and activate a virtual environment first:\033[0m"
+            echo -e "\033[0;90m          python3 -m venv .venv && source .venv/bin/activate\033[0m"
+            echo -e "\033[0;90m      then re-run this command. On a throwaway/ephemeral host (e.g. a CI runner)\033[0m"
+            echo -e "\033[0;90m      where mutating the system Python is acceptable, you may instead re-run with:\033[0m"
+            echo -e "\033[0;90m          DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES=1\033[0m"
             exit 1
         fi
     fi
