@@ -92,6 +92,20 @@ if [ -f "requirements.txt" ]; then
     # `cdk deploy` -> `python3 app.py`, which then died with `ModuleNotFoundError: No module
     # named 'aws_cdk'`. That made a broken install look like a success on a clean runner.
     #
+    # CRITICAL: pin ONE interpreter for install, verification, AND synthesis.
+    # `cdk.json` runs the app as `python3 app.py`, and `npx cdk` may resolve `python3` to a
+    # DIFFERENT interpreter than a bare `pip3`/`python3` in this shell (very common with
+    # pyenv shims or multiple python3 installs). If we `pip3 install` into interpreter A but
+    # cdk synthesizes with interpreter B, the deps are invisible and synth dies with
+    # ModuleNotFoundError even though install "succeeded". So we resolve $PY once here and use
+    # it for install (`$PY -m pip`), verification (`$PY -c import aws_cdk`), AND the CDK app
+    # override below (`--app "$PY app.py"`), guaranteeing all three are the same interpreter.
+    PY="$(command -v python3 || true)"
+    if [ -z "$PY" ]; then
+        echo -e "\033[0;31m      ERROR: python3 not found on PATH; cannot install/synthesize the Python CDK app\033[0m"
+        exit 1
+    fi
+
     # Try a normal install. If it fails, we do NOT silently force it through.
     #
     # A common failure is PEP 668 ("externally-managed-environment"): the OS marks the
@@ -103,11 +117,11 @@ if [ -f "requirements.txt" ]; then
     # exactly what PEP 668 is steering them toward). The --break-system-packages bypass
     # remains available ONLY when the user explicitly opts in via the env var below --
     # intended for throwaway/ephemeral environments such as CI runners.
-    if ! pip3 install -r requirements.txt -q; then
+    if ! "$PY" -m pip install -r requirements.txt -q; then
         if [ "${DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES:-}" = "1" ]; then
             echo -e "\033[0;33m      Normal pip install failed; DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES=1 set,\033[0m"
             echo -e "\033[0;33m      retrying with --break-system-packages (mutates the system Python)...\033[0m"
-            if ! pip3 install -r requirements.txt -q --break-system-packages; then
+            if ! "$PY" -m pip install -r requirements.txt -q --break-system-packages; then
                 echo -e "\033[0;31m      ERROR: Failed to install Python CDK dependencies (requirements.txt)\033[0m"
                 exit 1
             fi
@@ -122,19 +136,21 @@ if [ -f "requirements.txt" ]; then
             exit 1
         fi
     fi
-    # Verify the CDK library is actually importable by the same interpreter that will synth
-    # the app (cdk.json runs `python3 app.py`). A green pip does not guarantee this if pip and
-    # python3 resolve to different environments, so check the real precondition, not a proxy.
-    if ! python3 -c "import aws_cdk" 2>/dev/null; then
-        echo -e "\033[0;31m      ERROR: 'aws_cdk' is not importable by python3 after installing requirements.txt.\033[0m"
-        echo -e "\033[0;31m             pip3 and python3 may resolve to different environments.\033[0m"
-        echo -e "\033[0;90m             pip3:    $(command -v pip3)\033[0m"
-        echo -e "\033[0;90m             python3: $(command -v python3)\033[0m"
+    # Verify the CDK library is importable by the EXACT interpreter that will synth the app
+    # ($PY, which we also pin into --app below). A green pip does not guarantee this if pip
+    # and the synth interpreter differ, so check the real precondition against $PY itself.
+    if ! "$PY" -c "import aws_cdk" 2>/dev/null; then
+        echo -e "\033[0;31m      ERROR: 'aws_cdk' is not importable by the interpreter that will synth the app.\033[0m"
+        echo -e "\033[0;90m             interpreter: $PY\033[0m"
+        echo -e "\033[0;90m             This usually means pip installed into a different python than \$PY.\033[0m"
+        echo -e "\033[0;90m             Use a virtual environment so pip and python3 are the same interpreter.\033[0m"
         exit 1
     fi
-    # Override CDK app command to use python3 (some systems only have python3, not python)
-    CDK_APP_OVERRIDE="--app 'python3 app.py'"
-    echo -e "\033[0;32m      OK: Python CDK dependencies installed\033[0m"
+    # Pin the CDK app command to the SAME interpreter we installed into and verified above,
+    # by absolute path -- not a bare `python3`, which npx cdk could re-resolve to a different
+    # interpreter that lacks the deps (the root cause of the ModuleNotFoundError-after-OK bug).
+    CDK_APP_OVERRIDE="--app '$PY app.py'"
+    echo -e "\033[0;32m      OK: Python CDK dependencies installed (interpreter: $PY)\033[0m"
 elif [ -f "package.json" ]; then
     # TypeScript/JavaScript CDK project.
     # Install when node_modules is missing OR incomplete. A previous interrupted
