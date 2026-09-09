@@ -227,9 +227,29 @@ import boto3
 import os
 from decimal import Decimal
 
+# Runtime/state fields are OWNED BY THE AGENT and must never be written by the
+# deploy-time populator (issue #116): a full-item put_item here used to wipe
+# extraction history on every deploy, making services show as "Never extracted".
+RUNTIME_FIELDS = {
+    'extraction_count',
+    'last_extraction',
+    'success_rate',
+    'last_refresh_origin',
+    'last_extraction_duration',
+}
+
+# Fields seeded only when absent, so user changes (e.g. disabling a service in
+# the UI) survive redeploys.
+SEED_ONLY_FIELDS = {'enabled'}
+
 def handler(event, context):
-    """Populate DynamoDB with service configurations"""
-    
+    """Seed/refresh static service configuration WITHOUT touching runtime state.
+
+    Static, repo-owned fields (documentation_urls, extraction_focus, ...) are
+    updated on every deploy so config changes propagate. Agent-owned runtime
+    fields are never written. update_item upserts, so new services are created.
+    """
+
     request_type = event['RequestType']
     
     # Only populate on Create and Update
@@ -253,12 +273,33 @@ def handler(event, context):
         print(f"Populating {len(services_config)} service configurations...")
         
         for service_name, config in services_config.items():
-            # Add service_name (required for DynamoDB key)
-            config['service_name'] = service_name
+            update_parts = []
+            expr_names = {}
+            expr_values = {}
+            for key, value in config.items():
+                if key == 'service_name' or key in RUNTIME_FIELDS:
+                    continue
+                # Placeholders are mandatory: field names like 'name' are
+                # DynamoDB reserved words.
+                name_ph = f'#f{len(expr_names)}'
+                value_ph = f':v{len(expr_values)}'
+                expr_names[name_ph] = key
+                expr_values[value_ph] = value
+                if key in SEED_ONLY_FIELDS:
+                    update_parts.append(f'{name_ph} = if_not_exists({name_ph}, {value_ph})')
+                else:
+                    update_parts.append(f'{name_ph} = {value_ph}')
             
-            # Put item in DynamoDB
-            config_table.put_item(Item=config)
-            print(f"✅ {config.get('name', service_name)}: Configuration saved")
+            if not update_parts:
+                continue
+            
+            config_table.update_item(
+                Key={'service_name': service_name},
+                UpdateExpression='SET ' + ', '.join(update_parts),
+                ExpressionAttributeNames=expr_names,
+                ExpressionAttributeValues=expr_values,
+            )
+            print(f"✅ {config.get('name', service_name)}: Configuration saved (runtime state preserved)")
         
         return {
             'PhysicalResourceId': 'ServiceConfigPopulator',
@@ -291,7 +332,9 @@ def handler(event, context):
       properties: {
         ServiceConfigs: JSON.stringify(serviceConfigs.services),
         TableName: this.configTable.tableName,
-        // Add timestamp to force update on every deployment
+        // Force the populator to run on every deployment. This is SAFE (and
+        // desirable) because the populator only writes static, repo-owned
+        // config fields and never touches agent-owned runtime state (#116).
         Timestamp: Date.now().toString(),
       },
     });
