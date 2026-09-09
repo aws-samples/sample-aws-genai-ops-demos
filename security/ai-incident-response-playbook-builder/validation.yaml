@@ -1,0 +1,29 @@
+# validation.yaml — tells the demo-cdk-validation workflow how to deploy, verify, and tear
+# down this demo. See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)")
+# for the full schema.
+
+# The demo's OWN deploy command (argv), run from the demo folder.
+deploy_command: ["./build-playbooks.sh"]
+
+# Teardown command (argv), run from destroy_subdir (below).
+destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+
+# Subdir under the demo folder to run destroy from.
+destroy_subdir: "infrastructure/cdk"
+
+# CloudFormation stack to confirm deployed and later confirm destroyed.
+# Matches infrastructure/cdk/app.py: PlaybookBuilderStack-{region}.
+stacks: ["PlaybookBuilderStack-us-west-2"]
+
+# Region the demo deploys to.
+region: "us-west-2"
+
+# deterministic: this demo's generation phase depends on Bedrock Claude model access being
+# manually enabled in the account, which CI can't drive. The reliable signal is that the
+# stack (one S3 bucket) deploys and destroys cleanly.
+verify: "deterministic"
+
+notes: >
+  Deploys one S3 bucket via CDK; build-playbooks.sh then runs discovery + Bedrock generation
+  locally. Needs Claude model access enabled in the account for the generation phase. Zero
+  required args.

@@ -148,6 +148,68 @@ The CI workflow will flag PRs using `.no-deploy` with a `deploy-exempt` label fo
 
 ---
 
+## Demo Validation (`validation.yaml`)
+
+Every deployable demo SHOULD ship a `validation.yaml` at its **demo root**. This file
+teaches the internal demo-validation system how to deploy, verify, and destroy the demo
+in a test AWS account. Demos exempted via `.no-deploy` do not need one.
+
+**How it's used:** a maintainer manually triggers the `demo-cdk-validation.yml` GitHub
+Actions workflow with a demo's folder path. The workflow runs on GitHub-hosted runners
+using OIDC, reads that demo's `validation.yaml`, and drives an end-to-end
+**deploy → verify → destroy** cycle against a test AWS account.
+
+A starter template is available at `shared/templates/validation.yaml.example` — copy it
+into your demo folder and edit the values.
+
+### Schema
+
+| Key | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `deploy_command` | list | ✅ | — | The demo's own deploy command argv, run from the demo folder (e.g. `["./deploy-all.sh"]`) |
+| `destroy_command` | list | ❌ | `["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]` | Teardown command argv |
+| `destroy_subdir` | string | ❌ | `"infrastructure/cdk"` | Subdirectory (under the demo folder) to run the destroy command from |
+| `stacks` | list | ✅ (for deterministic verify) | — | CloudFormation stack name(s) to confirm deployed, then confirm destroyed. Use the region-suffixed stack IDs already required elsewhere in this guide |
+| `region` | string | ❌ | ambient region | Region the demo deploys to |
+| `verify` | string | ❌ | `"deterministic"` | `"deterministic"` or `"agent"` — see below |
+| `notes` | string | ❌ | — | Gotchas for maintainers (e.g. "needs Bedrock Claude access enabled") |
+
+### Choosing a `verify` mode
+
+- **`deterministic`** — use when whether the demo "really works" depends on something
+  CI cannot drive itself (a manually enabled Bedrock model, a Slack webhook, DevOps Agent
+  registration, AWS Transform). The only reliable signal here is that the demo **deployed
+  and destroyed cleanly** — the stack(s) in `stacks` reach `CREATE_COMPLETE` and are later
+  confirmed gone.
+- **`agent`** — use for self-contained demos where functional success is checkable, but
+  too demo-specific to hardcode into the validation system. An agent reads the demo's
+  README and performs functional checks beyond "did the stack deploy."
+
+  > **Note:** `agent` verification is a planned capability. Until it exists, `verify: agent`
+  > falls back to the same deterministic deploy/destroy check as above.
+
+### Example
+
+`security/ai-incident-response-playbook-builder/validation.yaml`:
+
+```yaml
+deploy_command: ["./build-playbooks.sh"]
+stacks:
+  - "PlaybookBuilderStack-<region>"
+verify: deterministic
+notes: "Needs Bedrock Claude model access enabled in the test account before running."
+```
+
+### Teardown is first-class
+
+Cleanup is not optional. A demo that deploys successfully but **cannot be cleanly
+destroyed is treated as a failed validation** — not a partial pass. Before shipping a
+`validation.yaml`, confirm that `cdk destroy` (or your custom `destroy_command`) actually
+removes every resource the deploy created. A demo that leaves orphaned resources behind
+fails validation even if the deploy itself succeeded.
+
+---
+
 ## Implementation Patterns
 
 ### Region Detection
