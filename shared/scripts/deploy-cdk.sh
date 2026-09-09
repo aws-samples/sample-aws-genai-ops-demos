@@ -46,9 +46,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export PYTHONPATH="$REPO_ROOT"
 
-# Get AWS account and region
+# Get AWS account and region.
+# Resolve region with the same priority the rest of the repo uses (AWS_REGION /
+# AWS_DEFAULT_REGION env vars win over the CLI's configured region). A caller that
+# exports AWS_REGION to target a specific region -- e.g. build-playbooks.sh, which
+# resolves the region itself and invokes Bedrock there -- would otherwise be silently
+# overridden by whatever `aws configure get region` returns, deploying the stack to the
+# wrong region and breaking the caller's subsequent region-suffixed stack lookup.
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-CURRENT_REGION=$(aws configure get region)
+CURRENT_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+if [ -z "$CURRENT_REGION" ]; then
+    CURRENT_REGION=$(aws configure get region)
+fi
 
 if [ -z "$CURRENT_REGION" ]; then
     echo -e "\033[0;31m❌ No AWS region configured\033[0m"
@@ -77,13 +86,32 @@ echo -e "\033[0;33mInstalling CDK dependencies...\033[0m"
 CDK_APP_OVERRIDE=""
 
 if [ -f "requirements.txt" ]; then
-    # Python CDK project - install deps directly (--break-system-packages for PEP 668 environments)
-    set +e
-    pip3 install -r requirements.txt -q 2>/dev/null
-    if [ $? -ne 0 ]; then
-        pip3 install -r requirements.txt -q --break-system-packages 2>/dev/null
+    # Python CDK project. Install deps and FAIL LOUDLY if the install does not succeed.
+    # Previously both attempts were silenced (2>/dev/null) under `set +e` and the exit code
+    # was never checked, so a failed install still printed "OK" and the script proceeded to
+    # `cdk deploy` -> `python3 app.py`, which then died with `ModuleNotFoundError: No module
+    # named 'aws_cdk'`. That made a broken install look like a success on a clean runner.
+    #
+    # First try a normal install; if that fails (e.g. PEP 668 "externally-managed
+    # environment"), retry with --break-system-packages. Only if BOTH fail do we abort --
+    # and we surface the second attempt's stderr so the real error is visible.
+    if ! pip3 install -r requirements.txt -q; then
+        echo -e "\033[0;33m      First pip install failed; retrying with --break-system-packages...\033[0m"
+        if ! pip3 install -r requirements.txt -q --break-system-packages; then
+            echo -e "\033[0;31m      ERROR: Failed to install Python CDK dependencies (requirements.txt)\033[0m"
+            exit 1
+        fi
     fi
-    set -e
+    # Verify the CDK library is actually importable by the same interpreter that will synth
+    # the app (cdk.json runs `python3 app.py`). A green pip does not guarantee this if pip and
+    # python3 resolve to different environments, so check the real precondition, not a proxy.
+    if ! python3 -c "import aws_cdk" 2>/dev/null; then
+        echo -e "\033[0;31m      ERROR: 'aws_cdk' is not importable by python3 after installing requirements.txt.\033[0m"
+        echo -e "\033[0;31m             pip3 and python3 may resolve to different environments.\033[0m"
+        echo -e "\033[0;90m             pip3:    $(command -v pip3)\033[0m"
+        echo -e "\033[0;90m             python3: $(command -v python3)\033[0m"
+        exit 1
+    fi
     # Override CDK app command to use python3 (some systems only have python3, not python)
     CDK_APP_OVERRIDE="--app 'python3 app.py'"
     echo -e "\033[0;32m      OK: Python CDK dependencies installed\033[0m"
