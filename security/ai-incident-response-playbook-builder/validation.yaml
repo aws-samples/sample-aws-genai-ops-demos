@@ -10,6 +10,24 @@
 # Bedrock call fails deploy_command itself, independent of the verify step below.
 deploy_command: ["./build-playbooks.sh"]
 
+# Install this demo's OWN CDK deps explicitly and loudly BEFORE deploy_command runs.
+# This is NOT redundant with the shared shared/scripts/deploy-cdk.sh (which build-playbooks.sh
+# calls): that script's Python install is silent and non-fatal. It runs, under `set +e`:
+#     pip3 install -r requirements.txt -q 2>/dev/null
+#     if [ $? -ne 0 ]; then
+#         pip3 install -r requirements.txt -q --break-system-packages 2>/dev/null
+#     fi
+#     set -e
+#     ...
+#     echo -e "...OK: Python CDK dependencies installed"
+# Both pip attempts pipe stderr to /dev/null and the block is under `set +e`, so a failed
+# install is invisible and non-fatal -- the script prints "OK" and proceeds to `cdk deploy`
+# anyway. On a clean runner that leaves aws_cdk uninstalled and `cdk deploy` (which synths via
+# `python3 app.py`) then dies with `ModuleNotFoundError: No module named 'aws_cdk'`. Declaring
+# the install here guarantees aws_cdk is importable regardless of the shared script's outcome.
+setup_commands:
+  - ["pip", "install", "-r", "infrastructure/cdk/requirements.txt"]
+
 # Runs `npx cdk destroy` directly, bypassing build-playbooks.sh and shared/scripts/deploy-cdk.sh
 # entirely -- see pythonpath_repo_root below for why that matters here.
 destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
