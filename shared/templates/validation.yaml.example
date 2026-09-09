@@ -1,0 +1,45 @@
+# Example validation.yaml — a demo ships this in its OWN folder in the public demos repo, e.g.
+#   security/ai-incident-response-playbook-builder/validation.yaml
+#
+# The demo-validation workflow reads <demo-path>/validation.yaml to learn how to deploy, verify,
+# and tear the demo down. Keeping it in the demo's folder means the validation contract lives
+# with the demo (author sets it at contribution time), scales to every demo without a central
+# list, and lets a maintainer validate any demo just by pointing the workflow at its path.
+#
+# To use: copy this file to <your-demo>/validation.yaml and edit the values. See
+# .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)") for the full schema.
+#
+# This example matches the reference demo (ai-incident-response-playbook-builder).
+
+# The demo's OWN deploy command (argv), run from the demo folder. REQUIRED.
+# We drive the demo's script rather than re-implementing its deployment.
+deploy_command: ["./build-playbooks.sh"]
+
+# Teardown command (argv), run from destroy_subdir (below).
+# Default if omitted: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+
+# Subdir under the demo folder to run destroy from. Default: "infrastructure/cdk".
+destroy_subdir: "infrastructure/cdk"
+
+# CloudFormation stack name(s) to confirm deployed (verify) and confirm gone (destroy).
+# REQUIRED for the deterministic verify strategy. Use the region-suffixed stack ID your
+# CDK app already produces (see contributor-guide.md "CDK Stack Naming").
+stacks: ["PlaybookBuilderStack-us-west-2"]
+
+# Region the demo deploys to. Default: the workflow's default region (us-west-2).
+region: "us-west-2"
+
+# Verify strategy:
+#   deterministic (default) — check the stack(s) reached *_COMPLETE. Use this when the demo's
+#     "does it really work" depends on external things CI can't drive (e.g. a manually-enabled
+#     Bedrock model, a Slack webhook, DevOps Agent registration).
+#   agent — hand off to the backend verification agent for functional checks (Phase 2; falls
+#     back to deterministic until that exists).
+verify: "deterministic"
+
+# Freeform notes / gotchas for maintainers.
+notes: >
+  Deploys one S3 bucket via CDK; build-playbooks.sh then runs discovery + Bedrock generation
+  locally. Needs Claude model access enabled in the account for the generation phase. Zero
+  required args.

@@ -159,6 +159,9 @@ Actions workflow with a demo's folder path. The workflow runs on GitHub-hosted r
 using OIDC, reads that demo's `validation.yaml`, and drives an end-to-end
 **deploy → verify → destroy** cycle against a test AWS account.
 
+A starter template is available at `shared/templates/validation.yaml.example` — copy it
+into your demo folder and edit the values.
+
 ### Schema
 
 | Key | Type | Required | Default | Description |
