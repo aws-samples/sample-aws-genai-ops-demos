@@ -3,6 +3,7 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import { Construct } from 'constructs';
 
 export interface SchedulerStackProps extends cdk.StackProps {
@@ -27,6 +28,133 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
     this.notificationTopic = new sns.Topic(this, 'ExtractionNotifications', {
       topicName: 'aws-services-lifecycle-notifications',
       displayName: 'AWS Services Lifecycle Extraction Notifications'
+    });
+
+    // ------------------------------------------------------------------
+    // Refresh All orchestration (issue #126)
+    //
+    // A Standard state machine fans out per-service extractions against the
+    // AgentCore runtime (plain aws-sdk InvokeAgentRuntime integration — the
+    // demo's agent is a custom runtime, not the managed harness). The fixed
+    // name lets the Auth stack grant user-role IAM and the frontend receive
+    // the ARN without cross-stack references (spec D2).
+    // ------------------------------------------------------------------
+    const stateMachineName = 'aws-services-lifecycle-refresh-all';
+    const invokeAgentResource = 'arn:aws:states:::aws-sdk:bedrockagentcore:invokeAgentRuntime';
+
+    // Role assumed by the state machine to invoke the agent runtime per service
+    const refreshStateMachineRole = new iam.Role(this, 'RefreshAllStateMachineRole', {
+      assumedBy: new iam.ServicePrincipal('states.amazonaws.com'),
+      inlinePolicies: {
+        InvokeAgentCore: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+              resources: [props.agentRuntimeArn, `${props.agentRuntimeArn}/*`],
+            }),
+          ],
+        }),
+      },
+    });
+
+    // ASL definition (JSONata query language). Execution input:
+    //   { "refresh_origin": "manual" | "Auto", "services"?: ["glue", ...] }
+    // A provided services list wins (subset/single-service runs); otherwise
+    // the agent's list_enabled_service_names action supplies all enabled ones.
+    const refreshDefinition = {
+      Comment:
+        'Refresh All orchestration: fan out per-service lifecycle extractions against the AgentCore runtime (#126)',
+      QueryLanguage: 'JSONata',
+      StartAt: 'CheckProvidedServices',
+      States: {
+        CheckProvidedServices: {
+          Type: 'Choice',
+          Choices: [
+            {
+              Condition: '{% $exists($states.input.services) and $count($states.input.services) > 0 %}',
+              Next: 'UseProvidedServices',
+            },
+          ],
+          Default: 'ListEnabledServices',
+        },
+        UseProvidedServices: {
+          Type: 'Pass',
+          Output:
+            "{% {'services': $states.input.services, 'refresh_origin': $exists($states.input.refresh_origin) ? $states.input.refresh_origin : 'manual'} %}",
+          Next: 'RunExtractions',
+        },
+        ListEnabledServices: {
+          Type: 'Task',
+          Resource: invokeAgentResource,
+          Arguments: {
+            AgentRuntimeArn: props.agentRuntimeArn,
+            ContentType: 'application/json',
+            Accept: 'application/json',
+            Payload: '{"action": "list_enabled_service_names"}',
+          },
+          Retry: [{ ErrorEquals: ['States.ALL'], IntervalSeconds: 5, MaxAttempts: 2, BackoffRate: 2 }],
+          Output:
+            "{% {'services': $parse($states.result.Response).services, 'refresh_origin': $exists($states.input.refresh_origin) ? $states.input.refresh_origin : 'manual'} %}",
+          Next: 'RunExtractions',
+        },
+        RunExtractions: {
+          Type: 'Map',
+          Items: '{% $states.input.services %}',
+          MaxConcurrency: 5,
+          ItemSelector: {
+            service: '{% $states.context.Map.Item.Value %}',
+            origin: '{% $states.input.refresh_origin %}',
+          },
+          ItemProcessor: {
+            ProcessorConfig: { Mode: 'INLINE' },
+            StartAt: 'ExtractService',
+            States: {
+              ExtractService: {
+                Type: 'Task',
+                Resource: invokeAgentResource,
+                Arguments: {
+                  AgentRuntimeArn: props.agentRuntimeArn,
+                  ContentType: 'application/json',
+                  Accept: 'application/json',
+                  Payload:
+                    "{% $string({'service_name': $states.input.service, 'force_refresh': true, 'refresh_origin': $states.input.origin}) %}",
+                },
+                // Retries cover transport/service errors only; an extraction
+                // that returns success:false is reported, not retried (a
+                // failing docs page will not succeed on immediate retry).
+                Retry: [{ ErrorEquals: ['States.ALL'], IntervalSeconds: 10, MaxAttempts: 2, BackoffRate: 2 }],
+                Catch: [
+                  {
+                    ErrorEquals: ['States.ALL'],
+                    Output:
+                      "{% {'service': $states.input.service, 'status': 'failed', 'error': $states.errorOutput.Error} %}",
+                    Next: 'MarkFailed',
+                  },
+                ],
+                Output:
+                  "{% {'service': $states.input.service, 'status': ($parse($states.result.Response).success = true) ? 'succeeded' : 'failed'} %}",
+                End: true,
+              },
+              MarkFailed: { Type: 'Pass', End: true },
+            },
+          },
+          Output: "{% {'results': $states.result, 'refresh_origin': $states.input.refresh_origin} %}",
+          Next: 'Summarize',
+        },
+        Summarize: {
+          Type: 'Pass',
+          Output:
+            "{% {'refresh_origin': $states.input.refresh_origin, 'total': $count($states.input.results), 'succeeded': $count($filter($states.input.results, function($r) { $r.status = 'succeeded' })), 'failed': [$filter($states.input.results, function($r) { $r.status != 'succeeded' }).service]} %}",
+          End: true,
+        },
+      },
+    };
+
+    const refreshStateMachine = new sfn.StateMachine(this, 'RefreshAllStateMachine', {
+      stateMachineName,
+      role: refreshStateMachineRole,
+      definitionBody: sfn.DefinitionBody.fromString(JSON.stringify(refreshDefinition)),
     });
 
     // Create IAM role for EventBridge Scheduler to invoke AgentCore
@@ -144,6 +272,12 @@ export class AWSServicesLifecycleTrackerScheduler extends cdk.Stack {
     new cdk.CfnOutput(this, 'HealthScheduleName', {
       value: healthSchedule.name!,
       description: 'EventBridge Scheduler name for Health events collection (every 5 minutes)'
+    });
+
+    new cdk.CfnOutput(this, 'StateMachineArn', {
+      value: refreshStateMachine.stateMachineArn,
+      description: 'Step Functions state machine orchestrating Refresh All extractions (#126)',
+      exportName: 'AWSServicesLifecycleTrackerRefreshStateMachineArn'
     });
   }
 }
