@@ -130,8 +130,8 @@ cd security/ai-incident-response-playbook-builder
 # Generate playbooks for your current AWS account
 ./build-playbooks.sh
 
-# Specify output format and model
-./build-playbooks.sh --output-format both --model-id us.anthropic.claude-sonnet-4-20250514-v1:0
+# Override the model (optional; omit to use the region-correct non-legacy default)
+./build-playbooks.sh --output-format both --model-id us.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # Include organization context (escalation contacts, Slack channels, etc.)
 ./build-playbooks.sh --org-context org-context.json
@@ -145,8 +145,8 @@ cd security\ai-incident-response-playbook-builder
 # Generate playbooks for your current AWS account
 .\build-playbooks.ps1
 
-# Specify output format and model
-.\build-playbooks.ps1 -OutputFormat Both -ModelId "us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Override the model (optional; omit to use the region-correct non-legacy default)
+.\build-playbooks.ps1 -OutputFormat Both -ModelId "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 # Include organization context
 .\build-playbooks.ps1 -OrgContext org-context.json
@@ -164,7 +164,7 @@ The script automatically:
 | Parameter | PowerShell | Bash | Default | Description |
 |---|---|---|---|---|
 | Output format | `-OutputFormat` | `--output-format` | `both` | `ssm`, `markdown`, or `both` |
-| Model ID | `-ModelId` | `--model-id` | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Bedrock model to use |
+| Model ID | `-ModelId` | `--model-id` | Region-correct non-legacy Sonnet, resolved via the shared `get_bedrock_model_id()` helper | Bedrock model to use; pass a value to override |
 | Region | `-Region` | `--region` | Current configured region | AWS region to scan |
 | Org context | `-OrgContext` | `--org-context` | None | Path to JSON with org-specific details |
 | Output dir | `-OutputDir` | `--output-dir` | `./output` | Where to write generated files |

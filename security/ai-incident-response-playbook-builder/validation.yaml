@@ -3,7 +3,8 @@
 
 # The demo's own deploy command, run zero-arg exactly as the README's Quick Start shows.
 # build-playbooks.sh's argument parser has no required flag -- every variable defaults
-# (OUTPUT_FORMAT="both", MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0", REGION=""
+# (OUTPUT_FORMAT="both", MODEL_ID="" [no model hardcoded; generator.py resolves a
+# region-correct, non-legacy default via the shared get_bedrock_model_id() helper], REGION=""
 # [resolved dynamically], OUTPUT_DIR="./output", SKIP_SETUP=false) -- so the bare command is
 # valid. Note this runs the FULL pipeline under `set -e` (CDK deploy -> discovery ->
 # Bedrock generation -> output assembly -> S3 upload), not just the CDK deploy -- a failed
@@ -38,11 +39,14 @@ destroy_subdir: "infrastructure/cdk"
 # STACK_NAME="PlaybookBuilderStack-$REGION". Both agree.
 stacks: ["PlaybookBuilderStack-us-west-2"]
 
-# Pinned, not left to the ambient region. build-playbooks.sh hardcodes
-# MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0" -- a "us."-prefixed cross-region
-# inference profile. If the runner's ambient region isn't a "us-*" region, that Bedrock
-# invoke fails to resolve the profile, which fails deploy_command itself (see above).
-# us-west-2 keeps the deploy region's geography aligned with the hardcoded model prefix.
+# Pinned, not left to the ambient region. The demo no longer hardcodes a model id; instead
+# generator.py resolves the default via the shared get_bedrock_model_id() helper, which
+# applies the CRIS prefix for the deploy region (us-* -> "us.", eu-* -> "eu.", ap-* ->
+# "apac.", else "global."). Pinning still matters for two reasons: (1) the resolved profile
+# and the FMs it fans out to must actually be enabled in the account, and Claude access is
+# enabled here in us-west-2 (see notes); (2) a fixed region keeps the `stacks` name below
+# (PlaybookBuilderStack-us-west-2) deterministic. us-west-2 yields the verified
+# "us.anthropic.claude-sonnet-4-5-20250929-v1:0" profile.
 region: "us-west-2"
 
 # Two things make "does it really work" undrivable by a deterministic check alone:
@@ -68,6 +72,7 @@ notes: >
   runs discovery + Bedrock generation + S3 upload locally under `set -e`, so the whole
   pipeline (not just the CDK deploy) must succeed for deploy_command to report success.
   Needs Claude model access enabled in the account's Bedrock console before running. Region
-  is pinned to us-west-2 to match the script's hardcoded "us."-prefixed default model ID;
-  overriding to a non-"us-*" region would additionally require passing --model-id. Zero
-  required args.
+  is pinned to us-west-2 so the shared get_bedrock_model_id() helper resolves the
+  "us."-prefixed CRIS profile (us.anthropic.claude-sonnet-4-5-20250929-v1:0) and so the
+  stack name stays deterministic; the helper adapts the prefix to any region, so no
+  --model-id override is needed to change regions. Zero required args.
