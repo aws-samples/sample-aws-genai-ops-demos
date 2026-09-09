@@ -240,7 +240,8 @@ export const triggerExtraction = async (serviceNames: string | string[]): Promis
 export interface RefreshSummary {
   total: number;
   succeeded: number;
-  failed: Array<{ service: string; error?: string }>;
+  // Service names that failed (the Summarize state projects failures to names)
+  failed: string[];
 }
 
 export interface RefreshExecutionStatus {

@@ -116,7 +116,7 @@ export default function Dashboard() {
             dismissible: true,
             dismissLabel: 'Dismiss',
             onDismiss: () => setFlashbarItems([]),
-            content: `Refresh finished: ${summary.succeeded}/${summary.total} services succeeded. Failed: ${summary.failed.map(f => f.service).join(', ')}`,
+            content: `Refresh finished: ${summary.succeeded}/${summary.total} services succeeded. Failed: ${summary.failed.join(', ')}`,
             id: `refresh-partial-${Date.now()}`
           }]);
         } else {
