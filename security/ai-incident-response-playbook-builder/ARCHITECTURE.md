@@ -92,7 +92,11 @@ User:   [Architecture Profile JSON]
 ```
 
 **Model Configuration**:
-- Default: `anthropic.claude-3-5-sonnet-20241022-v2:0`
+- Default: region-correct, non-legacy Sonnet resolved at runtime via the shared
+  `get_bedrock_model_id()` helper (base id `anthropic.claude-sonnet-4-5-20250929-v1:0`,
+  e.g. `us.anthropic.claude-sonnet-4-5-20250929-v1:0` in a `us-*` region). No model id is
+  hardcoded — the helper applies the correct cross-region-inference prefix per region, so a
+  pinned id can never silently become Legacy. Override with `--model-id` / `-ModelId`.
 - Max tokens: 4096 per playbook
 - Temperature: 0.2 (low creativity, high consistency)
 

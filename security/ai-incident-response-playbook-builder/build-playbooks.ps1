@@ -12,7 +12,8 @@
     Output format: ssm, markdown, or both (default: both)
 
 .PARAMETER ModelId
-    Bedrock model ID (default: anthropic.claude-3-5-sonnet-20241022-v2:0)
+    Bedrock model ID. Omit to use the region-correct, non-legacy default resolved by
+    generator.py via the shared get_bedrock_model_id() helper.
 
 .PARAMETER Region
     AWS region to scan (default: current configured region)
@@ -40,7 +41,11 @@
 param(
     [ValidateSet("ssm", "markdown", "both")]
     [string]$OutputFormat = "both",
-    [string]$ModelId = "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    # Empty by default on purpose: DO NOT hardcode a model id here. When empty, generator.py
+    # resolves a region-correct, non-legacy default via the shared get_bedrock_model_id()
+    # helper. A pinned id eventually goes Legacy and Bedrock blocks new/inactive accounts
+    # from invoking it. -ModelId still overrides for callers who want a specific model.
+    [string]$ModelId = "",
     [string]$Region = "",
     [string]$OrgContext = "",
     [string]$OutputDir = "./output",
@@ -142,7 +147,11 @@ Write-Host ""
 Write-Host "Configuration:" -ForegroundColor Yellow
 Write-Host "  Account:       $accountId" -ForegroundColor Gray
 Write-Host "  Region:        $Region" -ForegroundColor Gray
-Write-Host "  Model:         $ModelId" -ForegroundColor Gray
+if (-not [string]::IsNullOrEmpty($ModelId)) {
+    Write-Host "  Model:         $ModelId (override)" -ForegroundColor Gray
+} else {
+    Write-Host "  Model:         region-correct default (resolved by generator.py via shared helper)" -ForegroundColor Gray
+}
 Write-Host "  Output format: $OutputFormat" -ForegroundColor Gray
 Write-Host "  S3 Bucket:     $outputBucket" -ForegroundColor Gray
 Write-Host "  Job ID:        $jobId" -ForegroundColor Gray
@@ -195,11 +204,17 @@ $generateStart = Get-Date
 $generateArgs = @(
     "$srcDir\generator.py",
     "--profile", $profilePath,
-    "--model-id", $ModelId,
     "--region", $Region,
     "--output-dir", $OutputDir,
     "--output-format", $OutputFormat
 )
+
+# Only forward --model-id when the caller explicitly overrode it. When omitted, generator.py
+# resolves the region-correct, non-legacy default via the shared get_bedrock_model_id() helper.
+if (-not [string]::IsNullOrEmpty($ModelId)) {
+    $generateArgs += "--model-id"
+    $generateArgs += $ModelId
+}
 
 if (-not [string]::IsNullOrEmpty($OrgContext)) {
     if (-not (Test-Path $OrgContext)) {

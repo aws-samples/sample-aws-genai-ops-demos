@@ -3,8 +3,25 @@
 import argparse
 import json
 import os
+import sys
 
 import boto3
+
+# Reach the repo's shared utilities. generator.py runs as a standalone subprocess
+# (build-playbooks.sh invokes `python3 src/generator.py`) without the PYTHONPATH the
+# shared deploy script exports, so bootstrap sys.path to the repo root here. Repo layout:
+# <repo-root>/security/ai-incident-response-playbook-builder/src/generator.py -> 4 levels up.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from shared.utils import get_bedrock_model_id  # noqa: E402
+
+# Verified non-legacy default (base id, no CRIS prefix). get_bedrock_model_id() applies the
+# correct us/eu/apac/global prefix for the deploy region at runtime. NEVER hardcode a
+# region-prefixed id here (contributor-guide.md): any pinned model eventually goes Legacy and
+# Bedrock blocks new/inactive accounts from invoking it, which is exactly the bug this fixes.
+DEFAULT_MODEL_NAME = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 THREAT_ASSESSMENT_PROMPT = """You are an AWS security incident response expert. Analyze the following AWS architecture profile and identify the most likely and highest-impact threat scenarios for this specific environment.
 
@@ -213,12 +230,24 @@ def slugify(name):
 def main():
     parser = argparse.ArgumentParser(description="Generate IR playbooks via Amazon Bedrock")
     parser.add_argument("--profile", required=True, help="Path to architecture profile JSON")
-    parser.add_argument("--model-id", default="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    parser.add_argument(
+        "--model-id",
+        default=None,
+        help="Bedrock model ID to invoke. Omit to use the region-correct default resolved "
+             "via the shared get_bedrock_model_id() helper (a current, non-legacy Sonnet).",
+    )
     parser.add_argument("--region", required=True)
     parser.add_argument("--output-dir", default="./output")
     parser.add_argument("--output-format", default="both", choices=["ssm", "markdown", "both"])
     parser.add_argument("--org-context", default=None, help="Path to org context JSON")
     args = parser.parse_args()
+
+    # Resolve the model id: an explicit --model-id always wins; otherwise route through the
+    # shared helper so the CRIS prefix matches AWS_REGION/args.region at invoke time.
+    if not args.model_id:
+        os.environ.setdefault("AWS_REGION", args.region)
+        args.model_id = get_bedrock_model_id(DEFAULT_MODEL_NAME)
+    print(f"  Using model: {args.model_id}")
 
     with open(args.profile) as f:
         profile = json.load(f)
