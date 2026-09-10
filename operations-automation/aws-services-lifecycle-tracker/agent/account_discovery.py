@@ -14,162 +14,162 @@ from typing import Dict, List, Any
 # Get region from environment
 REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
 
-# Known deprecation schedules for AWS services
-LAMBDA_RUNTIME_INFO = {
-    "python3.7": {"deprecation": "2023-11-27", "end_of_support": "2024-11-27", "status": "end_of_life"},
-    "python3.8": {"deprecation": "2024-10-14", "end_of_support": "2025-10-14", "status": "deprecated"},
-    "python3.9": {"deprecation": "2025-10-01", "end_of_support": "2026-10-01", "status": "deprecated"},
-    "python3.10": {"deprecation": "2026-10-01", "end_of_support": "2027-10-01", "status": "supported"},
-    "python3.11": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "python3.12": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "python3.13": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "nodejs14.x": {"deprecation": "2023-11-27", "end_of_support": "2024-11-27", "status": "end_of_life"},
-    "nodejs16.x": {"deprecation": "2024-03-11", "end_of_support": "2025-03-11", "status": "end_of_life"},
-    "nodejs18.x": {"deprecation": "2025-04-30", "end_of_support": "2026-04-30", "status": "deprecated"},
-    "nodejs20.x": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "nodejs22.x": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java8": {"deprecation": "2023-12-31", "end_of_support": "2024-12-31", "status": "end_of_life"},
-    "java8.al2": {"deprecation": "2024-01-08", "end_of_support": "2025-01-08", "status": "end_of_life"},
-    "java11": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java17": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java21": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "dotnetcore3.1": {"deprecation": "2023-04-03", "end_of_support": "2024-04-03", "status": "end_of_life"},
-    "dotnet6": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "dotnet8": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "go1.x": {"deprecation": "2023-12-31", "end_of_support": "2024-12-31", "status": "end_of_life"},
-    "ruby2.7": {"deprecation": "2023-12-07", "end_of_support": "2024-12-07", "status": "end_of_life"},
-    "ruby3.2": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "ruby3.3": {"deprecation": None, "end_of_support": None, "status": "supported"},
+# ---------------------------------------------------------------------------
+# Lifecycle verdicts come from the extraction pipeline's DynamoDB rows.
+#
+# This module previously carried ~10 hand-written *_INFO dicts with hardcoded
+# deprecation dates and statuses (issue #99 I1/I2). Those went stale silently
+# (single commit, never maintained) while the extraction pipeline kept fresh,
+# correct data one table away. Discovery now only detects WHAT is running in
+# the account; WHETHER it is deprecated is answered by joining the extraction
+# rows. No match means status 'unknown' - never a stale hardcoded verdict.
+# ---------------------------------------------------------------------------
+
+import re
+
+# The one detection heuristic kept: which EC2 instance families count as
+# "previous generation" (per https://aws.amazon.com/ec2/previous-generation/).
+# This is membership knowledge (which families to flag), not lifecycle data -
+# families never leave this list. Dates/verdicts still come from the lifecycle
+# table when an 'ec2' extraction source exists; otherwise the row is reported
+# as deprecated with no dates.
+EC2_PREVIOUS_GENERATION_FAMILIES = {
+    "t1", "m1", "m2", "c1", "m3", "c3", "r3", "m4", "c4", "r4", "t2", "i2",
 }
 
-RDS_ENGINE_INFO = {
-    "mysql-5.7": {"deprecation": "2023-10-01", "end_of_support": "2024-02-29", "status": "end_of_life"},
-    "mysql-8.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "postgres-11": {"deprecation": "2023-11-09", "end_of_support": "2024-02-29", "status": "end_of_life"},
-    "postgres-12": {"deprecation": "2024-11-14", "end_of_support": "2025-02-28", "status": "deprecated"},
-    "postgres-13": {"deprecation": "2025-11-13", "end_of_support": "2026-02-28", "status": "deprecated"},
-    "postgres-14": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "postgres-15": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "postgres-16": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "mariadb-10.3": {"deprecation": "2023-10-23", "end_of_support": "2024-10-23", "status": "end_of_life"},
-    "mariadb-10.4": {"deprecation": "2024-06-18", "end_of_support": "2025-06-18", "status": "deprecated"},
-    "mariadb-10.5": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "mariadb-10.6": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "aurora-mysql-5.7": {"deprecation": "2024-10-31", "end_of_support": "2024-10-31", "status": "end_of_life"},
-    "aurora-mysql-8.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "aurora-postgresql-11": {"deprecation": "2024-02-29", "end_of_support": "2024-02-29", "status": "end_of_life"},
-    "aurora-postgresql-12": {"deprecation": "2025-02-28", "end_of_support": "2025-02-28", "status": "deprecated"},
-    "aurora-postgresql-13": {"deprecation": None, "end_of_support": None, "status": "supported"},
+# RDS API engine names -> extraction 'engine' vocabulary
+_RDS_ENGINE_ALIASES = {
+    "postgres": "postgresql",
+    "docdb": "documentdb",
 }
 
-EKS_VERSION_INFO = {
-    "1.23": {"deprecation": "2023-10-11", "end_of_support": "2024-10-11", "status": "end_of_life"},
-    "1.24": {"deprecation": "2024-01-31", "end_of_support": "2025-01-31", "status": "end_of_life"},
-    "1.25": {"deprecation": "2024-05-01", "end_of_support": "2025-05-01", "status": "deprecated"},
-    "1.26": {"deprecation": "2024-06-11", "end_of_support": "2025-06-11", "status": "deprecated"},
-    "1.27": {"deprecation": "2024-07-24", "end_of_support": "2025-07-24", "status": "deprecated"},
-    "1.28": {"deprecation": "2025-01-01", "end_of_support": "2026-01-01", "status": "deprecated"},
-    "1.29": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "1.30": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "1.31": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-ELASTICACHE_ENGINE_INFO = {
-    "redis-6": {"deprecation": "2024-10-01", "end_of_support": "2025-10-01", "status": "deprecated"},
-    "redis-7": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "memcached-1.5": {"deprecation": "2024-05-01", "end_of_support": "2025-05-01", "status": "deprecated"},
-    "memcached-1.6": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-OPENSEARCH_VERSION_INFO = {
-    "OpenSearch_1.0": {"deprecation": "2024-07-01", "end_of_support": "2025-07-01", "status": "deprecated"},
-    "OpenSearch_1.1": {"deprecation": "2024-07-01", "end_of_support": "2025-07-01", "status": "deprecated"},
-    "OpenSearch_1.2": {"deprecation": "2024-07-01", "end_of_support": "2025-07-01", "status": "deprecated"},
-    "OpenSearch_1.3": {"deprecation": "2024-07-01", "end_of_support": "2025-07-01", "status": "deprecated"},
-    "OpenSearch_2.3": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "OpenSearch_2.5": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "OpenSearch_2.7": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "OpenSearch_2.9": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "OpenSearch_2.11": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# MSK (Kafka) version info
-MSK_VERSION_INFO = {
-    "2.2.1": {"deprecation": "2023-06-01", "end_of_support": "2024-06-01", "status": "end_of_life"},
-    "2.3.1": {"deprecation": "2023-09-01", "end_of_support": "2024-09-01", "status": "end_of_life"},
-    "2.4.1": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "2.6.0": {"deprecation": "2024-06-01", "end_of_support": "2025-06-01", "status": "deprecated"},
-    "2.7.0": {"deprecation": "2024-09-01", "end_of_support": "2025-09-01", "status": "deprecated"},
-    "2.8.1": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "3.3.1": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "3.4.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "3.5.1": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "3.6.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# DocumentDB version info
-DOCUMENTDB_VERSION_INFO = {
-    "3.6": {"deprecation": "2024-01-01", "end_of_support": "2024-09-01", "status": "end_of_life"},
-    "4.0": {"deprecation": "2025-04-01", "end_of_support": "2025-10-01", "status": "deprecated"},
-    "5.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# Neptune engine version info
-NEPTUNE_VERSION_INFO = {
-    "1.0.1.0": {"deprecation": "2023-06-01", "end_of_support": "2024-06-01", "status": "end_of_life"},
-    "1.0.2.0": {"deprecation": "2023-09-01", "end_of_support": "2024-09-01", "status": "end_of_life"},
-    "1.0.3.0": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "1.0.4.0": {"deprecation": "2024-06-01", "end_of_support": "2025-06-01", "status": "deprecated"},
-    "1.0.5.0": {"deprecation": "2024-12-01", "end_of_support": "2025-12-01", "status": "deprecated"},
-    "1.1.0.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "1.2.0.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "1.3.0.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# Glue version info (Python/Spark)
-GLUE_VERSION_INFO = {
-    "glue-1.0": {"deprecation": "2023-06-01", "end_of_support": "2024-06-01", "status": "end_of_life"},
-    "glue-2.0": {"deprecation": "2024-06-01", "end_of_support": "2025-06-01", "status": "deprecated"},
-    "glue-3.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "glue-4.0": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# Elastic Beanstalk platform info (simplified - major platforms)
-BEANSTALK_PLATFORM_INFO = {
-    "python-3.7": {"deprecation": "2023-06-01", "end_of_support": "2024-06-01", "status": "end_of_life"},
-    "python-3.8": {"deprecation": "2024-10-01", "end_of_support": "2025-10-01", "status": "deprecated"},
-    "python-3.9": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "python-3.11": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "python-3.12": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "nodejs-14": {"deprecation": "2023-11-01", "end_of_support": "2024-11-01", "status": "end_of_life"},
-    "nodejs-16": {"deprecation": "2024-03-01", "end_of_support": "2025-03-01", "status": "end_of_life"},
-    "nodejs-18": {"deprecation": "2025-04-01", "end_of_support": "2026-04-01", "status": "deprecated"},
-    "nodejs-20": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java-8": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "java-11": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java-17": {"deprecation": None, "end_of_support": None, "status": "supported"},
-    "java-21": {"deprecation": None, "end_of_support": None, "status": "supported"},
-}
-
-# EC2 instance types approaching EOL (older generations)
-EC2_INSTANCE_INFO = {
-    "t1": {"deprecation": "2022-01-01", "end_of_support": "2023-01-01", "status": "end_of_life"},
-    "m1": {"deprecation": "2022-01-01", "end_of_support": "2023-01-01", "status": "end_of_life"},
-    "m2": {"deprecation": "2022-01-01", "end_of_support": "2023-01-01", "status": "end_of_life"},
-    "c1": {"deprecation": "2022-01-01", "end_of_support": "2023-01-01", "status": "end_of_life"},
-    "t2": {"deprecation": "2025-01-01", "end_of_support": "2026-01-01", "status": "deprecated"},
-    "m3": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "m4": {"deprecation": "2025-06-01", "end_of_support": "2026-06-01", "status": "deprecated"},
-    "c3": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "c4": {"deprecation": "2025-06-01", "end_of_support": "2026-06-01", "status": "deprecated"},
-    "r3": {"deprecation": "2024-01-01", "end_of_support": "2025-01-01", "status": "end_of_life"},
-    "r4": {"deprecation": "2025-06-01", "end_of_support": "2026-06-01", "status": "deprecated"},
+# SQL Server internal major version -> product year (immutable mapping facts)
+_SQLSERVER_VERSION_YEARS = {
+    "11": "2012", "12": "2014", "13": "2016",
+    "14": "2017", "15": "2019", "16": "2022", "17": "2025",
 }
 
 
-def discover_lambda_functions(region: str = None) -> List[Dict]:
+def _normalize(value) -> str:
+    """Normalize identifiers for matching: lowercase, dashes, alnum/dot only."""
+    if not value:
+        return ""
+    text = str(value).lower().replace("_", "-").replace(" ", "-")
+    return re.sub(r"[^a-z0-9.\-]", "", text)
+
+
+class LifecycleIndex:
+    """Per-service lookup of extraction-owned lifecycle rows (issue #99 I1).
+
+    Loads the lifecycle table rows for a service on first use (skipping
+    provenance-tagged inventory rows, including discovery's own) and indexes
+    them by normalized identifier/version/name. lookup() tries exact matches
+    first, then prefix containment either way (longest indexed key wins).
+    """
+
+    def __init__(self, table_name: str = "aws-services-lifecycle", region: str = None):
+        dynamodb = boto3.resource("dynamodb", region_name=region or REGION)
+        self._table = dynamodb.Table(table_name)
+        self._cache: Dict[str, Dict[str, Dict]] = {}
+
+    def _load(self, service_key: str) -> Dict[str, Dict]:
+        rows = []
+        kwargs = {
+            "KeyConditionExpression": "service_name = :s",
+            "ExpressionAttributeValues": {":s": service_key},
+        }
+        try:
+            response = self._table.query(**kwargs)
+            rows.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self._table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+                rows.extend(response.get("Items", []))
+        except Exception as e:
+            print(f"Warning: could not load lifecycle rows for '{service_key}': {e}")
+            return {}
+
+        index: Dict[str, Dict] = {}
+        for row in rows:
+            if row.get("provenance"):
+                continue  # inventory rows are not lifecycle knowledge
+            specific = row.get("service_specific", {}) or {}
+            entry = {
+                "status": row.get("status", "unknown"),
+                "deprecation_date": str(specific.get("deprecation_date") or "") or "N/A",
+                "end_of_support_date": str(
+                    specific.get("end_of_support_date")
+                    or specific.get("end_of_standard_support_date")
+                    or specific.get("eol_date")
+                    or specific.get("end_of_life_date")
+                    or ""
+                ) or "N/A",
+                "item_id": row.get("item_id", ""),
+            }
+            for candidate in (specific.get("identifier"), specific.get("version"), specific.get("name")):
+                key = _normalize(candidate)
+                if key and key not in index:
+                    index[key] = entry
+        return index
+
+    def lookup(self, service_key: str, candidates: List) -> Dict:
+        """Best lifecycle match for any candidate identifier, or None."""
+        if service_key not in self._cache:
+            self._cache[service_key] = self._load(service_key)
+        index = self._cache[service_key]
+
+        normalized = [_normalize(c) for c in candidates if c]
+        for cand in normalized:
+            if cand in index:
+                return index[cand]
+
+        best, best_len = None, 0
+        for cand in normalized:
+            if len(cand) < 3:
+                continue
+            for key, entry in index.items():
+                if len(key) < 3:
+                    continue
+                if (key.startswith(cand) or cand.startswith(key)) and len(key) > best_len:
+                    best, best_len = entry, len(key)
+        return best
+
+
+def build_inventory_item(service_key: str, identifier: str, display_name: str,
+                         candidates: List, affected_resources: str, total_affected: int,
+                         source_url: str, index: "LifecycleIndex",
+                         fallback_status: str = "unknown") -> Dict:
+    """Emit a unified inventory row keyed like extraction rows (#98 E7).
+
+    service_name uses the extraction config key (e.g. 'lambda', not
+    'AWS Lambda') and item_id is prefixed 'inventory#', so inventory shares
+    the key vocabulary of the rest of the system (UI filters, Health
+    enrichment) while staying distinguishable and provenance-tagged.
+    """
+    match = index.lookup(service_key, candidates)
+    now = datetime.now()
+    return {
+        "service_name": service_key,
+        "item_id": f"inventory#{identifier}",
+        "status": match["status"] if match else fallback_status,
+        "source_url": source_url,
+        "extraction_date": now.strftime("%Y-%m-%d"),
+        "last_verified": now.isoformat() + "Z",
+        "service_specific": {
+            "name": display_name,
+            "identifier": identifier,
+            "deprecation_date": (match or {}).get("deprecation_date", "N/A"),
+            "end_of_support_date": (match or {}).get("end_of_support_date", "N/A"),
+            "affected_resources": affected_resources,
+            "total_affected": total_affected,
+            "matched_lifecycle_item": (match or {}).get("item_id", ""),
+        },
+    }
+
+
+def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover Lambda functions and their runtimes in the account"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     lambda_client = boto3.client("lambda", region_name=region)
     items = []
     runtime_functions = {}
@@ -184,32 +184,46 @@ def discover_lambda_functions(region: str = None) -> List[Dict]:
                 runtime_functions[runtime].append(func["FunctionName"])
         
         for runtime, functions in runtime_functions.items():
-            info = LAMBDA_RUNTIME_INFO.get(runtime, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "AWS Lambda",
-                "item_id": f"lambda-{runtime.replace('.', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Lambda {runtime} Runtime",
-                    "identifier": runtime,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(functions[:5]) + (f" (+{len(functions)-5} more)" if len(functions) > 5 else ""),
-                    "total_affected": len(functions),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="lambda",
+                identifier=runtime,
+                display_name=f"Lambda {runtime} Runtime",
+                candidates=[runtime],
+                affected_resources=", ".join(functions[:5]) + (f" (+{len(functions)-5} more)" if len(functions) > 5 else ""),
+                total_affected=len(functions),
+                source_url="https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering Lambda functions: {e}")
     
     return items
 
 
-def discover_rds_instances(region: str = None) -> List[Dict]:
+def _rds_match_candidates(engine: str, version: str) -> List[str]:
+    """Candidate identifiers to match an RDS engine/version against
+    extraction rows (which use slugs like 'mysql-8.0.35', 'postgresql-17.6',
+    'oracle-19c', 'sqlserver-2019')."""
+    base = engine.split("-")[0] if engine.startswith(("oracle", "sqlserver")) else engine
+    base = _RDS_ENGINE_ALIASES.get(base, base)
+    parts = version.split(".")
+    candidates = [f"{base}-{version}"]
+    if len(parts) >= 2:
+        candidates.append(f"{base}-{parts[0]}.{parts[1]}")
+    candidates.append(f"{base}-{parts[0]}")
+    if base == "sqlserver":
+        year = _SQLSERVER_VERSION_YEARS.get(parts[0])
+        if year:
+            candidates.insert(0, f"sqlserver-{year}")
+    if base == "oracle":
+        candidates.append(f"oracle-{parts[0]}c")
+    return candidates
+
+
+def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover RDS instances and their engine versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     rds_client = boto3.client("rds", region_name=region)
     items = []
     engine_instances = {}
@@ -221,39 +235,36 @@ def discover_rds_instances(region: str = None) -> List[Dict]:
                 engine = db["Engine"]
                 version = db["EngineVersion"]
                 major = version.split('.')[0]
-                key = f"{engine}-{major}"
+                key = (engine, major, version)
                 
                 if key not in engine_instances:
                     engine_instances[key] = []
                 engine_instances[key].append(db["DBInstanceIdentifier"])
         
-        for engine_key, instances in engine_instances.items():
-            info = RDS_ENGINE_INFO.get(engine_key, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon RDS",
-                "item_id": f"rds-{engine_key}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"RDS {engine_key.replace('-', ' ').title()}",
-                    "identifier": engine_key,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(instances),
-                    "total_affected": len(instances),
-                }
-            })
+        for (engine, major, version), instances in engine_instances.items():
+            # Aurora engines have their own extraction source/config key
+            service_key = "aurora" if engine.startswith("aurora") else "rds"
+            engine_key = f"{engine}-{major}"
+            items.append(build_inventory_item(
+                service_key=service_key,
+                identifier=engine_key,
+                display_name=f"RDS {engine_key.replace('-', ' ').title()}",
+                candidates=_rds_match_candidates(engine, version),
+                affected_resources=", ".join(instances),
+                total_affected=len(instances),
+                source_url="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering RDS instances: {e}")
     
     return items
 
 
-def discover_eks_clusters(region: str = None) -> List[Dict]:
+def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover EKS clusters and their Kubernetes versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     eks_client = boto3.client("eks", region_name=region)
     items = []
     version_clusters = {}
@@ -268,32 +279,26 @@ def discover_eks_clusters(region: str = None) -> List[Dict]:
             version_clusters[version].append(cluster_name)
         
         for version, cluster_names in version_clusters.items():
-            info = EKS_VERSION_INFO.get(version, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon EKS",
-                "item_id": f"eks-{version.replace('.', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Kubernetes {version}",
-                    "identifier": f"k8s-{version}",
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(cluster_names),
-                    "total_affected": len(cluster_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="eks",
+                identifier=f"k8s-{version}",
+                display_name=f"Kubernetes {version}",
+                candidates=[version, f"k8s-{version}", f"eks-{version}"],
+                affected_resources=", ".join(cluster_names),
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering EKS clusters: {e}")
     
     return items
 
 
-def discover_elasticache_clusters(region: str = None) -> List[Dict]:
+def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover ElastiCache clusters and their engine versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     elasticache_client = boto3.client("elasticache", region_name=region)
     items = []
     engine_clusters = {}
@@ -311,32 +316,26 @@ def discover_elasticache_clusters(region: str = None) -> List[Dict]:
                 engine_clusters[key].append(cluster["CacheClusterId"])
         
         for engine_key, clusters in engine_clusters.items():
-            info = ELASTICACHE_ENGINE_INFO.get(engine_key, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon ElastiCache",
-                "item_id": f"elasticache-{engine_key}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"ElastiCache {engine_key.replace('-', ' ').title()}",
-                    "identifier": engine_key,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(clusters),
-                    "total_affected": len(clusters),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="elasticache",
+                identifier=engine_key,
+                display_name=f"ElastiCache {engine_key.replace('-', ' ').title()}",
+                candidates=[engine_key],
+                affected_resources=", ".join(clusters),
+                total_affected=len(clusters),
+                source_url="https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering ElastiCache clusters: {e}")
     
     return items
 
 
-def discover_opensearch_domains(region: str = None) -> List[Dict]:
+def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover OpenSearch domains and their versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     opensearch_client = boto3.client("opensearch", region_name=region)
     items = []
     version_domains = {}
@@ -353,32 +352,27 @@ def discover_opensearch_domains(region: str = None) -> List[Dict]:
             version_domains[version].append(domain_name)
         
         for version, domain_names in version_domains.items():
-            info = OPENSEARCH_VERSION_INFO.get(version, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon OpenSearch",
-                "item_id": f"opensearch-{version.replace('.', '').replace('_', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"OpenSearch {version}",
-                    "identifier": version,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(domain_names),
-                    "total_affected": len(domain_names),
-                }
-            })
+            bare_version = version.split("_")[-1] if "_" in version else version
+            items.append(build_inventory_item(
+                service_key="opensearch",
+                identifier=version,
+                display_name=f"OpenSearch {version}",
+                candidates=[version, bare_version, f"opensearch-{bare_version}"],
+                affected_resources=", ".join(domain_names),
+                total_affected=len(domain_names),
+                source_url="https://docs.aws.amazon.com/opensearch-service/latest/developerguide/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering OpenSearch domains: {e}")
     
     return items
 
 
-def discover_msk_clusters(region: str = None) -> List[Dict]:
+def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover MSK (Kafka) clusters and their versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     msk_client = boto3.client("kafka", region_name=region)
     items = []
     version_clusters = {}
@@ -397,32 +391,26 @@ def discover_msk_clusters(region: str = None) -> List[Dict]:
                 version_clusters[kafka_version].append(cluster_name)
         
         for version, cluster_names in version_clusters.items():
-            info = MSK_VERSION_INFO.get(version, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon MSK",
-                "item_id": f"msk-{version.replace('.', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/msk/latest/developerguide/supported-kafka-versions.html",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Apache Kafka {version}",
-                    "identifier": f"kafka-{version}",
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(cluster_names),
-                    "total_affected": len(cluster_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="msk",
+                identifier=f"kafka-{version}",
+                display_name=f"Apache Kafka {version}",
+                candidates=[f"kafka-{version}", version],
+                affected_resources=", ".join(cluster_names),
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/msk/latest/developerguide/supported-kafka-versions.html",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering MSK clusters: {e}")
     
     return items
 
 
-def discover_documentdb_clusters(region: str = None) -> List[Dict]:
+def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover DocumentDB clusters and their engine versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     docdb_client = boto3.client("docdb", region_name=region)
     items = []
     version_clusters = {}
@@ -440,32 +428,26 @@ def discover_documentdb_clusters(region: str = None) -> List[Dict]:
                     version_clusters[version].append(cluster_id)
         
         for version, cluster_names in version_clusters.items():
-            info = DOCUMENTDB_VERSION_INFO.get(version, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon DocumentDB",
-                "item_id": f"docdb-{version.replace('.', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/documentdb/latest/developerguide/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"DocumentDB {version} (MongoDB compatibility)",
-                    "identifier": f"docdb-{version}",
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(cluster_names),
-                    "total_affected": len(cluster_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="documentdb",
+                identifier=f"docdb-{version}",
+                display_name=f"DocumentDB {version} (MongoDB compatibility)",
+                candidates=[f"docdb-{version}", f"documentdb-{version}", version],
+                affected_resources=", ".join(cluster_names),
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/documentdb/latest/developerguide/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering DocumentDB clusters: {e}")
     
     return items
 
 
-def discover_neptune_clusters(region: str = None) -> List[Dict]:
+def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover Neptune clusters and their engine versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     neptune_client = boto3.client("neptune", region_name=region)
     items = []
     version_clusters = {}
@@ -483,32 +465,26 @@ def discover_neptune_clusters(region: str = None) -> List[Dict]:
                     version_clusters[version].append(cluster_id)
         
         for version, cluster_names in version_clusters.items():
-            info = NEPTUNE_VERSION_INFO.get(version, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "Amazon Neptune",
-                "item_id": f"neptune-{version.replace('.', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/neptune/latest/userguide/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Neptune {version}",
-                    "identifier": f"neptune-{version}",
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(cluster_names),
-                    "total_affected": len(cluster_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="neptune",
+                identifier=f"neptune-{version}",
+                display_name=f"Neptune {version}",
+                candidates=[f"neptune-{version}", version],
+                affected_resources=", ".join(cluster_names),
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/neptune/latest/userguide/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering Neptune clusters: {e}")
     
     return items
 
 
-def discover_glue_jobs(region: str = None) -> List[Dict]:
+def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover Glue jobs and their versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     glue_client = boto3.client("glue", region_name=region)
     items = []
     version_jobs = {}
@@ -526,32 +502,26 @@ def discover_glue_jobs(region: str = None) -> List[Dict]:
                 version_jobs[key].append(job_name)
         
         for version_key, job_names in version_jobs.items():
-            info = GLUE_VERSION_INFO.get(version_key, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "AWS Glue",
-                "item_id": version_key.replace('.', ''),
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/glue/latest/dg/release-notes.html",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Glue {version_key.replace('glue-', '')}",
-                    "identifier": version_key,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(job_names[:5]) + (f" (+{len(job_names)-5} more)" if len(job_names) > 5 else ""),
-                    "total_affected": len(job_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="glue",
+                identifier=version_key,
+                display_name=f"Glue {version_key.replace('glue-', '')}",
+                candidates=[version_key, version_key.replace('glue-', '')],
+                affected_resources=", ".join(job_names[:5]) + (f" (+{len(job_names)-5} more)" if len(job_names) > 5 else ""),
+                total_affected=len(job_names),
+                source_url="https://docs.aws.amazon.com/glue/latest/dg/release-notes.html",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering Glue jobs: {e}")
     
     return items
 
 
-def discover_beanstalk_environments(region: str = None) -> List[Dict]:
+def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
     """Discover Elastic Beanstalk environments and their platform versions"""
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     eb_client = boto3.client("elasticbeanstalk", region_name=region)
     items = []
     platform_envs = {}
@@ -585,32 +555,32 @@ def discover_beanstalk_environments(region: str = None) -> List[Dict]:
             platform_envs[platform_key].append(env_name)
         
         for platform_key, env_names in platform_envs.items():
-            info = BEANSTALK_PLATFORM_INFO.get(platform_key, {"status": "unknown", "deprecation": None, "end_of_support": None})
-            items.append({
-                "service_name": "AWS Elastic Beanstalk",
-                "item_id": f"beanstalk-{platform_key.replace('.', '').replace('-', '')}",
-                "status": info["status"],
-                "source_url": "https://docs.aws.amazon.com/elasticbeanstalk/latest/platforms/",
-                "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                "last_verified": datetime.now().isoformat() + "Z",
-                "service_specific": {
-                    "name": f"Beanstalk {platform_key}",
-                    "identifier": platform_key,
-                    "deprecation_date": info.get("deprecation") or "N/A",
-                    "end_of_support_date": info.get("end_of_support") or "N/A",
-                    "affected_resources": ", ".join(env_names),
-                    "total_affected": len(env_names),
-                }
-            })
+            items.append(build_inventory_item(
+                service_key="elasticbeanstalk",
+                identifier=platform_key,
+                display_name=f"Beanstalk {platform_key}",
+                candidates=[platform_key, platform_key.replace('-', ' ')],
+                affected_resources=", ".join(env_names),
+                total_affected=len(env_names),
+                source_url="https://docs.aws.amazon.com/elasticbeanstalk/latest/platforms/",
+                index=index,
+            ))
     except Exception as e:
         print(f"Error discovering Elastic Beanstalk environments: {e}")
     
     return items
 
 
-def discover_ec2_instances(region: str = None) -> List[Dict]:
-    """Discover EC2 instances with older instance types"""
+def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover EC2 instances with previous-generation instance types.
+
+    EC2 has no extraction source today, so the verdict falls back to
+    'deprecated' for families on the previous-generation list (membership in
+    that list IS the deprecation signal); dates come from the lifecycle table
+    if an 'ec2' extraction source is ever configured.
+    """
     region = region or REGION
+    index = index or LifecycleIndex(region=region)
     ec2_client = boto3.client("ec2", region_name=region)
     items = []
     type_instances = {}
@@ -631,25 +601,20 @@ def discover_ec2_instances(region: str = None) -> List[Dict]:
                     type_instances[family].append(instance_id)
         
         for family, instance_ids in type_instances.items():
-            info = EC2_INSTANCE_INFO.get(family, {"status": "supported", "deprecation": None, "end_of_support": None})
-            # Only report deprecated/EOL instance families
-            if info["status"] in ["deprecated", "end_of_life"]:
-                items.append({
-                    "service_name": "Amazon EC2",
-                    "item_id": f"ec2-{family}",
-                    "status": info["status"],
-                    "source_url": "https://aws.amazon.com/ec2/previous-generation/",
-                    "extraction_date": datetime.now().strftime("%Y-%m-%d"),
-                    "last_verified": datetime.now().isoformat() + "Z",
-                    "service_specific": {
-                        "name": f"EC2 {family.upper()} Instance Family",
-                        "identifier": family,
-                        "deprecation_date": info.get("deprecation") or "N/A",
-                        "end_of_support_date": info.get("end_of_support") or "N/A",
-                        "affected_resources": ", ".join(instance_ids[:5]) + (f" (+{len(instance_ids)-5} more)" if len(instance_ids) > 5 else ""),
-                        "total_affected": len(instance_ids),
-                    }
-                })
+            # Only report previous-generation instance families
+            if family not in EC2_PREVIOUS_GENERATION_FAMILIES:
+                continue
+            items.append(build_inventory_item(
+                service_key="ec2",
+                identifier=family,
+                display_name=f"EC2 {family.upper()} Instance Family",
+                candidates=[family, f"ec2-{family}"],
+                affected_resources=", ".join(instance_ids[:5]) + (f" (+{len(instance_ids)-5} more)" if len(instance_ids) > 5 else ""),
+                total_affected=len(instance_ids),
+                source_url="https://aws.amazon.com/ec2/previous-generation/",
+                index=index,
+                fallback_status="deprecated",
+            ))
     except Exception as e:
         print(f"Error discovering EC2 instances: {e}")
     
@@ -766,40 +731,44 @@ def discover_all_resources(region: str = None, include_supported: bool = True) -
     services_scanned = []
     services_failed = []
     
+    # One shared lifecycle index for the whole run: each service's extraction
+    # rows are loaded once and reused across discover_* calls (issue #99 I1).
+    index = LifecycleIndex(region=region)
+    
     # Discover resources from each service
     print(f"Discovering resources in {region}...")
     
     # Core services (most common)
     try:
-        lambda_items = discover_lambda_functions(region)
+        lambda_items = discover_lambda_functions(region, index)
         all_items.extend(lambda_items)
         services_scanned.append("Lambda")
     except Exception as e:
         services_failed.append(f"Lambda: {e}")
     
     try:
-        rds_items = discover_rds_instances(region)
+        rds_items = discover_rds_instances(region, index)
         all_items.extend(rds_items)
         services_scanned.append("RDS")
     except Exception as e:
         services_failed.append(f"RDS: {e}")
     
     try:
-        eks_items = discover_eks_clusters(region)
+        eks_items = discover_eks_clusters(region, index)
         all_items.extend(eks_items)
         services_scanned.append("EKS")
     except Exception as e:
         services_failed.append(f"EKS: {e}")
     
     try:
-        elasticache_items = discover_elasticache_clusters(region)
+        elasticache_items = discover_elasticache_clusters(region, index)
         all_items.extend(elasticache_items)
         services_scanned.append("ElastiCache")
     except Exception as e:
         services_failed.append(f"ElastiCache: {e}")
     
     try:
-        opensearch_items = discover_opensearch_domains(region)
+        opensearch_items = discover_opensearch_domains(region, index)
         all_items.extend(opensearch_items)
         services_scanned.append("OpenSearch")
     except Exception as e:
@@ -807,42 +776,42 @@ def discover_all_resources(region: str = None, include_supported: bool = True) -
     
     # Additional services
     try:
-        msk_items = discover_msk_clusters(region)
+        msk_items = discover_msk_clusters(region, index)
         all_items.extend(msk_items)
         services_scanned.append("MSK")
     except Exception as e:
         services_failed.append(f"MSK: {e}")
     
     try:
-        docdb_items = discover_documentdb_clusters(region)
+        docdb_items = discover_documentdb_clusters(region, index)
         all_items.extend(docdb_items)
         services_scanned.append("DocumentDB")
     except Exception as e:
         services_failed.append(f"DocumentDB: {e}")
     
     try:
-        neptune_items = discover_neptune_clusters(region)
+        neptune_items = discover_neptune_clusters(region, index)
         all_items.extend(neptune_items)
         services_scanned.append("Neptune")
     except Exception as e:
         services_failed.append(f"Neptune: {e}")
     
     try:
-        glue_items = discover_glue_jobs(region)
+        glue_items = discover_glue_jobs(region, index)
         all_items.extend(glue_items)
         services_scanned.append("Glue")
     except Exception as e:
         services_failed.append(f"Glue: {e}")
     
     try:
-        beanstalk_items = discover_beanstalk_environments(region)
+        beanstalk_items = discover_beanstalk_environments(region, index)
         all_items.extend(beanstalk_items)
         services_scanned.append("Elastic Beanstalk")
     except Exception as e:
         services_failed.append(f"Elastic Beanstalk: {e}")
     
     try:
-        ec2_items = discover_ec2_instances(region)
+        ec2_items = discover_ec2_instances(region, index)
         all_items.extend(ec2_items)
         services_scanned.append("EC2")
     except Exception as e:
