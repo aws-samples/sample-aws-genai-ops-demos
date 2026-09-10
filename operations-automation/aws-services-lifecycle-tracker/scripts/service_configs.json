@@ -23,9 +23,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "LAMBDA",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "LAMBDA"
     },
     "eks": {
       "name": "Amazon EKS",
@@ -48,9 +46,7 @@
         "end_of_standard_support_date"
       ],
       "enabled": true,
-      "health_event_mapping": "EKS",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "EKS"
     },
     "rds": {
       "name": "Amazon RDS",
@@ -80,9 +76,7 @@
         "version"
       ],
       "enabled": true,
-      "health_event_mapping": "RDS",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "RDS"
     },
     "elasticache": {
       "name": "Amazon ElastiCache",
@@ -110,9 +104,7 @@
         "end_of_standard_support_date"
       ],
       "enabled": true,
-      "health_event_mapping": "ELASTICACHE",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "ELASTICACHE"
     },
     "opensearch": {
       "name": "Amazon OpenSearch Service",
@@ -138,9 +130,7 @@
         "end_of_extended_support_date"
       ],
       "enabled": true,
-      "health_event_mapping": "OPENSEARCH",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "OPENSEARCH"
     },
     "elasticbeanstalk": {
       "name": "AWS Elastic Beanstalk",
@@ -163,9 +153,7 @@
         "runtime_version"
       ],
       "enabled": true,
-      "health_event_mapping": "ELASTICBEANSTALK",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "ELASTICBEANSTALK"
     },
     "bedrock": {
       "name": "Amazon Bedrock",
@@ -191,9 +179,7 @@
         "eol_date"
       ],
       "enabled": true,
-      "health_event_mapping": "BEDROCK",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "BEDROCK"
     },
     "msk": {
       "name": "Amazon MSK (Managed Streaming for Apache Kafka)",
@@ -216,9 +202,7 @@
         "end_of_support_date"
       ],
       "enabled": true,
-      "health_event_mapping": "KAFKA",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "KAFKA"
     },
     "ecs": {
       "name": "Amazon ECS",
@@ -243,9 +227,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "ECS",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "ECS"
     },
     "batch": {
       "name": "AWS Batch",
@@ -269,9 +251,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "BATCH",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "BATCH"
     },
     "aurora": {
       "name": "Amazon Aurora",
@@ -297,9 +277,7 @@
         "end_of_standard_support_date"
       ],
       "enabled": true,
-      "health_event_mapping": "RDS",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "RDS"
     },
     "documentdb": {
       "name": "Amazon DocumentDB",
@@ -325,9 +303,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "DOCUMENTDB",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "DOCUMENTDB"
     },
     "neptune": {
       "name": "Amazon Neptune",
@@ -352,9 +328,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "NEPTUNE",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "NEPTUNE"
     },
     "memorydb": {
       "name": "Amazon MemoryDB",
@@ -379,9 +353,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "MEMORYDB",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "MEMORYDB"
     },
     "dynamodb": {
       "name": "Amazon DynamoDB",
@@ -405,9 +377,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "DYNAMODB",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "DYNAMODB"
     },
     "apigateway": {
       "name": "Amazon API Gateway",
@@ -431,9 +401,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "APIGATEWAY",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "APIGATEWAY"
     },
     "cloudfront": {
       "name": "Amazon CloudFront",
@@ -458,9 +426,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "CLOUDFRONT",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "CLOUDFRONT"
     },
     "appmesh": {
       "name": "AWS App Mesh",
@@ -484,9 +450,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "APPMESH",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "APPMESH"
     },
     "emr": {
       "name": "Amazon EMR",
@@ -512,9 +476,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "EMR",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "EMR"
     },
     "glue": {
       "name": "AWS Glue",
@@ -539,9 +501,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "GLUE",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "GLUE"
     },
     "athena": {
       "name": "Amazon Athena",
@@ -566,9 +526,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "ATHENA",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "ATHENA"
     },
     "redshift": {
       "name": "Amazon Redshift",
@@ -594,9 +552,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "REDSHIFT",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "REDSHIFT"
     },
     "sagemaker": {
       "name": "Amazon SageMaker",
@@ -622,9 +578,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "SAGEMAKER",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "SAGEMAKER"
     },
     "comprehend": {
       "name": "Amazon Comprehend",
@@ -648,9 +602,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "COMPREHEND",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "COMPREHEND"
     },
     "rekognition": {
       "name": "Amazon Rekognition",
@@ -676,9 +628,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "REKOGNITION",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "REKOGNITION"
     },
     "waf": {
       "name": "AWS WAF",
@@ -703,9 +653,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "WAF",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "WAF"
     },
     "guardduty": {
       "name": "Amazon GuardDuty",
@@ -729,9 +677,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "GUARDDUTY",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "GUARDDUTY"
     },
     "inspector": {
       "name": "Amazon Inspector",
@@ -756,9 +702,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "INSPECTOR",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "INSPECTOR"
     },
     "elasticsearch": {
       "name": "Amazon Elasticsearch Service (Legacy)",
@@ -784,9 +728,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "OPENSEARCH",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "OPENSEARCH"
     },
     "kinesis": {
       "name": "Amazon Kinesis Data Analytics",
@@ -810,9 +752,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "KINESIS_ANALYTICS",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "KINESIS_ANALYTICS"
     },
     "amplify": {
       "name": "AWS Amplify",
@@ -837,9 +777,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "AMPLIFY",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "AMPLIFY"
     },
     "codebuild": {
       "name": "AWS CodeBuild",
@@ -865,9 +803,7 @@
         "status"
       ],
       "enabled": true,
-      "health_event_mapping": "CODEBUILD",
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "CODEBUILD"
     }
   }
 }
