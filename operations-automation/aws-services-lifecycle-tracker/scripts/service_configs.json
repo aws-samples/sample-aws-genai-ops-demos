@@ -815,7 +815,7 @@
       "documentation_urls": [
         "https://docs.aws.amazon.com/amplify/latest/userguide/build-image-support.html"
       ],
-      "extraction_focus": "Locate Amplify build image and framework version lifecycle information. Extract deprecated build images, Node.js versions, and framework versions. For each item, extract: build image or framework name, version, deprecation date, and replacement.",
+      "extraction_focus": "Locate Amplify build image and framework version lifecycle information. Extract deprecated build images, Node.js versions, and framework versions. For each item, extract: build image or framework name, a short identifier slug (e.g., 'amplify-build-al1' for the Amazon Linux 1 build image, or the version tag), version, deprecation date, and replacement.",
       "schema_key": "versions",
       "item_properties": {
         "name": "Amplify build image or framework version (e.g., 'Amplify Build Image Amazon Linux 2')",
