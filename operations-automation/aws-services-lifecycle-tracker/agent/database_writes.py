@@ -217,7 +217,17 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
                 if not identifier:
                     errors.append(f"Item missing both 'identifier' and 'name' fields: {item}")
                     continue
-                    
+
+                # Backfill the identifier so validation agrees with the key
+                # derivation above. Every service lists 'identifier' in
+                # required_fields, but the LLM omits it when the source docs
+                # have no natural identifier column (e.g. Amplify build
+                # images, issue #135) - previously that hard-failed every
+                # item even though the name-based fallback key was already
+                # computed and usable.
+                if not item.get('identifier'):
+                    item['identifier'] = identifier
+
                 item_id = f"{schema_key}#{identifier}"
                 
                 # Validate item against service configuration (single source of truth)
