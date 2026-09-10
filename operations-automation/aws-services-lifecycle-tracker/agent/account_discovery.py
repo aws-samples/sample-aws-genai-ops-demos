@@ -621,78 +621,110 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
     return items
 
 
-# Provenance tag identifying rows written by account discovery. Discovery may
-# only ever create, update, or delete rows carrying this tag (issue #116) -
-# extraction-pipeline rows are owned by store_deprecation_data and untouchable.
+# Provenance tag identifying rows written by account discovery (issue #116).
+# Kept on every inventory row for traceability; will carry account/region
+# provenance dimensions when the multi-account roadmap (#99 I4) lands.
 DISCOVERY_PROVENANCE = "account_discovery"
 
+# Discovered assets live in their own table, fully decoupled from the public
+# deprecation facts in aws-services-lifecycle (issue #116 follow-on).
+INVENTORY_TABLE_NAME = os.environ.get("INVENTORY_TABLE_NAME", "aws-account-inventory")
 
-def save_to_dynamodb(items: List[Dict], table_name: str = "aws-services-lifecycle", region: str = None) -> Dict:
+# Scanner display label -> config service keys its inventory rows use.
+# The RDS scanner emits both rds and aurora rows (aurora engines route to the
+# aurora service key), so a successful RDS scan owns both reconciliation scopes.
+SCANNER_SERVICE_KEYS = {
+    "Lambda": ["lambda"],
+    "RDS": ["rds", "aurora"],
+    "EKS": ["eks"],
+    "ElastiCache": ["elasticache"],
+    "OpenSearch": ["opensearch"],
+    "MSK": ["msk"],
+    "DocumentDB": ["documentdb"],
+    "Neptune": ["neptune"],
+    "Glue": ["glue"],
+    "Elastic Beanstalk": ["elasticbeanstalk"],
+    "EC2": ["ec2"],
+}
+
+
+def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = None,
+                     run_id: str = None, scanned_services: List[str] = None) -> Dict:
     """
     Upsert discovered inventory rows and reconcile stale ones (issue #116).
 
-    Previous behavior scanned the whole table and deleted EVERY row -
-    including extraction-pipeline deprecation data - before rewriting the
-    inventory. Now discovery owns only its provenance-tagged rows:
-    1. every discovered item is tagged provenance='account_discovery',
-    2. items are upserted by key (a put on the same key replaces the
-       previous inventory version - idempotent re-runs),
-    3. stale rows are removed only if they carry the discovery provenance
-       tag AND were not re-seen in this run (e.g. a resource left the
-       account). Rows without the tag are never touched.
-
-    Note: inventory rows written before this change carry no provenance tag.
-    Re-seen resources get tagged on the next run's upsert; rows for resources
-    that disappeared before this change linger untagged until manually removed.
+    Writes go to the dedicated aws-account-inventory table - never to the
+    extraction facts table. Reconciliation is run-id based and scoped:
+    1. every item is tagged with this run's discovery_run_id and provenance,
+    2. items are upserted by key (idempotent re-runs),
+    3. stale rows (older run_id, i.e. resources no longer seen) are deleted
+       ONLY within the services this run actually scanned successfully.
+       A scanner that failed leaves its service's inventory untouched
+       instead of having it wiped as "stale".
 
     Args:
-        items: List of deprecation items to save
-        table_name: DynamoDB table name
+        items: Discovered inventory items to save
+        table_name: DynamoDB table override (defaults to INVENTORY_TABLE_NAME)
         region: AWS region
-    
+        run_id: Unique id for this discovery run (generated if omitted)
+        scanned_services: Service keys whose scanners completed successfully;
+            reconciliation is confined to these. Defaults to the service keys
+            present in items (which loses empty-result scopes - pass it).
+
     Returns:
         Dictionary with save results
     """
+    import uuid
+
     region = region or REGION
+    table_name = table_name or INVENTORY_TABLE_NAME
+    run_id = run_id or str(uuid.uuid4())
     dynamodb = boto3.resource("dynamodb", region_name=region)
     table = dynamodb.Table(table_name)
-    
+
     try:
-        # Tag provenance and remember this run's key set
-        current_keys = set()
         for item in items:
             item["provenance"] = DISCOVERY_PROVENANCE
-            current_keys.add((item["service_name"], item["item_id"]))
-        
+            item["discovery_run_id"] = run_id
+
         # Upsert this run's inventory (put on an existing key replaces it)
         with table.batch_writer() as batch:
             for item in items:
                 batch.put_item(Item=item)
-        
-        # Reconcile: delete only discovery-owned rows not re-seen this run
+
+        # Reconcile per successfully-scanned service: query that service's
+        # inventory rows and delete those not written by this run.
+        if scanned_services is None:
+            scanned_services = sorted({i["service_name"] for i in items})
+
         stale_keys = []
-        scan_kwargs = {"ProjectionExpression": "service_name, item_id, provenance"}
-        response = table.scan(**scan_kwargs)
-        while True:
-            for row in response.get("Items", []):
-                if row.get("provenance") == DISCOVERY_PROVENANCE and \
-                        (row["service_name"], row["item_id"]) not in current_keys:
-                    stale_keys.append({
-                        "service_name": row["service_name"],
-                        "item_id": row["item_id"],
-                    })
-            if "LastEvaluatedKey" not in response:
-                break
-            response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"], **scan_kwargs)
-        
+        for service_key in scanned_services:
+            kwargs = {
+                "KeyConditionExpression": "service_name = :s",
+                "ExpressionAttributeValues": {":s": service_key},
+                "ProjectionExpression": "service_name, item_id, discovery_run_id",
+            }
+            response = table.query(**kwargs)
+            while True:
+                for row in response.get("Items", []):
+                    if row.get("discovery_run_id") != run_id:
+                        stale_keys.append({
+                            "service_name": row["service_name"],
+                            "item_id": row["item_id"],
+                        })
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+
         with table.batch_writer() as batch:
             for key in stale_keys:
                 batch.delete_item(Key=key)
-        
+
         return {
             "success": True,
             "items_saved": len(items),
             "stale_removed": len(stale_keys),
+            "run_id": run_id,
             "table_name": table_name
         }
     except Exception as e:
@@ -821,6 +853,15 @@ def discover_all_resources(region: str = None, include_supported: bool = True) -
     if not include_supported:
         all_items = [i for i in all_items if i["status"] in ["deprecated", "end_of_life"]]
     
+    # Service keys covered by the scanners that completed successfully -
+    # reconciliation must be confined to these (issue #116): a failed scanner
+    # keeps its previous inventory instead of having it wiped as stale.
+    scanned_service_keys = sorted({
+        key
+        for label in services_scanned
+        for key in SCANNER_SERVICE_KEYS.get(label, [])
+    })
+    
     # Calculate summary
     deprecated_count = len([i for i in all_items if i["status"] == "deprecated"])
     eol_count = len([i for i in all_items if i["status"] == "end_of_life"])
@@ -838,20 +879,21 @@ def discover_all_resources(region: str = None, include_supported: bool = True) -
             "needs_attention": deprecated_count + eol_count,
         },
         "services_scanned": services_scanned,
+        "scanned_service_keys": scanned_service_keys,
         "services_failed": services_failed,
         "discovery_date": datetime.now().isoformat() + "Z"
     }
 
 
-def discover_and_save(region: str = None, include_supported: bool = True, table_name: str = "aws-services-lifecycle") -> Dict:
+def discover_and_save(region: str = None, include_supported: bool = True, table_name: str = None) -> Dict:
     """
-    Discover all resources and save to DynamoDB in one operation.
+    Discover all resources and save to the inventory table in one operation.
     This is the main entry point for the agent integration.
     
     Args:
         region: AWS region to scan
         include_supported: Include supported resources (not just deprecated)
-        table_name: DynamoDB table name
+        table_name: Inventory table override (defaults to INVENTORY_TABLE_NAME)
     
     Returns:
         Dictionary with discovery and save results
@@ -862,8 +904,12 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
     if not discovery_result["success"]:
         return discovery_result
     
-    # Save to DynamoDB
-    save_result = save_to_dynamodb(discovery_result["items"], table_name, region)
+    # Save to the inventory table; reconciliation is confined to the scopes
+    # whose scanners succeeded (issue #116).
+    save_result = save_to_dynamodb(
+        discovery_result["items"], table_name, region,
+        scanned_services=discovery_result["scanned_service_keys"],
+    )
     
     if not save_result["success"]:
         return {
@@ -877,6 +923,8 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
         "region": discovery_result["region"],
         "items_discovered": len(discovery_result["items"]),
         "items_saved": save_result["items_saved"],
+        "stale_removed": save_result.get("stale_removed", 0),
         "summary": discovery_result["summary"],
+        "services_failed": discovery_result["services_failed"],
         "discovery_date": discovery_result["discovery_date"]
     }

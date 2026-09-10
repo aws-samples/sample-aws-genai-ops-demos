@@ -162,6 +162,8 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-services-lifecycle/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-state`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-state/index/*`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-account-inventory`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-account-inventory/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-health-events`,

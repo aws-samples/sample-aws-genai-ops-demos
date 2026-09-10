@@ -35,10 +35,13 @@ CONFIG_TABLE_NAME = os.environ.get('CONFIG_TABLE_NAME', 'service-extraction-conf
 # Agent-owned runtime state (issue #116, Option B): extraction metadata and
 # health-collection control rows live here, separate from repo-owned config.
 STATE_TABLE_NAME = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')
+# Discovered account inventory - decoupled from the public deprecation facts.
+INVENTORY_TABLE_NAME = os.environ.get('INVENTORY_TABLE_NAME', 'aws-account-inventory')
 
 lifecycle_table = dynamodb.Table(LIFECYCLE_TABLE_NAME)
 config_table = dynamodb.Table(CONFIG_TABLE_NAME)
 state_table = dynamodb.Table(STATE_TABLE_NAME)
+inventory_table = dynamodb.Table(INVENTORY_TABLE_NAME)
 
 
 def convert_decimals(obj):
@@ -131,31 +134,36 @@ def list_deprecations(filters: dict = None) -> dict:
     try:
         filters = filters or {}
         
-        if filters.get('service'):
-            response = lifecycle_table.query(
-                KeyConditionExpression='service_name = :service',
-                ExpressionAttributeValues={':service': filters['service']}
-            )
-        else:
-            response = lifecycle_table.scan()
-        
-        items = response.get('Items', [])
-        
-        while 'LastEvaluatedKey' in response:
+        def _collect(table):
             if filters.get('service'):
-                response = lifecycle_table.query(
+                response = table.query(
                     KeyConditionExpression='service_name = :service',
-                    ExpressionAttributeValues={':service': filters['service']},
-                    ExclusiveStartKey=response['LastEvaluatedKey']
+                    ExpressionAttributeValues={':service': filters['service']}
                 )
             else:
-                response = lifecycle_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
-            items.extend(response.get('Items', []))
+                response = table.scan()
+            
+            rows = response.get('Items', [])
+            
+            while 'LastEvaluatedKey' in response:
+                if filters.get('service'):
+                    response = table.query(
+                        KeyConditionExpression='service_name = :service',
+                        ExpressionAttributeValues={':service': filters['service']},
+                        ExclusiveStartKey=response['LastEvaluatedKey']
+                    )
+                else:
+                    response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+                rows.extend(response.get('Items', []))
+            return rows
+        
+        # Union: public deprecation facts + the account's discovered inventory
+        # (issue #116 - inventory lives in its own table; rows stay
+        # distinguishable via the inventory# item_id prefix and provenance tag).
+        items = _collect(lifecycle_table) + _collect(inventory_table)
         
         if filters.get('status'):
             items = [item for item in items if item.get('status') == filters['status']]
-        
-
         
         items = convert_decimals(items)
         return {'items': items}

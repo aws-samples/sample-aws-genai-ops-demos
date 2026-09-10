@@ -10,6 +10,7 @@ export class DataStack extends cdk.Stack {
   public readonly lifecycleTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
   public readonly stateTable: dynamodb.Table;
+  public readonly inventoryTable: dynamodb.Table;
   public readonly actionPlanTable: dynamodb.Table;
   public readonly healthEventsTable: dynamodb.Table;
 
@@ -88,6 +89,31 @@ export class DataStack extends cdk.Stack {
       tableName: 'service-extraction-state',
       partitionKey: {
         name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Account inventory table (issue #116 follow-on): discovered assets from
+    // account scans live here, fully decoupled from the public deprecation
+    // facts in aws-services-lifecycle. Discovery is this table's only writer;
+    // reconciliation scans stay confined to this small table instead of
+    // sweeping the growing facts table. Same key shape as the lifecycle table
+    // so read paths can union rows, and ready to grow account_id/region
+    // dimensions for the multi-account roadmap (#99 I4).
+    this.inventoryTable = new dynamodb.Table(this, 'InventoryTable', {
+      tableName: 'aws-account-inventory',
+      partitionKey: {
+        name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'item_id',
         type: dynamodb.AttributeType.STRING,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -204,6 +230,18 @@ export class DataStack extends cdk.Stack {
       value: this.configTable.tableArn,
       description: 'DynamoDB table ARN for service configuration',
       exportName: 'AWSServicesLifecycleTrackerConfigTableArn',
+    });
+
+    new cdk.CfnOutput(this, 'InventoryTableName', {
+      value: this.inventoryTable.tableName,
+      description: 'DynamoDB table for discovered account inventory (issue #116)',
+      exportName: 'AWSServicesLifecycleTrackerInventoryTableName',
+    });
+
+    new cdk.CfnOutput(this, 'InventoryTableArn', {
+      value: this.inventoryTable.tableArn,
+      description: 'DynamoDB table ARN for discovered account inventory',
+      exportName: 'AWSServicesLifecycleTrackerInventoryTableArn',
     });
 
     new cdk.CfnOutput(this, 'StateTableName', {
