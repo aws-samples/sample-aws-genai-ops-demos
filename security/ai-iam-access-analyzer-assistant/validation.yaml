@@ -1,0 +1,57 @@
+# validation.yaml — security/ai-iam-access-analyzer-assistant
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)") for the schema.
+
+# The demo's own deploy command, run zero-arg exactly as the README's Quick Start shows.
+# deploy-all.sh takes no required args. It runs the FULL pipeline under `set -euo pipefail`:
+# CDK dep install (into a demo-local .venv) -> React frontend build -> `cdk deploy` -> frontend
+# S3 sync + CloudFront invalidation -> create a demo Cognito user. A failure in any step fails
+# deploy_command. Bedrock model access only matters at RUNTIME (the assistant invokes the model);
+# the CDK deploy itself does not require it, and the script only WARNS if access isn't enabled.
+deploy_command: ["./deploy-all.sh"]
+
+# Pre-create the demo-local CDK virtualenv and install its deps BEFORE deploy_command.
+# IMPORTANT: this demo's cdk.json sets  "app": ".venv/bin/python3 app.py"  -- i.e. cdk synthesizes
+# using infrastructure/cdk/.venv, a venv the deploy script creates. The default destroy_command
+# below (`npx cdk destroy`) re-synthesizes app.py and therefore ALSO needs that .venv to exist
+# with aws-cdk-lib installed. deploy_command creates it, but declaring it here guarantees the
+# venv + deps exist independently of the deploy path's (silent, quiet) pip step -- the same
+# failure-derived guard used elsewhere, adapted to this demo's venv-based layout.
+setup_commands:
+  - ["python3", "-m", "venv", "infrastructure/cdk/.venv"]
+  - ["infrastructure/cdk/.venv/bin/python3", "-m", "pip", "install", "-q", "-r", "infrastructure/cdk/requirements.txt"]
+
+# Default destroy: `npx cdk destroy` from infrastructure/cdk (schema default). cdk.json's
+# "app": ".venv/bin/python3 app.py" means the synth for destroy runs inside the demo-local venv
+# created by setup_commands above -- so aws_cdk is importable and app.py synthesizes correctly.
+# NOTE: app.py does its OWN region detection (AWS_REGION -> AWS_DEFAULT_REGION -> us-east-1) and
+# does NOT import the repo's `shared` package, so pythonpath_repo_root is NOT needed here.
+destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+destroy_subdir: "infrastructure/cdk"
+
+# infrastructure/cdk/app.py: IamAnalyzerAssistantStack(app, f"IamAnalyzerAssistantStack-{region}", ...).
+# Single stack (only the main stack carries tracking, per the tracking rule). Cross-checked
+# against deploy-all.sh, which deploys and reads outputs for "IamAnalyzerAssistantStack-$REGION".
+stacks: ["IamAnalyzerAssistantStack-us-west-2"]
+
+# Pinned so the region-suffixed stack name above stays deterministic AND so it matches a region
+# where the demo's Bedrock model (us.anthropic.claude-sonnet-4-5-20250929-v1:0) is enabled. app.py
+# resolves region from AWS_REGION first, so exporting AWS_REGION=us-west-2 targets this region.
+region: "us-west-2"
+
+# Deterministic, same rationale as the reference demo: whether the assistant "really works"
+# depends on Bedrock Claude model access being manually enabled for the account (a one-time
+# external console action CI cannot perform), and grading the conversational quality is a
+# qualitative judgment. The reliable, driveable signal is that the one stack (Cognito, API
+# Gateway/Lambda, S3+CloudFront frontend) reaches *_COMPLETE on deploy and is confirmed gone on
+# destroy. The deploy itself does not require model access; only the runtime assistant does.
+verify: "deterministic"
+
+notes: >
+  CDK + Bedrock demo (no CodeBuild/agent/interactive prompts). deploy-all.sh deploys one stack
+  (IamAnalyzerAssistantStack-{region}: Cognito user pool, API Gateway + Lambda, S3 + CloudFront
+  frontend), builds/uploads a React frontend, and creates a demo Cognito user. Uses a demo-local
+  CDK venv (cdk.json app = ".venv/bin/python3 app.py"), which setup_commands pre-creates so the
+  destroy synth works too. Needs Claude model access enabled in the account's Bedrock console for
+  the assistant to function at runtime; the deploy/destroy validated here does not depend on it.
+  Region pinned to us-west-2 to match the enabled model and keep the stack name deterministic.
+  Zero required args.
