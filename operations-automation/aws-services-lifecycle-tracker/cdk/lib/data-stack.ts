@@ -9,6 +9,7 @@ import * as fs from 'fs';
 export class DataStack extends cdk.Stack {
   public readonly lifecycleTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
+  public readonly stateTable: dynamodb.Table;
   public readonly actionPlanTable: dynamodb.Table;
   public readonly healthEventsTable: dynamodb.Table;
 
@@ -63,6 +64,28 @@ export class DataStack extends cdk.Stack {
     // Service configuration table
     this.configTable = new dynamodb.Table(this, 'ConfigTable', {
       tableName: 'service-extraction-config',
+      partitionKey: {
+        name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Agent-owned runtime state table (issue #116, Option B).
+    // Extraction metadata (extraction_count, last_extraction, success_rate,
+    // last_refresh_origin, last_extraction_duration) and the health-collection
+    // control rows (_health_collection_failures, _health_collection_lock) live
+    // here, physically separated from the repo-owned configuration table so no
+    // deploy-time writer can touch runtime state: the populator has no grant on
+    // this table, and the agent has no full-item write on the config table.
+    // TTL enabled for the concurrency-lock row's expires_at-based cleanup.
+    this.stateTable = new dynamodb.Table(this, 'StateTable', {
+      tableName: 'service-extraction-state',
       partitionKey: {
         name: 'service_name',
         type: dynamodb.AttributeType.STRING,
@@ -181,6 +204,18 @@ export class DataStack extends cdk.Stack {
       value: this.configTable.tableArn,
       description: 'DynamoDB table ARN for service configuration',
       exportName: 'AWSServicesLifecycleTrackerConfigTableArn',
+    });
+
+    new cdk.CfnOutput(this, 'StateTableName', {
+      value: this.stateTable.tableName,
+      description: 'DynamoDB table for agent-owned runtime state (issue #116)',
+      exportName: 'AWSServicesLifecycleTrackerStateTableName',
+    });
+
+    new cdk.CfnOutput(this, 'StateTableArn', {
+      value: this.stateTable.tableArn,
+      description: 'DynamoDB table ARN for agent-owned runtime state',
+      exportName: 'AWSServicesLifecycleTrackerStateTableArn',
     });
 
     new cdk.CfnOutput(this, 'ActionPlanTableName', {
