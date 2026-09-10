@@ -347,8 +347,18 @@ def handler(event, context):
         
         for service_name, config in services_config.items():
             update_parts = []
+            remove_parts = []
             expr_names = {}
             expr_values = {}
+            # Evict runtime-state attributes that older deployments wrote into
+            # config rows. They now live in the service-extraction-state table
+            # (issue #116) and stale copies here would be a second, silently
+            # diverging source of truth. REMOVE on an absent attribute is a
+            # no-op, so this is safe on every deploy.
+            for stale_field in sorted(RUNTIME_FIELDS):
+                name_ph = f'#r{len(expr_names)}'
+                expr_names[name_ph] = stale_field
+                remove_parts.append(name_ph)
             for key, value in config.items():
                 if key == 'service_name' or key in RUNTIME_FIELDS:
                     continue
@@ -366,9 +376,13 @@ def handler(event, context):
             if not update_parts:
                 continue
             
+            update_expression = 'SET ' + ', '.join(update_parts)
+            if remove_parts:
+                update_expression += ' REMOVE ' + ', '.join(remove_parts)
+            
             config_table.update_item(
                 Key={'service_name': service_name},
-                UpdateExpression='SET ' + ', '.join(update_parts),
+                UpdateExpression=update_expression,
                 ExpressionAttributeNames=expr_names,
                 ExpressionAttributeValues=expr_values,
             )

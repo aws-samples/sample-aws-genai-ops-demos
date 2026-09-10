@@ -190,6 +190,39 @@ class TestSaveReconciliation:
         assert sink["deletes"] == []
 
 
+class TestFactsTableGuard:
+    """Regression tests for the incident where the discover_account router
+    branch passed LIFECYCLE_TABLE_NAME, so discovery reconciliation deleted
+    363 extraction facts. Two independent guards now prevent it."""
+
+    def test_save_refuses_the_facts_table(self):
+        result = ad.save_to_dynamodb([], table_name="aws-services-lifecycle")
+        assert result["success"] is False
+        assert "facts table" in result["error"]
+
+    def test_save_defaults_to_inventory_table(self):
+        sink = {"puts": [], "deletes": []}
+        table = MagicMock()
+        table.batch_writer.side_effect = lambda: _FakeBatch(sink)
+        table.query.return_value = {"Items": []}
+        with patch.object(ad.boto3, "resource") as mock_resource:
+            mock_resource.return_value.Table.return_value = table
+            ad.save_to_dynamodb([{"service_name": "eks", "item_id": "inventory#k8s-1.31"}])
+        mock_resource.return_value.Table.assert_called_with("aws-account-inventory")
+
+    def test_router_does_not_pass_a_table_name(self):
+        """The discover_account branch must not hand a table name to
+        discover_and_save - the default (inventory) has to win."""
+        import inspect
+        import main
+        source = inspect.getsource(main)
+        branch = source.split("elif action == 'discover_account':")[1].split("elif action ==")[0]
+        assert "table_name" not in branch, (
+            "discover_account must not pass table_name; discovery resolves the "
+            "inventory table itself (issue #116)"
+        )
+
+
 class TestConfigWriteGuard:
     def test_runtime_state_fields_rejected(self):
         import database_writes

@@ -678,6 +678,21 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
 
     region = region or REGION
     table_name = table_name or INVENTORY_TABLE_NAME
+
+    # Hard guard (issue #116): reconciliation below deletes rows outside the
+    # current run, so pointing this at the extraction facts table would destroy
+    # deprecation data. A caller passing the lifecycle table is always a bug -
+    # refuse rather than corrupt.
+    lifecycle_table_name = os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
+    if table_name == lifecycle_table_name:
+        return {
+            "success": False,
+            "error": (
+                f"Refusing to write inventory to the extraction facts table "
+                f"'{table_name}'. Inventory belongs in '{INVENTORY_TABLE_NAME}' (issue #116)."
+            ),
+        }
+
     run_id = run_id or str(uuid.uuid4())
     dynamodb = boto3.resource("dynamodb", region_name=region)
     table = dynamodb.Table(table_name)

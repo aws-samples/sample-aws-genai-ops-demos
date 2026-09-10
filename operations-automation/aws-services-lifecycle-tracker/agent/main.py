@@ -396,16 +396,19 @@ def handle_api_action(action: str, payload: dict) -> dict:
         return get_metrics()
     
     elif action == 'discover_account':
-        # Discover actual resources in the customer's AWS account
+        # Discover actual resources in the customer's AWS account.
+        # Inventory goes to the dedicated aws-account-inventory table (issue
+        # #116); discover_and_save resolves it from INVENTORY_TABLE_NAME.
+        # NEVER pass the lifecycle (facts) table here: discovery reconciliation
+        # deletes rows outside the current run, which on the facts table would
+        # destroy extraction data.
         import os
         region = payload.get('region') or os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
         include_supported = payload.get('include_supported', True)
-        table_name = os.environ.get('LIFECYCLE_TABLE_NAME', 'aws-services-lifecycle')
         
         return discover_and_save(
             region=region,
             include_supported=include_supported,
-            table_name=table_name
         )
     
     elif action == 'update_service':
