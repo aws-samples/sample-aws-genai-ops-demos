@@ -22,7 +22,12 @@ health_events_table = _dynamodb.Table(HEALTH_TABLE_NAME)
 def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> str:
     """
     Intelligently categorize item status based on dates and service-specific logic
-    Returns: 'deprecated', 'extended_support', 'end_of_life', or 'end_of_support_date'
+    Returns one of:
+      'end_of_life'         - a lifecycle end date has already passed
+      'extended_support'    - in (or within a year of entering) the extended tier
+      'end_of_support_date' - a lifecycle end date is announced but > 1 year out
+      'deprecated'          - deprecation is effective now (date passed or docs say so)
+      'supported'           - no lifecycle dates and no deprecation signal (#119)
     """
     current_date = datetime.now(timezone.utc).date()
     
@@ -67,11 +72,16 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
         # Lambda runtimes are just deprecated until they're blocked
         return 'deprecated'
     
-    # MSK: Use "end_of_support_date" status for consistency with documentation
+    # MSK: end_of_support_date is a display label, not a lifecycle verdict (#119).
+    # Compare the date to today: past means the version is gone (end_of_life);
+    # future means "EOS announced" (end_of_support_date). Versions without an
+    # EOS date fall through to the generic logic instead of being blanket-
+    # labeled 'deprecated' (they may simply still be supported).
     if service_name == 'msk':
         if 'end_of_support_date' in parsed_dates:
-            return 'end_of_support_date'  # Keep consistent with MSK documentation terminology
-        return 'deprecated'  # Fallback if no end of support date
+            if parsed_dates['end_of_support_date'] <= current_date:
+                return 'end_of_life'
+            return 'end_of_support_date'
     
     # ElasticBeanstalk: Platform retirement lifecycle
     if service_name == 'elasticbeanstalk':
@@ -100,7 +110,9 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
     
     # GENERIC LOGIC for other services (EKS, RDS, etc. that have extended support)
     
-    # Check for retirement/end-of-life dates
+    # 1. Hard end dates: past means gone; within a year means final stretch;
+    #    further out means "end announced" (#119: the old 180/365 bands were
+    #    redundant, and >365 fell through to a blanket 'deprecated').
     retirement_fields = ['end_of_support_date', 'end_of_life_date', 'eol_date', 'target_retirement_date', 'retirement_date']
     retirement_date = None
     for field in retirement_fields:
@@ -112,23 +124,43 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
         days_until_retirement = (retirement_date - current_date).days
         if retirement_date <= current_date:
             return 'end_of_life'
-        elif days_until_retirement <= 180:  # Within 6 months of retirement
+        elif days_until_retirement <= 365:  # Within 1 year of the end date
             return 'extended_support'
-        elif days_until_retirement <= 365:  # Within 1 year of retirement
-            return 'extended_support'
+        else:
+            return 'end_of_support_date'  # End announced, more than a year out
     
-    # Check for extended support periods (EKS, RDS, ElastiCache)
+    # 2. Standard/extended support pair (EKS, RDS, ElastiCache, Aurora, OpenSearch)
     if 'end_of_extended_support_date' in parsed_dates:
         extended_end = parsed_dates['end_of_extended_support_date']
         if extended_end <= current_date:
             return 'end_of_life'
-        elif 'end_of_standard_support_date' in parsed_dates:
-            standard_end = parsed_dates['end_of_standard_support_date']
-            if standard_end <= current_date:
-                return 'extended_support'  # In extended support period
+        if 'end_of_standard_support_date' in parsed_dates:
+            if parsed_dates['end_of_standard_support_date'] <= current_date:
+                return 'extended_support'  # In the extended support window
+            return 'supported'  # Still in standard support (#119)
+        return 'extended_support'  # Only an extended-support end date is known
+    if 'end_of_standard_support_date' in parsed_dates:
+        # Standard-support date alone (previously ignored entirely, #119)
+        if parsed_dates['end_of_standard_support_date'] <= current_date:
+            return 'extended_support'
+        return 'supported'
     
-    # Default to deprecated if we have any deprecation info
-    return 'deprecated'
+    # 3. Explicit deprecation signals: a passed deprecation date, or docs text
+    #    that says so. A future deprecation date is announced-but-not-effective.
+    for field in ['deprecation_date', 'deprecated_date', 'sunset_date']:
+        if field in parsed_dates:
+            if parsed_dates[field] <= current_date:
+                return 'deprecated'
+            return 'end_of_support_date'  # Deprecation announced for a future date
+    raw_status = str(item.get('status', '')).lower()
+    if 'deprecat' in raw_status:
+        return 'deprecated'
+    if 'end of life' in raw_status or 'end_of_life' in raw_status or 'retired' in raw_status:
+        return 'end_of_life'
+    
+    # 4. No lifecycle dates and no deprecation signal: the item is supported
+    #    (#119: the old blanket 'deprecated' fallback mislabeled current versions).
+    return 'supported'
 
 
 def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -> Tuple[bool, List[str]]:
