@@ -9,6 +9,7 @@ REQUIRED_SERVICE=""
 MIN_AWS_CLI_VERSION="2.31.13"
 MIN_PYTHON_VERSION=""
 MIN_NODE_VERSION=""
+MIN_CDK_VERSION=""
 SKIP_SERVICE_CHECK=false
 REQUIRE_CDK=false
 REQUIRE_KUBECTL=false
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --min-node-version)
             MIN_NODE_VERSION="$2"
+            shift 2
+            ;;
+        --min-cdk-version)
+            MIN_CDK_VERSION="$2"
             shift 2
             ;;
         --skip-service-check)
@@ -94,6 +99,35 @@ if [ "$REQUIRE_CDK" = true ] || [ -n "$MIN_NODE_VERSION" ]; then
         fi
     else
         echo -e "\033[0;31m      ❌ Node.js not found. Install from https://nodejs.org\033[0m"
+        exit 1
+    fi
+fi
+
+# Check CDK CLI version (only when a demo needs a specific minimum, e.g. for
+# newer L2 constructs). --require-cdk alone validates Node.js; pass
+# --min-cdk-version to also gate on the CDK CLI itself.
+if [ -n "$MIN_CDK_VERSION" ]; then
+    echo -e "\n\033[0;33mChecking AWS CDK version...\033[0m"
+    CDK_VERSION=$(npx cdk --version 2>&1 || echo "NOT_FOUND")
+    if [[ $CDK_VERSION =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        CDK_MAJOR=${BASH_REMATCH[1]}
+        CDK_MINOR=${BASH_REMATCH[2]}
+        CDK_PATCH=${BASH_REMATCH[3]}
+        echo -e "\033[0;90m      Current version: cdk $CDK_MAJOR.$CDK_MINOR.$CDK_PATCH\033[0m"
+        IFS='.' read -r MIN_CDK_MAJOR MIN_CDK_MINOR MIN_CDK_PATCH <<< "$MIN_CDK_VERSION"
+        MIN_CDK_PATCH=${MIN_CDK_PATCH:-0}
+        if [ "$CDK_MAJOR" -gt "$MIN_CDK_MAJOR" ] || \
+           { [ "$CDK_MAJOR" -eq "$MIN_CDK_MAJOR" ] && [ "$CDK_MINOR" -gt "$MIN_CDK_MINOR" ]; } || \
+           { [ "$CDK_MAJOR" -eq "$MIN_CDK_MAJOR" ] && [ "$CDK_MINOR" -eq "$MIN_CDK_MINOR" ] && [ "$CDK_PATCH" -ge "$MIN_CDK_PATCH" ]; }; then
+            echo -e "\033[0;32m      ✓ AWS CDK version is compatible\033[0m"
+        else
+            echo -e "\033[0;31m      ❌ AWS CDK $MIN_CDK_VERSION or later is required (found $CDK_MAJOR.$CDK_MINOR.$CDK_PATCH)\033[0m"
+            echo -e "\033[0;36m      Upgrade with: npm install -g aws-cdk@latest\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[0;31m      ❌ AWS CDK not found or version unreadable\033[0m"
+        echo -e "\033[0;36m      Install with: npm install -g aws-cdk@latest\033[0m"
         exit 1
     fi
 fi

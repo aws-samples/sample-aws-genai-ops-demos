@@ -6,6 +6,7 @@ param(
     [string]$MinAwsCliVersion = "2.31.13",
     [string]$MinPythonVersion = "",
     [string]$MinNodeVersion = "",
+    [string]$MinCdkVersion = "",
     [switch]$SkipServiceCheck = $false,
     [switch]$RequireCDK = $false,
     [switch]$RequireKubectl = $false
@@ -52,6 +53,35 @@ if ($RequireCDK -or -not [string]::IsNullOrEmpty($MinNodeVersion)) {
         }
     } else {
         Write-Host "      ERROR: Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Check CDK CLI version (only when a demo needs a specific minimum, e.g. for
+# newer L2 constructs). -RequireCDK alone validates Node.js; pass
+# -MinCdkVersion to also gate on the CDK CLI itself.
+if (-not [string]::IsNullOrEmpty($MinCdkVersion)) {
+    Write-Host "`nChecking AWS CDK version..." -ForegroundColor Yellow
+    $cdkVersion = npx cdk --version 2>&1
+    if ($cdkVersion -match '(\d+)\.(\d+)\.(\d+)') {
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        $patch = [int]$Matches[3]
+        Write-Host "      Current version: cdk $major.$minor.$patch" -ForegroundColor Gray
+        $minParts = $MinCdkVersion.Split('.')
+        $minMajor = [int]$minParts[0]
+        $minMinor = [int]$minParts[1]
+        $minPatch = if ($minParts.Length -gt 2) { [int]$minParts[2] } else { 0 }
+        $isVersionValid = ($major -gt $minMajor) -or ($major -eq $minMajor -and $minor -gt $minMinor) -or ($major -eq $minMajor -and $minor -eq $minMinor -and $patch -ge $minPatch)
+        if (-not $isVersionValid) {
+            Write-Host "      ERROR: AWS CDK $MinCdkVersion or later is required (found $major.$minor.$patch)" -ForegroundColor Red
+            Write-Host "      Upgrade with: npm install -g aws-cdk@latest" -ForegroundColor Cyan
+            exit 1
+        }
+        Write-Host "      OK: AWS CDK version is compatible" -ForegroundColor Green
+    } else {
+        Write-Host "      ERROR: AWS CDK not found or version unreadable" -ForegroundColor Red
+        Write-Host "      Install with: npm install -g aws-cdk@latest" -ForegroundColor Cyan
         exit 1
     }
 }
