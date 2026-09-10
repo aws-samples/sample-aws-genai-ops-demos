@@ -4,7 +4,7 @@ Concurrency lock mechanism for AWS Services Lifecycle Tracker.
 Uses DynamoDB conditional writes to prevent parallel execution of
 health collection (or other exclusive operations).
 
-The lock is stored in the service-extraction-config table with a special
+The lock is stored in the agent-owned service-extraction-state table with a special
 service_name key (e.g., '_health_collection_lock').
 """
 import os
@@ -18,11 +18,13 @@ from botocore.exceptions import ClientError
 from aws_utils import get_region
 
 
-# Initialize DynamoDB
+# Initialize DynamoDB. The lock row is runtime state, so it lives in the
+# agent-owned service-extraction-state table (issue #116, Option B); the
+# agent no longer has full-item write access to the config table.
 region = get_region()
 dynamodb = boto3.resource('dynamodb', region_name=region)
-CONFIG_TABLE_NAME = os.environ.get('CONFIG_TABLE_NAME', 'service-extraction-config')
-config_table = dynamodb.Table(CONFIG_TABLE_NAME)
+STATE_TABLE_NAME = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')
+state_table = dynamodb.Table(STATE_TABLE_NAME)
 
 # Module-level state to track the current lock holder for release validation
 _current_lock_holder: Optional[str] = None
@@ -41,7 +43,7 @@ def acquire_lock(
     - The existing lock has expired (expires_at < current time)
 
     Args:
-        table_name: DynamoDB table name. Defaults to CONFIG_TABLE_NAME env var.
+        table_name: DynamoDB table name. Defaults to STATE_TABLE_NAME env var.
         lock_id: The service_name key for the lock item.
         ttl_minutes: Lock expiration time in minutes (default: 10).
 
@@ -90,7 +92,7 @@ def release_lock(
     Only releases the lock if the current process holds it (lock_holder matches).
 
     Args:
-        table_name: DynamoDB table name. Defaults to CONFIG_TABLE_NAME env var.
+        table_name: DynamoDB table name. Defaults to STATE_TABLE_NAME env var.
         lock_id: The service_name key for the lock item.
     """
     global _current_lock_holder
@@ -122,4 +124,4 @@ def _get_table(table_name: Optional[str]):
     """Return the DynamoDB Table resource for the given name or default."""
     if table_name:
         return dynamodb.Table(table_name)
-    return config_table
+    return state_table

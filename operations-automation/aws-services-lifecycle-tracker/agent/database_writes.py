@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 from botocore.exceptions import ClientError
 
-from database_reads import config_table, lifecycle_table, get_service_config
+from database_reads import config_table, lifecycle_table, state_table, get_service_config
 from aws_utils import get_region
 
 # Initialize health events table
@@ -355,11 +355,13 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
     try:
         current_timestamp = datetime.now(timezone.utc).isoformat()
         
-        # Get current extraction count and success rate
-        config_response = config_table.get_item(Key={'service_name': service_name})
-        current_config = config_response.get('Item', {})
-        current_count = int(current_config.get('extraction_count', 0))
-        current_rate = float(current_config.get('success_rate', 0))
+        # Get current extraction count and success rate from the agent-owned
+        # state table (issue #116, Option B) - runtime state no longer lives
+        # in the repo-owned config table.
+        state_response = state_table.get_item(Key={'service_name': service_name})
+        current_state = state_response.get('Item', {})
+        current_count = int(current_state.get('extraction_count', 0))
+        current_rate = float(current_state.get('success_rate', 0))
         
         # Calculate new success rate
         new_count = current_count + 1
@@ -379,8 +381,8 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
             update_expression += ', last_extraction_duration = :duration'
             expression_values[':duration'] = Decimal(str(extraction_duration))
         
-        # Update service config with extraction metadata
-        config_table.update_item(
+        # Upsert extraction metadata into the agent-owned state table
+        state_table.update_item(
             Key={'service_name': service_name},
             UpdateExpression=update_expression,
             ExpressionAttributeValues=expression_values
@@ -401,6 +403,18 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
         }
 
 
+# Runtime-state fields live in the agent-owned state table (issue #116,
+# Option B) and must never be written into the config table - not even via
+# the UI's update_service path.
+_RUNTIME_STATE_FIELDS = {
+    'extraction_count',
+    'last_extraction',
+    'success_rate',
+    'last_refresh_origin',
+    'last_extraction_duration',
+}
+
+
 def update_service_config(service_name: str, updates: dict) -> dict:
     """
     Update service configuration
@@ -413,6 +427,9 @@ def update_service_config(service_name: str, updates: dict) -> dict:
         expr_values = {}
         
         for key, value in updates.items():
+            if key in _RUNTIME_STATE_FIELDS:
+                # Silently dropping would hide caller bugs; reject instead.
+                return {'error': f"Field '{key}' is runtime state and cannot be written to the config table"}
             update_expr_parts.append(f'{key} = :{key}')
             expr_values[f':{key}'] = value
         

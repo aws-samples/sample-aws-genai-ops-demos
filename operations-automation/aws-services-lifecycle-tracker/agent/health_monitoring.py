@@ -5,8 +5,9 @@ Tracks consecutive Health collection failures and emits CloudWatch alarms
 when failures reach a configurable threshold. Implements graceful degradation
 by disabling Health collection when permissions are insufficient.
 
-The failure counter and disabled flag are stored in the service-extraction-config
-DynamoDB table (config table) as special entries prefixed with '_'.
+The failure counter and disabled flag are stored in the agent-owned
+service-extraction-state DynamoDB table (issue #116, Option B) as special
+entries prefixed with '_'.
 
 Requirements: 8.2, 9.3
 """
@@ -36,10 +37,16 @@ METRIC_NAME = "HealthCollectionConsecutiveFailures"
 
 
 def _get_config_table():
-    """Get a reference to the service-extraction-config DynamoDB table."""
+    """Get a reference to the agent-owned runtime state DynamoDB table.
+
+    The failure counter and disabled-flag control rows are runtime state, so
+    they live in service-extraction-state (issue #116, Option B) - the agent
+    no longer has full-item write access to the config table. The function
+    name is kept for API stability with existing tests/callers.
+    """
     region = get_region()
     dynamodb = boto3.resource('dynamodb', region_name=region)
-    table_name = os.environ.get('CONFIG_TABLE_NAME', 'service-extraction-config')
+    table_name = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')
     return dynamodb.Table(table_name)
 
 
