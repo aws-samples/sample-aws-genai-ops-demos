@@ -186,17 +186,47 @@ class AccountResourceDiscovery:
             print(f"  Warning: Could not scan EKS: {e}")
         return items
 
+    # Provenance tag identifying rows written by account discovery (issue
+    # #116). Mirrors agent/account_discovery.py - keep the two in sync.
+    DISCOVERY_PROVENANCE = "account_discovery"
+
     def save_to_dynamodb(self, items: List[Dict]):
-        """Save discovered items to DynamoDB"""
-        scan = self.lifecycle_table.scan()
-        with self.lifecycle_table.batch_writer() as batch:
-            for item in scan["Items"]:
-                batch.delete_item(Key={"service_name": item["service_name"], "item_id": item["item_id"]})
-        
+        """Upsert discovered inventory rows and reconcile stale ones.
+
+        Discovery owns only its provenance-tagged rows (issue #116): items are
+        tagged and upserted by key, then rows carrying the discovery tag that
+        were NOT re-seen in this run are removed. Rows without the tag (the
+        extraction pipeline's deprecation data) are never touched. The old
+        behavior deleted the ENTIRE table before rewriting the inventory.
+        """
+        current_keys = set()
+        for item in items:
+            item["provenance"] = self.DISCOVERY_PROVENANCE
+            current_keys.add((item["service_name"], item["item_id"]))
+
         with self.lifecycle_table.batch_writer() as batch:
             for item in items:
                 batch.put_item(Item=item)
-        print(f"Saved {len(items)} items to DynamoDB")
+
+        stale_keys = []
+        scan_kwargs = {"ProjectionExpression": "service_name, item_id, provenance"}
+        response = self.lifecycle_table.scan(**scan_kwargs)
+        while True:
+            for row in response.get("Items", []):
+                if row.get("provenance") == self.DISCOVERY_PROVENANCE and \
+                        (row["service_name"], row["item_id"]) not in current_keys:
+                    stale_keys.append({
+                        "service_name": row["service_name"],
+                        "item_id": row["item_id"],
+                    })
+            if "LastEvaluatedKey" not in response:
+                break
+            response = self.lifecycle_table.scan(ExclusiveStartKey=response["LastEvaluatedKey"], **scan_kwargs)
+
+        with self.lifecycle_table.batch_writer() as batch:
+            for key in stale_keys:
+                batch.delete_item(Key=key)
+        print(f"Saved {len(items)} items to DynamoDB ({len(stale_keys)} stale inventory rows reconciled)")
 
 
     def run(self):

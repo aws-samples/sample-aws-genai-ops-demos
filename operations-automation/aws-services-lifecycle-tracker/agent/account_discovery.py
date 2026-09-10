@@ -656,10 +656,30 @@ def discover_ec2_instances(region: str = None) -> List[Dict]:
     return items
 
 
+# Provenance tag identifying rows written by account discovery. Discovery may
+# only ever create, update, or delete rows carrying this tag (issue #116) -
+# extraction-pipeline rows are owned by store_deprecation_data and untouchable.
+DISCOVERY_PROVENANCE = "account_discovery"
+
+
 def save_to_dynamodb(items: List[Dict], table_name: str = "aws-services-lifecycle", region: str = None) -> Dict:
     """
-    Save discovered items to DynamoDB, replacing existing data.
-    
+    Upsert discovered inventory rows and reconcile stale ones (issue #116).
+
+    Previous behavior scanned the whole table and deleted EVERY row -
+    including extraction-pipeline deprecation data - before rewriting the
+    inventory. Now discovery owns only its provenance-tagged rows:
+    1. every discovered item is tagged provenance='account_discovery',
+    2. items are upserted by key (a put on the same key replaces the
+       previous inventory version - idempotent re-runs),
+    3. stale rows are removed only if they carry the discovery provenance
+       tag AND were not re-seen in this run (e.g. a resource left the
+       account). Rows without the tag are never touched.
+
+    Note: inventory rows written before this change carry no provenance tag.
+    Re-seen resources get tagged on the next run's upsert; rows for resources
+    that disappeared before this change linger untagged until manually removed.
+
     Args:
         items: List of deprecation items to save
         table_name: DynamoDB table name
@@ -673,23 +693,41 @@ def save_to_dynamodb(items: List[Dict], table_name: str = "aws-services-lifecycl
     table = dynamodb.Table(table_name)
     
     try:
-        # Clear existing items first
-        scan = table.scan()
-        with table.batch_writer() as batch:
-            for item in scan.get("Items", []):
-                batch.delete_item(Key={
-                    "service_name": item["service_name"],
-                    "item_id": item["item_id"]
-                })
+        # Tag provenance and remember this run's key set
+        current_keys = set()
+        for item in items:
+            item["provenance"] = DISCOVERY_PROVENANCE
+            current_keys.add((item["service_name"], item["item_id"]))
         
-        # Write new items
+        # Upsert this run's inventory (put on an existing key replaces it)
         with table.batch_writer() as batch:
             for item in items:
                 batch.put_item(Item=item)
         
+        # Reconcile: delete only discovery-owned rows not re-seen this run
+        stale_keys = []
+        scan_kwargs = {"ProjectionExpression": "service_name, item_id, provenance"}
+        response = table.scan(**scan_kwargs)
+        while True:
+            for row in response.get("Items", []):
+                if row.get("provenance") == DISCOVERY_PROVENANCE and \
+                        (row["service_name"], row["item_id"]) not in current_keys:
+                    stale_keys.append({
+                        "service_name": row["service_name"],
+                        "item_id": row["item_id"],
+                    })
+            if "LastEvaluatedKey" not in response:
+                break
+            response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"], **scan_kwargs)
+        
+        with table.batch_writer() as batch:
+            for key in stale_keys:
+                batch.delete_item(Key=key)
+        
         return {
             "success": True,
             "items_saved": len(items),
+            "stale_removed": len(stale_keys),
             "table_name": table_name
         }
     except Exception as e:
