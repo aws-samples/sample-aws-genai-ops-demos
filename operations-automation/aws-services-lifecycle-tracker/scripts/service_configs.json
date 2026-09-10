@@ -55,9 +55,13 @@
     "rds": {
       "name": "Amazon RDS",
       "documentation_urls": [
-        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/MySQL.Concepts.VersionMgmt.html"
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/MySQL.Concepts.VersionMgmt.html",
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/MariaDB.Concepts.VersionMgmt.html",
+        "https://docs.aws.amazon.com/AmazonRDS/latest/PostgreSQLReleaseNotes/postgresql-release-calendar.html",
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.Oracle.Overview.html",
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/SQLServer.Concepts.General.VersionPolicy.html"
       ],
-      "extraction_focus": "Locate database engine version lifecycle tables (e.g., MySQL, PostgreSQL version tables). Extract all rows from these tables. For each engine version, extract available fields such as: major version, community release date, RDS release date, community end of life date, RDS end of standard support date, RDS start of Extended Support year 1 pricing date, RDS start of Extended Support year 3 pricing date. Include all versions regardless of support status.",
+      "extraction_focus": "Locate database engine version lifecycle tables. Determine the engine (MySQL, MariaDB, PostgreSQL, Oracle, SQL Server) from the page title and content. Extract all rows from version lifecycle tables. For each engine version, extract available fields such as: major or minor version, community release date, RDS release date, community end of life date, RDS end of standard support date. For Oracle and SQL Server pages, the end-of-support or expected-upgrade date may be embedded in text or licensing notes - use the earliest such date as the end of standard support date. Build the identifier as a lowercase engine-version slug (e.g., 'mysql-5.7.44', 'postgresql-17.6', 'oracle-19c', 'sqlserver-2019'). Include all versions regardless of support status.",
       "schema_key": "engine_versions",
       "item_properties": {
         "name": "Database engine and version (e.g., 'MySQL 5.7.44')",
