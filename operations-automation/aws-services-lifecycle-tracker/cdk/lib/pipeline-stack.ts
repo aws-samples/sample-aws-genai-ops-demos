@@ -27,19 +27,41 @@ const API_FUNCTION_NAME = 'aws-services-lifecycle-api';
 const PYTHON_RUNTIME = lambda.Runtime.PYTHON_3_14;
 const PYTHON_VERSION = '3.14';
 
+// Repo-wide region/account helpers (shared/utils/aws_utils.py). The Lambda
+// bundle cannot import from outside its own directory, so the file is copied
+// into the staged backend at synth time: one source of truth, no local copy.
+const SHARED_AWS_UTILS = path.join(__dirname, '..', '..', '..', '..', 'shared', 'utils', 'aws_utils.py');
+const STAGE_DIR = path.join(__dirname, '..', '.backend-stage');
+
+/**
+ * Assemble the Lambda source tree: backend/*.py + requirements.txt plus the
+ * shared aws_utils.py. Tests and caches are never staged.
+ */
+function stageBackend(): string {
+  fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+  fs.mkdirSync(STAGE_DIR, { recursive: true });
+  for (const file of fs.readdirSync(BACKEND_DIR)) {
+    if (file.endsWith('.py') || file === 'requirements.txt') {
+      fs.copyFileSync(path.join(BACKEND_DIR, file), path.join(STAGE_DIR, file));
+    }
+  }
+  fs.copyFileSync(SHARED_AWS_UTILS, path.join(STAGE_DIR, 'aws_utils.py'));
+  return STAGE_DIR;
+}
+
 /**
  * Bundle the Python code without Docker: pip resolves Linux/arm64 wheels for
- * the Lambda runtime (all dependencies are pure Python), then the backend
+ * the Lambda runtime (all dependencies are pure Python), then the staged
  * sources are copied alongside. Returning false lets CDK fall back to the
  * Docker bundling image.
  */
-function bundleBackendLocally(outputDir: string): boolean {
+function bundleBackendLocally(stageDir: string, outputDir: string): boolean {
   const pipArgs = [
     '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
     '--platform', 'manylinux2014_aarch64', '--only-binary=:all:',
     '--python-version', PYTHON_VERSION, '--implementation', 'cp',
     '--target', outputDir,
-    '-r', path.join(BACKEND_DIR, 'requirements.txt'),
+    '-r', path.join(stageDir, 'requirements.txt'),
   ];
   let installed = false;
   for (const python of ['python', 'python3']) {
@@ -52,9 +74,9 @@ function bundleBackendLocally(outputDir: string): boolean {
   if (!installed) {
     return false;
   }
-  for (const file of fs.readdirSync(BACKEND_DIR)) {
+  for (const file of fs.readdirSync(stageDir)) {
     if (file.endsWith('.py')) {
-      fs.copyFileSync(path.join(BACKEND_DIR, file), path.join(outputDir, file));
+      fs.copyFileSync(path.join(stageDir, file), path.join(outputDir, file));
     }
   }
   return true;
@@ -95,8 +117,8 @@ export class PipelineStack extends cdk.Stack {
     // ------------------------------------------------------------------
     // Shared code bundle
     // ------------------------------------------------------------------
-    const backendCode = lambda.Code.fromAsset(BACKEND_DIR, {
-      exclude: ['tests', '__pycache__', '*.pyc', '.hypothesis', '.pytest_cache'],
+    const stageDir = stageBackend();
+    const backendCode = lambda.Code.fromAsset(stageDir, {
       bundling: {
         image: PYTHON_RUNTIME.bundlingImage,
         platform: 'linux/arm64',
@@ -104,7 +126,7 @@ export class PipelineStack extends cdk.Stack {
           'bash', '-c',
           'pip install --quiet -r requirements.txt -t /asset-output && cp *.py /asset-output/',
         ],
-        local: { tryBundle: (outputDir: string) => bundleBackendLocally(outputDir) },
+        local: { tryBundle: (outputDir: string) => bundleBackendLocally(stageDir, outputDir) },
       },
     });
 

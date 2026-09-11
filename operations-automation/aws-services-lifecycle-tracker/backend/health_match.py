@@ -15,28 +15,18 @@ Two calls, no storage of its own:
 
 The Health API requires Business/Enterprise Support; without it the call fails
 with SubscriptionRequiredException and the scan simply reports Health as
-unavailable. Health is a global service: its endpoint lives in one region per
-partition, which is a service fact, not a deployment choice.
+unavailable. Health is a global service: botocore addresses it through the
+partition pseudo-region "<partition>-global" (aws-global -> global.health.
+amazonaws.com), derived here from the deployment region's partition.
 """
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
 
-# Health API endpoint region per partition (global service).
-_HEALTH_ENDPOINT_REGION = {
-    "aws": "us-east-1",
-    "aws-cn": "cn-northwest-1",
-    "aws-us-gov": "us-gov-west-1",
-}
-
 # Health console deep link for one event
 HEALTH_CONSOLE_URL = "https://health.aws.amazon.com/health/home#/account/event-log?eventID={arn}"
-
-
-def _endpoint_region(partition: str) -> str:
-    return _HEALTH_ENDPOINT_REGION.get(partition, "us-east-1")
 
 
 def _chunks(seq: List, size: int):
@@ -44,8 +34,22 @@ def _chunks(seq: List, size: int):
         yield seq[i:i + size]
 
 
-def match_health_events(region: str, partition: str = "aws", client=None) -> Dict:
+def health_client(region: str):
+    """Health client for the partition that `region` belongs to.
+
+    botocore's endpoint ruleset maps the pseudo-region "<partition>-global" to
+    the single global Health endpoint; a real region would build a
+    health.<region> host that only exists in the partition's home region.
+    """
+    partition = boto3.session.Session().get_partition_for_region(region)
+    return boto3.client("health", region_name=f"{partition}-global")
+
+
+def match_health_events(region: str, client=None) -> Dict:
     """Return open/upcoming planned-lifecycle notices keyed by affected entity.
+
+    `region` is the scanned (deployment) region: it selects the Health
+    partition endpoint and filters events to that region plus global ones.
 
     Result:
       {"available": bool, "reason": str|None, "checked_at": iso,
@@ -55,7 +59,7 @@ def match_health_events(region: str, partition: str = "aws", client=None) -> Dic
     must not fail a scan.
     """
     checked_at = datetime.now(timezone.utc).isoformat()
-    health = client or boto3.client("health", region_name=_endpoint_region(partition))
+    health = client or health_client(region)
     events: Dict[str, Dict] = {}
     try:
         paginator = health.get_paginator("describe_events")

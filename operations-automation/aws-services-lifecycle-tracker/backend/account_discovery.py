@@ -1084,12 +1084,11 @@ def cross_check_health(items: List[Dict]) -> Dict:
     (no Business/Enterprise Support, missing permission) is just reported.
     """
     from health_match import match_health_events, apply_health_flags, health_status_summary
-    partition = _caller_identity().get("partition", "aws")
     regions = sorted({item.get("region") or REGION for item in items}) or [REGION]
     flagged, events, reasons, available = 0, 0, [], False
     checked_at = None
     for region in regions:
-        match = match_health_events(region, partition)
+        match = match_health_events(region)
         checked_at = match["checked_at"]
         if match["available"]:
             available = True
