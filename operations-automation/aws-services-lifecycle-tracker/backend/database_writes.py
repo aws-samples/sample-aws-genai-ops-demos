@@ -1,6 +1,6 @@
 """
 Database WRITE operations for AWS Services Lifecycle Tracker
-These functions should remain with the agent as they're part of the extraction workflow
+Part of the extraction workflow (pipeline Lambda)
 """
 import os
 import boto3
@@ -270,14 +270,14 @@ def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -
 
 
 # ============================================================================
-# WRITE OPERATIONS - Should stay with agent (part of extraction workflow)
+# WRITE OPERATIONS (extraction workflow)
 # ============================================================================
 
 def store_deprecation_data(service_name: str, items: list) -> dict:
     """
     Store extracted deprecation data in DynamoDB
     
-    KEEP WITH AGENT: This is part of the extraction workflow
+    Part of the extraction workflow
     """
     try:
         config = get_service_config(service_name)
@@ -422,13 +422,13 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
     """
     Update service configuration with extraction metadata
     
-    KEEP WITH AGENT: This tracks agent execution history
+    Tracks extraction history per service
     Returns dict with success status for better error tracking
     """
     try:
         current_timestamp = datetime.now(timezone.utc).isoformat()
         
-        # Get current extraction count and success rate from the agent-owned
+        # Get current extraction count and success rate from the backend-owned
         # state table (issue #116, Option B) - runtime state no longer lives
         # in the repo-owned config table.
         state_response = state_table.get_item(Key={'service_name': service_name})
@@ -454,7 +454,7 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
             update_expression += ', last_extraction_duration = :duration'
             expression_values[':duration'] = Decimal(str(extraction_duration))
         
-        # Upsert extraction metadata into the agent-owned state table
+        # Upsert extraction metadata into the backend-owned state table
         state_table.update_item(
             Key={'service_name': service_name},
             UpdateExpression=update_expression,
@@ -476,7 +476,7 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
         }
 
 
-# Runtime-state fields live in the agent-owned state table (issue #116,
+# Runtime-state fields live in the backend-owned state table (issue #116,
 # Option B) and must never be written into the config table - not even via
 # the UI's update_service path.
 _RUNTIME_STATE_FIELDS = {
@@ -493,7 +493,7 @@ def update_service_config(service_name: str, updates: dict) -> dict:
     Update service configuration
     
     FUTURE: Could move to API if we want admin UI to update configs
-    For now, keep with agent for simplicity
+    Kept in the backend for simplicity
     """
     try:
         update_expr_parts = []
@@ -533,7 +533,7 @@ def batch_write_health_events(events: list[dict]) -> dict:
     Uses DynamoDB BatchWriteItem with a maximum of 25 items per batch.
     Each event is expected to already contain all required fields including 'ttl'.
     
-    KEEP WITH AGENT: Part of the Health collection workflow.
+    Part of the Health collection workflow.
     
     Args:
         events: List of enriched Health event dicts ready for storage.
@@ -621,7 +621,7 @@ def update_health_event_status(event_arn: str, event_type_category: str, status:
     
     When the status is 'closed', also sets the resolution_time to the current timestamp.
     
-    KEEP WITH AGENT: Part of the Health collection workflow for event lifecycle tracking.
+    Part of the Health collection workflow for event lifecycle tracking.
     
     Args:
         event_arn: The ARN of the Health event (partition key).

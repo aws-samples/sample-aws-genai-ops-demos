@@ -2,7 +2,7 @@
 Action router and shared helpers for the AWS Services Lifecycle Tracker.
 
 Compute-agnostic: no AgentCore, Step Functions or Lambda specifics live here.
-Used by lambda_api.py (UI + scheduled Health collection) and lambda_pipeline.py
+Used by api.py (UI + scheduled Health collection) and pipeline.py
 (the durable refresh pipeline). Issue #139.
 """
 import json

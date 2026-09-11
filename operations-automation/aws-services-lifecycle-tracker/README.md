@@ -143,9 +143,9 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 
 ```
 project-root/
-├── agent/                          # Python code shared by both Lambda functions
-│   ├── lambda_pipeline.py          # Durable function: extract -> scan -> reconcile -> notify
-│   ├── lambda_api.py               # API Lambda: HTTP routes, pipeline control, scheduler entry
+├── backend/                          # Python code of both Lambda functions
+│   ├── pipeline.py          # Durable function: extract -> scan -> reconcile -> notify
+│   ├── api.py               # API Lambda: HTTP routes, pipeline control, scheduler entry
 │   ├── actions.py                  # Action router (list/update services, plans, health, ...)
 │   ├── workflow_orchestrator.py    # Single-service extraction workflow
 │   ├── data_extractor.py           # HTML parsing + Amazon Nova normalization
@@ -188,9 +188,9 @@ project-root/
 | File | Purpose | When to Modify |
 |------|---------|----------------|
 | **`scripts/service_configs.json`** | Service definitions - documentation URLs, extraction focus, schema | Add new services to monitor |
-| **`agent/account_discovery.py`** + **`cdk/lib/pipeline-stack.ts`** | Scanners and their read-only IAM grants | Add a service to the account scan |
-| **`agent/database_writes.py`** | Status categorization logic | Customize status thresholds or date fields |
-| **`agent/lambda_pipeline.py`** | Pipeline steps, concurrency, retry and failure-tolerance settings | Change how a refresh runs |
+| **`backend/account_discovery.py`** + **`cdk/lib/pipeline-stack.ts`** | Scanners and their read-only IAM grants | Add a service to the account scan |
+| **`backend/database_writes.py`** | Status categorization logic | Customize status thresholds or date fields |
+| **`backend/pipeline.py`** | Pipeline steps, concurrency, retry and failure-tolerance settings | Change how a refresh runs |
 | **`frontend/src/pages/Dashboard.tsx`** | Dashboard UI | Customize layout or metrics |
 
 ## Service Configuration Management
@@ -200,7 +200,7 @@ project-root/
 All service definitions live in **`scripts/service_configs.json`**. The tracker ships with 11 services, each meeting two rules that every addition must meet too:
 
 1. **The documentation page contains an HTML table with lifecycle dates** (end of support, retirement, deprecation). The extractor only sends tables to the model; on a page without one the model has nothing real to work with and will invent rows. `scripts/audit_service_configs.py` checks this for you.
-2. **An account scanner exists for the service** (`agent/account_discovery.py`). Without one the service only ever produces a facts list, never ""what you own that is affected"", which is the point of the demo.
+2. **An account scanner exists for the service** (`backend/account_discovery.py`). Without one the service only ever produces a facts list, never ""what you own that is affected"", which is the point of the demo.
 
 #### Service Configuration Schema
 
@@ -320,7 +320,7 @@ python scripts/audit_service_configs.py --service your-new-service
 ```
    Put at least one date field in `required_fields`: an item without a lifecycle date is not a lifecycle fact.
 
-3. **Add a scanner** in `agent/account_discovery.py` (`discover_<service>()` + an entry in `SCANNERS` / `SCANNER_SERVICE_KEYS`) and its read-only IAM actions in `cdk/lib/pipeline-stack.ts`.
+3. **Add a scanner** in `backend/account_discovery.py` (`discover_<service>()` + an entry in `SCANNERS` / `SCANNER_SERVICE_KEYS`) and its read-only IAM actions in `cdk/lib/pipeline-stack.ts`.
 
 4. **Redeploy** Data (config) and Pipeline (code):
 ```bash
@@ -363,7 +363,7 @@ The `extraction_focus` field is crucial - it's the AI prompt that guides data ex
 
 ### The refresh pipeline (Lambda durable function)
 
-`agent/lambda_pipeline.py` is a single `@durable_execution` handler. Every unit of work is a named, checkpointed step, so a crash or timeout resumes from the last checkpoint instead of restarting, and the execution history is the audit trail of the run.
+`backend/pipeline.py` is a single `@durable_execution` handler. Every unit of work is a named, checkpointed step, so a crash or timeout resumes from the last checkpoint instead of restarting, and the execution history is the audit trail of the run.
 
 ```
 start-run                       run_id, timestamp, region, enabled services (one step: non-deterministic values)
@@ -380,22 +380,22 @@ Design points:
 - **Idempotent starts**: the execution name is the idempotency key (Lambda enforces it). The weekly schedule uses `refresh-weekly-<date>`, manual runs `refresh-manual-<epoch>`; a second start while one is RUNNING adopts the running execution instead.
 - **Input contract**: `{"mode": "full|extract|scan", "services"?: [...], "regions"?: [...], "refresh_origin": "manual|Auto"}`. The UI's Refresh button sends `full`; per-service refresh sends `extract` with one service.
 
-Local tests use `aws-durable-execution-sdk-python-testing` (`agent/tests/test_lambda_pipeline.py`):
+Local tests use `aws-durable-execution-sdk-python-testing` (`backend/tests/test_pipeline.py`):
 
 ```bash
-cd agent && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
+cd backend && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
 ```
 
 ### The API function
 
-`agent/lambda_api.py` is a plain Lambda serving three things:
+`backend/api.py` is a plain Lambda serving three things:
 - **HTTP API routes** (JWT-protected): `POST /actions` (router actions such as `list_services`, `update_service`, action plans, health reads), `POST /refresh` (start or adopt a pipeline execution), `GET /refresh/{arn}` (status, progress, final summary).
 - **Weekly schedule**: `{"action": "start_refresh", "refresh_origin": "Auto"}` - same naming and adopt-running logic as the UI.
 - **Hourly Health poll**: `{"action": "collect_health_events"}`.
 
 Long-running work never runs behind the API (30 s limit): anything that extracts or scans goes through the pipeline.
 
-### Agent modules
+### Backend modules
 
 - **`workflow_orchestrator.py`** - `extract_service_lifecycle()`: config → fetch → normalize → store → metadata, for one service
 - **`data_extractor.py`** - BeautifulSoup table parsing + Amazon Nova normalization with service-specific prompts
@@ -474,13 +474,13 @@ cd cdk && npm install
 npx cdk bootstrap                                          # one-time per account/region
 npx cdk deploy AWSServicesLifecycleTrackerData-<region>
 npx cdk deploy AWSServicesLifecycleTrackerAuth-<region>
-npx cdk deploy AWSServicesLifecycleTrackerPipeline-<region> # bundles agent/ with pip (no Docker)
+npx cdk deploy AWSServicesLifecycleTrackerPipeline-<region> # bundles backend/ with pip (no Docker)
 npx cdk deploy AWSServicesLifecycleTrackerApi-<region>
 cd .. && ./scripts/build-frontend.sh <UserPoolId> <UserPoolClientId> <ApiUrl> <region>
 cd cdk && npx cdk deploy AWSServicesLifecycleTrackerFrontend-<region>
 ```
 
-Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `agent/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
+Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `backend/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
 
 ### Optional: a test fleet of databases to scan
 
@@ -576,7 +576,7 @@ Different AWS services use different date field names. The system recognizes the
 | **EKS** | `end_of_support_date`, `end_of_extended_support_date` | Support periods determine status |
 | **RDS** | `end_of_standard_support_date`, `end_of_extended_support_date` | Support periods with cost implications |
 
-The intelligent categorization logic in `agent/database_writes.py` automatically recognizes these patterns and applies consistent status classification.
+The intelligent categorization logic in `backend/database_writes.py` automatically recognizes these patterns and applies consistent status classification.
 
 ### DynamoDB Table Structure
 
@@ -695,7 +695,7 @@ All Python dependencies are pure Python, so `pipeline-stack.ts` bundles them loc
 |-------|---------|------------------|
 | **Data** | DynamoDB + service configs | When adding services |
 | **Auth** | Cognito User Pool | Rarely |
-| **Pipeline** | Lambda functions, schedules, notifications | When updating agent code |
+| **Pipeline** | Lambda functions, schedules, notifications | When updating backend code |
 | **Api** | HTTP API + authorizer | Rarely |
 | **Frontend** | React UI + CloudFront | When updating UI |
 
@@ -790,7 +790,7 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 - **Run `scripts/audit_service_configs.py`** before and after (`--check-stored`) - a service only ships when its page has a lifecycle table, it has a scanner, and every stored row is found on the page
 
 ### Enhancing Status Logic  
-- **Customize thresholds** in `agent/database_writes.py` (e.g., 3 months vs 6 months for extended_support)
+- **Customize thresholds** in `backend/database_writes.py` (e.g., 3 months vs 6 months for extended_support)
 - **Add service-specific logic** for different AWS service lifecycle patterns
 - **Implement cost impact scoring** based on service usage and deprecation urgency
 
@@ -921,7 +921,7 @@ The Plan of Action feature is fully integrated into the CDK deployment:
 
 - **Data Stack** (`cdk/lib/data-stack.ts`): Creates `deprecation-action-plans` table with GSIs for owner and status queries
 - **Pipeline Stack** (`cdk/lib/pipeline-stack.ts`): Grants the Lambda functions IAM permissions to read/write action plans
-- **Agent** (`agent/action_plans.py`): CRUD operations for action plans
+- **Backend** (`backend/action_plans.py`): CRUD operations for action plans
 - **Frontend** (`frontend/src/pages/PlanOfAction.tsx`): UI for managing action plans
 - **Frontend** (`frontend/src/pages/Deprecations.tsx`): Bulk selection and "Add to Plan of Action" button
 

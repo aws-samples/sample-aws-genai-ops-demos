@@ -57,11 +57,11 @@ Auth ────────────────▶ Api
 Auth ─────────────────────────▶ Frontend
 ```
 
-Both Lambda functions are built from the same `agent/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.14 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
+Both Lambda functions are built from the same `backend/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.14 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
 
 ## The Refresh Pipeline
 
-`agent/lambda_pipeline.py`, one `@durable_execution` handler.
+`backend/pipeline.py`, one `@durable_execution` handler.
 
 | Step | Kind | What it does |
 |------|------|--------------|
@@ -128,14 +128,14 @@ User ──▶ Cognito User Pool (email/password, no self-signup)
          API Lambda (the only principal with DynamoDB / Bedrock / Lambda permissions)
 ```
 
-The browser never receives AWS credentials. IAM boundaries: agent-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health read; discovery List/Describe only; the API function may invoke/observe the pipeline function.
+The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health read; discovery List/Describe only; the API function may invoke/observe the pipeline function.
 
-## Agent Module Structure
+## Backend Module Structure
 
 | Module | Responsibility |
 |--------|----------------|
-| `lambda_pipeline.py` | Durable function handler, steps and maps |
-| `lambda_api.py` | HTTP routes, pipeline start/adopt/status, scheduler entry points |
+| `pipeline.py` | Durable function handler, steps and maps |
+| `api.py` | HTTP routes, pipeline start/adopt/status, scheduler entry points |
 | `actions.py` | Action router used by the API function |
 | `workflow_orchestrator.py` | Single-service extraction workflow |
 | `data_extractor.py` | HTML parsing + AI normalization engine |

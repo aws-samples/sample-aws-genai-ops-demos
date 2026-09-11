@@ -1,5 +1,5 @@
 """
-AWS utility functions for the agent container runtime.
+AWS utility functions for the Lambda backend.
 
 This is a container-local version of shared/utils/aws_utils.py since the shared
 module is not available inside the Docker container.

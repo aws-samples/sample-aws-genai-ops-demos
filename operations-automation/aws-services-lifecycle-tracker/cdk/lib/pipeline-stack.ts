@@ -20,7 +20,7 @@ export interface PipelineStackProps extends cdk.StackProps {
   healthEventsTable: dynamodb.ITable;
 }
 
-const AGENT_DIR = path.join(__dirname, '..', '..', 'agent');
+const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
 const PIPELINE_FUNCTION_NAME = 'aws-services-lifecycle-pipeline';
 const API_FUNCTION_NAME = 'aws-services-lifecycle-api';
 // One place for the Lambda Python version: runtime of both functions, the
@@ -30,17 +30,17 @@ const PYTHON_VERSION = '3.14';
 
 /**
  * Bundle the Python code without Docker: pip resolves Linux/arm64 wheels for
- * the Lambda runtime (all dependencies are pure Python), then the agent
+ * the Lambda runtime (all dependencies are pure Python), then the backend
  * sources are copied alongside. Returning false lets CDK fall back to the
  * Docker bundling image.
  */
-function bundleAgentLocally(outputDir: string): boolean {
+function bundleBackendLocally(outputDir: string): boolean {
   const pipArgs = [
     '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
     '--platform', 'manylinux2014_aarch64', '--only-binary=:all:',
     '--python-version', PYTHON_VERSION, '--implementation', 'cp',
     '--target', outputDir,
-    '-r', path.join(AGENT_DIR, 'requirements.txt'),
+    '-r', path.join(BACKEND_DIR, 'requirements.txt'),
   ];
   let installed = false;
   for (const python of ['python', 'python3']) {
@@ -53,9 +53,9 @@ function bundleAgentLocally(outputDir: string): boolean {
   if (!installed) {
     return false;
   }
-  for (const file of fs.readdirSync(AGENT_DIR)) {
+  for (const file of fs.readdirSync(BACKEND_DIR)) {
     if (file.endsWith('.py')) {
-      fs.copyFileSync(path.join(AGENT_DIR, file), path.join(outputDir, file));
+      fs.copyFileSync(path.join(BACKEND_DIR, file), path.join(outputDir, file));
     }
   }
   return true;
@@ -96,7 +96,7 @@ export class PipelineStack extends cdk.Stack {
     // ------------------------------------------------------------------
     // Shared code bundle
     // ------------------------------------------------------------------
-    const agentCode = lambda.Code.fromAsset(AGENT_DIR, {
+    const backendCode = lambda.Code.fromAsset(BACKEND_DIR, {
       exclude: ['tests', '__pycache__', '*.pyc', '.hypothesis', '.pytest_cache'],
       bundling: {
         image: PYTHON_RUNTIME.bundlingImage,
@@ -105,7 +105,7 @@ export class PipelineStack extends cdk.Stack {
           'bash', '-c',
           'pip install --quiet -r requirements.txt -t /asset-output && cp *.py /asset-output/',
         ],
-        local: { tryBundle: (outputDir: string) => bundleAgentLocally(outputDir) },
+        local: { tryBundle: (outputDir: string) => bundleBackendLocally(outputDir) },
       },
     });
 
@@ -121,7 +121,7 @@ export class PipelineStack extends cdk.Stack {
 
     // ------------------------------------------------------------------
     // Shared data-plane permissions (same boundary as before, issue #116):
-    // full access to agent-owned tables, read + UpdateItem only on the
+    // full access to backend-owned tables, read + UpdateItem only on the
     // repo-owned configuration table (no Put/Delete/BatchWrite).
     // ------------------------------------------------------------------
     const dataAccessPolicy = new iam.ManagedPolicy(this, 'LifecycleDataAccess', {
@@ -194,8 +194,8 @@ export class PipelineStack extends cdk.Stack {
       description: 'Lifecycle refresh pipeline: extract -> scan -> reconcile -> notify (Lambda durable function)',
       runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
-      handler: 'lambda_pipeline.handler',
-      code: agentCode,
+      handler: 'pipeline.handler',
+      code: backendCode,
       memorySize: 1024,
       timeout: cdk.Duration.minutes(15),
       logGroup: pipelineLogGroup,
@@ -230,8 +230,8 @@ export class PipelineStack extends cdk.Stack {
       description: 'Lifecycle tracker API: UI actions, refresh pipeline control, scheduled Health collection',
       runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
-      handler: 'lambda_api.handler',
-      code: agentCode,
+      handler: 'api.handler',
+      code: backendCode,
       memorySize: 512,
       timeout: cdk.Duration.minutes(5),
       logGroup: apiLogGroup,

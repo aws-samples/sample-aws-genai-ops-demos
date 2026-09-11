@@ -32,7 +32,7 @@ region = get_region()
 dynamodb = boto3.resource('dynamodb', region_name=region)
 LIFECYCLE_TABLE_NAME = os.environ.get('LIFECYCLE_TABLE_NAME', 'aws-services-lifecycle')
 CONFIG_TABLE_NAME = os.environ.get('CONFIG_TABLE_NAME', 'service-extraction-config')
-# Agent-owned runtime state (issue #116, Option B): extraction metadata and
+# Backend-owned runtime state (issue #116, Option B): extraction metadata and
 # health-collection control rows live here, separate from repo-owned config.
 STATE_TABLE_NAME = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')
 # Discovered account inventory - decoupled from the public deprecation facts.
@@ -100,7 +100,7 @@ def list_services() -> dict:
             if not str(s.get('service_name', '')).startswith('_')
         ]
         
-        # Merge agent-owned runtime state (issue #116, Option B) into each
+        # Merge backend-owned runtime state (issue #116, Option B) into each
         # config row so the UI keeps its single ServiceConfig shape. Only
         # state for known services is merged, so control rows in the state
         # table never surface here.

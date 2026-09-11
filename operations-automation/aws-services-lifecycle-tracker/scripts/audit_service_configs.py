@@ -5,7 +5,7 @@ lifecycle (deprecation / end-of-support) tables the extractor can work with?
 
 For every enabled service and URL the script:
   1. fetches the page with the same session settings as the extractor,
-  2. finds HTML tables the same way agent/data_extractor.py does,
+  2. finds HTML tables the same way backend/data_extractor.py does,
   3. flags tables whose headers mention lifecycle or date terms,
   4. counts lifecycle keywords in the page text,
   5. (optional, --check-stored) loads the items currently stored in the facts

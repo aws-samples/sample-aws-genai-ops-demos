@@ -5,7 +5,7 @@ Tracks consecutive Health collection failures and emits CloudWatch alarms
 when failures reach a configurable threshold. Implements graceful degradation
 by disabling Health collection when permissions are insufficient.
 
-The failure counter and disabled flag are stored in the agent-owned
+The failure counter and disabled flag are stored in the backend-owned
 service-extraction-state DynamoDB table (issue #116, Option B) as special
 entries prefixed with '_'.
 
@@ -37,10 +37,10 @@ METRIC_NAME = "HealthCollectionConsecutiveFailures"
 
 
 def _get_config_table():
-    """Get a reference to the agent-owned runtime state DynamoDB table.
+    """Get a reference to the backend-owned runtime state DynamoDB table.
 
     The failure counter and disabled-flag control rows are runtime state, so
-    they live in service-extraction-state (issue #116, Option B) - the agent
+    they live in service-extraction-state (issue #116, Option B) - the backend
     no longer has full-item write access to the config table. The function
     name is kept for API stability with existing tests/callers.
     """

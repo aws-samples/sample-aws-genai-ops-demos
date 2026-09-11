@@ -4,7 +4,7 @@ Concurrency lock mechanism for AWS Services Lifecycle Tracker.
 Uses DynamoDB conditional writes to prevent parallel execution of
 health collection (or other exclusive operations).
 
-The lock is stored in the agent-owned service-extraction-state table with a special
+The lock is stored in the backend-owned service-extraction-state table with a special
 service_name key (e.g., '_health_collection_lock').
 """
 import os
@@ -19,8 +19,8 @@ from aws_utils import get_region
 
 
 # Initialize DynamoDB. The lock row is runtime state, so it lives in the
-# agent-owned service-extraction-state table (issue #116, Option B); the
-# agent no longer has full-item write access to the config table.
+# backend-owned service-extraction-state table (issue #116, Option B); the
+# backend no longer has full-item write access to the config table.
 region = get_region()
 dynamodb = boto3.resource('dynamodb', region_name=region)
 STATE_TABLE_NAME = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')

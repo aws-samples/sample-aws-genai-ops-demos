@@ -1027,7 +1027,7 @@ def discover_all_resources(region: str = None, include_supported: bool = True) -
 def discover_and_save(region: str = None, include_supported: bool = True, table_name: str = None) -> Dict:
     """
     Discover all resources and save to the inventory table in one operation.
-    This is the main entry point for the agent integration.
+    This is the main entry point for the pipeline scan step.
     
     Args:
         region: AWS region to scan

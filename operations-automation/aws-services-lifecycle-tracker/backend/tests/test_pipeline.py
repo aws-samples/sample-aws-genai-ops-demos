@@ -24,7 +24,7 @@ from aws_durable_execution_sdk_python_testing import DurableFunctionTestRunner
 from aws_durable_execution_sdk_python.execution import InvocationStatus
 from aws_durable_execution_sdk_python.lambda_service import OperationType
 
-import lambda_pipeline as lp
+import pipeline as lp
 
 
 def _run(event: dict):
@@ -77,7 +77,7 @@ class TestFullPipeline:
         assert res.status is InvocationStatus.SUCCEEDED
         out = _result(res)
 
-        # Extraction: 3 services, one agent-reported failure, one raised
+        # Extraction: 3 services, one reported failure, one raised
         assert out["extract"]["total"] == 3
         assert out["extract"]["succeeded"] == 1
         assert sorted(out["extract"]["failed"]) == ["amplify", "broken"]

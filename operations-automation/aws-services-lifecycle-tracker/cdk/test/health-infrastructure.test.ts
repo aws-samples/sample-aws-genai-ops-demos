@@ -95,7 +95,7 @@ describe('Pipeline stack - IAM and schedules (issue #139)', () => {
   test('pipeline function is a durable function with a live alias', () => {
     pipelineTemplate.hasResourceProperties('AWS::Lambda::Function', {
       FunctionName: 'aws-services-lifecycle-pipeline',
-      Handler: 'lambda_pipeline.handler',
+      Handler: 'pipeline.handler',
       DurableConfig: Match.objectLike({ ExecutionTimeout: 7200, RetentionPeriodInDays: 14 }),
     });
     pipelineTemplate.hasResourceProperties('AWS::Lambda::Alias', { Name: 'live' });

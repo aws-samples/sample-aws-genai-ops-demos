@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
 
-# Add agent directory to path
+# Add backend directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from health_monitoring import (
