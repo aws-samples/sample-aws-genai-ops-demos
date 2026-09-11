@@ -488,6 +488,31 @@ cd cdk && npx cdk deploy AWSServicesLifecycleTrackerFrontend-<region>
 
 Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `agent/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
 
+### Optional: a test fleet of databases to scan
+
+A fresh account has nothing on a deprecated version, so the scan phase finds nothing. `scripts/create_test_databases.py` creates 12 small RDS-family databases on engine versions whose standard support ends within the next year (plus a few current ones as controls), so a Refresh shows real matches:
+
+| Identifier | Engine / version | Class | Expected status |
+|---|---|---|---|
+| `lt-mysql-8-4` | MySQL 8.4.5 | db.t4g.micro | end of support announced (2026-10-31) |
+| `lt-mariadb-10-6`, `lt-mariadb-11-4` | MariaDB 10.6.22 / 11.4.7 | db.t4g.micro | end of support announced |
+| `lt-postgres-14` | PostgreSQL 14.18 | db.t4g.micro | end of support announced (2026-10-31) |
+| `lt-postgres-18` | PostgreSQL 18.6 | db.t4g.micro | supported (control) |
+| `lt-sqlserver-2017` | SQL Server 2017 Express | db.t3.small | supported (RDS end of support 2027-10-12, control) |
+| `lt-aurora-mysql-3-08`, `lt-aurora-mysql-3-10` | Aurora MySQL 3.08.2 / 3.10.5 | Serverless v2, min 0 ACU | extended support / supported (control) |
+| `lt-aurora-postgres-14`, `lt-aurora-postgres-15` | Aurora PostgreSQL 14.17 / 15.10 | Serverless v2, min 0 ACU | end of support announced / supported (control) |
+| `lt-docdb-4-0` | DocumentDB 4.0 | db.t3.medium | supported (no fee-free deprecated version exists) |
+| `lt-neptune-1-2` | Neptune 1.2.1.2 | db.t4g.medium | end of life 2026-12-04 |
+
+```bash
+python scripts/create_test_databases.py            # create what is missing (idempotent)
+python scripts/create_test_databases.py --status
+python scripts/create_test_databases.py --teardown # delete everything, no snapshots
+```
+
+Every resource is tagged `auto-delete=false`, `Project=aws-services-lifecycle-tracker`, `Purpose=lifecycle-test-fleet`; nothing is publicly accessible and the random master passwords are never stored (nobody connects to these). Only versions **inside** standard support are used: a version past it would incur RDS Extended Support fees (~$0.10 per vCPU-hour) - that is also why the fleet has no MySQL 5.7/8.0, PostgreSQL 13 or DocumentDB 3.6, even though those would show as `extended_support`.
+
+**Cost:** about **$210-240/month** - six RDS instances (~$95 incl. 20 GB gp3 each), DocumentDB db.t3.medium (~$60), Neptune db.t4g.medium (~$65), and the four Aurora Serverless v2 clusters at min 0 ACU, which scale to zero after 5 minutes idle (storage and backup only, a few dollars). Tear it down when you are done demoing.
 ### Cleanup
 
 ```bash

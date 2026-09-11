@@ -252,6 +252,11 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
         for page in paginator.paginate():
             for db in page["DBInstances"]:
                 engine = db["Engine"]
+                # DocumentDB and Neptune instances are returned by the RDS API too;
+                # their own scanners report them at cluster level with the right
+                # facts, so skip them here (they produced 'unknown' duplicates).
+                if engine in ("docdb", "neptune"):
+                    continue
                 version = db["EngineVersion"]
                 if "mysql_aurora." in version:
                     # '8.0.mysql_aurora.3.11.1' -> '3.11.1' (see _rds_match_candidates)
