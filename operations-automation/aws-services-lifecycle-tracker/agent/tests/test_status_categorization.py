@@ -81,18 +81,30 @@ class TestStandardExtendedSupportPair:
         }
         assert categorize_item_status(item, 'eks') == 'extended_support'
 
-    def test_still_in_standard_support_is_supported(self):
+    def test_still_in_standard_support_far_out_is_supported(self):
         # Previously fell through to the blanket 'deprecated' fallback
+        item = {
+            'end_of_standard_support_date': _date(600),
+            'end_of_extended_support_date': _date(1300),
+        }
+        assert categorize_item_status(item, 'eks') == 'supported'
+
+    def test_standard_support_ending_within_a_year_is_end_of_support_date(self):
+        # #140: 200 days of standard support left is "end announced", not fine
         item = {
             'end_of_standard_support_date': _date(200),
             'end_of_extended_support_date': _date(500),
         }
-        assert categorize_item_status(item, 'eks') == 'supported'
+        assert categorize_item_status(item, 'eks') == 'end_of_support_date'
 
-    def test_standard_date_alone_future_is_supported(self):
+    def test_standard_date_alone_far_future_is_supported(self):
         # Previously end_of_standard_support_date alone was ignored entirely
-        item = {'end_of_standard_support_date': _date(200)}
+        item = {'end_of_standard_support_date': _date(600)}
         assert categorize_item_status(item, 'rds') == 'supported'
+
+    def test_standard_date_alone_within_a_year_is_end_of_support_date(self):
+        item = {'end_of_standard_support_date': _date(200)}
+        assert categorize_item_status(item, 'rds') == 'end_of_support_date'
 
     def test_standard_date_alone_past_is_extended_support(self):
         item = {'end_of_standard_support_date': _date(-10)}

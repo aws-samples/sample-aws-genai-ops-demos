@@ -188,19 +188,28 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
             return 'end_of_support_date'  # End announced, more than a year out
     
     # 2. Standard/extended support pair (EKS, RDS, ElastiCache, Aurora, OpenSearch)
+    #    A standard-support end within the next year is announced-and-near:
+    #    'end_of_support_date', consistent with the hard-end-date rule above
+    #    (#140: previously anything in the future was plain 'supported', so a
+    #    version with 7 weeks of standard support left looked fine).
+    std_end = parsed_dates.get('end_of_standard_support_date')
     if 'end_of_extended_support_date' in parsed_dates:
         extended_end = parsed_dates['end_of_extended_support_date']
         if extended_end <= current_date:
             return 'end_of_life'
-        if 'end_of_standard_support_date' in parsed_dates:
-            if parsed_dates['end_of_standard_support_date'] <= current_date:
+        if std_end:
+            if std_end <= current_date:
                 return 'extended_support'  # In the extended support window
+            if (std_end - current_date).days <= 365:
+                return 'end_of_support_date'
             return 'supported'  # Still in standard support (#119)
         return 'extended_support'  # Only an extended-support end date is known
-    if 'end_of_standard_support_date' in parsed_dates:
+    if std_end:
         # Standard-support date alone (previously ignored entirely, #119)
-        if parsed_dates['end_of_standard_support_date'] <= current_date:
+        if std_end <= current_date:
             return 'extended_support'
+        if (std_end - current_date).days <= 365:
+            return 'end_of_support_date'
         return 'supported'
     
     # 3. Explicit deprecation signals: a passed deprecation date, or docs text

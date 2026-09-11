@@ -218,6 +218,13 @@ def _rds_match_candidates(engine: str, version: str) -> List[str]:
     'oracle-19c', 'sqlserver-2019')."""
     base = engine.split("-")[0] if engine.startswith(("oracle", "sqlserver")) else engine
     base = _RDS_ENGINE_ALIASES.get(base, base)
+    # Aurora MySQL reports '8.0.mysql_aurora.3.11.1' / '5.7.mysql_aurora.2.12.6':
+    # the part after 'mysql_aurora.' is the Aurora version the release
+    # calendar (and therefore the facts) are keyed on ('aurora-mysql-3.11').
+    # Without this the candidates were 'aurora-mysql-8.0' / 'aurora-mysql-8',
+    # which never match and can prefix-match the unrelated 'aurora-mysql-8.4'.
+    if "mysql_aurora." in version:
+        version = version.split("mysql_aurora.", 1)[1]
     parts = version.split(".")
     candidates = [f"{base}-{version}"]
     if len(parts) >= 2:
@@ -245,8 +252,20 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
         for page in paginator.paginate():
             for db in page["DBInstances"]:
                 engine = db["Engine"]
+                # DocumentDB and Neptune instances are returned by the RDS API too;
+                # their own scanners report them at cluster level with the right
+                # facts, so skip them here (they produced 'unknown' duplicates).
+                if engine in ("docdb", "neptune"):
+                    continue
                 version = db["EngineVersion"]
-                major = version.split('.')[0]
+                if "mysql_aurora." in version:
+                    # '8.0.mysql_aurora.3.11.1' -> '3.11.1' (see _rds_match_candidates)
+                    version = version.split("mysql_aurora.", 1)[1]
+                # Group by the version that carries the lifecycle: major.minor for
+                # Aurora/RDS engines ('aurora-mysql-3.11', 'postgres-14'), so two
+                # Aurora MySQL 3.x versions are not lumped together as '3'.
+                parts = version.split('.')
+                major = ".".join(parts[:2]) if engine.startswith("aurora-mysql") and len(parts) >= 2 else parts[0]
                 key = (engine, major, version)
                 
                 if key not in engine_instances:
