@@ -782,24 +782,22 @@
     "codebuild": {
       "name": "AWS CodeBuild",
       "documentation_urls": [
-        "https://docs.aws.amazon.com/codebuild/latest/userguide/available-runtimes.html"
+        "https://docs.aws.amazon.com/codebuild/latest/userguide/deprecated-images.html"
       ],
-      "extraction_focus": "Locate CodeBuild build image and runtime version lifecycle information. Extract deprecated build images and runtime versions. For each item, extract: image name, runtime name, version, deprecation date, and replacement image.",
-      "schema_key": "runtimes",
+      "extraction_focus": "Locate the table of deprecated CodeBuild Docker images (columns: Platform, Image identifier, Definition, Deprecation date). Extract every row. For each image, extract: platform, image identifier (e.g., 'aws/codebuild/standard:4.0'), definition (e.g., 'ubuntu/standard/4.0'), and deprecation date.",
+      "schema_key": "images",
       "item_properties": {
-        "name": "CodeBuild runtime or image (e.g., 'Ubuntu Standard 5.0')",
-        "identifier": "Runtime identifier (e.g., 'codebuild-ubuntu-std-5.0')",
-        "image_type": "Image type (Ubuntu, Amazon Linux, Windows)",
-        "runtime": "Runtime name",
-        "version": "Runtime version",
+        "name": "Image identifier (e.g., 'aws/codebuild/standard:4.0')",
+        "identifier": "Image identifier (e.g., 'aws/codebuild/standard:4.0')",
+        "platform": "Platform (e.g., 'Ubuntu 18.04', 'Amazon Linux 2')",
+        "definition": "Image definition path (e.g., 'ubuntu/standard/4.0')",
         "deprecation_date": "Deprecation date",
-        "end_of_support_date": "End of support date",
-        "replacement_image": "Recommended replacement image",
         "status": "Current status"
       },
       "required_fields": [
         "name",
         "identifier",
+        "deprecation_date",
         "status"
       ],
       "enabled": true,
