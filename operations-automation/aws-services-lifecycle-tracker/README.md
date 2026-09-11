@@ -108,7 +108,7 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 
 1. **Create an admin user** with the two `aws cognito-idp` commands printed at the end of the deployment, then sign in at the CloudFront URL.
 
-2. **Click Refresh** on the dashboard. The button shows live progress (`N extracted, M scanned`); you can navigate away - the run continues server-side and the UI re-attaches when you come back. When it finishes you get a summary such as *Facts: 32/32 services (476 items). Inventory: 8 assets scanned, 0 need attention.*
+2. **Click Refresh** on the dashboard. The button shows live progress (`N extracted, M scanned`); you can navigate away - the run continues server-side and the UI re-attaches when you come back. When it finishes you get a summary such as *Facts: 11/11 services (323 items). Inventory: 8 assets scanned, 1 need attention.*
 
 3. **Refresh a single service** from the Services page - this runs the same pipeline scoped to one service (`mode: extract`).
 
@@ -203,7 +203,10 @@ project-root/
 
 ### 🔧 Adding New AWS Services
 
-The system is designed to monitor any AWS service without code changes. All service definitions are stored in **`scripts/service_configs.json`**.
+All service definitions live in **`scripts/service_configs.json`**. The tracker ships with 11 services, each meeting two rules that every addition must meet too:
+
+1. **The documentation page contains an HTML table with lifecycle dates** (end of support, retirement, deprecation). The extractor only sends tables to the model; on a page without one the model has nothing real to work with and will invent rows. `scripts/audit_service_configs.py` checks this for you.
+2. **An account scanner exists for the service** (`agent/account_discovery.py`). Without one the service only ever produces a facts list, never ""what you own that is affected"", which is the point of the demo.
 
 #### Service Configuration Schema
 
@@ -215,7 +218,7 @@ The system is designed to monitor any AWS service without code changes. All serv
       "documentation_urls": [
         "https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html#runtimes-deprecated"
       ],
-      "extraction_focus": "Locate the 'Supported runtimes' or 'Deprecated runtimes' tables. Focus on the most important deprecation or block items from 2024 and later. For each runtime, extract: runtime name, runtime identifier, operating system, deprecation_date, block_create_date, and block_update_date.",
+      "extraction_focus": "Locate the 'Deprecated runtimes' table (columns: Name, Identifier, Operating system, Deprecation date, Block function create, Block function update). Extract EVERY row of that table, regardless of how old the deprecation date is. For each runtime, extract: runtime name, runtime identifier, operating system, deprecation_date, block_create_date, and block_update_date.",
       "schema_key": "runtimes",
       "item_properties": {
         "name": "Runtime name",
@@ -227,9 +230,7 @@ The system is designed to monitor any AWS service without code changes. All serv
         "status": "Current status"
       },
       "required_fields": ["name", "identifier", "deprecation_date", "status"],
-      "enabled": true,
-      "last_extraction": "",
-      "extraction_count": 0
+      "enabled": true
     },
     "elasticbeanstalk": {
       "name": "AWS Elastic Beanstalk",
@@ -247,9 +248,7 @@ The system is designed to monitor any AWS service without code changes. All serv
         "retirement_date": "Actual retirement date"
       },
       "required_fields": ["name", "identifier", "runtime_version"],
-      "enabled": true,
-      "last_extraction": "",
-      "extraction_count": 0
+      "enabled": true
     }
   }
 }
@@ -266,8 +265,7 @@ The system is designed to monitor any AWS service without code changes. All serv
 | **`item_properties`** | Expected fields in extracted data | Maps field names to descriptions for AI |
 | **`required_fields`** | Fields that must be present | `["name", "identifier"]` |
 | **`enabled`** | Whether service is active for automated extraction | `true` or `false` |
-| **`last_extraction`** | Timestamp of most recent extraction | `"2025-11-07T10:30:00Z"` (auto-updated) |
-| **`extraction_count`** | Number of successful extractions | `42` (auto-updated) |
+| **`*_date` fields** | Any field ending in `_date` is normalized to ISO `YYYY-MM-DD` at storage time, whatever spelling the page uses (`28 February 2027`, `February 28, 2027`, `April 2032`) | `"end_of_standard_support_date"` |
 
 #### Adding a New Service
 
@@ -292,47 +290,59 @@ Adding a new service follows a simple two-step process:
 
 **Step-by-Step Process:**
 
-1. **Edit `scripts/service_configs.json`**:
+1. **Check the page before writing any config.** Put the candidate URL in a scratch entry (or just run the audit on an existing one) and make sure it reports `OK` with a lifecycle table:
+```bash
+cd operations-automation/aws-services-lifecycle-tracker
+pip install requests beautifulsoup4 boto3
+python scripts/audit_service_configs.py --service your-new-service
+#   your-new-service   OK   ...  -> OK: 9 rows: Type | Version | End of support | End of life
+```
+   `NO-TABLE` or `WEAK` means the page will not work - find the service's release calendar / version support page instead (they usually contain "release-calendar", "version-support", "supported-versions", "deprecated" or "platforms-schedule" in the URL). If no such page exists, the service cannot be tracked.
+
+2. **Edit `scripts/service_configs.json`**:
 ```json
 {
   "services": {
     "your-new-service": {
       "name": "Your AWS Service",
       "documentation_urls": [
-        "https://docs.aws.amazon.com/your-service/latest/userguide/deprecations.html"
+        "https://docs.aws.amazon.com/your-service/latest/userguide/version-support-dates.html"
       ],
-      "extraction_focus": "Extract deprecation information from the deprecation table. Include version numbers, deprecation dates, and replacement recommendations.",
+      "extraction_focus": "Use the table with columns 'Engine version | Release date | End of standard support | End of Extended Support'. Extract every row. For each version, extract: version, release date, end of standard support date, end of extended support date; use null where the page says N/A.",
       "schema_key": "versions",
       "item_properties": {
         "name": "Version name",
         "identifier": "Version identifier",
-        "deprecation_date": "When deprecated",
-        "end_of_support_date": "When support ends"
+        "release_date": "Release date",
+        "end_of_standard_support_date": "End of standard support",
+        "end_of_extended_support_date": "End of extended support"
       },
-      "required_fields": ["name", "identifier"],
+      "required_fields": ["name", "identifier", "end_of_standard_support_date"],
       "enabled": true,
-      "last_extraction": "",
-      "extraction_count": 0
+      "health_event_mapping": "YOURSERVICE"
     }
   }
 }
 ```
+   Put at least one date field in `required_fields`: an item without a lifecycle date is not a lifecycle fact.
 
-2. **Redeploy the data stack** to update DynamoDB:
+3. **Add a scanner** in `agent/account_discovery.py` (`discover_<service>()` + an entry in `SCANNERS` / `SCANNER_SERVICE_KEYS`) and its read-only IAM actions in `cdk/lib/pipeline-stack.ts`.
+
+4. **Redeploy** Data (config) and Pipeline (code):
 ```bash
-cd cdk
-region=$(aws configure get region)
-npx cdk deploy "AWSServicesLifecycleTrackerData-$region" --no-cli-pager
+cd cdk && region=$(aws configure get region)
+npx cdk deploy "AWSServicesLifecycleTrackerData-$region" "AWSServicesLifecycleTrackerPipeline-$region" --no-cli-pager
 ```
 
-3. **Test extraction** via the admin UI or CLI:
+5. **Run a scoped extraction** and verify what was stored really comes from the page:
 ```bash
-# Via admin UI: Navigate to Services → Test extraction for "your-new-service"
-
-# Via CLI:
-python agent/test_direct_agent.py  # Modify service_name in the script
+aws lambda invoke --function-name aws-services-lifecycle-api --cli-binary-format raw-in-base64-out \
+  --payload '{"action":"start_refresh","mode":"extract","services":["your-new-service"]}' out.json && cat out.json
+# wait for the execution to finish (aws lambda get-durable-execution ...), then:
+python scripts/audit_service_configs.py --check-stored --service your-new-service
+#   your-new-service   OK   ...  12/12   <- every stored row found on the page
 ```
-
+   A low `stored-on-page` ratio means the model padded the result: tighten `extraction_focus` (name the table and its columns explicitly) and re-run.
 #### Writing Effective Extraction Focus
 
 The `extraction_focus` field is crucial - it's the AI prompt that guides data extraction:
@@ -714,7 +724,7 @@ aws cognito-idp admin-set-user-password \
 
 ## Cost Estimate
 
-Approximate monthly costs with the default weekly schedule (32 services, one region):
+Approximate monthly costs with the default weekly schedule (11 services, one region):
 
 - **Lambda (pipeline + API)**: a full refresh is ~1 minute of compute at 1 GB plus a few dozen durable-execution checkpoints; the hourly Health poll and UI calls add a few hundred short invocations. Well under $1/month
 - **Bedrock (Amazon Nova)**: pay per token; ~$1-3/month for weekly extraction of ~30 services
@@ -758,7 +768,7 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 ### Adding More AWS Services
 - **Edit** `scripts/service_configs.json` to add new services
 - **Focus on** services with clear deprecation documentation
-- **Test extraction** via admin UI before enabling automated scheduling
+- **Run `scripts/audit_service_configs.py`** before and after (`--check-stored`) - a service only ships when its page has a lifecycle table, it has a scanner, and every stored row is found on the page
 
 ### Enhancing Status Logic  
 - **Customize thresholds** in `agent/database_writes.py` (e.g., 3 months vs 6 months for extended_support)
