@@ -1,40 +1,31 @@
 #!/bin/bash
-# Build frontend with AgentCore Runtime ARN and Cognito config
-# macOS/Linux version - auto-generated from build-frontend.ps1
+# Build frontend with the HTTP API URL and Cognito config
+# macOS/Linux version - mirrors build-frontend.ps1
 
 set -e  # Exit on error
 
 USER_POOL_ID="$1"
 USER_POOL_CLIENT_ID="$2"
-IDENTITY_POOL_ID="$3"
-AGENT_RUNTIME_ARN="$4"
-REGION="$5"
+API_URL="$3"
+REGION="$4"
 
-if [ -z "$USER_POOL_ID" ] || [ -z "$USER_POOL_CLIENT_ID" ] || [ -z "$IDENTITY_POOL_ID" ] || [ -z "$AGENT_RUNTIME_ARN" ] || [ -z "$REGION" ]; then
-    echo "Usage: $0 <USER_POOL_ID> <USER_POOL_CLIENT_ID> <IDENTITY_POOL_ID> <AGENT_RUNTIME_ARN> <REGION>"
+if [ -z "$USER_POOL_ID" ] || [ -z "$USER_POOL_CLIENT_ID" ] || [ -z "$API_URL" ] || [ -z "$REGION" ]; then
+    echo "Usage: $0 <USER_POOL_ID> <USER_POOL_CLIENT_ID> <API_URL> <REGION>"
     exit 1
 fi
 
-# Derive the Refresh All state machine ARN from its fixed name (deployed by
-# the Scheduler stack). Derived rather than read from stack outputs because
-# the frontend builds before the Scheduler stack deploys on a first install.
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-STATE_MACHINE_ARN="arn:aws:states:${REGION}:${ACCOUNT_ID}:stateMachine:aws-services-lifecycle-refresh-all"
-
+# The SPA talks to the HTTP API (Api stack) with the Cognito ID token; it
+# holds no AWS credentials, so only these values are baked into the build.
 echo "Building frontend with:"
-echo "  User Pool ID: $USER_POOL_ID"
+echo "  User Pool ID:        $USER_POOL_ID"
 echo "  User Pool Client ID: $USER_POOL_CLIENT_ID"
-echo "  Identity Pool ID: $IDENTITY_POOL_ID"
-echo "  Agent Runtime ARN: $AGENT_RUNTIME_ARN"
-echo "  State Machine ARN: $STATE_MACHINE_ARN"
-echo "  Region: $REGION"
+echo "  API URL:             $API_URL"
+echo "  Region:              $REGION"
 
 # Set environment variables for build
 export VITE_USER_POOL_ID="$USER_POOL_ID"
 export VITE_USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID"
-export VITE_IDENTITY_POOL_ID="$IDENTITY_POOL_ID"
-export VITE_AGENT_RUNTIME_ARN="$AGENT_RUNTIME_ARN"
-export VITE_STATE_MACHINE_ARN="$STATE_MACHINE_ARN"
+export VITE_API_URL="$API_URL"
 export VITE_REGION="$REGION"
 
 # Build frontend
