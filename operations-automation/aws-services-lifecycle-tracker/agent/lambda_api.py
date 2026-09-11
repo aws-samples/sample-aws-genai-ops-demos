@@ -40,10 +40,19 @@ def _lambda_client():
 # Refresh pipeline control
 # ---------------------------------------------------------------------------
 
+def _unqualified_function_arn() -> str:
+    """Strip the alias qualifier: arn:...:function:name:live -> arn:...:function:name."""
+    parts = PIPELINE_FUNCTION_ARN.split(":")
+    return ":".join(parts[:7]) if len(parts) > 7 else PIPELINE_FUNCTION_ARN
+
+
 def _running_execution() -> Optional[dict]:
-    """The currently RUNNING pipeline execution, if any."""
+    """The currently RUNNING pipeline execution, if any (across all versions).
+
+    The list API cannot filter by alias, so query the function itself.
+    """
     resp = _lambda_client().list_durable_executions_by_function(
-        FunctionName=PIPELINE_FUNCTION_ARN, Statuses=["RUNNING"], MaxItems=1)
+        FunctionName=_unqualified_function_arn(), Statuses=["RUNNING"], MaxItems=1)
     executions = resp.get("DurableExecutions", [])
     return executions[0] if executions else None
 
