@@ -69,7 +69,9 @@ class LifecycleIndex:
 
     def __init__(self, table_name: str = None, region: str = None):
         table_name = table_name or os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
-        dynamodb = boto3.resource("dynamodb", region_name=region or REGION)
+        # The region being scanned; stamped on every inventory row (issue #141)
+        self.region = region or REGION
+        dynamodb = boto3.resource("dynamodb", region_name=self.region)
         self._table = dynamodb.Table(table_name)
         self._cache: Dict[str, Dict[str, Dict]] = {}
 
@@ -163,6 +165,7 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
         "service_name": service_key,
         "item_id": f"inventory#{identifier}",
         "status": match["status"] if match else fallback_status,
+        "region": getattr(index, "region", None) or REGION,
         "source_url": source_url,
         "extraction_date": now.strftime("%Y-%m-%d"),
         "last_verified": now.isoformat() + "Z",

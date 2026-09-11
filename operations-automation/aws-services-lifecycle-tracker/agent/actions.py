@@ -373,6 +373,29 @@ def _batch_write_health_events(events: list) -> tuple:
     return events_written, errors
 
 
+def _last_scan_info() -> dict:
+    """When the inventory was last written, how many rows, which regions (issue #141)."""
+    from database_reads import inventory_table
+    latest, regions, count = None, set(), 0
+    kwargs = {'ProjectionExpression': 'last_verified, #r', 'ExpressionAttributeNames': {'#r': 'region'}}
+    try:
+        while True:
+            page = inventory_table.scan(**kwargs)
+            for row in page.get('Items', []):
+                count += 1
+                lv = str(row.get('last_verified') or '')
+                if lv and (latest is None or lv > latest):
+                    latest = lv
+                if row.get('region'):
+                    regions.add(str(row['region']))
+            if 'LastEvaluatedKey' not in page:
+                break
+            kwargs['ExclusiveStartKey'] = page['LastEvaluatedKey']
+    except Exception as e:
+        print(f"Warning: could not read inventory for last_scan: {e}")
+    return {'last_verified': latest, 'resources': count, 'regions': sorted(regions)}
+
+
 def handle_api_action(action: str, payload: dict) -> dict:
     """Handle admin UI API actions (read operations)"""
     
@@ -392,6 +415,18 @@ def handle_api_action(action: str, payload: dict) -> dict:
     
     elif action == 'get_metrics':
         return get_metrics()
+    
+    elif action == 'list_scanners':
+        # Scanner coverage for the UI (issue #141): which config service keys
+        # have an account scanner behind them, and the last completed scan.
+        from account_discovery import SCANNER_SERVICE_KEYS
+        return {
+            'scanners': [
+                {'label': label, 'service_keys': keys}
+                for label, keys in SCANNER_SERVICE_KEYS.items()
+            ],
+            'last_scan': _last_scan_info(),
+        }
     
     elif action == 'discover_account':
         # Discover actual resources in the customer's AWS account.
