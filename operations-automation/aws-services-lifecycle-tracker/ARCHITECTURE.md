@@ -94,6 +94,12 @@ Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each s
 3. Entities are joined with the inventory by ARN (or identifier): each matching resource gets a `health` block (event type, PENDING/RESOLVED, console link) and each row a `health_flagged` count
 4. The outcome (available, reason, events seen, resources flagged) is stored as the `_health_match` control row of the state table and shown on Sources & coverage. No Support plan → `SubscriptionRequiredException` → reported, never fatal
 
+### Extended Support cost exposure (part of every scan, #142)
+
+1. The RDS scanner records class, Multi-AZ, engine/version and (Aurora Serverless v2) the cluster's min/max ACU on each resource
+2. `reconcile_inventory` calls `account_discovery.estimate_cost_exposure()`: `cost_estimator.PriceBook` loads Extended Support unit prices for the scanned region from the Price List API (one call per year tier), `VcpuBook` resolves vCPUs per instance class via EC2, the catalog's major-version row gives the dates
+3. Each RDS/Aurora resource gets an `extended_support` block (inputs, unit price and source, monthly Yr1-2 / Yr3, 12-month forecast, dates); each row a `cost_exposure` aggregate; the outcome is stored as `_cost_exposure` control row. Pricing never fails a scan
+
 ### Reads (dashboard, services, plans)
 
 1. Frontend calls `POST /actions` with `{"action": "list_services" | "get_metrics" | "list_deprecations" | ...}`
@@ -127,7 +133,7 @@ User ──▶ Cognito User Pool (email/password, no self-signup)
          API Lambda (the only principal with DynamoDB / Bedrock / Lambda permissions)
 ```
 
-The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health `DescribeEvents`/`DescribeAffectedEntities`; discovery List/Describe only; the API function may invoke/observe the pipeline function.
+The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health `DescribeEvents`/`DescribeAffectedEntities`; `pricing:GetProducts` + `ec2:DescribeInstanceTypes`; discovery List/Describe only; the API function may invoke/observe the pipeline function.
 
 ## Backend Module Structure
 
@@ -140,6 +146,7 @@ The browser never receives AWS credentials. IAM boundaries: backend-owned tables
 | `data_extractor.py` | HTML parsing + AI normalization engine |
 | `account_discovery.py` | Scanners, `LifecycleIndex`, inventory reconciliation |
 | `health_match.py` | AWS Health cross-check: open notices joined with the inventory by ARN |
+| `cost_estimator.py` | RDS/Aurora Extended Support surcharge: Price List prices, EC2 vCPUs, catalog dates |
 | `database_reads.py` | Read operations (metrics, configs, listings) |
 | `database_writes.py` | Write operations + status categorization |
 | `action_plans.py` | Plan of Action CRUD |

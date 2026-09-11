@@ -242,7 +242,7 @@ def handle_api_action(action: str, payload: dict) -> dict:
     elif action == 'list_scanners':
         # Scanner coverage for the UI (issue #141): which config service keys
         # have an account scanner behind them, and the last completed scan.
-        from account_discovery import SCANNER_SERVICE_KEYS, load_health_status
+        from account_discovery import SCANNER_SERVICE_KEYS, COST_STATUS_KEY, load_health_status, load_control_row
         return {
             'scanners': [
                 {'label': label, 'service_keys': keys}
@@ -251,6 +251,8 @@ def handle_api_action(action: str, payload: dict) -> dict:
             'last_scan': _last_scan_info(),
             # Outcome of the AWS Health cross-check of the last scan (#141)
             'health': load_health_status(),
+            # Outcome of the Extended Support pricing pass of the last scan (#142)
+            'cost_exposure': load_control_row(COST_STATUS_KEY),
         }
     
     elif action == 'discover_account':

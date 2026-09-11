@@ -179,6 +179,13 @@ export class PipelineStack extends cdk.Stack {
           resources: ['*'], // Health API has no resource-level permissions
         }),
         new iam.PolicyStatement({
+          // Extended Support cost exposure (#142): unit prices from the Price
+          // List API, vCPUs per DB instance class from EC2.
+          sid: 'ExtendedSupportPricing',
+          actions: ['pricing:GetProducts', 'ec2:DescribeInstanceTypes'],
+          resources: ['*'], // neither API supports resource-level permissions
+        }),
+        new iam.PolicyStatement({
           sid: 'AccountResourceDiscovery',
           actions: [
             'lambda:ListFunctions',
