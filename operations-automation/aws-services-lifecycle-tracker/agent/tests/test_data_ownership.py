@@ -64,6 +64,26 @@ class TestLifecycleIndex:
         match = index.lookup("rds", ["mysql-8.0"])
         assert match and match["item_id"] == "engine_versions#mysql-8.0.35"
 
+    def test_bare_name_row_does_not_claim_versioned_candidates(self):
+        """Live regression: Lambda's Node.js 0.10 row has identifier 'nodejs',
+        which prefix-matched 'nodejs22.x' and marked current runtimes deprecated."""
+        rows = [{"service_name": "lambda", "item_id": "runtimes#nodejs", "status": "deprecated",
+                 "service_specific": {"identifier": "nodejs", "name": "Node.js 0.10"}},
+                {"service_name": "lambda", "item_id": "runtimes#nodejs18.x", "status": "deprecated",
+                 "service_specific": {"identifier": "nodejs18.x", "name": "Node.js 18"}}]
+        index = _index_with_rows(rows)
+        assert index.lookup("lambda", ["nodejs22.x"]) is None
+        assert index.lookup("lambda", ["nodejs18.x"])["item_id"] == "runtimes#nodejs18.x"
+
+    def test_prefix_match_still_works_on_version_boundary(self):
+        rows = [{"service_name": "eks", "item_id": "versions#1.31", "status": "extended_support",
+                 "service_specific": {"identifier": "1.31"}}]
+        index = _index_with_rows(rows)
+        # candidate more specific than row, boundary at '.'
+        assert index.lookup("eks", ["1.31.5"])["item_id"] == "versions#1.31"
+        # candidate 'k8s-1.31' vs row '1.31' - no shared prefix, no match (exact handles it)
+        assert index.lookup("eks", ["1.3"]) is None  # '1.3' -> '1.31' is not a boundary
+
     def test_short_candidates_do_not_prefix_match(self):
         rows = [{"service_name": "glue", "item_id": "versions#12345",
                  "status": "deprecated", "service_specific": {"identifier": "12345"}}]

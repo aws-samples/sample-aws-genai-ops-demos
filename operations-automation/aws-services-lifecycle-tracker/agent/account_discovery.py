@@ -122,6 +122,17 @@ class LifecycleIndex:
             if cand in index:
                 return index[cand]
 
+        # Prefix fallback, restricted to VERSION boundaries: the shorter side
+        # must end where a version segment begins ('.', '-', or a digit->letter
+        # edge). Without this, Lambda's 'nodejs' row (Node.js 0.10) would claim
+        # every nodejs2x.x runtime as deprecated.
+        def _boundary_prefix(short: str, long: str) -> bool:
+            if not long.startswith(short) or len(long) == len(short):
+                return False
+            nxt = long[len(short)]
+            prev = short[-1]
+            return nxt in ".-" or (prev.isdigit() and not nxt.isdigit()) or (prev in ".-")
+
         best, best_len = None, 0
         for cand in normalized:
             if len(cand) < 3:
@@ -129,7 +140,7 @@ class LifecycleIndex:
             for key, entry in index.items():
                 if len(key) < 3:
                     continue
-                if (key.startswith(cand) or cand.startswith(key)) and len(key) > best_len:
+                if (_boundary_prefix(cand, key) or _boundary_prefix(key, cand)) and len(key) > best_len:
                     best, best_len = entry, len(key)
         return best
 
