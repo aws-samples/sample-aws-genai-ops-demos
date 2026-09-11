@@ -12,11 +12,72 @@ from botocore.exceptions import ClientError
 from database_reads import config_table, lifecycle_table, state_table, get_service_config
 from aws_utils import get_region
 
+import calendar
+import re
+from datetime import date
+
+from dateutil import parser as date_parser
+
 # Initialize health events table
 _region = get_region()
 _dynamodb = boto3.resource('dynamodb', region_name=_region)
 HEALTH_TABLE_NAME = os.environ.get('HEALTH_TABLE_NAME', 'aws-health-events')
 health_events_table = _dynamodb.Table(HEALTH_TABLE_NAME)
+
+
+# ============================================================================
+# DATE NORMALIZATION (issue #140)
+# ============================================================================
+
+_NO_DATE_VALUES = {'', 'n/a', 'na', 'none', 'null', '--', '-', 'tbd', 'to be determined',
+                   'not announced', 'no dates available', 'not applicable'}
+_MONTH_ONLY = re.compile(r'^\s*([A-Za-z]{3,9})\s+(\d{4})\s*$')
+_YEAR_ONLY = re.compile(r'^\s*(\d{4})\s*$')
+
+
+def normalize_date(value: Any) -> Optional[str]:
+    """Normalize the many date spellings found in AWS docs to ISO YYYY-MM-DD.
+
+    Handles '2027-06-03', 'February 25, 2026', '28 February 2027',
+    '2026-07-27T00:00:00Z', month-only 'April 2032' (-> last day of that
+    month: an end-of-support month means support lasts through the month) and
+    year-only '2032' (-> Dec 31). Returns None for placeholders such as
+    'N/A', 'To be determined' or anything unparseable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.strftime('%Y-%m-%d')
+    text = str(value).strip()
+    if text.lower() in _NO_DATE_VALUES:
+        return None
+
+    m = _MONTH_ONLY.match(text)
+    if m:
+        try:
+            first = date_parser.parse(f"1 {m.group(1)} {m.group(2)}")
+        except (ValueError, OverflowError):
+            return None
+        last_day = calendar.monthrange(first.year, first.month)[1]
+        return first.replace(day=last_day).strftime('%Y-%m-%d')
+
+    m = _YEAR_ONLY.match(text)
+    if m:
+        return f"{m.group(1)}-12-31"
+
+    # Day-first only matters for ambiguous numeric forms ('03/06/2027'); AWS docs
+    # write those month-first (US style), and unambiguous spellings such as
+    # '28 February 2027' parse correctly either way.
+    try:
+        return date_parser.parse(text, dayfirst=False, fuzzy=False).strftime('%Y-%m-%d')
+    except (ValueError, OverflowError, TypeError):
+        return None
+
+
+def parse_date(value: Any) -> Optional[date]:
+    """normalize_date() as a date object, or None."""
+    iso = normalize_date(value)
+    return date.fromisoformat(iso) if iso else None
 
 
 def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> str:
@@ -40,24 +101,12 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
         'end_of_standard_support_date', 'end_of_extended_support_date'
     ]
     
-    # Parse dates from the item
+    # Parse dates from the item (any spelling the docs use, see normalize_date)
     parsed_dates = {}
     for field in date_fields:
-        if field in item and item[field]:
-            try:
-                date_str = str(item[field]).strip()
-                if date_str and date_str.lower() not in ['n/a', 'none', 'null', '', '--', 'no dates available']:
-                    # Try different date formats including ElasticBeanstalk formats
-                    for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%B %d, %Y', '%B %Y', '%Y-%m-%dT%H:%M:%S%z']:
-                        try:
-                            parsed_date = datetime.strptime(date_str, fmt).date()
-                            parsed_dates[field] = parsed_date
-                            break
-                        except ValueError:
-                            continue
-            except (TypeError, AttributeError, ValueError) as e:
-                # Skip fields with invalid date data types or formats
-                continue
+        parsed = parse_date(item.get(field))
+        if parsed:
+            parsed_dates[field] = parsed
     
     # SERVICE-SPECIFIC LOGIC
     
@@ -268,13 +317,19 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
                     errors.append(f"Item {item.get('name', 'unknown')}: {', '.join(validation_errors)}")
                     continue
                 
-                # Extract only the fields defined in item_properties (service-specific fields)
+                # Extract only the fields defined in item_properties (service-specific fields).
+                # Date fields are stored as ISO YYYY-MM-DD (issue #140): the docs mix
+                # 'February 25, 2026', '28 February 2027', 'April 2032' and ISO, and both
+                # the status logic and the UI's `new Date()` need one format.
                 service_specific = {}
                 for field in item_properties.keys():
                     if field in item:
-                        # Handle different field name variations from the hybrid extractor
                         value = item[field]
-                        # Store the value (date normalization could be added here if needed)
+                        if field.endswith('_date') or field.startswith('date_'):
+                            normalized = normalize_date(value)
+                            # Keep the original text when it carries meaning (e.g. 'N/A',
+                            # 'To be determined') but could not become a date.
+                            value = normalized if normalized else (value if value not in (None, '') else None)
                         service_specific[field] = value
                 
                 # Intelligently determine status based on dates
