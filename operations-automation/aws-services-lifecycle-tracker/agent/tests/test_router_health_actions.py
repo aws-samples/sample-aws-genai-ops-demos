@@ -1,5 +1,5 @@
 """
-Unit tests for the Health-related router actions in main.py.
+Unit tests for the Health-related router actions in actions.py.
 
 Tests the routing of the 4 new Health actions:
 - collect_health_events
@@ -18,7 +18,7 @@ from unittest.mock import patch, MagicMock
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Mock heavy dependencies that main.py transitively imports
+# Mock heavy dependencies that actions.py transitively imports
 # These aren't available in the test environment (bs4, boto3, bedrock, etc.)
 _mock_modules = [
     'aws_utils',
@@ -38,18 +38,18 @@ for mod_name in _mock_modules:
 
 sys.modules['aws_utils'].get_region = MagicMock(return_value='us-east-1')
 
-# Now we can safely import main
+# Now we can safely import actions
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _isolate_main(monkeypatch):
     """
-    Ensure 'main' module is freshly imported for each test to avoid state leaks.
+    Ensure 'actions' module is freshly imported for each test to avoid state leaks.
     We patch at the function level to avoid module-level import issues.
     """
     # Remove cached main module so each test class gets a clean state
-    if 'main' in sys.modules:
+    if 'actions' in sys.modules:
         # We keep it loaded since mocks are set up globally
         pass
 
@@ -59,8 +59,8 @@ def _isolate_main(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _import_handle_api_action():
-    """Import handle_api_action from main (safe after mocks are set up)."""
-    from main import handle_api_action
+    """Import handle_api_action from actions (safe after mocks are set up)."""
+    from actions import handle_api_action
     return handle_api_action
 
 
@@ -72,14 +72,14 @@ def _import_handle_api_action():
 class TestRouteCollectHealthEvents:
     """Tests that 'collect_health_events' action routes to _handle_collect_health_events."""
 
-    @patch('main.track_collection_result')
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=True)
-    @patch('main.HealthEnricher')
-    @patch('main.HealthCollector')
-    @patch('main._batch_write_health_events', return_value=(2, []))
-    @patch('main.list_services', return_value={
+    @patch('actions.track_collection_result')
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=True)
+    @patch('actions.HealthEnricher')
+    @patch('actions.HealthCollector')
+    @patch('actions._batch_write_health_events', return_value=(2, []))
+    @patch('actions.list_services', return_value={
         'services': [
             {'service_name': 'lambda', 'enabled': True, 'health_event_mapping': 'LAMBDA'},
             {'service_name': 'eks', 'enabled': True, 'health_event_mapping': 'EKS'},
@@ -125,14 +125,14 @@ class TestRouteCollectHealthEvents:
         mock_enricher.enrich_events.assert_called_once()
         mock_release.assert_called_once()
 
-    @patch('main.track_collection_result')
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=True)
-    @patch('main.HealthEnricher')
-    @patch('main.HealthCollector')
-    @patch('main._batch_write_health_events', return_value=(0, []))
-    @patch('main.list_services', return_value={
+    @patch('actions.track_collection_result')
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=True)
+    @patch('actions.HealthEnricher')
+    @patch('actions.HealthCollector')
+    @patch('actions._batch_write_health_events', return_value=(0, []))
+    @patch('actions.list_services', return_value={
         'services': [
             {'service_name': 'lambda', 'enabled': True, 'health_event_mapping': 'LAMBDA'},
         ]
@@ -168,7 +168,7 @@ class TestRouteCollectHealthEvents:
 class TestRouteListHealthEvents:
     """Tests that 'list_health_events' action routes to list_health_events."""
 
-    @patch('main.list_health_events')
+    @patch('actions.list_health_events')
     def test_list_health_events_routes_correctly(self, mock_list_health):
         """handle_api_action('list_health_events', {'filters': {...}}) routes to list_health_events."""
         handle_api_action = _import_handle_api_action()
@@ -187,7 +187,7 @@ class TestRouteListHealthEvents:
         assert 'events' in result
         assert len(result['events']) == 1
 
-    @patch('main.list_health_events')
+    @patch('actions.list_health_events')
     def test_list_health_events_with_empty_filters(self, mock_list_health):
         """list_health_events is called with empty dict when no filters provided."""
         handle_api_action = _import_handle_api_action()
@@ -203,7 +203,7 @@ class TestRouteListHealthEvents:
 class TestRouteGetHealthEvent:
     """Tests that 'get_health_event' action routes to get_health_event."""
 
-    @patch('main.get_health_event')
+    @patch('actions.get_health_event')
     def test_get_health_event_routes_correctly(self, mock_get_event):
         """handle_api_action('get_health_event', {'event_arn': '...'}) routes to get_health_event."""
         handle_api_action = _import_handle_api_action()
@@ -224,7 +224,7 @@ class TestRouteGetHealthEvent:
         assert 'event' in result
         assert result['event']['event_arn'] == test_arn
 
-    @patch('main.get_health_event')
+    @patch('actions.get_health_event')
     def test_get_health_event_missing_arn(self, mock_get_event):
         """get_health_event is called with None when event_arn not in payload."""
         handle_api_action = _import_handle_api_action()
@@ -240,7 +240,7 @@ class TestRouteGetHealthEvent:
 class TestRouteGetHealthSummary:
     """Tests that 'get_health_summary' action routes to get_health_summary."""
 
-    @patch('main.get_health_summary')
+    @patch('actions.get_health_summary')
     def test_get_health_summary_routes_correctly(self, mock_summary):
         """handle_api_action('get_health_summary', {}) routes to get_health_summary."""
         handle_api_action = _import_handle_api_action()
@@ -264,14 +264,14 @@ class TestRouteGetHealthSummary:
 class TestManualCollectionTrigger:
     """Tests manual collection triggered via API (simulates EventBridge or direct invocation)."""
 
-    @patch('main.track_collection_result')
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=True)
-    @patch('main.HealthEnricher')
-    @patch('main.HealthCollector')
-    @patch('main._batch_write_health_events', return_value=(1, []))
-    @patch('main.list_services', return_value={
+    @patch('actions.track_collection_result')
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=True)
+    @patch('actions.HealthEnricher')
+    @patch('actions.HealthCollector')
+    @patch('actions._batch_write_health_events', return_value=(1, []))
+    @patch('actions.list_services', return_value={
         'services': [
             {'service_name': 'rds', 'enabled': True, 'health_event_mapping': 'RDS'},
         ]
@@ -307,14 +307,14 @@ class TestManualCollectionTrigger:
         assert result['events_collected'] == 1
         assert result['events_written'] == 1
 
-    @patch('main.track_collection_result')
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=True)
-    @patch('main.HealthEnricher')
-    @patch('main.HealthCollector')
-    @patch('main._batch_write_health_events', return_value=(0, []))
-    @patch('main.list_services', return_value={
+    @patch('actions.track_collection_result')
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=True)
+    @patch('actions.HealthEnricher')
+    @patch('actions.HealthCollector')
+    @patch('actions._batch_write_health_events', return_value=(0, []))
+    @patch('actions.list_services', return_value={
         'services': [
             {'service_name': 'lambda', 'enabled': True, 'health_event_mapping': 'LAMBDA'},
         ]
@@ -344,13 +344,13 @@ class TestManualCollectionTrigger:
 
         mock_release.assert_called_once()
 
-    @patch('main.track_collection_result')
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=True)
-    @patch('main.HealthEnricher')
-    @patch('main.HealthCollector')
-    @patch('main.list_services', return_value={
+    @patch('actions.track_collection_result')
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=True)
+    @patch('actions.HealthEnricher')
+    @patch('actions.HealthCollector')
+    @patch('actions.list_services', return_value={
         'services': [
             {'service_name': 'lambda', 'enabled': True, 'health_event_mapping': 'LAMBDA'},
         ]
@@ -376,9 +376,9 @@ class TestManualCollectionTrigger:
 class TestCollectionBlockedByConcurrencyLock:
     """Tests that collection is blocked when lock is already held."""
 
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=False)
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=False)
     def test_collection_blocked_returns_concurrent_execution(
         self, mock_acquire, mock_release, mock_enabled
     ):
@@ -393,16 +393,16 @@ class TestCollectionBlockedByConcurrencyLock:
         # Release should NOT be called since lock was never acquired
         mock_release.assert_not_called()
 
-    @patch('main.is_health_collection_enabled', return_value=True)
-    @patch('main.release_lock')
-    @patch('main.acquire_lock', return_value=False)
+    @patch('actions.is_health_collection_enabled', return_value=True)
+    @patch('actions.release_lock')
+    @patch('actions.acquire_lock', return_value=False)
     def test_blocked_collection_does_not_call_collector(
         self, mock_acquire, mock_release, mock_enabled
     ):
         """When lock is held, HealthCollector is never instantiated or called."""
         handle_api_action = _import_handle_api_action()
 
-        with patch('main.HealthCollector') as mock_collector_cls:
+        with patch('actions.HealthCollector') as mock_collector_cls:
             result = handle_api_action('collect_health_events', {})
 
         assert result['success'] is False

@@ -1,10 +1,14 @@
 # AWS Services Lifecycle Tracker - Complete Deployment Script
+#
+# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Frontend
+# No Docker needed: the Lambda bundle is built locally with pip (pure-Python
+# dependencies resolved as Linux/arm64 wheels).
 
 Write-Host "=== AWS Services Lifecycle Tracker Deployment ===" -ForegroundColor Cyan
 
 # Run shared prerequisites check
 Write-Host "`nRunning prerequisites check..." -ForegroundColor Yellow
-& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "agentcore" -MinAwsCliVersion "2.31.13" -RequireCDK
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "bedrock" -MinAwsCliVersion "2.33.22" -MinPythonVersion "3.11" -RequireCDK -MinCdkVersion "2.1030.0"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Prerequisites check failed" -ForegroundColor Red
@@ -32,20 +36,10 @@ if (-not (Test-Path "frontend/dist")) {
 # Get region for stack names
 $region = $global:AWS_REGION
 
-# Deploy infrastructure stack
-Write-Host "`nDeploying infrastructure stack..." -ForegroundColor Yellow
-Write-Host "      (Creating ECR repository, CodeBuild project, S3 bucket for agent builds, and IAM roles)" -ForegroundColor Gray
-& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerInfra-$region"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Infrastructure deployment failed" -ForegroundColor Red
-    exit 1
-}
-
 # Deploy data stack
 Write-Host "`nDeploying data stack..." -ForegroundColor Yellow
-Write-Host "      (Creating DynamoDB tables and populating service configurations for 7 AWS services)" -ForegroundColor Gray
-& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerData-$region" -SkipBootstrap
+Write-Host "      (Creating DynamoDB tables and populating service configurations)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerData-$region"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Data stack deployment failed" -ForegroundColor Red
@@ -62,77 +56,52 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Deploy runtime stack (triggers build and waits via Lambda)
-Write-Host "`nDeploying AgentCore runtime stack..." -ForegroundColor Yellow
-Write-Host "      (Uploading agent code, building ARM64 Docker image via CodeBuild, creating AgentCore runtime)" -ForegroundColor Gray
-Write-Host "      Note: CodeBuild will compile the container image - this takes 5-10 minutes" -ForegroundColor DarkGray
-Write-Host "      The deployment will pause while waiting for the build to complete..." -ForegroundColor DarkGray
-
-$deployOutput = & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerRuntime-$region" -SkipBootstrap 2>&1 | Tee-Object -Variable cdkOutput
+# Deploy pipeline stack (durable refresh pipeline + API function + schedules)
+Write-Host "`nDeploying pipeline stack..." -ForegroundColor Yellow
+Write-Host "      (Bundling Python code with pip, creating the Lambda durable function, API function, SNS topic and schedules)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerPipeline-$region" -SkipBootstrap
 
 if ($LASTEXITCODE -ne 0) {
-    # Check if the error is about unrecognized resource type
-    if ($cdkOutput -match "Unrecognized resource types.*BedrockAgentCore") {
-        Write-Host "`n❌ DEPLOYMENT FAILED: AgentCore is not available in region '$region'" -ForegroundColor Red
-        Write-Host ""
-        Write-Host "Please verify AgentCore availability in your target region:" -ForegroundColor Yellow
-        Write-Host "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "To deploy to a supported region, configure your AWS CLI:" -ForegroundColor Yellow
-        Write-Host "  aws configure set region <your-supported-region>" -ForegroundColor Gray
-        Write-Host "  .\deploy-all.ps1" -ForegroundColor Gray
-        exit 1
-    }
-    # Re-throw other errors
-    Write-Host "Backend deployment failed" -ForegroundColor Red
+    Write-Host "Pipeline deployment failed" -ForegroundColor Red
+    exit 1
+}
+
+# Deploy API stack (HTTP API + Cognito JWT authorizer)
+Write-Host "`nDeploying API stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the HTTP API with Cognito JWT authorization in front of the API function)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerApi-$region" -SkipBootstrap
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "API deployment failed" -ForegroundColor Red
     exit 1
 }
 
 # Build and deploy frontend (after backend is complete)
 Write-Host "`nBuilding and deploying frontend..." -ForegroundColor Yellow
-Write-Host "      (Retrieving AgentCore Runtime ID and Cognito config, building React app, deploying to S3 + CloudFront)" -ForegroundColor Gray
-$agentRuntimeArn = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
-$outputRegion = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='Region'].OutputValue" --output text --no-cli-pager
+Write-Host "      (Retrieving API URL and Cognito config, building React app, deploying to S3 + CloudFront)" -ForegroundColor Gray
+$apiUrl = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerApi-$region" --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text --no-cli-pager
 $userPoolId = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
 $userPoolClientId = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
-$identityPoolId = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager
 
-if ([string]::IsNullOrEmpty($agentRuntimeArn)) {
-    Write-Host "Failed to get Agent Runtime ARN from stack outputs" -ForegroundColor Red
+if ([string]::IsNullOrEmpty($apiUrl)) {
+    Write-Host "Failed to get API URL from stack outputs" -ForegroundColor Red
     exit 1
 }
 
-if ([string]::IsNullOrEmpty($outputRegion)) {
-    Write-Host "Failed to get Region from stack outputs" -ForegroundColor Red
-    exit 1
-}
-
-if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolClientId) -or [string]::IsNullOrEmpty($identityPoolId)) {
+if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolClientId)) {
     Write-Host "Failed to get Cognito config from stack outputs" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "Agent Runtime ARN: $agentRuntimeArn" -ForegroundColor Green
-Write-Host "Region: $outputRegion" -ForegroundColor Green
+Write-Host "API URL: $apiUrl" -ForegroundColor Green
 Write-Host "User Pool ID: $userPoolId" -ForegroundColor Green
 Write-Host "User Pool Client ID: $userPoolClientId" -ForegroundColor Green
-Write-Host "Identity Pool ID: $identityPoolId" -ForegroundColor Green
 
-# Build frontend with AgentCore Runtime ARN and Cognito config
-& .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -IdentityPoolId $identityPoolId -AgentRuntimeArn $agentRuntimeArn -Region $outputRegion
+# Build frontend with API URL and Cognito config
+& .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -ApiUrl $apiUrl -Region $region
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Frontend build failed" -ForegroundColor Red
-    exit 1
-}
-
-# Deploy scheduler stack (optional but recommended for automated extractions)
-Write-Host "`nDeploying scheduler stack..." -ForegroundColor Yellow
-Write-Host "      (Creating EventBridge rules for automated weekly/monthly extractions)" -ForegroundColor Gray
-& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerScheduler-$region" -SkipBootstrap
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Scheduler deployment failed" -ForegroundColor Red
     exit 1
 }
 
@@ -144,15 +113,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Get CloudFront URL
+# Gather outputs
 $websiteUrl = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerFrontend-$region" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
+$pipelineArn = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerPipeline-$region" --query "Stacks[0].Outputs[?OutputKey=='PipelineFunctionAliasArn'].OutputValue" --output text --no-cli-pager
+$topicArn = aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerPipeline-$region" --query "Stacks[0].Outputs[?OutputKey=='NotificationTopicArn'].OutputValue" --output text --no-cli-pager
 
-Write-Host "`n=== Deployment Complete ===" -ForegroundColor Green
-Write-Host "Website URL: $websiteUrl" -ForegroundColor Cyan
-Write-Host "Agent Runtime ARN: $agentRuntimeArn" -ForegroundColor Cyan
-Write-Host "Region: $region" -ForegroundColor Cyan
-Write-Host "User Pool ID: $userPoolId" -ForegroundColor Cyan
-Write-Host "User Pool Client ID: $userPoolClientId" -ForegroundColor Cyan
+Write-Host "`n========================================" -ForegroundColor Green
+Write-Host "  Deployment Complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "  Open the demo:      $websiteUrl" -ForegroundColor Cyan
+Write-Host "  API URL:            $apiUrl" -ForegroundColor Cyan
+Write-Host "  Pipeline (durable): $pipelineArn" -ForegroundColor Cyan
+Write-Host "  Notifications:      $topicArn" -ForegroundColor Cyan
+Write-Host "  Region:             $region" -ForegroundColor Cyan
+Write-Host "  User Pool ID:       $userPoolId" -ForegroundColor Cyan
 Write-Host "`nNext Steps:" -ForegroundColor Yellow
 Write-Host "  1. Create an admin user (copy-paste these two commands):" -ForegroundColor Gray
 Write-Host ""
@@ -161,6 +135,7 @@ Write-Host ""
 Write-Host "     aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin --password ""YourSecurePassword123!"" --permanent" -ForegroundColor White
 Write-Host ""
 Write-Host "     (Replace the email and password with your own values)" -ForegroundColor DarkGray
-Write-Host "  2. Sign in at the Website URL above with your created admin credentials" -ForegroundColor Gray
-Write-Host "  3. Initial extraction is running in background - results will appear in DynamoDB" -ForegroundColor Gray
-Write-Host "  4. View extracted data via admin UI or query DynamoDB table aws-services-lifecycle" -ForegroundColor Gray
+Write-Host "  2. Sign in at the Website URL above and click Refresh to run the first end-to-end pipeline" -ForegroundColor Gray
+Write-Host "  3. Optional: subscribe an email to the notifications topic to receive run summaries:" -ForegroundColor Gray
+Write-Host "     aws sns subscribe --topic-arn $topicArn --protocol email --notification-endpoint you@example.com" -ForegroundColor White
+Write-Host "  4. The weekly schedule runs the same pipeline automatically; Health events are polled hourly" -ForegroundColor Gray

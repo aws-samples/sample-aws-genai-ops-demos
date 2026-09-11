@@ -1,48 +1,34 @@
 """
-AWS Services Lifecycle Tracker - Main Agent Entry Point
-Handles routing between API actions and extraction operations
+Action router and shared helpers for the AWS Services Lifecycle Tracker.
+
+Compute-agnostic: no AgentCore, Step Functions or Lambda specifics live here.
+Used by lambda_api.py (UI + scheduled Health collection) and lambda_pipeline.py
+(the durable refresh pipeline). Issue #139.
 """
 import json
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-# Import READ operations (future API candidates)
 from database_reads import (
     list_services,
     list_deprecations,
     get_metrics,
     convert_decimals
 )
-
-# Import Health READ operations
 from health_reads import (
     list_health_events,
     get_health_event,
     get_health_summary,
 )
-
-# Import WRITE operations (stay with agent)
 from database_writes import update_service_config
-
-# Import workflow orchestration logic
 from workflow_orchestrator import extract_service_lifecycle
-
-# Import account discovery
 from account_discovery import discover_and_save
-
-# Import Health collection and enrichment
 from health_collector import HealthCollector
 from health_enricher import HealthEnricher
 from concurrency_lock import acquire_lock, release_lock
-
-# Import Health monitoring (failure tracking and graceful degradation)
 from health_monitoring import (
     track_collection_result,
     is_health_collection_enabled,
     disable_health_collection,
 )
-
-# Create the AgentCore app
-app = BedrockAgentCoreApp()
 
 
 def get_all_enabled_services() -> list:
@@ -60,6 +46,24 @@ def get_all_enabled_services() -> list:
             enabled_services.append(service_name)
     
     return enabled_services
+
+
+def slim_extraction_result(service_name: str, result: dict) -> dict:
+    """Reduce a full extract_service_lifecycle() result to a summary.
+
+    The full result carries every extracted item (already persisted to
+    DynamoDB); callers that aggregate many services - and durable steps whose
+    return values are checkpointed - only need the outcome. Also reads the
+    correct duration key (extraction_duration): the old code read 'duration',
+    which never existed, so durations were always reported as 0.
+    """
+    return {
+        'service_name': service_name,
+        'success': bool(result.get('success', False)),
+        'items_extracted': int(result.get('total_items_extracted', 0) or 0),
+        'error': result.get('error'),
+        'duration': float(result.get('extraction_duration', 0) or 0),
+    }
 
 
 def handle_multi_service_extraction(payload: dict) -> dict:
@@ -111,13 +115,7 @@ def handle_multi_service_extraction(payload: dict) -> dict:
                 else:
                     failed_extractions += 1
                 
-                results.append({
-                    'service_name': service_name,
-                    'success': result.get('success', False),
-                    'items_extracted': result.get('total_items_extracted', 0),
-                    'error': result.get('error'),
-                    'duration': result.get('duration', 0)
-                })
+                results.append(slim_extraction_result(service_name, result))
                 
             except Exception as service_error:
                 failed_extractions += 1
@@ -461,73 +459,47 @@ def handle_api_action(action: str, payload: dict) -> dict:
         return {'error': f'Unknown action: {action}'}
 
 
-@app.entrypoint
-def main_handler(payload):
+def dispatch(payload) -> dict:
     """
-    Main entry point for the agent
-    Routes requests to either API actions or extraction operations
-    
+    Route a request payload to the right operation. Compute-agnostic.
+
     Payload formats:
     - API Actions: {"action": "list_services"} or {"action": "list_deprecations", "filters": {...}}
     - Single Service: {"service_name": "lambda", "force_refresh": false}
     - Multiple Services: {"services": ["lambda", "eks"], "force_refresh": true}
     - All Services: {"services": "all", "force_refresh": true}
-    - Scheduled: {"services": "all", "extraction_type": "weekly", "force_refresh": true}
-    - EventBridge Scheduler: {"AgentRuntimeArn": "...", "Payload": "{\"services\":\"all\",\"force_refresh\":true,\"refresh_origin\":\"Auto\"}"}
     """
     try:
-        # Handle both dict and string payloads
         if isinstance(payload, str):
             payload = json.loads(payload)
-        
-        # Handle EventBridge Scheduler format (nested Payload)
-        if isinstance(payload, dict) and 'Payload' in payload and 'AgentRuntimeArn' in payload:
-            # Extract the actual payload from the EventBridge Scheduler wrapper
-            inner_payload = payload['Payload']
-            if isinstance(inner_payload, str):
-                payload = json.loads(inner_payload)
-            else:
-                payload = inner_payload
-        
-        # Check if this is an API action request
-        if isinstance(payload, dict) and 'action' in payload:
-            action = payload['action']
-            result = handle_api_action(action, payload)
-            # Ensure result is JSON serializable
-            return convert_decimals(result)
-        
-        # Handle multi-service extraction
+
+        if not isinstance(payload, dict):
+            return {"success": False, "error": "Payload must be a JSON object"}
+
+        if 'action' in payload:
+            return convert_decimals(handle_api_action(payload['action'], payload))
+
         if 'services' in payload:
             return handle_multi_service_extraction(payload)
-        
-        # Handle single service extraction
+
         service_name = payload.get("service_name")
         if not service_name:
             return {
                 "success": False,
-                "error": "No service_name or services provided. Expected format: {'service_name': 'lambda'} or {'services': 'all'}"
+                "error": "No action, service_name or services provided. Expected e.g. "
+                         "{'action': 'list_services'}, {'service_name': 'lambda'} or {'services': 'all'}"
             }
-        
-        force_refresh = payload.get("force_refresh", False)
-        override_urls = payload.get("urls")
-        refresh_origin = payload.get("refresh_origin", "manual")
-        
-        # Run single service extraction
+
         result = extract_service_lifecycle(
             service_name=service_name,
-            force_refresh=force_refresh,
-            override_urls=override_urls,
-            refresh_origin=refresh_origin
+            force_refresh=payload.get("force_refresh", False),
+            override_urls=payload.get("urls"),
+            refresh_origin=payload.get("refresh_origin", "manual")
         )
-        
         return convert_decimals(result)
-        
+
     except Exception as e:
         return {
             "success": False,
             "error": f"Request failed: {str(e)}"
         }
-
-
-if __name__ == "__main__":
-    app.run()

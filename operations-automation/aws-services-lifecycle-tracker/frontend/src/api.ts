@@ -1,21 +1,15 @@
-// API service for AWS Services Lifecycle Tracker Admin UI
-import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
-import {
-  SFNClient,
-  StartExecutionCommand,
-  DescribeExecutionCommand,
-  ListExecutionsCommand,
-} from '@aws-sdk/client-sfn';
-import { CognitoIdentityClient } from '@aws-sdk/client-cognito-identity';
-import { fromCognitoIdentityPool } from '@aws-sdk/credential-provider-cognito-identity';
+// API service for AWS Services Lifecycle Tracker Admin UI (issue #139)
+//
+// Every call goes over HTTPS to the HTTP API deployed by the Api stack, with
+// the Cognito ID token in the Authorization header (validated by the API's
+// JWT authorizer). The browser holds no AWS credentials.
+//
+//   POST /actions          -> router actions (read/write DynamoDB, action plans, health)
+//   POST /refresh          -> start (or adopt) the durable refresh pipeline
+//   GET  /refresh/{arn}    -> pipeline execution status for polling / re-attach
 import { getIdToken } from './auth';
 
-const region = (import.meta as any).env?.VITE_REGION || 'us-east-1';
-const agentRuntimeArn = (import.meta as any).env?.VITE_AGENT_RUNTIME_ARN;
-const identityPoolId = (import.meta as any).env?.VITE_IDENTITY_POOL_ID;
-const userPoolId = (import.meta as any).env?.VITE_USER_POOL_ID;
-const stateMachineArn = (import.meta as any).env?.VITE_STATE_MACHINE_ARN;
-
+const apiUrl: string = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '');
 // Types
 export interface ServiceConfig {
   service_name: string;
@@ -82,108 +76,48 @@ export interface DashboardMetrics {
 }
 
 
-// Helper to get AWS credentials from Cognito Identity Pool
-const getAwsCredentials = async () => {
+// --- Transport -------------------------------------------------------------
+
+const callApi = async (method: 'GET' | 'POST', path: string, body?: unknown): Promise<any> => {
+  if (!apiUrl) {
+    throw new Error('API URL not configured (VITE_API_URL missing) - rebuild the frontend');
+  }
   const idToken = await getIdToken();
   if (!idToken) {
     throw new Error('Not authenticated - no ID token available');
   }
 
-  return fromCognitoIdentityPool({
-    client: new CognitoIdentityClient({ region }),
-    identityPoolId,
-    logins: {
-      [`cognito-idp.${region}.amazonaws.com/${userPoolId}`]: idToken,
+  const response = await fetch(`${apiUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-};
 
-// Helper to invoke agent with payload using AWS SDK
-const invokeAgentWithPayload = async (payload: any): Promise<any> => {
-  try {
-    // Get AWS credentials from Cognito Identity Pool
-    const credentials = await getAwsCredentials();
-
-    // Create AgentCore client with IAM authentication
-    const client = new BedrockAgentCoreClient({ 
-      region, 
-      credentials 
-    });
-    
-    console.log('Invoking AgentCore with IAM authentication:', { agentRuntimeArn, region });
-    console.log('Request payload:', payload);
-    
-    // Call AgentCore using AWS SDK
-    const command = new InvokeAgentRuntimeCommand({
-      agentRuntimeArn,
-      payload: JSON.stringify(payload),
-    });
-
-    const response = await client.send(command);
-    
-    console.log('AgentCore response:', response);
-
-    // Parse response (handle both new ReadableStream format and legacy payload format)
-    const responseStream = response.response || response.payload;
-    
-    if (responseStream) {
-      try {
-        let payloadString: string;
-        
-        // Check if it's a ReadableStream with AWS SDK transform methods
-        if (responseStream instanceof ReadableStream && typeof responseStream.transformToString === 'function') {
-          // Use AWS SDK built-in transformation method
-          payloadString = await responseStream.transformToString();
-        } else if (responseStream instanceof ReadableStream) {
-          // Fallback to manual stream reading
-          const reader = responseStream.getReader();
-          const chunks: Uint8Array[] = [];
-          
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-          
-          // Combine all chunks
-          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-          const combined = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            combined.set(chunk, offset);
-            offset += chunk.length;
-          }
-          
-          payloadString = new TextDecoder().decode(combined);
-        } else {
-          // Handle Uint8Array (legacy format)
-          payloadString = new TextDecoder().decode(responseStream);
-        }
-        
-        console.log('Parsed payload string:', payloadString);
-        return JSON.parse(payloadString);
-      } catch (parseError) {
-        console.error('Failed to parse response payload:', parseError);
-        return { response: 'Failed to parse agent response' };
-      }
-    } else {
-      return { response: 'No response from agent' };
+  const text = await response.text();
+  let data: any = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
     }
-
-  } catch (error: any) {
-    console.error('AgentCore invocation error:', error);
-    throw new Error(`Failed to invoke agent: ${error.message}`);
   }
+  if (!response.ok) {
+    throw new Error(data?.error || data?.message || `${method} ${path} failed (${response.status})`);
+  }
+  return data;
 };
+
+// Router action (POST /actions). Payload shape: { action, ...params }.
+const invokeAction = async (payload: Record<string, unknown>): Promise<any> => callApi('POST', '/actions', payload);
 
 // API Functions
 
 export const getServices = async (): Promise<ServiceConfig[]> => {
-  // Call agent to get services from DynamoDB
-  const result = await invokeAgentWithPayload({
-    action: 'list_services'
-  });
-
+  const result = await invokeAction({ action: 'list_services' });
   return result.services || [];
 };
 
@@ -192,128 +126,126 @@ export const getDeprecations = async (filters?: {
   status?: string;
   limit?: number;
 }): Promise<DeprecationItem[]> => {
-  const result = await invokeAgentWithPayload({
-    action: 'list_deprecations',
-    filters
-  });
-
+  const result = await invokeAction({ action: 'list_deprecations', filters });
   return result.items || [];
 };
 
-export const triggerExtraction = async (serviceNames: string | string[]): Promise<any> => {
-  const services = Array.isArray(serviceNames) ? serviceNames : [serviceNames];
+// --- Refresh pipeline (Lambda durable function) -----------------------------
+// The whole refresh (web extraction -> account scan -> reconcile -> notify)
+// runs server-side as one durable execution. The UI only starts and observes
+// it, so closing the tab never kills a run.
 
-  // If 'all', get all service names first
-  let servicesToExtract = services;
-  if (services.length === 1 && services[0] === 'all') {
-    const allServices = await getServices();
-    servicesToExtract = allServices.filter(s => s.enabled).map(s => s.service_name);
-  }
-
-  // Extract each service individually (agent expects service_name not services)
-  const results = [];
-  for (const serviceName of servicesToExtract) {
-    try {
-      const result = await invokeAgentWithPayload({
-        service_name: serviceName,
-        force_refresh: true,
-        refresh_origin: 'manual'
-      });
-      results.push({ service: serviceName, success: true, result });
-    } catch (error: any) {
-      results.push({ service: serviceName, success: false, error: error.message });
-    }
-  }
-
-  return {
-    total: servicesToExtract.length,
-    results
-  };
-};
-
-// --- Refresh All orchestration (Step Functions) ---
-// The "Refresh All" batch runs server-side in the fixed-name state machine
-// deployed by the Scheduler stack. The UI only starts and observes the
-// execution (same direct-SDK-call-with-Cognito-IAM pattern as the agent
-// invocations above), so closing the browser tab never kills the batch.
-
-export interface RefreshSummary {
+export interface RefreshPhaseSummary {
   total: number;
   succeeded: number;
-  // Service names that failed (the Summarize state projects failures to names)
   failed: string[];
+  items_extracted: number;
+}
+
+export interface ScanPhaseSummary {
+  cells_total: number;
+  cells_succeeded: number;
+  failed_cells: string[];
+  items_discovered: number;
+  needs_attention: number;
+}
+
+export interface RefreshSummary {
+  run_id: string;
+  mode: 'full' | 'extract' | 'scan';
+  refresh_origin: string;
+  started_at: string;
+  finished_at: string;
+  extract: RefreshPhaseSummary;
+  scan: ScanPhaseSummary;
+  inventory?: { items_saved?: number; stale_removed?: number; [key: string]: unknown };
+}
+
+export interface RefreshProgress {
+  extract_done: number;
+  scan_done: number;
 }
 
 export interface RefreshExecutionStatus {
   executionArn: string;
-  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED' | 'PENDING_REDRIVE';
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'STOPPED';
   startDate?: Date;
   stopDate?: Date;
-  // Present on SUCCEEDED: the Summarize state's output
+  // Present on SUCCEEDED: the pipeline's final summary
   summary?: RefreshSummary;
+  progress?: RefreshProgress;
+  error?: unknown;
 }
 
-const getSfnClient = async (): Promise<SFNClient> => {
-  const credentials = await getAwsCredentials();
-  return new SFNClient({ region, credentials });
+export interface RefreshRequest {
+  mode?: 'full' | 'extract' | 'scan';
+  services?: string[];
+  regions?: string[];
+}
+
+// Start a refresh. If one is already running, the API adopts it instead of
+// starting a second one.
+export const startRefresh = async (
+  request: RefreshRequest = {}
+): Promise<{ executionArn: string; alreadyRunning: boolean }> => {
+  const result = await callApi('POST', '/refresh', { refresh_origin: 'manual', ...request });
+  return { executionArn: result.executionArn, alreadyRunning: !!result.alreadyRunning };
 };
 
-// Start a Refresh All batch. If one is already running, adopt it instead of
-// starting a second one (the backend tolerates overlap, but surfacing the
-// in-flight run is the better UX).
-export const startRefreshAll = async (): Promise<{ executionArn: string; alreadyRunning: boolean }> => {
-  if (!stateMachineArn) {
-    throw new Error('Refresh state machine not configured (VITE_STATE_MACHINE_ARN missing) - redeploy the frontend');
-  }
+// Full end-to-end refresh: all enabled services, all scanners.
+export const startRefreshAll = () => startRefresh({ mode: 'full' });
 
-  const client = await getSfnClient();
-
-  const running = await client.send(new ListExecutionsCommand({
-    stateMachineArn,
-    statusFilter: 'RUNNING',
-    maxResults: 1,
-  }));
-
-  if (running.executions && running.executions.length > 0) {
-    return { executionArn: running.executions[0].executionArn!, alreadyRunning: true };
-  }
-
-  const started = await client.send(new StartExecutionCommand({
-    stateMachineArn,
-    input: JSON.stringify({ refresh_origin: 'manual' }),
-  }));
-
-  return { executionArn: started.executionArn!, alreadyRunning: false };
-};
-
-// Poll the status of a Refresh All execution.
+// Poll the status of a refresh execution.
 export const getRefreshStatus = async (executionArn: string): Promise<RefreshExecutionStatus> => {
-  const client = await getSfnClient();
-  const result = await client.send(new DescribeExecutionCommand({ executionArn }));
-
-  let summary: RefreshSummary | undefined;
-  if (result.status === 'SUCCEEDED' && result.output) {
-    try {
-      const parsed = JSON.parse(result.output);
-      if (typeof parsed?.total === 'number') {
-        summary = parsed as RefreshSummary;
-      }
-    } catch {
-      // Output not parseable - status alone is still useful
-    }
-  }
-
+  const result = await callApi('GET', `/refresh/${executionArn}`);
   return {
     executionArn,
-    status: (result.status as RefreshExecutionStatus['status']) || 'RUNNING',
-    startDate: result.startDate,
-    stopDate: result.stopDate,
-    summary,
+    status: result.status || 'RUNNING',
+    startDate: result.startDate ? new Date(result.startDate) : undefined,
+    stopDate: result.stopDate ? new Date(result.stopDate) : undefined,
+    summary: result.summary || undefined,
+    progress: result.progress || undefined,
+    error: result.error,
   };
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Start a refresh and wait for it to finish (polling). Used for scoped runs
+// such as a single-service extraction from the Services page.
+export const runRefreshAndWait = async (
+  request: RefreshRequest,
+  pollIntervalMs = 5000
+): Promise<RefreshExecutionStatus> => {
+  const { executionArn, alreadyRunning } = await startRefresh(request);
+  if (alreadyRunning) {
+    throw new Error('A refresh is already running - wait for it to finish before starting another one.');
+  }
+  for (;;) {
+    await sleep(pollIntervalMs);
+    const status = await getRefreshStatus(executionArn);
+    if (status.status !== 'RUNNING') {
+      return status;
+    }
+  }
+};
+
+// Re-extract one service's deprecation facts from the AWS documentation.
+// Runs through the pipeline (mode=extract) because a single extraction can
+// take minutes, well beyond the API's 30 s request limit.
+export const triggerExtraction = async (serviceName: string): Promise<RefreshExecutionStatus> => {
+  const status = await runRefreshAndWait({ mode: 'extract', services: [serviceName] });
+  if (status.status !== 'SUCCEEDED') {
+    throw new Error(`Extraction ended with status ${status.status}`);
+  }
+  const failed = status.summary?.extract?.failed || [];
+  if (failed.includes(serviceName)) {
+    throw new Error(`Extraction failed for ${serviceName}`);
+  }
+  return status;
+};
 export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'get_metrics'
   });
 
@@ -327,35 +259,11 @@ export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
 };
 
 export const updateServiceConfig = async (serviceName: string, updates: Partial<ServiceConfig>): Promise<void> => {
-  await invokeAgentWithPayload({
+  await invokeAction({
     action: 'update_service',
     service_name: serviceName,
     updates
   });
-};
-
-export const discoverAccountResources = async (options?: {
-  region?: string;
-  include_supported?: boolean;
-}): Promise<{
-  success: boolean;
-  items_discovered?: number;
-  items_saved?: number;
-  summary?: {
-    total: number;
-    end_of_life: number;
-    deprecated: number;
-    supported: number;
-    needs_attention: number;
-  };
-  error?: string;
-}> => {
-  const result = await invokeAgentWithPayload({
-    action: 'discover_account',
-    region: options?.region,
-    include_supported: options?.include_supported ?? true
-  });
-  return result;
 };
 
 // Action Plan Types
@@ -379,7 +287,7 @@ export const getActionPlans = async (filters?: {
   owner?: string;
   plan_status?: string;
 }): Promise<ActionPlan[]> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'list_action_plans',
     filters
   });
@@ -387,7 +295,7 @@ export const getActionPlans = async (filters?: {
 };
 
 export const getActionPlan = async (planId: string): Promise<ActionPlan | null> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'get_action_plan',
     plan_id: planId
   });
@@ -404,7 +312,7 @@ export const createActionPlan = async (data: {
   target_date?: string;
   notes?: string;
 }): Promise<{ success: boolean; plan?: ActionPlan; error?: string }> => {
-  return await invokeAgentWithPayload({
+  return await invokeAction({
     action: 'create_action_plan',
     ...data
   });
@@ -414,7 +322,7 @@ export const updateActionPlan = async (
   planId: string,
   updates: Partial<ActionPlan>
 ): Promise<{ success: boolean; plan?: ActionPlan; error?: string }> => {
-  return await invokeAgentWithPayload({
+  return await invokeAction({
     action: 'update_action_plan',
     plan_id: planId,
     updates
@@ -424,7 +332,7 @@ export const updateActionPlan = async (
 export const deleteActionPlan = async (
   planId: string
 ): Promise<{ success: boolean; error?: string }> => {
-  return await invokeAgentWithPayload({
+  return await invokeAction({
     action: 'delete_action_plan',
     plan_id: planId
   });
@@ -461,7 +369,7 @@ export interface HealthSummary {
 // Health API Functions
 
 export const fetchHealthSummary = async (): Promise<HealthSummary> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'get_health_summary'
   });
 
@@ -489,7 +397,7 @@ export const fetchHealthEvents = async (filters?: {
   severity?: string;
   status_code?: string;
 }): Promise<HealthEvent[]> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'list_health_events',
     filters
   });
@@ -497,7 +405,7 @@ export const fetchHealthEvents = async (filters?: {
 };
 
 export const fetchHealthEvent = async (eventArn: string): Promise<HealthEvent | null> => {
-  const result = await invokeAgentWithPayload({
+  const result = await invokeAction({
     action: 'get_health_event',
     event_arn: eventArn
   });

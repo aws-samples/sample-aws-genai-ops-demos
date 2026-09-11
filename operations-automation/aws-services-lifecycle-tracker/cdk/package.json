@@ -1,7 +1,7 @@
 {
-  "name": "strands-agentcore-cdk",
+  "name": "aws-services-lifecycle-tracker-cdk",
   "version": "1.0.0",
-  "description": "CDK deployment for Strands Agent on Bedrock AgentCore",
+  "description": "CDK deployment for the AWS Services Lifecycle Tracker (Lambda durable pipeline)",
   "main": "app.ts",
   "scripts": {
     "build": "tsc",
@@ -13,8 +13,8 @@
     "aws",
     "cdk",
     "bedrock",
-    "agentcore",
-    "strands"
+    "lambda",
+    "durable-functions"
   ],
   "author": "",
   "license": "MIT",
@@ -32,7 +32,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.219.0",
+    "aws-cdk-lib": "^2.268.0",
     "constructs": "^10.4.2"
   }
 }

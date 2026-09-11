@@ -8,15 +8,15 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Button from '@cloudscape-design/components/button';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Popover from '@cloudscape-design/components/popover';
-import { getDashboardMetrics, startRefreshAll, getRefreshStatus, discoverAccountResources, DashboardMetrics } from '../api';
+import { getDashboardMetrics, startRefreshAll, getRefreshStatus, DashboardMetrics, RefreshProgress } from '../api';
 import HealthPanel from '../components/HealthPanel';
 
-// sessionStorage key for the in-flight Refresh All execution ARN. The batch
-// runs server-side in Step Functions; this only lets the UI re-attach to it
-// after a page navigation or reload.
+// sessionStorage key for the in-flight refresh execution ARN. The pipeline
+// runs server-side as a Lambda durable execution; this only lets the UI
+// re-attach to it after a page navigation or reload.
 const REFRESH_ARN_KEY = 'lifecycle-refresh-execution-arn';
 
-// Services covered by Discovery (account scan)
+// Services covered by the account scan phase
 const DISCOVERY_SERVICES = [
   'Lambda (runtimes)',
   'RDS (engine versions)',
@@ -31,23 +31,12 @@ const DISCOVERY_SERVICES = [
   'EC2 (older instance families)'
 ];
 
-// Services covered by Extraction (documentation)
-const EXTRACTION_SERVICES = [
-  'Lambda',
-  'EKS',
-  'RDS',
-  'ElastiCache',
-  'OpenSearch',
-  'Elastic Beanstalk',
-  'MSK'
-];
-
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [extracting, setExtracting] = useState(false);
-  const [discovering, setDiscovering] = useState(false);
+  const [progress, setProgress] = useState<RefreshProgress | null>(null);
   
   // Polling state
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -97,8 +86,9 @@ export default function Dashboard() {
     try {
       const execution = await getRefreshStatus(executionArn);
 
-      if (execution.status === 'RUNNING' || execution.status === 'PENDING_REDRIVE') {
-        loadMetrics(false); // refresh counts while the batch progresses
+      if (execution.status === 'RUNNING') {
+        setProgress(execution.progress || null);
+        loadMetrics(false); // refresh counts while the pipeline progresses
         pollingIntervalRef.current = setTimeout(() => pollExecution(executionArn), 5000);
         return;
       }
@@ -106,17 +96,25 @@ export default function Dashboard() {
       // Terminal state reached
       sessionStorage.removeItem(REFRESH_ARN_KEY);
       setExtracting(false);
+      setProgress(null);
       await loadMetrics(false);
 
       if (execution.status === 'SUCCEEDED') {
         const summary = execution.summary;
-        if (summary && summary.failed.length > 0) {
+        const ex = summary?.extract;
+        const sc = summary?.scan;
+        const failures = [...(ex?.failed || []), ...(sc?.failed_cells || [])];
+        const detail = summary
+          ? `Facts: ${ex!.succeeded}/${ex!.total} services (${ex!.items_extracted} items). ` +
+            `Inventory: ${sc!.items_discovered} assets scanned, ${sc!.needs_attention} need attention.`
+          : '';
+        if (failures.length > 0) {
           setFlashbarItems([{
             type: 'warning',
             dismissible: true,
             dismissLabel: 'Dismiss',
             onDismiss: () => setFlashbarItems([]),
-            content: `Refresh finished: ${summary.succeeded}/${summary.total} services succeeded. Failed: ${summary.failed.join(', ')}`,
+            content: `Refresh finished with failures. ${detail} Failed: ${failures.join(', ')}`,
             id: `refresh-partial-${Date.now()}`
           }]);
         } else {
@@ -125,9 +123,7 @@ export default function Dashboard() {
             dismissible: true,
             dismissLabel: 'Dismiss',
             onDismiss: () => setFlashbarItems([]),
-            content: summary
-              ? `Refresh complete: all ${summary.total} services refreshed successfully.`
-              : 'Refresh completed successfully.',
+            content: detail ? `Refresh complete. ${detail}` : 'Refresh completed successfully.',
             id: `refresh-success-${Date.now()}`
           }]);
         }
@@ -137,7 +133,7 @@ export default function Dashboard() {
           dismissible: true,
           dismissLabel: 'Dismiss',
           onDismiss: () => setFlashbarItems([]),
-          content: `Refresh ended with status ${execution.status}. Check the Step Functions console for details.`,
+          content: `Refresh ended with status ${execution.status}. Check the pipeline function's durable executions in the Lambda console for details.`,
           id: `refresh-failed-${Date.now()}`
         }]);
       }
@@ -160,7 +156,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleExtractAll = async () => {
+  const handleRefresh = async () => {
     try {
       setExtracting(true);
 
@@ -175,7 +171,7 @@ export default function Dashboard() {
         onDismiss: () => setFlashbarItems([]),
         content: alreadyRunning
           ? 'A refresh is already in progress - showing its status.'
-          : 'Refresh started for all enabled services. It runs server-side, so you can navigate away - progress resumes when you return.',
+          : 'Refresh started: extracting facts for all enabled services, then scanning the account. It runs server-side, so you can navigate away - progress resumes when you return.',
         id: `extract-all-${Date.now()}`
       }]);
 
@@ -190,58 +186,6 @@ export default function Dashboard() {
         content: `Failed to start refresh: ${err.message}`,
         id: `error-${Date.now()}`
       }]);
-    }
-  };
-
-  const handleDiscoverResources = async () => {
-    try {
-      setDiscovering(true);
-      
-      setFlashbarItems([{
-        type: 'info',
-        dismissible: true,
-        dismissLabel: 'Dismiss',
-        onDismiss: () => setFlashbarItems([]),
-        content: 'Scanning your AWS account for resources (Lambda, RDS, EKS, ElastiCache, OpenSearch)...',
-        id: `discover-${Date.now()}`
-      }]);
-      
-      const result = await discoverAccountResources({ include_supported: true });
-      
-      if (result.success) {
-        // Reload metrics to show new data
-        await loadMetrics(false);
-        
-        const summary = result.summary;
-        setFlashbarItems([{
-          type: 'success',
-          dismissible: true,
-          dismissLabel: 'Dismiss',
-          onDismiss: () => setFlashbarItems([]),
-          content: `Discovery complete! Found ${result.items_discovered} resources: ${summary?.needs_attention || 0} need attention, ${summary?.supported || 0} are healthy.`,
-          id: `discover-success-${Date.now()}`
-        }]);
-      } else {
-        setFlashbarItems([{
-          type: 'error',
-          dismissible: true,
-          dismissLabel: 'Dismiss',
-          onDismiss: () => setFlashbarItems([]),
-          content: `Discovery failed: ${result.error}`,
-          id: `discover-error-${Date.now()}`
-        }]);
-      }
-    } catch (err: any) {
-      setFlashbarItems([{
-        type: 'error',
-        dismissible: true,
-        dismissLabel: 'Dismiss',
-        onDismiss: () => setFlashbarItems([]),
-        content: `Failed to discover resources: ${err.message}`,
-        id: `error-${Date.now()}`
-      }]);
-    } finally {
-      setDiscovering(false);
     }
   };
 
@@ -264,77 +208,50 @@ export default function Dashboard() {
           <Header
             variant="h1"
             actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <SpaceBetween direction="horizontal" size="xxs">
-                  <Button
-                    variant="normal"
-                    iconName="search"
-                    loading={discovering}
-                    onClick={handleDiscoverResources}
-                    disabled={discovering || extracting}
-                  >
-                    {discovering ? 'Scanning...' : 'Discover My Resources'}
-                  </Button>
-                  <Popover
-                    dismissButton={false}
-                    position="bottom"
-                    size="medium"
-                    triggerType="text"
-                    content={
-                      <SpaceBetween size="xs">
-                        <Box variant="strong">Scans your AWS account for:</Box>
-                        <Box variant="small">
-                          {DISCOVERY_SERVICES.map((service, i) => (
-                            <div key={i}>• {service}</div>
-                          ))}
-                        </Box>
-                        <Box variant="small" color="text-status-info">
-                          Note: Only these {DISCOVERY_SERVICES.length} services are currently supported.
-                        </Box>
-                        <Box variant="small" color="text-body-secondary">
-                          To add more services: edit <code>agent/account_discovery.py</code> and add IAM permissions in <code>cdk/lib/infra-stack.ts</code>.
-                        </Box>
-                      </SpaceBetween>
-                    }
-                  >
-                    <Box color="text-status-info" display="inline">ⓘ</Box>
-                  </Popover>
-                </SpaceBetween>
-                <SpaceBetween direction="horizontal" size="xxs">
-                  <Button
-                    variant="primary"
-                    iconName="refresh"
-                    loading={extracting}
-                    onClick={handleExtractAll}
-                    disabled={extracting || discovering}
-                  >
-                    {extracting ? 'Extracting...' : 'Extract All Services'}
-                  </Button>
-                  <Popover
-                    dismissButton={false}
-                    position="bottom"
-                    size="medium"
-                    triggerType="text"
-                    content={
-                      <SpaceBetween size="xs">
-                        <Box variant="strong">Extracts deprecation info from AWS docs for:</Box>
-                        <Box variant="small">
-                          {EXTRACTION_SERVICES.map((service, i) => (
-                            <div key={i}>• {service}</div>
-                          ))}
-                        </Box>
-                        <Box variant="small" color="text-status-info">
-                          Note: Only these {EXTRACTION_SERVICES.length} services are currently configured.
-                        </Box>
-                        <Box variant="small" color="text-body-secondary">
-                          To add more services: edit <code>scripts/service_configs.json</code> with the service name and AWS documentation URL.
-                        </Box>
-                      </SpaceBetween>
-                    }
-                  >
-                    <Box color="text-status-info" display="inline">ⓘ</Box>
-                  </Popover>
-                </SpaceBetween>
+              <SpaceBetween direction="horizontal" size="xxs">
+                <Button
+                  variant="primary"
+                  iconName="refresh"
+                  loading={extracting}
+                  onClick={handleRefresh}
+                  disabled={extracting}
+                >
+                  {extracting
+                    ? progress
+                      ? `Refreshing... (${progress.extract_done} extracted, ${progress.scan_done} scanned)`
+                      : 'Refreshing...'
+                    : 'Refresh'}
+                </Button>
+                <Popover
+                  dismissButton={false}
+                  position="bottom"
+                  size="medium"
+                  triggerType="text"
+                  content={
+                    <SpaceBetween size="xs">
+                      <Box variant="strong">One end-to-end run (Lambda durable function):</Box>
+                      <Box variant="small">
+                        1. Extracts deprecation facts from the AWS documentation for every enabled service.
+                      </Box>
+                      <Box variant="small">
+                        2. Scans this account for resources on deprecated versions:
+                        {DISCOVERY_SERVICES.map((service, i) => (
+                          <div key={i}>• {service}</div>
+                        ))}
+                      </Box>
+                      <Box variant="small">
+                        3. Reconciles the inventory and publishes a summary to SNS.
+                      </Box>
+                      <Box variant="small" color="text-body-secondary">
+                        The run continues server-side if you navigate away. To add services: edit
+                        <code> scripts/service_configs.json</code> (facts) or <code>agent/account_discovery.py</code>
+                        plus the IAM grants in <code>cdk/lib/pipeline-stack.ts</code> (scan).
+                      </Box>
+                    </SpaceBetween>
+                  }
+                >
+                  <Box color="text-status-info" display="inline">ⓘ</Box>
+                </Popover>
               </SpaceBetween>
             }
           >

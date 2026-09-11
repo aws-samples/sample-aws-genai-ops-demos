@@ -116,7 +116,7 @@ export default function Services() {
         dismissible: true,
         dismissLabel: 'Dismiss',
         onDismiss: () => setFlashbarItems([]),
-        content: `Starting extraction for ${serviceName}. This will take about 10-20 seconds. Service data will update in real-time`,
+        content: `Starting extraction for ${serviceName}. It runs server-side as a pipeline execution and usually takes 1-3 minutes; service data updates as it progresses`,
         id: `extract-start-${serviceName}-${Date.now()}`
       }]);
       

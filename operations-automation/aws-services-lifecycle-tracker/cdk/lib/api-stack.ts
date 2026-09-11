@@ -1,152 +1,70 @@
 import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import * as iam from 'aws-cdk-lib/aws-iam';
+import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpUserPoolAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 
 export interface ApiStackProps extends cdk.StackProps {
-  orchestratorFunctionArn: string;
-  orchestratorFunctionName: string;
-  agentRuntimeArn: string;
-  lifecycleTableName: string;
-  configTableName: string;
-  userPool: cognito.UserPool;
-  userPoolClient: cognito.UserPoolClient;
+  apiFunction: lambda.IFunction;
+  userPool: cognito.IUserPool;
+  userPoolClient: cognito.IUserPoolClient;
 }
 
-export class AWSServicesLifecycleTrackerApi extends cdk.Stack {
-  public readonly api: apigateway.RestApi;
-  public readonly extractionFunction: lambda.Function;
-  public readonly configFunction: lambda.Function;
-  public readonly dataFunction: lambda.Function;
+/**
+ * HTTP API in front of the API Lambda (issue #139).
+ *
+ * The Cognito user-pool JWT authorizer validates the ID token the SPA sends
+ * in the Authorization header; the browser itself holds no AWS credentials.
+ *
+ *   POST /actions          router actions (list_services, update_service, ...)
+ *   POST /refresh          start (or adopt) a durable pipeline execution
+ *   GET  /refresh/{arn}    execution status for UI polling / re-attach
+ */
+export class ApiStack extends cdk.Stack {
+  public readonly httpApi: apigwv2.HttpApi;
+  public readonly apiUrl: string;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    // Create Cognito Authorizer for API Gateway
-    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'ApiAuthorizer', {
-      cognitoUserPools: [props.userPool],
-      identitySource: 'method.request.header.Authorization'
+    const authorizer = new HttpUserPoolAuthorizer('CognitoAuthorizer', props.userPool, {
+      userPoolClients: [props.userPoolClient],
     });
 
-    // Create API Gateway
-    this.api = new apigateway.RestApi(this, 'LifecycleTrackerApi', {
-      restApiName: 'aws-services-lifecycle-tracker-api',
-      description: 'API for AWS Services Lifecycle Tracker admin interface',
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key', 'X-Amz-Security-Token'],
+    this.httpApi = new apigwv2.HttpApi(this, 'LifecycleTrackerHttpApi', {
+      apiName: 'aws-services-lifecycle-tracker-api',
+      description: 'AWS Services Lifecycle Tracker UI API (Cognito JWT)',
+      defaultAuthorizer: authorizer,
+      corsPreflight: {
+        // The CloudFront domain is only known after the frontend deploys,
+        // which itself needs this API URL at build time; auth is enforced
+        // by the JWT authorizer, not by the origin allow-list.
+        allowOrigins: ['*'],
+        allowMethods: [apigwv2.CorsHttpMethod.GET, apigwv2.CorsHttpMethod.POST, apigwv2.CorsHttpMethod.OPTIONS],
+        allowHeaders: ['Content-Type', 'Authorization'],
+        maxAge: cdk.Duration.hours(1),
       },
-    }); 
-   // Lambda function for extraction operations
-    this.extractionFunction = new lambda.Function(this, 'ExtractionApiFunction', {
-      functionName: 'aws-services-lifecycle-extraction-api',
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'extraction_api.lambda_handler',
-      code: lambda.Code.fromAsset('lambda/api'),
-      timeout: cdk.Duration.minutes(5),
-      memorySize: 256,
-      environment: {
-        ORCHESTRATOR_FUNCTION_NAME: props.orchestratorFunctionName,
-        AGENT_RUNTIME_ARN: props.agentRuntimeArn,
-        LIFECYCLE_TABLE_NAME: props.lifecycleTableName,
-        CONFIG_TABLE_NAME: props.configTableName,
-        AWS_REGION: this.region
-      }
     });
 
-    // Lambda function for configuration operations
-    this.configFunction = new lambda.Function(this, 'ConfigApiFunction', {
-      functionName: 'aws-services-lifecycle-config-api',
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'config_api.lambda_handler',
-      code: lambda.Code.fromAsset('lambda/api'),
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 256,
-      environment: {
-        CONFIG_TABLE_NAME: props.configTableName,
-        AWS_REGION: this.region
-      }
-    });
+    const integration = new HttpLambdaIntegration('ApiFunctionIntegration', props.apiFunction);
 
-    // Lambda function for data operations
-    this.dataFunction = new lambda.Function(this, 'DataApiFunction', {
-      functionName: 'aws-services-lifecycle-data-api',
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'data_api.lambda_handler',
-      code: lambda.Code.fromAsset('lambda/api'),
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 256,
-      environment: {
-        LIFECYCLE_TABLE_NAME: props.lifecycleTableName,
-        CONFIG_TABLE_NAME: props.configTableName,
-        AWS_REGION: this.region
-      }
-    });    
-// IAM Permissions for extraction function
-    this.extractionFunction.addToRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['lambda:InvokeFunction'],
-      resources: [props.orchestratorFunctionArn]
-    }));
+    this.httpApi.addRoutes({ path: '/actions', methods: [apigwv2.HttpMethod.POST], integration });
+    this.httpApi.addRoutes({ path: '/refresh', methods: [apigwv2.HttpMethod.POST], integration });
+    // Greedy: durable execution ARNs contain '/' segments
+    this.httpApi.addRoutes({ path: '/refresh/{arn+}', methods: [apigwv2.HttpMethod.GET], integration });
 
-    this.extractionFunction.addToRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['bedrock-agentcore:InvokeAgentRuntime'],
-      resources: [props.agentRuntimeArn]
-    }));
+    // apiEndpoint has no trailing slash
+    this.apiUrl = this.httpApi.apiEndpoint;
 
-    // DynamoDB permissions for all functions
-    const dynamoDbPolicy = new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'dynamodb:GetItem',
-        'dynamodb:PutItem',
-        'dynamodb:UpdateItem',
-        'dynamodb:DeleteItem',
-        'dynamodb:Query',
-        'dynamodb:Scan',
-        'dynamodb:BatchGetItem',
-        'dynamodb:BatchWriteItem'
-      ],
-      resources: [
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.lifecycleTableName}`,
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.lifecycleTableName}/index/*`,
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.configTableName}`,
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.configTableName}/index/*`
-      ]
-    });
-
-    this.extractionFunction.addToRolePolicy(dynamoDbPolicy);
-    this.configFunction.addToRolePolicy(dynamoDbPolicy);
-    this.dataFunction.addToRolePolicy(dynamoDbPolicy);    
-// API Routes - Basic endpoints
-    const extractResource = this.api.root.addResource('extract');
-    extractResource.addMethod('POST', new apigateway.LambdaIntegration(this.extractionFunction), {
-      authorizer
-    });
-
-    const servicesResource = this.api.root.addResource('services');
-    servicesResource.addMethod('GET', new apigateway.LambdaIntegration(this.configFunction), {
-      authorizer
-    });
-
-    const deprecationsResource = this.api.root.addResource('deprecations');
-    deprecationsResource.addMethod('GET', new apigateway.LambdaIntegration(this.dataFunction), {
-      authorizer
-    });
-
-    // Outputs
     new cdk.CfnOutput(this, 'ApiUrl', {
-      value: this.api.url,
-      description: 'API Gateway URL for admin interface'
+      value: this.apiUrl,
+      description: 'HTTP API base URL used by the frontend (VITE_API_URL)',
     });
-
     new cdk.CfnOutput(this, 'ApiId', {
-      value: this.api.restApiId,
-      description: 'API Gateway ID'
+      value: this.httpApi.apiId,
+      description: 'HTTP API ID',
     });
   }
 }
