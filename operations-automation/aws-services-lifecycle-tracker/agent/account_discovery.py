@@ -148,9 +148,71 @@ class LifecycleIndex:
         return best
 
 
-# Upper bound on resource names stored per inventory row (DynamoDB item limit is
-# 400 KB; 500 ARN-length names stay far below it). total_affected is always exact.
+# Upper bound on resources stored per inventory row (DynamoDB item limit is
+# 400 KB; 500 entries of name+ARN+console URL stay well below it).
+# total_affected is always exact.
 MAX_RESOURCE_NAMES = 500
+
+_CALLER = {}
+
+
+def _caller_identity() -> Dict[str, str]:
+    """Partition and account id of the scanning identity (cached per process).
+
+    Used to build ARNs for services whose list API does not return one
+    (Glue jobs, EC2 instances)."""
+    if not _CALLER:
+        try:
+            arn = boto3.client("sts").get_caller_identity()["Arn"]
+            _CALLER.update(partition=arn.split(":")[1], account=arn.split(":")[4])
+        except Exception:  # offline/unit tests: fall back to the public partition
+            _CALLER.update(partition="aws", account="")
+    return _CALLER
+
+
+def build_arn(service: str, region: str, resource: str) -> str:
+    """ARN for a regional resource of the caller's account, e.g. glue job/x."""
+    ident = _caller_identity()
+    return f"arn:{ident['partition']}:{service}:{region}:{ident['account']}:{resource}"
+
+
+def console_url(service_key: str, region: str, res: Dict) -> str:
+    """Deep link to the AWS console page of one discovered resource.
+
+    Built from the deployment region, never hardcoded. `res` carries name and
+    arn plus optional service-specific hints (ElastiCache engine, Beanstalk
+    environment id). Partitions other than the public one are not mapped and
+    get the public console host.
+    """
+    from urllib.parse import quote
+    base = f"https://{region}.console.aws.amazon.com"
+    name, arn = res.get("name", ""), res.get("arn", "")
+    q = quote(name, safe="")
+    if service_key == "lambda":
+        return f"{base}/lambda/home?region={region}#/functions/{q}"
+    if service_key in ("rds", "aurora"):
+        return f"{base}/rds/home?region={region}#database:id={q};is-cluster=false"
+    if service_key == "eks":
+        return f"{base}/eks/home?region={region}#/clusters/{q}"
+    if service_key == "elasticache":
+        engine = res.get("engine", "redis")
+        return f"{base}/elasticache/home?region={region}#/{engine}/{q}"
+    if service_key == "opensearch":
+        return f"{base}/aos/home?region={region}#opensearch/domains/{q}"
+    if service_key == "msk":
+        return f"{base}/msk/home?region={region}#/cluster/{quote(arn, safe='')}/view"
+    if service_key == "documentdb":
+        return f"{base}/docdb/home?region={region}#cluster-details/{q}"
+    if service_key == "neptune":
+        return f"{base}/neptune/home?region={region}#database:ids={q};is-cluster=true"
+    if service_key == "glue":
+        return f"{base}/gluestudio/home?region={region}#/editor/job/{q}/details"
+    if service_key == "elasticbeanstalk":
+        env_id = res.get("environment_id", "")
+        return f"{base}/elasticbeanstalk/home?region={region}#/environment/dashboard?environmentId={quote(env_id, safe='')}"
+    if service_key == "ec2":
+        return f"{base}/ec2/home?region={region}#InstanceDetails:instanceId={q}"
+    return ""
 
 
 def build_inventory_item(service_key: str, identifier: str, display_name: str,
@@ -164,14 +226,25 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
     the key vocabulary of the rest of the system (UI filters, Health
     enrichment) while staying distinguishable and provenance-tagged.
 
-    affected_resources may be a list of resource names (preferred, #141) or a
-    legacy summary string. The row stores the full list (capped) as
-    affected_resource_names for the details view, plus a short summary string.
+    affected_resources (#141) is a list of resources, each either a name or a
+    dict {name, arn, ...hints}; a legacy summary string is still accepted. The
+    row stores (capped) affected_resource_names for compatibility and
+    affected_resource_details [{name, arn, console_url}] for the details view,
+    plus a 3-name summary string.
     """
     match = index.lookup(service_key, candidates)
     now = datetime.now()
+    region = getattr(index, "region", None) or REGION
+    details: List[Dict] = []
     if isinstance(affected_resources, (list, tuple)):
-        names = sorted(str(n) for n in affected_resources)
+        for r in affected_resources:
+            res = dict(r) if isinstance(r, dict) else {"name": str(r)}
+            res["name"] = str(res.get("name", ""))
+            res.setdefault("arn", "")
+            details.append({"name": res["name"], "arn": res["arn"],
+                            "console_url": console_url(service_key, region, res)})
+        details.sort(key=lambda d: d["name"])
+        names = [d["name"] for d in details]
         summary = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
     else:
         names = []
@@ -180,7 +253,7 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
         "service_name": service_key,
         "item_id": f"inventory#{identifier}",
         "status": match["status"] if match else fallback_status,
-        "region": getattr(index, "region", None) or REGION,
+        "region": region,
         "source_url": source_url,
         "extraction_date": now.strftime("%Y-%m-%d"),
         "last_verified": now.isoformat() + "Z",
@@ -191,6 +264,7 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
             "end_of_support_date": (match or {}).get("end_of_support_date", "N/A"),
             "affected_resources": summary,
             "affected_resource_names": names[:MAX_RESOURCE_NAMES],
+            "affected_resource_details": details[:MAX_RESOURCE_NAMES],
             "total_affected": total_affected,
             "matched_lifecycle_item": (match or {}).get("item_id", ""),
         },
@@ -212,7 +286,7 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
                 runtime = func.get("Runtime", "unknown")
                 if runtime not in runtime_functions:
                     runtime_functions[runtime] = []
-                runtime_functions[runtime].append(func["FunctionName"])
+                runtime_functions[runtime].append({"name": func["FunctionName"], "arn": func.get("FunctionArn", "")})
         
         for runtime, functions in runtime_functions.items():
             items.append(build_inventory_item(
@@ -289,7 +363,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 
                 if key not in engine_instances:
                     engine_instances[key] = []
-                engine_instances[key].append(db["DBInstanceIdentifier"])
+                engine_instances[key].append({"name": db["DBInstanceIdentifier"], "arn": db.get("DBInstanceArn", "")})
         
         for (engine, major, version), instances in engine_instances.items():
             # Aurora engines have their own extraction source/config key
@@ -326,7 +400,7 @@ def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> L
             version = cluster["version"]
             if version not in version_clusters:
                 version_clusters[version] = []
-            version_clusters[version].append(cluster_name)
+            version_clusters[version].append({"name": cluster_name, "arn": cluster.get("arn", "")})
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
@@ -363,7 +437,7 @@ def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = No
                 
                 if key not in engine_clusters:
                     engine_clusters[key] = []
-                engine_clusters[key].append(cluster["CacheClusterId"])
+                engine_clusters[key].append({"name": cluster["CacheClusterId"], "arn": cluster.get("ARN", ""), "engine": engine})
         
         for engine_key, clusters in engine_clusters.items():
             items.append(build_inventory_item(
@@ -399,7 +473,7 @@ def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None
             
             if version not in version_domains:
                 version_domains[version] = []
-            version_domains[version].append(domain_name)
+            version_domains[version].append({"name": domain_name, "arn": domain.get("ARN", "")})
         
         for version, domain_names in version_domains.items():
             bare_version = version.split("_")[-1] if "_" in version else version
@@ -438,7 +512,7 @@ def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> L
                 
                 if kafka_version not in version_clusters:
                     version_clusters[kafka_version] = []
-                version_clusters[kafka_version].append(cluster_name)
+                version_clusters[kafka_version].append({"name": cluster_name, "arn": cluster.get("ClusterArn", "")})
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
@@ -475,7 +549,7 @@ def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = Non
                     
                     if version not in version_clusters:
                         version_clusters[version] = []
-                    version_clusters[version].append(cluster_id)
+                    version_clusters[version].append({"name": cluster_id, "arn": cluster.get("DBClusterArn", "")})
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
@@ -512,7 +586,7 @@ def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) 
                     
                     if version not in version_clusters:
                         version_clusters[version] = []
-                    version_clusters[version].append(cluster_id)
+                    version_clusters[version].append({"name": cluster_id, "arn": cluster.get("DBClusterArn", "")})
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
@@ -549,7 +623,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
                 
                 if key not in version_jobs:
                     version_jobs[key] = []
-                version_jobs[key].append(job_name)
+                version_jobs[key].append({"name": job_name, "arn": build_arn("glue", region, f"job/{job_name}")})
         
         for version_key, job_names in version_jobs.items():
             items.append(build_inventory_item(
@@ -602,7 +676,7 @@ def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = 
             
             if platform_key not in platform_envs:
                 platform_envs[platform_key] = []
-            platform_envs[platform_key].append(env_name)
+            platform_envs[platform_key].append({"name": env_name, "arn": env.get("EnvironmentArn", ""), "environment_id": env.get("EnvironmentId", "")})
         
         for platform_key, env_names in platform_envs.items():
             items.append(build_inventory_item(
@@ -648,7 +722,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
                     
                     if family not in type_instances:
                         type_instances[family] = []
-                    type_instances[family].append(instance_id)
+                    type_instances[family].append({"name": instance_id, "arn": build_arn("ec2", region, f"instance/{instance_id}")})
         
         for family, instance_ids in type_instances.items():
             # Only report previous-generation instance families
