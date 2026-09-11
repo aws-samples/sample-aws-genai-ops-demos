@@ -28,7 +28,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 - [AI-Powered Technical Documentation Generation](operations-automation/ai-documentation-generation/README.md): Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase
 - [AI-Powered Legacy System Automation](operations-automation/ai-legacy-system-browser-automation/README.md): Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring
 - [AI Password Reset Chatbot](operations-automation/ai-password-reset-chatbot/README.md): Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access
-- [AWS Services Lifecycle Tracker](operations-automation/aws-services-lifecycle-tracker/README.md): Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface
+- [AWS Services Lifecycle Tracker](operations-automation/aws-services-lifecycle-tracker/README.md): Track AWS service deprecations and the account resources they affect with one Lambda durable function refresh pipeline, intelligent status categorization and an admin dashboard
 - [AI Lambda Runtime Migration Assistant](operations-automation/ai-lambda-runtime-migration/README.md): Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard
 - [AnyCompany IT Demo Portal](operations-automation/anycompany-it-demo-portal/README.md): Multi-portal enterprise IT system simulation demonstrating AI-powered legacy system automation using Amazon Nova Act with the AgentCore Browser Tool
 

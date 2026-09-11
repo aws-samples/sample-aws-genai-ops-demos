@@ -1,20 +1,17 @@
 # AWS Services Lifecycle Tracker
 
-Comprehensive solution for automatically monitoring, extracting, and managing AWS service deprecation information across all AWS services. Built with [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/resources/) and hybrid HTML parsing + AI normalization.
-
-This system transforms manual deprecation tracking into an automated, scalable, and reliable process with intelligent status categorization, centralized storage, and comprehensive administrative interfaces for proactive AWS lifecycle management.
+Automatically track AWS service deprecations, find the resources in your account that are affected, and manage remediation. The whole refresh (web extraction → account scan → reconcile → notify) runs as **one [AWS Lambda durable function](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) execution**, using hybrid HTML parsing + Amazon Nova AI normalization for the extraction step.
 
 ## 🚀 Key Features
 
-- **🔍 Account Resource Discovery**: Automatically scan your AWS account to find actual resources (Lambda, RDS, EKS, ElastiCache, OpenSearch) and show only relevant deprecations
-- **📋 Plan of Action**: Assign deprecations to team members with ownership, priority, target dates, and notes for organized remediation tracking
-- **🤖 Hybrid AI Extraction**: BeautifulSoup HTML parsing +  Amazon Nova 2 Lite AI normalization for reliable data extraction
-- **⚡ Fast Extrant Status Categorization**: Automatically categorizes items as deprecated, extended_support, or end_of_life based on dates
-- **🎛️ Admin Interface**: React-based UI with Cloudscape Design System for service configuration and monitoring
-- **📊 Real-time Dashboard**: Live metrics showing status breakdown (75 deprecated, 19 extended support, 2 end of life)
-- **🔐 Direct AgentCore Integration**: IAM-authenticated AWS SDK calls directly to AgentCore via Cognito Identity Pool (no API Gateway complexity)
-- **⚙️ Service Configuration Management**: Add/modify AWS services via UI or service configuration files
-- **📈 Scalable Architecture**: Serverless design that scales from single services to enterprise-wide monitoring
+- **🔁 One-click end-to-end Refresh**: A single durable execution extracts deprecation facts from the AWS documentation, scans your account for affected resources, reconciles the inventory and publishes a summary - checkpointed step by step, so a failing service or scanner never aborts the run
+- **🔍 Account Resource Discovery**: Scans 11 services (Lambda, RDS/Aurora, EKS, ElastiCache, OpenSearch, MSK, DocumentDB, Neptune, Glue, Elastic Beanstalk, EC2) and keeps the inventory separate from the public deprecation facts
+- **📋 Plan of Action**: Assign deprecations to team members with ownership, priority, target dates and notes
+- **🤖 Hybrid AI Extraction**: BeautifulSoup HTML parsing + Amazon Nova AI normalization for reliable data extraction
+- **🧠 Intelligent Status Categorization**: deprecated / extended_support / end_of_life based on retirement dates
+- **🎛️ Admin Interface**: React + Cloudscape UI behind Cognito; all calls go through an HTTP API with a JWT authorizer (the browser holds no AWS credentials)
+- **🩺 AWS Health integration**: Hourly poll of Health events correlated with tracked deprecations (paid Support plan required)
+- **📦 No Docker, no container registry**: Python code is bundled locally with pip; deploys in a few minutes
 
 ## Interactive Demo
 
@@ -30,90 +27,67 @@ Experience this demo in an interactive click-through walkthrough:
 ## Architecture
 
 ```
-                                    AWS Services Lifecycle Tracker
-                                         Simplified Architecture
+                         AWS Services Lifecycle Tracker
 
-┌─────────────────┐     ┌─────────────────────────────────────────────────────────────────┐
-│   Admin User    │────>│                    Frontend Stack                               │
-└─────────────────┘     │  CloudFront ──▶ S3 Static ──▶ React Admin UI (Cloudscape)      │
-                        └─────────────────────────────────────────────────────────────────┘
-                                                      │
-                                                      ▼
-                        ┌─────────────────────────────────────────────────────────────────┐
-                        │                    Auth Stack                                   │
-                        │  Cognito User Pool + Identity Pool ──> AWS IAM Credentials      │
-                        └─────────────────────────────────────────────────────────────────┘
-                                                      │
-                                                      ▼
-                        ┌─────────────────────────────────────────────────────────────────┐
-                        │                   Runtime Stack                                 │
-                        │  AgentCore Runtime (Hybrid Extraction + Amazon Nova 2 Lite)     │
-                        │  ├─ Container: ECR Image (CodeBuild ARM64)                      │
-                        │  ├─ AI Model: Amazon Nova 2 Lite                                │
-                        │  ├─ Hybrid Approach: BeautifulSoup + LLM normalization          │
-                        │  └─ Environment: Table names from Data Stack                    │
-                        └─────────────────────────────────────────────────────────────────┘
-                                                      │
-                                                      ▼
-┌─────────────────┐     ┌─────────────────────────────────────────────────────────────────┐
-│ AWS             │<────│                    Data Stack                                   │
-│ Documentation   │     │  DynamoDB Tables:                                               │
-└─────────────────┘     │  ├─ aws-services-lifecycle (deprecation data)                   │
-                        │  ├─ service-extraction-config (service settings)                │
-                        │  └─ deprecation-action-plans (remediation tracking)             │
-                        └─────────────────────────────────────────────────────────────────┘
-
-                        ┌─────────────────────────────────────────────────────────────────┐
-                        │                 Monitoring (Built-in)                           │
-                        │  CloudWatch Logs + X-Ray Tracing + CloudWatch Metrics           │
-                        └─────────────────────────────────────────────────────────────────┘
-
-Simplified Flow:
-1. Admin User ──▶ React UI ──▶ Cognito User Pool ──▶ Identity Pool ──▶ AWS Credentials ──▶ AgentCore (IAM)
-2. AgentCore ──▶ Hybrid Extraction (BeautifulSoup + Amazon Nova 2 Lite) ──▶ DynamoDB
-3. All operations log to CloudWatch, traced by X-Ray
+┌────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────────┐
+│ Admin user │──>│ Frontend stack               │──>│ Auth stack                       │
+└────────────┘   │ CloudFront + S3 (React SPA)  │   │ Cognito User Pool (ID token)     │
+                 └──────────────┬───────────────┘   └──────────────────────────────────┘
+                                │ HTTPS + Authorization: Bearer <ID token>
+                                ▼
+                 ┌──────────────────────────────────────────────────────────────────────┐
+                 │ Api stack: API Gateway HTTP API + Cognito JWT authorizer             │
+                 │   POST /actions   POST /refresh   GET /refresh/{arn}                 │
+                 └──────────────┬───────────────────────────────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ Pipeline stack (main)                                                                │
+│                                                                                      │
+│  ┌─ aws-services-lifecycle-api (Lambda) ─────────────────────────────────────────┐   │
+│  │  UI actions (reads/writes) · start/observe pipeline runs · hourly Health poll │   │
+│  └───────────────┬───────────────────────────────────────────────────────────────┘   │
+│                  │ lambda:Invoke (Event, DurableExecutionName)                       │
+│                  ▼                                                                   │
+│  ┌─ aws-services-lifecycle-pipeline:live (Lambda durable function, 2 h / 14 d) ──┐   │
+│  │  start-run ─> map extract-<service> ─> map scan-<Scanner>-<region>            │   │
+│  │            ─> reconcile-inventory ─> summarize-and-notify (SNS)               │   │
+│  └───────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                      │
+│  EventBridge Scheduler: weekly refresh · hourly Health    SNS topic · SQS DLQ        │
+└──────────────────────────────┬───────────────────────────────────────────────────────┘
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ Data stack (DynamoDB)                                                                │
+│  aws-services-lifecycle (public deprecation facts)  · aws-account-inventory (yours)  │
+│  service-extraction-config · service-extraction-state · deprecation-action-plans     │
+│  aws-health-events                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ![Architecture Diagram](img/lifecycle.drawio.svg)
 
-**System Flow:**
-1. **Admin Interface**: React app with direct AgentCore integration via JWT authentication
-2. **Hybrid Extraction**: AgentCore runtime combines HTML parsing + AI normalization for reliable data extraction
-3. **Intelligent Categorization**: Automatically determines status (deprecated/extended_support/end_of_life) based on retirement dates
-4. **Data Storage**: DynamoDB stores structured deprecation data with intelligent status indexing
+**System flow:**
+1. **Refresh** (UI button, weekly schedule, or CLI) starts one durable execution of the pipeline function
+2. **Extract**: one checkpointed step per enabled service fetches the AWS docs and normalizes them with Amazon Nova (parallel, max 5)
+3. **Scan**: one checkpointed step per scanner × region discovers your resources and matches them against the facts
+4. **Reconcile**: this run's inventory is upserted and stale rows from successfully scanned scopes are removed
+5. **Notify**: the run summary is published to SNS and stored as the execution result the UI shows
 
-**Key Components:**
-- **🤖 Hybrid Data Extraction**: BeautifulSoup HTML parsing + Amazon Nova 2 Lite AI normalization for 80-90% success rates
-- **🧠 Smart Status Logic**: Analyzes `target_retirement_date` and other date fields to categorize lifecycle stages
-- **🎛️ Service Configuration**: JSON-driven service definitions in `scripts/service_configs.json`
-- **📊 Real-time Dashboard**: Live status breakdown showing actionable categorization of deprecation urgency
-- **🔐 Direct AgentCore Access**: JWT-authenticated HTTPS calls directly to AgentCore (simplified architecture)
-- **⚙️ Configurable Services**: Add new AWS services without code changes via service configuration files
-- **📈 Comprehensive Monitoring**: CloudWatch logs, X-Ray tracing, and built-in observability
+Facts and inventory live in separate tables: the public deprecation data is never mixed with what was found in your account.
 
 ## Quick Start
 
 ### Prerequisites
-- **AWS CLI v2.31.13 or later** installed and configured ([Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html))
-  - Check your version: `aws --version`
-  - AgentCore support was added in AWS CLI v2.31.13 (January 2025)
-- **Node.js 22+** installed
-- **AWS CDK** installed globally ([Installation Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html))
-  - Install: `npm install -g aws-cdk`
-  - Check your version: `cdk --version`
-- **Python 3.8+** installed (for configuration scripts)
-- **AWS credentials** configured with permissions for CloudFormation, Lambda, S3, ECR, CodeBuild, DynamoDB, Cognito, and IAM via:
-  - `aws configure` (access key/secret key)
-  - AWS SSO: `aws sso login --profile <profile-name>`
-  - Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-- **No Docker required!** (CodeBuild handles container builds)
-- **Paid AWS Support plan** (**AWS Business Support+, Enterprise Support, or Unified Operations**) — required for the AWS Health API integration. Accounts on Basic/Developer support receive a `SubscriptionRequiredException` when the tracker calls the Health API, and the AWS Health panel will not populate. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html). The rest of the demo (documentation extraction, deprecation tracking) works without a paid plan.
+- **AWS CLI v2.33.22 or later** ([Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)) - durable function APIs need this version. Check with `aws --version`
+- **Node.js 22+** and **AWS CDK CLI** (`npm install -g aws-cdk`, check with `cdk --version`)
+- **Python 3.11+** with `pip` - used to bundle the Lambda code locally (no Docker needed)
+- **AWS credentials** with permissions for CloudFormation, Lambda, API Gateway, DynamoDB, Cognito, EventBridge Scheduler, SNS, SQS, CloudFront, S3 and IAM
+- **Amazon Bedrock** model access for Amazon Nova in your region
+- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health panel. Without it the Health poll gets a `SubscriptionRequiredException` and the panel stays empty; everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html)
 
-### ⚠️ Important: Region Requirements
+### ⚠️ Region Requirements
 
-**Amazon Bedrock AgentCore is only available in specific AWS regions.**
-
-Before deploying, verify AgentCore availability in your target region by checking the [AWS AgentCore Regions Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html).
+Lambda durable functions and Amazon Nova must be available in your target region. Check the [Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) and [Bedrock model support by region](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) pages. The deploy scripts use your configured AWS CLI region (`AWS_REGION` / `aws configure get region`).
 
 ### One-Command Deploy
 
@@ -128,132 +102,102 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 ./deploy-all.sh
 ```
 
-> **Platform Notes:**
-> - **Windows users**: Use the PowerShell script (`.ps1`)
-> - **macOS/Linux users**: Use the bash script (`.sh`)
-> - Both scripts perform identical operations and produce the same infrastructure
-
-**Time:** ~10 minutes (most time is CodeBuild creating the container image)
-
-**Done!** Your AWS Services Lifecycle Tracker is deployed and ready to monitor AWS service deprecations.
+**Time:** ~5 minutes. The scripts deploy Data → Auth → Pipeline → Api, build the frontend with the API URL and Cognito IDs, then deploy Frontend, and finish with the website URL, the pipeline alias ARN and the SNS topic.
 
 ### Test Your System
 
-1. **Access the admin interface:**
-   - Open the CloudFront URL from deployment output
-   - Sign in with Cognito to access the admin dashboard
-   - View system health, metrics, and recent extractions
+1. **Create an admin user** with the two `aws cognito-idp` commands printed at the end of the deployment, then sign in at the CloudFront URL.
 
-2. **Test manual extraction via UI:**
-   - Navigate to the "Extract" section
-   - Click "Test Extraction" for a specific service (e.g., Lambda)
-   - Monitor real-time progress and results
+2. **Click Refresh** on the dashboard. The button shows live progress (`N extracted, M scanned`); you can navigate away - the run continues server-side and the UI re-attaches when you come back. When it finishes you get a summary such as *Facts: 32/32 services (476 items). Inventory: 8 assets scanned, 0 need attention.*
 
-3. **Trigger bulk extraction via UI:**
-   - Click "Refresh All Services" for comprehensive extraction
-   - Monitor orchestrator progress across all enabled services
+3. **Refresh a single service** from the Services page - this runs the same pipeline scoped to one service (`mode: extract`).
 
-4. **Check service configurations via UI:**
-   - Navigate to "Services" section
-   - View, edit, or add new service configurations
-   - Enable/disable services for monitoring
-
-5. **Command-line testing (optional):**
+4. **Command-line testing (optional):**
    ```bash
-   # Get your configured region
    region=$(aws configure get region)
-   
-   # Test direct agent invocation (single service)
-   aws bedrock-agentcore invoke-agent-runtime \
-     --agent-runtime-arn $(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text) \
-     --payload '{"service_name": "lambda", "force_refresh": true}'
-   
-   # Test bulk extraction (all services)
-   aws bedrock-agentcore invoke-agent-runtime \
-     --agent-runtime-arn $(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text) \
-     --payload '{"services": "all", "force_refresh": true}'
-   
-   # View extracted data
-   aws dynamodb scan --table-name aws-services-lifecycle --limit 5
+   pipeline=$(aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerPipeline-$region" \
+     --query "Stacks[0].Outputs[?OutputKey=='PipelineFunctionAliasArn'].OutputValue" --output text)
+
+   # Start a scoped run (durable functions need a qualified ARN + an execution name)
+   aws lambda invoke --function-name "$pipeline" --invocation-type Event \
+     --durable-execution-name "cli-$(date +%s)" \
+     --payload '{"mode":"full","services":["lambda"],"refresh_origin":"manual"}' \
+     --cli-binary-format raw-in-base64-out out.json && cat out.json
+
+   # Follow it
+   aws lambda list-durable-executions-by-function --function-name aws-services-lifecycle-pipeline --max-items 3
+   aws lambda get-durable-execution --durable-execution-arn <arn from above> --query '[Status,Result]'
+   aws lambda get-durable-execution-history --durable-execution-arn <arn> --query 'Events[].[EventType,Name]' --output text
    ```
 
-6. **Monitor automated scheduling:**
-   - Check EventBridge Scheduler schedules: `aws scheduler list-schedules --name-prefix aws-services-lifecycle`
-   - View AgentCore logs: `aws logs tail /aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-* --follow`
-
+5. **Subscribe to run summaries (optional):**
+   ```bash
+   aws sns subscribe --topic-arn <NotificationTopicArn output> --protocol email --notification-endpoint you@example.com
+   ```
 
 ## Stack Architecture
 
 | Stack Name | Purpose | Key Resources | Dependencies |
 |------------|---------|---------------|--------------|
-| **AWSServicesLifecycleTrackerInfra-{region}** | Build infrastructure | ECR Repository, CodeBuild Project, IAM Roles, S3 Bucket | None |
-| **AWSServicesLifecycleTrackerAuth-{region}** | Authentication | Cognito User Pool, User Pool Client, Identity Pool, IAM Role | None |
-| **AWSServicesLifecycleTrackerData-{region}** | Data storage | DynamoDB Tables (lifecycle data + service configs) | None |
-| **AWSServicesLifecycleTrackerRuntime-{region}** | Agent runtime | AgentCore Runtime with hybrid extraction logic | Infra, Auth, Data |
-| **AWSServicesLifecycleTrackerScheduler-{region}** | Automated scheduling | EventBridge Scheduler, SNS Topic, SQS Dead Letter Queue | Runtime |
-| **AWSServicesLifecycleTrackerFrontend-{region}** | Admin interface | S3 Bucket, CloudFront Distribution, React UI | Auth, Runtime, Data |
+| **AWSServicesLifecycleTrackerData-{region}** | Data storage | 6 DynamoDB tables + service config populator | None |
+| **AWSServicesLifecycleTrackerAuth-{region}** | Authentication | Cognito User Pool + web client | None |
+| **AWSServicesLifecycleTrackerPipeline-{region}** | Refresh pipeline (main stack) | Lambda durable function + `live` alias, API Lambda, SNS topic, SQS DLQ, EventBridge schedules, IAM | Data |
+| **AWSServicesLifecycleTrackerApi-{region}** | UI API | API Gateway HTTP API + Cognito JWT authorizer | Pipeline, Auth |
+| **AWSServicesLifecycleTrackerFrontend-{region}** | Admin interface | S3 bucket, CloudFront distribution, React UI | Api, Auth |
 
 ## Project Structure
 
 ```
 project-root/
-├── agent/                          # Agent runtime code
-│   ├── main.py                     # AgentCore entry point - request routing
-│   ├── workflow_orchestrator.py    # High-level extraction workflow coordination
-│   ├── data_extractor.py           # Low-level HTML parsing + AI extraction engine
-│   ├── database_reads.py           # READ operations (metrics, service configs)
-│   ├── database_writes.py          # WRITE operations + intelligent status categorization
-│   ├── action_plans.py             # Plan of Action CRUD operations
-│   ├── account_discovery.py        # AWS account resource discovery
-│   ├── requirements.txt            # Python dependencies (boto3, beautifulsoup4, requests)
-│   ├── Dockerfile                  # ARM64 container definition
-│   └── test_*.py                   # Testing and debugging scripts
+├── agent/                          # Python code shared by both Lambda functions
+│   ├── lambda_pipeline.py          # Durable function: extract -> scan -> reconcile -> notify
+│   ├── lambda_api.py               # API Lambda: HTTP routes, pipeline control, scheduler entry
+│   ├── actions.py                  # Action router (list/update services, plans, health, ...)
+│   ├── workflow_orchestrator.py    # Single-service extraction workflow
+│   ├── data_extractor.py           # HTML parsing + Amazon Nova normalization
+│   ├── account_discovery.py        # Account scanners + inventory reconciliation
+│   ├── database_reads.py           # READ operations (metrics, configs, deprecations)
+│   ├── database_writes.py          # WRITE operations + status categorization
+│   ├── action_plans.py             # Plan of Action CRUD
+│   ├── health_*.py                 # AWS Health collection, enrichment, reads
+│   ├── requirements.txt            # boto3, aws-durable-execution-sdk-python, bs4, requests
+│   └── tests/                      # pytest (incl. DurableFunctionTestRunner pipeline tests)
 │
-├── cdk/                            # Infrastructure as Code
+├── cdk/                            # Infrastructure as Code (TypeScript)
+│   ├── bin/app.ts                  # Stack wiring (tracking tag on the Pipeline stack)
 │   ├── lib/
-│   │   ├── infra-stack.ts          # Build infrastructure (ECR, CodeBuild, IAM)
 │   │   ├── data-stack.ts           # DynamoDB tables + service config population
-│   │   ├── auth-stack.ts           # Cognito User Pool + Identity Pool + IAM authentication
-│   │   ├── runtime-stack.ts        # AgentCore runtime with hybrid extraction
-│   │   ├── scheduler-stack.ts      # EventBridge direct AgentCore invocation
-│   │   └── frontend-stack.ts       # CloudFront + S3 + React admin UI
-│   └── package.json                # CDK dependencies
+│   │   ├── auth-stack.ts           # Cognito User Pool
+│   │   ├── pipeline-stack.ts       # Durable pipeline + API Lambda + schedules (pip bundling, no Docker)
+│   │   ├── api-stack.ts            # HTTP API + JWT authorizer
+│   │   └── frontend-stack.ts       # CloudFront + S3
+│   └── test/                       # CDK assertions (jest)
 │
 ├── frontend/                       # React admin interface (Cloudscape Design System)
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx       # Status breakdown dashboard (75/19/2 display)
-│   │   │   ├── Services.tsx        # Service configuration management
-│   │   │   ├── Deprecations.tsx    # Deprecation data viewer with filters + bulk selection
-│   │   │   ├── Timeline.tsx        # Timeline view of upcoming deprecations
-│   │   │   └── PlanOfAction.tsx    # Remediation tracking with ownership assignment
-│   │   ├── App.tsx                 # Main app with navigation and auth
-│   │   ├── AuthModal.tsx           # Cognito login/signup modal
-│   │   ├── auth.ts                 # Cognito User Pool authentication
-│   │   ├── api.ts                  # API helper functions
-│   │   └── agentcore.ts            # AgentCore invocation with IAM credentials
-│   └── package.json                # Frontend dependencies (React, Cloudscape, Cognito)
+│   └── src/
+│       ├── api.ts                  # fetch() to the HTTP API with the Cognito ID token
+│       ├── auth.ts                 # Cognito User Pool authentication
+│       └── pages/                  # Dashboard, Services, Deprecations, Timeline, PlanOfAction
 │
 ├── scripts/
-│   ├── service_configs.json        # 🔧 KEY FILE: Service configuration definitions
-│   ├── populate_service_configs.py # Populates DynamoDB with service configs
-│   ├── build-frontend.ps1          # Frontend build with config injection (Windows)
-│   └── build-frontend.sh           # Frontend build with config injection (macOS/Linux)
+│   ├── service_configs.json        # 🔧 KEY FILE: service definitions
+│   ├── populate_service_configs.py # Loads service configs into DynamoDB at deploy time
+│   └── build-frontend.{ps1,sh}     # Frontend build with API URL / Cognito injection
 │
-├── deploy-all.ps1                  # Complete deployment orchestration (Windows)
-├── deploy-all.sh                   # Complete deployment orchestration (macOS/Linux)
-└── README.md                       # This documentation
+├── deploy-all.{ps1,sh}             # Complete deployment
+├── ARCHITECTURE.md                 # Design notes
+└── README.md
 ```
 
 ### 🔧 Key Files for Customization
 
 | File | Purpose | When to Modify |
 |------|---------|----------------|
-| **`scripts/service_configs.json`** | **Service definitions** - Add new AWS services, configure extraction focus, documentation URLs | Add new services to monitor |
-| **`agent/database_writes.py`** | **Status categorization logic** - Intelligent status determination based on dates | Customize status logic or add new date field patterns |
-| **`frontend/src/pages/Dashboard.tsx`** | **Dashboard UI** - Status breakdown display and metrics | Customize dashboard layout or add new metrics |
-| **`agent/data_extractor.py`** | **Extraction engine** - HTML parsing + AI normalization logic | Modify extraction approach or add new documentation sources |
-| **`cdk/lib/data-stack.ts`** | **Service config population** - Loads service_configs.json into DynamoDB | Change how service configurations are deployed |
+| **`scripts/service_configs.json`** | Service definitions - documentation URLs, extraction focus, schema | Add new services to monitor |
+| **`agent/account_discovery.py`** + **`cdk/lib/pipeline-stack.ts`** | Scanners and their read-only IAM grants | Add a service to the account scan |
+| **`agent/database_writes.py`** | Status categorization logic | Customize status thresholds or date fields |
+| **`agent/lambda_pipeline.py`** | Pipeline steps, concurrency, retry and failure-tolerance settings | Change how a refresh runs |
+| **`frontend/src/pages/Dashboard.tsx`** | Dashboard UI | Customize layout or metrics |
 
 ## Service Configuration Management
 
@@ -410,43 +354,50 @@ The `extraction_focus` field is crucial - it's the AI prompt that guides data ex
 - **Provide examples** of identifiers or formats
 - **Mention variations** the AI should handle
 
+
 ## How It Works
 
-### Agent Architecture
+### The refresh pipeline (Lambda durable function)
 
-The agent is organized into modular components with clear separation of concerns:
+`agent/lambda_pipeline.py` is a single `@durable_execution` handler. Every unit of work is a named, checkpointed step, so a crash or timeout resumes from the last checkpoint instead of restarting, and the execution history is the audit trail of the run.
 
-**`main.py`** - AgentCore entry point and request routing
-- Routes requests to either API actions (reads) or extraction operations (writes)
-- Handles payload parsing and error handling
-- Minimal logic - just routing between different operation types
+```
+start-run                       run_id, timestamp, region, enabled services (one step: non-deterministic values)
+map "extract"                   one step per service: extract-<service>   (max 5 in parallel, 3 attempts)
+map "scan"                      one step per scanner x region: scan-<Scanner>-<region>   (max 5, 2 attempts)
+reconcile-inventory             upsert this run's assets, drop stale rows only for scopes that scanned OK
+summarize-and-notify            run summary -> execution result + SNS message
+```
 
-**`workflow_orchestrator.py`** - High-level extraction workflow coordination
-- `extract_service_lifecycle()` - Main orchestration function
-- Coordinates: config retrieval → data extraction → storage → metadata updates
-- Handles error recovery and comprehensive result reporting
-- **Role**: Workflow management and coordination
+Design points:
+- **Failure isolation**: both maps use `tolerated_failure_percentage=100`. A documentation page that changed or a scanner without permissions is reported in the summary; the run still succeeds and everything else is reconciled.
+- **Slim checkpoints**: extraction steps write the items to DynamoDB themselves and return only counts, so execution state stays small.
+- **Deterministic reconciliation**: the `run_id` minted in `start-run` tags all inventory rows; stale rows are removed only for `(service, region)` scopes whose scan step succeeded.
+- **Idempotent starts**: the execution name is the idempotency key (Lambda enforces it). The weekly schedule uses `refresh-weekly-<date>`, manual runs `refresh-manual-<epoch>`; a second start while one is RUNNING adopts the running execution instead.
+- **Input contract**: `{"mode": "full|extract|scan", "services"?: [...], "regions"?: [...], "refresh_origin": "manual|Auto"}`. The UI's Refresh button sends `full`; per-service refresh sends `extract` with one service.
 
-**`data_extractor.py`** - Low-level hybrid extraction engine
-- `DataExtractor` class with hybrid HTML + AI approach
-- `_fetch_html_tables()` - BeautifulSoup HTML parsing for structured data
-- `_llm_extract_deprecation_data()` - Amazon Nova 2 Lite AI normalization
-- `_build_extraction_prompt()` - Service-specific AI prompt generation
-- **Role**: Pure data extraction mechanics
+Local tests use `aws-durable-execution-sdk-python-testing` (`agent/tests/test_lambda_pipeline.py`):
 
-**`database_reads.py`** - READ operations (future API candidates)
-- `list_services()` - Get all service configurations
-- `list_deprecations()` - Query deprecation items with filters
-- `get_metrics()` - Calculate dashboard metrics with status breakdown
-- `get_service_config()` - Retrieve service configuration
-- **Cost optimization opportunity**: Could be moved to API Gateway + Lambda for 80-95% cost reduction
+```bash
+cd agent && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
+```
 
-**`database_writes.py`** - WRITE operations + intelligent status logic
-- `categorize_item_status()` - **🧠 Intelligent status categorization based on dates**
-- `store_deprecation_data()` - Store extracted items with smart status assignment
-- `update_service_metadata()` - Track extraction history and success rates
-- `validate_item_against_config()` - Ensure data quality against service schemas
-- **Keep with agent**: Core extraction workflow functionality
+### The API function
+
+`agent/lambda_api.py` is a plain Lambda serving three things:
+- **HTTP API routes** (JWT-protected): `POST /actions` (router actions such as `list_services`, `update_service`, action plans, health reads), `POST /refresh` (start or adopt a pipeline execution), `GET /refresh/{arn}` (status, progress, final summary).
+- **Weekly schedule**: `{"action": "start_refresh", "refresh_origin": "Auto"}` - same naming and adopt-running logic as the UI.
+- **Hourly Health poll**: `{"action": "collect_health_events"}`.
+
+Long-running work never runs behind the API (30 s limit): anything that extracts or scans goes through the pipeline.
+
+### Agent modules
+
+- **`workflow_orchestrator.py`** - `extract_service_lifecycle()`: config → fetch → normalize → store → metadata, for one service
+- **`data_extractor.py`** - BeautifulSoup table parsing + Amazon Nova normalization with service-specific prompts
+- **`account_discovery.py`** - one `discover_*` scanner per service, a `LifecycleIndex` to match versions against the facts, and `save_to_dynamodb()` for run-scoped reconciliation
+- **`database_reads.py` / `database_writes.py`** - DynamoDB access; `categorize_item_status()` lives in writes
+- **`actions.py`** - the action router used by the API function
 
 ### 🧠 Intelligent Status Categorization
 
@@ -474,618 +425,80 @@ def categorize_item_status(item: Dict[str, Any]) -> str:
 - **19 Extended Support** - Extra costs apply, upgrade recommended  
 - **2 End of Life** - Immediate action required
 
-### Architecture Benefits
 
-**Clear Separation of Concerns:**
-- **Orchestration** (`workflow_orchestrator.py`) - High-level workflow
-- **Extraction** (`data_extractor.py`) - Low-level data processing
-- **Intelligence** (`database_writes.py`) - Smart status categorization
-- **Data Access** (`database_reads.py`) - Query and metrics
 
-**Future Optimization Path:**
-When ready to optimize costs:
-1. Move `database_reads.py` to API Gateway + Lambda
-2. Keep extraction workflow on AgentCore for AI processing
-3. **Result**: 80-95% cost reduction for read operations while maintaining AI capabilities
+## Operations
 
-### Deployment Flow
+### Schedules
 
-The `deploy-all.ps1` script orchestrates the complete deployment:
+| Schedule | Cadence | Target | Payload |
+|----------|---------|--------|---------|
+| `aws-services-lifecycle-weekly-refresh` | every 7 days | API function | `{"action":"start_refresh","refresh_origin":"Auto"}` → full pipeline run |
+| `aws-health-events-collection` | hourly | API function | `{"action":"collect_health_events"}` |
 
-1. **Verify AWS credentials** (checks AWS CLI configuration)
-2. **Check AWS CLI version** (requires v2.31.13+ for AgentCore support)
-3. **Check AgentCore availability** (verifies service is available in your configured region)
-4. **Install CDK dependencies** (cdk/node_modules)
-5. **Install frontend dependencies** (frontend/node_modules, includes amazon-cognito-identity-js)
-6. **Create placeholder frontend build** (for initial deployment)
-7. **Bootstrap CDK environment** (sets up CDK deployment resources in your AWS account/region)
-8. **Deploy AWSServicesLifecycleTrackerInfra-{region}** - Creates build pipeline resources:
-   - ECR repository for agent container images
-   - IAM role for AgentCore runtime
-   - S3 bucket for CodeBuild sources
-   - CodeBuild project for ARM64 builds
-9. **Deploy AWSServicesLifecycleTrackerData-{region}** - Creates data storage:
-   - DynamoDB table for lifecycle data (`aws-services-lifecycle`)
-   - DynamoDB table for service configurations (`service-extraction-config`)
-   - Global Secondary Indexes for efficient querying
-10. **Deploy AWSServicesLifecycleTrackerAuth-{region}** - Creates authentication resources:
-    - Cognito User Pool (email/password, admin-only, no self-signup)
-    - User Pool Client for frontend authentication
-    - Cognito Identity Pool for AWS credential exchange
-    - IAM Role with AgentCore invocation permissions
-    - Password policy (min 8 chars, uppercase, lowercase, digit)
-11. **Deploy AWSServicesLifecycleTrackerRuntime-{region}** - Deploys agent with built-in auth:
-    - Uploads agent source code to S3
-    - Triggers CodeBuild via Custom Resource
-    - **Lambda waiter polls CodeBuild** (5-10 minutes)
-    - Creates AgentCore runtime with IAM authentication and hybrid extraction
-12. **Build frontend with full configuration, then deploy AWSServicesLifecycleTrackerFrontend-{region}**:
-    - Retrieves all stack outputs (AgentCore ARN, Cognito config)
-    - Builds React admin interface with injected configuration
-    - S3 bucket for static hosting
-    - CloudFront distribution with OAC
-    - Deploys admin interface with direct AgentCore integration
+Failed scheduler invocations land in the `aws-services-lifecycle-scheduler-dlq` SQS queue.
 
-### Request Flow
-
-#### **Automated Extraction Flow:**
-1. EventBridge Scheduler triggers weekly extraction (every 7 days)
-2. EventBridge Scheduler directly invokes AgentCore with payload (no Lambda orchestrator)
-3. AgentCore queries DynamoDB for enabled service configurations
-4. AgentCore processes all enabled services with refresh_origin: "Auto"
-5. AgentCore executes agent in isolated container (microVM)
-6. Agent fetches AWS documentation and extracts deprecation data using Amazon Nova 2 Lite
-7. Agent stores structured data in DynamoDB lifecycle table
-8. Orchestrator collects results and sends SNS notification with summary
-
-#### **Manual UI-Triggered Flow:**
-1. User signs in via Cognito User Pool (email/password authentication)
-2. Frontend receives JWT ID token from Cognito User Pool
-3. Frontend exchanges ID token for AWS credentials via Cognito Identity Pool
-4. User triggers extraction via admin UI (single service, multiple services, or "all")
-5. Frontend invokes AgentCore using AWS SDK with IAM credentials (SigV4 signing)
-6. AgentCore validates IAM credentials and executes hybrid extraction (BeautifulSoup + AI normalization)
-7. AgentCore stores results in DynamoDB and returns real-time results
-8. Frontend displays live progress and results to user
-
-#### **Configuration Management Flow:**
-1. User accesses service configuration via admin UI
-2. Frontend calls AgentCore directly for CRUD operations
-3. AgentCore manages DynamoDB service configuration table
-4. Changes immediately affect future manual extractions
-
-### **Authentication Architecture Deep Dive**
-
-The system uses a secure, multi-layer authentication approach:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Authentication Flow                             │
-└─────────────────────────────────────────────────────────────────────┘
-
-1. User Login (Cognito User Pool)
-   ├─ User enters email/password in frontend
-   ├─ amazon-cognito-identity-js authenticates with User Pool
-   └─ Returns: JWT ID Token (contains user identity + 'aud' claim)
-
-2. Credential Exchange (Cognito Identity Pool)
-   ├─ Frontend sends ID Token to Identity Pool
-   ├─ Identity Pool validates token with User Pool
-   ├─ Identity Pool assumes IAM Role (AuthenticatedRole)
-   └─ Returns: Temporary AWS Credentials (AccessKeyId, SecretKey, SessionToken)
-        └─ Valid for 1 hour, automatically refreshed
-
-3. AgentCore Invocation (IAM Authentication)
-   ├─ Frontend creates BedrockAgentCoreClient with credentials
-   ├─ AWS SDK signs request with SigV4 (IAM signature)
-   ├─ AgentCore validates IAM signature
-   └─ Executes agent code with full AWS permissions
-```
-
-**Key Components:**
-
-1. **Cognito User Pool** (`auth-stack.ts`)
-   - Stores admin user accounts (email/password)
-   - Self-signup disabled (admin-only access)
-   - Issues JWT tokens (ID Token, Access Token, Refresh Token)
-   - ID Token contains: `sub`, `email`, `aud` (audience), `cognito:username`
-
-2. **Cognito Identity Pool** (`auth-stack.ts`)
-   - Exchanges JWT ID Token for AWS credentials
-   - Maps authenticated users to IAM Role
-   - Provides temporary credentials (1 hour expiry)
-   - Enables AWS SDK usage from browser
-
-3. **IAM Role - AuthenticatedRole** (`auth-stack.ts`)
-   - Assumed by authenticated users via Identity Pool
-   - Permissions: `bedrock-agentcore:InvokeAgentRuntime`
-   - Trust policy: Only Cognito Identity Pool can assume
-   - Follows least privilege principle
-
-4. **Frontend Authentication** (`frontend/src/auth.ts`)
-   - `si
-
-### **Simplified Architecture**
-The system uses a direct integration approach for maximum simplicity and reliability:
-
-- **Direct UI → AgentCore**: No intermediate API Gateway or Lambda
-- **IAM Authentication**: Cognito Identity Pool provides AWS credentials for AgentCore invocation
-- **Hybrid Extraction**: BeautifulSoup HTML parsing + AI normalization for reliable results
-- **Real-time Feedback**: Direct AWS SDK calls provide immediate results
-- **Environment-Driven**: Uses environment variables for table names (no hardcoded resources)
-- **Comprehensive Logging**: All operations logged to CloudWatch with X-Ray tracing
-
-**AgentCore Request Formats:**
-```json
-// Single service extraction
-{"service_name": "lambda", "force_refresh": true}
-
-// Multiple services extraction (handled by agent)
-{"services": ["lambda", "eks"], "force_refresh": true}
-
-// All enabled services extraction (handled by agent)
-{"services": "all", "force_refresh": true}
-```
-
-### **Automated Scheduling**
-EventBridge Scheduler provides reliable, serverless scheduling:
-
-- **📅 Weekly Extraction**: Every 7 days - All enabled services with Auto refresh origin
-
-**Schedule Configuration:**
 ```bash
-# View current EventBridge Scheduler schedules
-aws scheduler list-schedules --name-prefix aws-services-lifecycle
-
-# Get schedule details
-aws scheduler get-schedule --name aws-services-lifecycle-weekly-extraction
-
-# Monitor AgentCore logs directly
-aws logs tail /aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-* --follow
+aws scheduler list-schedules --name-prefix aws-
+aws scheduler get-schedule --name aws-services-lifecycle-weekly-refresh
 ```
 
-### **Service Configuration Management**
-Dynamic service management without code changes:
+### Monitoring a run
 
-- **Add New Services**: Configure new AWS services via admin UI or CLI
-- **Extraction Focus**: Service-specific AI instructions for optimal extraction
-- **Documentation URLs**: Multiple URLs per service for comprehensive coverage
-- **Enable/Disable**: Turn services on/off without affecting others
-- **Scheduling Control**: Per-service extraction frequency configuration
+```bash
+# Executions (most recent first) and their status
+aws lambda list-durable-executions-by-function --function-name aws-services-lifecycle-pipeline --max-items 5
 
-**Service Configuration Schema:**
-```json
-{
-  "name": "AWS Elastic Beanstalk",
-  "documentation_urls": [
-    "https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/platforms-schedule.html"
-  ],
-  "extraction_focus": "Locate the 'Retiring' or 'Retired' tables or similar. Focus on the most important retirement items from 2025 and later. For each platform branch, extract: Runtime version, Platform branch name, Operating system, and retirement dates.",
-  "schema_key": "platform_branches",
-  "item_properties": {
-    "name": "Full platform branch name",
-    "identifier": "Platform branch identifier",
-    "runtime_version": "Runtime version",
-    "operating_system": "Operating system",
-    "target_retirement_date": "Target retirement date",
-    "retirement_date": "Actual retirement date"
-  },
-  "required_fields": ["name", "identifier", "runtime_version"],
-  "enabled": true,
-  "last_extraction": "",
-  "extraction_count": 0
-}
+# Result / error of one execution
+aws lambda get-durable-execution --durable-execution-arn <arn> --query '[Status,Error,Result]'
+
+# Step-by-step history (which extract-*/scan-* steps succeeded or failed)
+aws lambda get-durable-execution-history --durable-execution-arn <arn> \
+  --query 'Events[?contains(EventType, `Step`)].[EventType,Name]' --output text
+
+# Logs
+aws logs tail /aws/lambda/aws-services-lifecycle-pipeline --follow
+aws logs tail /aws/lambda/aws-services-lifecycle-api --follow
 ```
 
-### **Admin Interface Integration**
-Comprehensive UI for manual operations and monitoring:
+Every execution is also visible in the Lambda console under the function's **Durable executions** tab, including a timeline of the steps.
 
-- **🔄 Manual Triggers**: Instant extraction for any service or combination
-- **🧪 Test Extractions**: Validate service configurations before scheduling
-- **📊 Real-time Monitoring**: Live system health, metrics, and extraction status
-- **⚙️ Configuration Management**: Add, edit, delete service configurations
-- **📈 System Metrics**: Track extraction success rates, data freshness, and system health
+### Manual Deployment
 
-**AgentCore Operations via UI:**
-```json
-// Manual extraction triggers
-{"service_name": "lambda", "force_refresh": true}
-{"services": ["lambda", "eks"], "force_refresh": true}
-{"services": "all", "force_refresh": true}
-
-// Service configuration management
-{"action": "list_services"}
-{"action": "get_service_config", "service_name": "lambda"}
-{"action": "update_service_config", "service_name": "lambda", "config": {...}}
-
-// Data viewing and metrics
-{"action": "list_deprecations", "service_name": "lambda"}
-{"action": "get_metrics"}
-{"action": "health_check"}
+```bash
+cd cdk && npm install
+npx cdk bootstrap                                          # one-time per account/region
+npx cdk deploy AWSServicesLifecycleTrackerData-<region>
+npx cdk deploy AWSServicesLifecycleTrackerAuth-<region>
+npx cdk deploy AWSServicesLifecycleTrackerPipeline-<region> # bundles agent/ with pip (no Docker)
+npx cdk deploy AWSServicesLifecycleTrackerApi-<region>
+cd .. && ./scripts/build-frontend.sh <UserPoolId> <UserPoolClientId> <ApiUrl> <region>
+cd cdk && npx cdk deploy AWSServicesLifecycleTrackerFrontend-<region>
 ```
 
-## Key Components
+Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `agent/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
 
-### 1. Authentication (`AWSServicesLifecycleTrackerAuth` stack)
-- **Cognito User Pool** for admin user management (no self-signup)
-- **Cognito Identity Pool** for AWS credential exchange
-- **IAM Role** with AgentCore invocation permissions (`bedrock-agentcore:InvokeAgentRuntime`)
-- Email-based authentication with verification
-- Password policy: min 8 chars, uppercase, lowercase, digit
-- **Frontend integration** via AWS SDK and amazon-cognito-identity-js
-- Admin users must be created manually via AWS CLI or Console
-- **IAM Authentication Flow**: User Pool → ID Token → Identity Pool → AWS Credentials → AgentCore (SigV4)
+### Cleanup
 
-### 2. Agent (`agent/main.py`)
-- AgentCore entry point with request routing
-- Uses Amazon Nova 2 Lite for AI normalization
-- Hybrid extraction: BeautifulSoup + LLM
-- Direct DynamoDB integration for data storage
-
-### 3. Container Build
-- ARM64 architecture (native AgentCore support)
-- Python 3.13 slim base image
-- Built via CodeBuild (no local Docker required)
-- Automatic build on deployment
-- Build history and logs in AWS Console
-
-### 4. Lambda Waiter (Critical Component)
-- Custom Resource that waits for CodeBuild completion
-- Polls every 30 seconds, 15-minute timeout
-- Returns minimal response to CloudFormation (<4KB)
-- Ensures image exists before AgentCore runtime creation
-- **Why needed:** CodeBuild's `batchGetBuilds` response exceeds CloudFormation's 4KB Custom Resource limit
-
-### 5. Direct AgentCore Integration
-- Frontend calls AgentCore directly using AWS SDK
-- IAM authentication with SigV4 request signing
-- Cognito Identity Pool provides temporary AWS credentials
-- No API Gateway or Lambda intermediaries required
-
-### 6. IAM Permissions
-The execution role includes:
-- Bedrock model invocation
-- ECR image access
-- CloudWatch Logs & Metrics
-- X-Ray tracing
-- AgentCore Identity (workload access tokens)
-
-### 7. Built-in Observability
-- **CloudWatch Logs:** 
-  - AgentCore: `/aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-*`
-- **X-Ray Tracing:** Distributed tracing enabled for AgentCore operations
-- **CloudWatch Metrics:** Custom metrics in `bedrock-agentcore` namespace
-- **Built-in Monitoring:** AgentCore provides comprehensive observability out of the box
-
-## Manual Deployment
-
-If you prefer to deploy stacks individually:
-
-### 1. Bootstrap CDK (one-time setup)
 ```bash
 cd cdk
-npx cdk bootstrap --no-cli-pager
+npx cdk destroy AWSServicesLifecycleTrackerFrontend-<region> AWSServicesLifecycleTrackerApi-<region> \
+  AWSServicesLifecycleTrackerPipeline-<region> AWSServicesLifecycleTrackerAuth-<region> AWSServicesLifecycleTrackerData-<region>
 ```
 
-### 2. Deploy Infrastructure
-```bash
-cd cdk
-npx cdk deploy AWSServicesLifecycleTrackerInfra-{region} --no-cli-pager
-```
+Deleting the pipeline function waits for RUNNING executions to finish (stop them first with `aws lambda stop-durable-execution` if you are in a hurry). DynamoDB tables are removed with the Data stack.
 
-### 3. Deploy Data Storage
-```bash
-cd cdk
-npx cdk deploy AWSServicesLifecycleTrackerData-{region} --no-cli-pager
-```
+### Troubleshooting
 
-### 4. Deploy Authentication
-```bash
-cd cdk
-npx cdk deploy AWSServicesLifecycleTrackerAuth-{region} --no-cli-pager
-```
-
-### 5. Deploy Runtime (triggers build automatically)
-```bash
-cd cdk
-npx cdk deploy AWSServicesLifecycleTrackerRuntime-{region} --no-cli-pager
-```
-*Note: This will pause for 5-10 minutes while CodeBuild runs*
-
-### 6. Deploy Scheduler
-```bash
-cd cdk
-npx cdk deploy AWSServicesLifecycleTrackerScheduler-{region} --no-cli-pager
-```
-
-### 7. Deploy Frontend & Admin API
-
-**Windows (PowerShell):**
-```powershell
-$region = aws configure get region
-$stackNameRuntime = "AWSServicesLifecycleTrackerRuntime-$region"
-$stackNameAuth = "AWSServicesLifecycleTrackerAuth-$region"
-$stackNameFrontend = "AWSServicesLifecycleTrackerFrontend-$region"
-
-$agentRuntimeArn = aws cloudformation describe-stacks --stack-name $stackNameRuntime --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
-$userPoolId = aws cloudformation describe-stacks --stack-name $stackNameAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
-$userPoolClientId = aws cloudformation describe-stacks --stack-name $stackNameAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
-.\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -AgentRuntimeArn $agentRuntimeArn -Region $region
-cd cdk
-npx cdk deploy $stackNameFrontend --no-cli-pager
-```
-
-**macOS/Linux (Bash):**
-```bash
-region=$(aws configure get region)
-stack_name_runtime="AWSServicesLifecycleTrackerRuntime-$region"
-stack_name_auth="AWSServicesLifecycleTrackerAuth-$region"
-stack_name_frontend="AWSServicesLifecycleTrackerFrontend-$region"
-
-AGENT_RUNTIME_ARN=$(aws cloudformation describe-stacks --stack-name "$stack_name_runtime" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager)
-USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name "$stack_name_auth" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
-USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name "$stack_name_auth" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
-./scripts/build-frontend.sh "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$AGENT_RUNTIME_ARN" "$region"
-cd cdk
-npx cdk deploy "$stack_name_frontend" --no-cli-pager
-```
-
-## Customizing the System
-
-### Updating Agent Code
-
-To modify the extraction logic or add new capabilities:
-
-1. **Edit agent files**:
-   - `agent/data_extractor.py` - Modify HTML parsing or AI extraction logic
-   - `agent/database_writes.py` - Customize status categorization logic
-   - `agent/workflow_orchestrator.py` - Change extraction workflow
-   - `agent/requirements.txt` - Add new Python dependencies
-
-2. **Redeploy runtime stack**:
-   ```bash
-   cd cdk
-   npx cdk deploy AWSServicesLifecycleTrackerRuntime --no-cli-pager
-   ```
-   *Note: This triggers CodeBuild to rebuild the container with your changes*
-
-### Customizing Status Categorization
-
-The intelligent status logic is in `agent/database_writes.py`. To modify how items are categorized:
-
-```python
-def categorize_item_status(item: Dict[str, Any]) -> str:
-    # Add your custom logic here
-    # Example: Custom thresholds for extended_support
-    if retirement_date:
-        days_until_retirement = (retirement_date - current_date).days
-        if days_until_retirement <= 90:  # Custom: 3 months instead of 6
-            return 'extended_support'
-    # ... rest of logic
-```
-
-### Adding New Date Field Patterns
-
-To recognize new date field names from AWS documentation:
-
-```python
-# In categorize_item_status(), add to date_fields list:
-date_fields = [
-    'end_of_support_date', 'end_of_life_date', 'eol_date',
-    'target_retirement_date', 'retirement_date',
-    'your_new_date_field',  # Add custom field names here
-    'another_date_field'
-]
-```
-
-## Updating Service Configurations
-
-To add or modify AWS services for monitoring:
-
-### Via Admin UI (Recommended):
-1. Access the admin interface via CloudFront URL
-2. Navigate to "Services" section
-3. Click "Add Service" or edit existing services
-4. Configure extraction focus, documentation URLs, and scheduling
-5. Enable/disable services as needed
-
-### Via Command Line:
-```bash
-# Add new service configuration
-aws dynamodb put-item --table-name service-extraction-config --item '{
-  "service_name": {"S": "elasticbeanstalk"},
-  "display_name": {"S": "AWS Elastic Beanstalk"},
-  "documentation_urls": {"L": [{"S": "https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/platforms-retiring.html"}]},
-  "extraction_focus": {"S": "Extract platform version deprecations and retirement schedules"},
-  "enabled": {"BOOL": true}
-}'
-
-# Trigger extraction for new service
-aws lambda invoke --function-name aws-services-lifecycle-orchestrator \
-  --payload '{"service_name": "elasticbeanstalk", "force_refresh": true}' response.json
-```
-
-The deployment will:
-- Upload new agent code to S3
-- Trigger CodeBuild to rebuild container
-- Wait for build completion
-- Update AgentCore runtime with new image
-
-## Cleanup
-
-```bash
-region=$(aws configure get region)
-cd cdk
-npx cdk destroy "AWSServicesLifecycleTrackerFrontend-$region" --no-cli-pager
-npx cdk destroy "AWSServicesLifecycleTrackerScheduler-$region" --no-cli-pager
-npx cdk destroy "AWSServicesLifecycleTrackerRuntime-$region" --no-cli-pager
-npx cdk destroy "AWSServicesLifecycleTrackerAuth-$region" --no-cli-pager
-npx cdk destroy "AWSServicesLifecycleTrackerData-$region" --no-cli-pager
-npx cdk destroy "AWSServicesLifecycleTrackerInfra-$region" --no-cli-pager
-```
-
-**Note:** Cognito User Pool will be deleted along with all user accounts.
-
-## Troubleshooting
-
-### "Container failed to start"
-Check CloudWatch logs:
-```bash
-aws logs tail /aws/bedrock-agentcore/runtimes/strands_agent-* --follow --no-cli-pager
-```
-
-### "Image not found in ECR"
-Redeploy runtime stack - it will trigger a new build:
-```bash
-region=$(aws configure get region)
-cd cdk
-npx cdk deploy "AWSServicesLifecycleTrackerRuntime-$region" --no-cli-pager
-```
-
-### "Build timeout after 15 minutes"
-Check CodeBuild console for build status. If build is still running, wait for completion and redeploy runtime stack.
-
-### CodeBuild fails
-Check build logs:
-```bash
-aws logs tail /aws/codebuild/bedrock-agentcore-strands-agent-builder --follow --no-cli-pager
-```
-
-### Frontend shows errors
-Verify AgentCore Runtime ARN and Cognito config are correct:
-```bash
-region=$(aws configure get region)
-stack_name_runtime="AWSServicesLifecycleTrackerRuntime-$region"
-stack_name_auth="AWSServicesLifecycleTrackerAuth-$region"
-
-aws cloudformation describe-stacks --stack-name "$stack_name_runtime" --query "Stacks[0].Outputs[?OutputKey=='AgentRuntimeArn'].OutputValue" --output text --no-cli-pager
-aws cloudformation describe-stacks --stack-name "$stack_name_runtime" --query "Stacks[0].Outputs[?OutputKey=='Region'].OutputValue" --output text --no-cli-pager
-aws cloudformation describe-stacks --stack-name "$stack_name_auth" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
-aws cloudformation describe-stacks --stack-name "$stack_name_auth" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
-```
-
-### Email verification not received
-- Check spam/junk folder
-- Verify email address is correct
-- Wait a few minutes (can take up to 5 minutes)
-- Try signing up with a different email
-
-### Verify deployment status
-Check all stack statuses:
-```bash
-region=$(aws configure get region)
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerInfra-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerData-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerAuth-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerRuntime-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerScheduler-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-aws cloudformation describe-stacks --stack-name "AWSServicesLifecycleTrackerFrontend-$region" --query "Stacks[0].StackStatus" --no-cli-pager
-```
-
-### Monitor automated extractions
-Check scheduled extraction activity:
-```bash
-# View EventBridge Scheduler schedules
-aws scheduler list-schedules --name-prefix aws-services-lifecycle
-
-# Get schedule details
-aws scheduler get-schedule --name aws-services-lifecycle-weekly-extraction
-
-# Check AgentCore logs for scheduled extractions
-aws logs tail /aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-* --follow --no-cli-pager
-
-# View recent extractions
-aws dynamodb scan --table-name aws-services-lifecycle \
-  --filter-expression "extraction_date > :date" \
-  --expression-attribute-values '{":date":{"S":"2025-10-26"}}' \
-  --query "Items[*].[service_name.S,extraction_date.S,#name.S]" \
-  --expression-attribute-names '{"#name":"name"}' --output table
-```
-
-## Testing and Monitoring
-
-### Testing Extraction via Admin UI (Recommended)
-
-1. **Access the admin interface** at the CloudFront URL from deployment output
-2. **Sign in** with your Cognito account
-3. **Navigate to Services** section
-4. **Click "Test Extraction"** for any service (e.g., Lambda, Elastic Beanstalk)
-5. **Monitor real-time progress** and results in the UI
-
-### Manual Extraction via CLI (Advanced)
-
-For direct AgentCore testing, use the provided test scripts:
-
-```bash
-# Test Lambda extraction
-cd agent
-python test_direct_agent.py
-
-# Test Elastic Beanstalk extraction  
-python test_elasticbeanstalk.py
-
-# Check dashboard metrics
-python test_metrics.py
-
-# Debug status categorization
-python debug_status.py
-```
-
-### Supported Services
-
-The system currently monitors these AWS services:
-
-| Service | Status | Items Tracked | Key Date Fields |
-|---------|--------|---------------|-----------------|
-| **AWS Lambda** | ✅ Active | ~26 deprecated runtimes | `deprecation_date`, `block_function_create_date`, `block_function_update_date` |
-| **Elastic Beanstalk** | ✅ Active | ~21 platform versions | `target_retirement_date`, `retirement_date` |
-| **Amazon EKS** | ⚙️ Configured | Kubernetes versions | `end_of_support_date`, `end_of_extended_support_date` |
-| **Amazon RDS** | ⚙️ Configured | Database engine versions | `end_of_standard_support_date`, `end_of_extended_support_date` |
-| **Amazon ECS** | ⚙️ Configured | Platform versions | `retirement_date` |
-| **OpenSearch** | ⚙️ Configured | Service versions | `end_of_support_date` |
-| **ElastiCache** | ⚙️ Configured | Engine versions | `end_of_support_date` |
-
-### Viewing Extracted Data
-
-**Via Admin UI (Recommended):**
-- Navigate to "Deprecations" section
-- Filter by service, status, or date ranges
-- Export data as CSV or JSON
-
-**Via CLI:**
-```bash
-# View all deprecations for a service
-aws dynamodb query \
-  --table-name aws-services-lifecycle \
-  --key-condition-expression "service_name = :svc" \
-  --expression-attribute-values '{":svc":{"S":"lambda"}}' \
-  --no-paginate
-
-# View items by status (cross-service)
-aws dynamodb query \
-  --table-name aws-services-lifecycle \
-  --index-name status-index \
-  --key-condition-expression "#status = :status" \
-  --expression-attribute-names '{"#status":"status"}' \
-  --expression-attribute-values '{":status":{"S":"extended_support"}}' \
-  --no-paginate
-```
-
-### Monitoring System Health
-
-**Dashboard Metrics:**
-- **Total Services**: 7 configured services
-- **Total Items**: ~96 deprecation items tracked
-- **Status Breakdown**: 75 deprecated, 19 extended support, 2 end of life
-
-**CloudWatch Logs:**
-```bash
-# AgentCore runtime logs
-aws logs tail /aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-* --follow
-
-# AgentCore logs for scheduled extractions (every minute)
-aws logs tail /aws/bedrock-agentcore/runtimes/aws_services_lifecycle_agent-* --follow
-```
+| Symptom | Cause / fix |
+|---------|-------------|
+| `Durable execution requires qualified function identifier` | Invoke the `live` alias (the `PipelineFunctionAliasArn` output), never the bare function name |
+| Pipeline bundling fails during `cdk deploy` | `python`/`python3` with `pip` must be on PATH (3.11+). If pip is unavailable CDK falls back to Docker bundling |
+| Refresh summary lists failed services | Open the execution history: `extract-<service>` shows the error (docs page changed, Bedrock access, ...). The rest of the run is unaffected |
+| `failed_cells` in the scan summary | Scanner had no permission or the service isn't available in that region; inventory for that scope is left untouched |
+| Health panel empty, `SubscriptionRequiredException` in the API logs | AWS Health API needs a Business/Enterprise Support plan |
+| UI shows `401` | Session expired - sign in again. The HTTP API only accepts a valid Cognito ID token |
+| A second Refresh says "already in progress" | Intended: one run at a time; the UI attaches to the running execution |
 
 ## Data Model & Intelligent Status System
 
@@ -1226,61 +639,51 @@ aws dynamodb query \
 - `service_specific.identifier` = Clean identifier for display (e.g., `nodejs18.x`)
 - Follows database best practice of having both technical and human-readable identifiers
 
+
 ## Architecture Decisions
 
-### Why CDK Instead of AgentCore CLI?
+### Why a Lambda durable function for the pipeline?
 
-While AgentCore CLI (`agentcore launch`) is simpler for basic deployments, this project uses AWS CDK for:
+The refresh is a multi-step batch (dozens of extractions, a dozen scans, then a reconciliation that must only trust successful scans). A durable function gives that batch checkpointed steps, per-step retries, a completion policy for partial failures and a queryable execution history - in plain Python, in one deployable unit, with no state machine definition to keep in sync with the code. Earlier versions of this demo used Step Functions plus an Amazon Bedrock AgentCore runtime for the same job; the durable function replaced both with less infrastructure and faster deploys.
 
-- **Full-stack deployment**: Includes authentication, frontend, data storage, and monitoring
-- **Production readiness**: Proper IAM roles, security policies, and resource organization  
-- **Team collaboration**: Version-controlled, reproducible infrastructure
-- **Customization flexibility**: Easy to extend with additional AWS services and features
+### Why an HTTP API in front of the UI?
+
+The browser only ever holds a Cognito ID token. API Gateway validates it, and the API Lambda is the only principal with DynamoDB, Bedrock and Lambda permissions. Anything that can take longer than the API's 30 s limit (extraction, scanning) is pushed to the pipeline and observed asynchronously.
 
 ### Why Hybrid Extraction (HTML + AI)?
 
-**Reliability**: BeautifulSoup HTML parsing provides 100% reliable table extraction
-**Intelligence**: AI normalization handles variations in AWS documentation formats  
-**Success Rate**: 80-90% extraction success vs 50% with pure AI tool calling
+**Reliability**: BeautifulSoup HTML parsing provides deterministic table extraction
+**Intelligence**: AI normalization handles variations in AWS documentation formats
 **Cost Efficiency**: Minimal token usage while maintaining high data quality
+
+### Why no Docker?
+
+All Python dependencies are pure Python, so `pipeline-stack.ts` bundles them locally with `pip --platform manylinux2014_aarch64` into a zip. Contributors don't need Docker or a container registry, and a code change deploys in about a minute.
 
 ### Stack Organization
 
 | Stack | Purpose | Update Frequency |
 |-------|---------|------------------|
-| **Infra** | Build pipeline (ECR, CodeBuild) | Rarely |
-| **Auth** | Cognito User Pool | Rarely |  
 | **Data** | DynamoDB + service configs | When adding services |
-| **Runtime** | AgentCore + extraction logic | When updating agent code |
+| **Auth** | Cognito User Pool | Rarely |
+| **Pipeline** | Lambda functions, schedules, notifications | When updating agent code |
+| **Api** | HTTP API + authorizer | Rarely |
 | **Frontend** | React UI + CloudFront | When updating UI |
-
-This separation enables independent updates without full system rebuilds.
 
 ## Security
 
 ### Authentication & Authorization
 - **Admin-only access** - Cognito User Pool with self-signup disabled
-- **IAM-based authentication** - AgentCore invoked with temporary AWS credentials via Cognito Identity Pool
-- **Email verification** - Users must verify email before access
+- **JWT authorizer** - API Gateway validates the Cognito ID token on every request; the browser never receives AWS credentials
 - **Password policy** - Minimum 8 characters, uppercase, lowercase, digit required
-- **Temporary credentials** - AWS credentials automatically expire and refresh (1 hour default)
-- **Least privilege IAM** - Authenticated role only has `bedrock-agentcore:InvokeAgentRuntime` permission
-- **No long-lived credentials** - Frontend never stores AWS access keys
+- **Least privilege IAM** - the API function can only invoke/observe the pipeline function and access the demo's tables; the configuration table is read + update only (no Put/Delete) so deploy-time config and runtime state stay separated
+- **Read-only discovery** - scanners use List/Describe permissions only
 
 ### Network & Data Security
-- **HTTPS only** - Frontend served via CloudFront with TLS
+- **HTTPS only** - CloudFront and API Gateway with TLS
 - **Origin Access Control (OAC)** - S3 bucket only accessible via CloudFront
-- **VPC isolation** - AgentCore Runtime runs in isolated microVMs
 - **DynamoDB encryption** - Data encrypted at rest using AWS managed keys
-- **CloudWatch Logs encryption** - Log data encrypted at rest
-
-### Application Security
-- **Container scanning** - ECR automatically scans images for vulnerabilities
-- **Minimal IAM permissions** - Each component has only required permissions
-- **No hardcoded secrets** - All configuration via environment variables and CloudFormation outputs
-- **Session management** - JWT tokens stored in browser session storage (cleared on tab close)
-- **Input validation** - Service configurations validated before storage
-- **Error handling** - Sensitive information not exposed in error messages
+- **Durable execution state** - checkpoints hold counts and identifiers only, never extracted content
 
 ### Admin User Management
 Admin users must be created manually to prevent unauthorized access:
@@ -1302,63 +705,27 @@ aws cognito-idp admin-set-user-password \
 ```
 
 ### Security Best Practices
-1. **Change default admin email** in `cdk/lib/auth-stack.ts` before deployment
-2. **Use strong passwords** for admin accounts (consider password manager)
-3. **Enable MFA** for admin users (optional, via Cognito Console)
+1. **Use strong passwords** for admin accounts (consider password manager)
+2. **Enable MFA** for admin users (optional, via Cognito Console)
+3. **Restrict CORS** in `cdk/lib/api-stack.ts` to your CloudFront domain once it is known
 4. **Monitor CloudWatch Logs** for suspicious activity
-5. **Rotate credentials** if compromised (delete and recreate user)
-6. **Review IAM policies** periodically to ensure least privilege
-7. **Enable CloudTrail** for audit logging of AWS API calls
+5. **Review IAM policies** periodically to ensure least privilege
+6. **Enable CloudTrail** for audit logging of AWS API calls
 
 ## Cost Estimate
 
-Approximate monthly costs for AWS Services Lifecycle Tracker:
+Approximate monthly costs with the default weekly schedule (32 services, one region):
 
-**Core Services:**
-- **AgentCore Runtime**: $0.10 per hour active + $0.000008 per request
-  - With weekly scheduled extractions: ~$0.50-1/month (active only during extraction) - **Current configuration**
-  - With daily scheduled extractions: ~$3-5/month (active only during extraction)
-  - With hourly scheduled extractions: ~$72/month (24/7 active)
-- **Bedrock Model Usage**: Pay-per-token
-  - Amazon Nova 2 Lite (Global Cross-region Inference): $0.30 per 1M input tokens, $2.50 per 1M output tokens (Standard tier)
-  - Typical usage: $2-5/month depending on extraction frequency and service count
-- **DynamoDB**: On-demand pricing
-  - Write requests: $1.25 per million write request units
-  - Read requests: $0.25 per million read request units
-  - Storage: $0.25 per GB-month
-  - Typical usage: $1-5/month for lifecycle data storage
-- **EventBridge Scheduler**: $1.00 per million invocations
-  - Weekly schedule: ~$0.004/month (4 invocations/month) - **Current configuration**
-  - Daily schedule: ~$0.03/month (30 invocations/month)
-  - Hourly schedule: ~$0.72/month (720 invocations/month)
+- **Lambda (pipeline + API)**: a full refresh is ~1 minute of compute at 1 GB plus a few dozen durable-execution checkpoints; the hourly Health poll and UI calls add a few hundred short invocations. Well under $1/month
+- **Bedrock (Amazon Nova)**: pay per token; ~$1-3/month for weekly extraction of ~30 services
+- **DynamoDB** (on-demand): ~$1-3/month
+- **API Gateway HTTP API**: $1.00 per million requests - negligible
+- **EventBridge Scheduler / SNS / SQS**: negligible (a few hundred invocations per month)
+- **CloudFront + S3**: ~$1/month
+- **CloudWatch Logs**: ~$1/month (1-month retention on both log groups)
+- **Cognito**: free tier
 
-**Frontend & Auth:**
-- **Cognito**: Free for first 50,000 MAUs (Monthly Active Users)
-- **CloudFront**: $0.085 per GB + $0.01 per 10,000 requests (~$1-2/month)
-- **S3**: $0.023 per GB-month (negligible for static hosting, <$1/month)
-
-**Build & Deployment:**
-- **ECR**: $0.10 per GB-month for container image storage (~$0.50/month)
-- **CodeBuild**: $0.005 per build minute (ARM64) - only during deployments (~$0.50 per deployment)
-
-**Monitoring:**
-- **CloudWatch Logs**: $0.50 per GB ingested + $0.03 per GB stored (~$2-5/month)
-- **X-Ray**: $5.00 per million traces recorded + $0.50 per million traces retrieved (~$1-3/month)
-
-**Free Services:**
-- **CloudFormation**: Free for stack operations
-- **IAM**: Free
-
-**Total Estimated Monthly Cost:**
-- **With weekly extraction (cost-optimized)**: ~$5-10/month - **Current configuration**
-- **With daily extraction (balanced monitoring)**: ~$12-25/month
-- **With hourly extraction (aggressive monitoring)**: ~$80-95/month
-
-**Cost Optimization Tips:**
-1. **Current configuration uses weekly schedule**: Already optimized for cost (~$5-10/month total)
-2. **Selective service monitoring**: Only enable services you actively use
-3. **Implement caching**: Skip extraction if documentation hasn't changed (check ETag headers)
-4. **Optimize prompts**: Reduce token usage by making extraction prompts more concise
+**Total: roughly $5/month.** Running the refresh daily multiplies the Bedrock and Lambda lines by ~7 (~$15-20/month).
 
 ## Frontend Architecture
 
@@ -1370,8 +737,8 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 - **Services Management**: Configure, enable/disable, and test AWS service extractions
 - **Deprecations Viewer**: Browse and filter deprecation data with advanced search
 - **Timeline View**: Visualize upcoming deprecation deadlines
-- **Authentication**: Cognito User Pool + Identity Pool for IAM-based access
-- **Direct AgentCore Integration**: AWS SDK calls with temporary IAM credentials (no API Gateway)
+- **Authentication**: Cognito User Pool; the ID token is sent to the HTTP API on every call
+- **Refresh with re-attach**: fire-and-forget pipeline start, progress polled via `GET /refresh/{arn}`, survives navigation and reloads
 
 ### Cloudscape Benefits
 
@@ -1409,6 +776,7 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 - **JIRA integration** to automatically create migration tickets
 - **Cost analysis** integration with AWS Cost Explorer
 - **Custom dashboards** with service-specific deprecation views
+
 
 ## Plan of Action - From Awareness to Remediation
 
@@ -1523,18 +891,19 @@ aws dynamodb query \
 The Plan of Action feature is fully integrated into the CDK deployment:
 
 - **Data Stack** (`cdk/lib/data-stack.ts`): Creates `deprecation-action-plans` table with GSIs for owner and status queries
-- **Infra Stack** (`cdk/lib/infra-stack.ts`): Grants agent IAM permissions to read/write action plans
+- **Pipeline Stack** (`cdk/lib/pipeline-stack.ts`): Grants the Lambda functions IAM permissions to read/write action plans
 - **Agent** (`agent/action_plans.py`): CRUD operations for action plans
 - **Frontend** (`frontend/src/pages/PlanOfAction.tsx`): UI for managing action plans
 - **Frontend** (`frontend/src/pages/Deprecations.tsx`): Bulk selection and "Add to Plan of Action" button
 
 No manual setup required - everything is created automatically during stack deployment.
 
+
 ## Resources
 
 ### Key Documentation
-- **[AgentCore Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-agentcore.html)** - Core AgentCore concepts
-- **[AgentCore JWT Authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html#invoke-agent)** - JWT Bearer token setup
+- **[AWS Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)** - Execution model, steps, maps, retries
+- **[Durable Execution SDK for Python](https://github.com/aws/aws-durable-execution-sdk-python)** - SDK and local test runner used by the pipeline
 - **[Cloudscape Design System](https://cloudscape.design/)** - UI component library used in admin interface
 
 ### AWS Service Documentation  
@@ -1547,20 +916,6 @@ No manual setup required - everything is created automatically during stack depl
 - **[Bedrock Model IDs](https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html)** - Available AI models
 - **[BeautifulSoup Documentation](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)** - HTML parsing library
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## Support
-
-For issues and questions:
-- Check the troubleshooting section
-- Review AWS Bedrock documentation
-- Open an issue in the repository
 ## Contributing
 
 We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
