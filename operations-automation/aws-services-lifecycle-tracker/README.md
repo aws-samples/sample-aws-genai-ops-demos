@@ -20,10 +20,6 @@ Experience this demo in an interactive click-through walkthrough:
 ▶️ [Launch Interactive Demo](https://app.storylane.io/share/jtv9je6phpy4)
 
 
-## Demo
-
-![Demo](img/LifeCycle.gif)
-
 ## Architecture
 
 ```
@@ -63,8 +59,6 @@ Experience this demo in an interactive click-through walkthrough:
 │  aws-health-events                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
-
-![Architecture Diagram](img/lifecycle.drawio.svg)
 
 **System flow:**
 1. **Refresh** (UI button, weekly schedule, or CLI) starts one durable execution of the pipeline function

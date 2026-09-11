@@ -57,7 +57,7 @@ Auth ────────────────▶ Api
 Auth ─────────────────────────▶ Frontend
 ```
 
-Both Lambda functions are built from the same `agent/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.13 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
+Both Lambda functions are built from the same `agent/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.14 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
 
 ## The Refresh Pipeline
 

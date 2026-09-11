@@ -291,7 +291,7 @@ export class DataStack extends cdk.Stack {
 
     // Lambda function to populate configurations
     const populatorFunction = new lambda.Function(this, 'ServiceConfigPopulator', {
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_14,
       handler: 'index.handler',
       timeout: cdk.Duration.minutes(5),
       code: lambda.Code.fromInline(`

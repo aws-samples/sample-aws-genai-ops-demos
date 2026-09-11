@@ -23,6 +23,10 @@ export interface PipelineStackProps extends cdk.StackProps {
 const AGENT_DIR = path.join(__dirname, '..', '..', 'agent');
 const PIPELINE_FUNCTION_NAME = 'aws-services-lifecycle-pipeline';
 const API_FUNCTION_NAME = 'aws-services-lifecycle-api';
+// One place for the Lambda Python version: runtime of both functions, the
+// Docker bundling image and the pip wheel target must agree.
+const PYTHON_RUNTIME = lambda.Runtime.PYTHON_3_14;
+const PYTHON_VERSION = '3.14';
 
 /**
  * Bundle the Python code without Docker: pip resolves Linux/arm64 wheels for
@@ -34,7 +38,7 @@ function bundleAgentLocally(outputDir: string): boolean {
   const pipArgs = [
     '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
     '--platform', 'manylinux2014_aarch64', '--only-binary=:all:',
-    '--python-version', '3.13', '--implementation', 'cp',
+    '--python-version', PYTHON_VERSION, '--implementation', 'cp',
     '--target', outputDir,
     '-r', path.join(AGENT_DIR, 'requirements.txt'),
   ];
@@ -95,7 +99,7 @@ export class PipelineStack extends cdk.Stack {
     const agentCode = lambda.Code.fromAsset(AGENT_DIR, {
       exclude: ['tests', '__pycache__', '*.pyc', '.hypothesis', '.pytest_cache'],
       bundling: {
-        image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+        image: PYTHON_RUNTIME.bundlingImage,
         platform: 'linux/arm64',
         command: [
           'bash', '-c',
@@ -188,7 +192,7 @@ export class PipelineStack extends cdk.Stack {
     this.pipelineFunction = new lambda.Function(this, 'PipelineFunction', {
       functionName: PIPELINE_FUNCTION_NAME,
       description: 'Lifecycle refresh pipeline: extract -> scan -> reconcile -> notify (Lambda durable function)',
-      runtime: lambda.Runtime.PYTHON_3_13,
+      runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
       handler: 'lambda_pipeline.handler',
       code: agentCode,
@@ -224,7 +228,7 @@ export class PipelineStack extends cdk.Stack {
     this.apiFunction = new lambda.Function(this, 'ApiFunction', {
       functionName: API_FUNCTION_NAME,
       description: 'Lifecycle tracker API: UI actions, refresh pipeline control, scheduled Health collection',
-      runtime: lambda.Runtime.PYTHON_3_13,
+      runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
       handler: 'lambda_api.handler',
       code: agentCode,
