@@ -11,7 +11,8 @@ import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
 import ServiceDetail from './pages/ServiceDetail';
-import Deprecations from './pages/Deprecations';
+import MyResources from './pages/MyResources';
+import Catalog from './pages/Catalog';
 import Timeline from './pages/Timeline';
 import PlanOfAction from './pages/PlanOfAction';
 
@@ -128,16 +129,21 @@ function AppContent() {
               navigate(event.detail.href);
             }}
             items={[
-              { type: "link", text: "Dashboard", href: "/dashboard" },
-              { type: "link", text: "Services", href: "/services" },
-              { type: "link", text: "Deprecations", href: "/deprecations" },
-              { type: "link", text: "Timeline", href: "/timeline" },
-              { type: "link", text: "Plan of Action", href: "/plan-of-action" },
+              { type: "section", text: "My account", items: [
+                { type: "link", text: "My exposure", href: "/dashboard" },
+                { type: "link", text: "My resources", href: "/resources" },
+                { type: "link", text: "Timeline", href: "/timeline" },
+                { type: "link", text: "Plan of Action", href: "/plan-of-action" },
+              ] },
+              { type: "section", text: "Reference", items: [
+                { type: "link", text: "Catalog", href: "/catalog" },
+                { type: "link", text: "Sources & coverage", href: "/services" },
+              ] },
               { type: "divider" },
               {
                 type: "link",
                 text: "Documentation",
-                href: "https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-agentcore.html",
+                href: "https://github.com/aws-samples/sample-aws-genai-ops-demos/tree/main/operations-automation/aws-services-lifecycle-tracker",
                 external: true
               }
             ]}
@@ -185,7 +191,9 @@ function AppContent() {
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/services" element={<Services />} />
                     <Route path="/services/:serviceName" element={<ServiceDetail />} />
-                    <Route path="/deprecations" element={<Deprecations />} />
+                    <Route path="/resources" element={<MyResources />} />
+                    <Route path="/catalog" element={<Catalog />} />
+                    <Route path="/deprecations" element={<Navigate to="/catalog" replace />} />
                     <Route path="/timeline" element={<Timeline />} />
                     <Route path="/plan-of-action" element={<PlanOfAction />} />
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />

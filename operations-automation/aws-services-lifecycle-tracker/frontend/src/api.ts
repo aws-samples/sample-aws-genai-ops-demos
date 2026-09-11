@@ -50,12 +50,24 @@ export const DEPRECATION_STATUSES: LifecycleStatus[] = [
 
 export interface DeprecationItem {
   service_name: string;
-  item_id: string;
+  item_id: string;            // facts: '<schema_key>#<id>'; inventory: 'inventory#<id>'
   status: LifecycleStatus;
   source_url: string;
   extraction_date: string;
   last_verified: string;
+  region?: string;            // inventory rows: region that was scanned (issue #141)
+  provenance?: string;        // inventory rows: 'account_discovery'
   service_specific: Record<string, any>;
+}
+
+export interface ScannerInfo {
+  label: string;
+  service_keys: string[];
+}
+
+export interface ScanCoverage {
+  scanners: ScannerInfo[];
+  last_scan: { last_verified: string | null; resources: number; regions: string[] };
 }
 
 export interface DashboardMetrics {
@@ -128,6 +140,24 @@ export const getDeprecations = async (filters?: {
 }): Promise<DeprecationItem[]> => {
   const result = await invokeAction({ action: 'list_deprecations', filters });
   return result.items || [];
+};
+
+// The same rows split by origin: what AWS publishes vs what was found in the
+// account (issue #141). One call, two lenses.
+export const getLifecycleData = async (): Promise<{ facts: DeprecationItem[]; inventory: DeprecationItem[] }> => {
+  const all = await getDeprecations();
+  return {
+    facts: all.filter((i) => !i.item_id.startsWith('inventory#')),
+    inventory: all.filter((i) => i.item_id.startsWith('inventory#')),
+  };
+};
+
+export const getScanners = async (): Promise<ScanCoverage> => {
+  const result = await invokeAction({ action: 'list_scanners' });
+  return {
+    scanners: result.scanners || [],
+    last_scan: result.last_scan || { last_verified: null, resources: 0, regions: [] },
+  };
 };
 
 // --- Refresh pipeline (Lambda durable function) -----------------------------

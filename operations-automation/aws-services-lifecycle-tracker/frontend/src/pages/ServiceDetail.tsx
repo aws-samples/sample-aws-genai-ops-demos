@@ -19,6 +19,7 @@ import {
   DeprecationItem,
   HealthEvent,
 } from '../api';
+import { statusMeta } from '../lifecycle';
 
 function getSeverityIndicator(severity: string) {
   switch (severity) {
@@ -318,18 +319,9 @@ export default function ServiceDetail() {
               {
                 id: 'status',
                 header: 'Status',
-                cell: (item) => {
-                  switch (item.status) {
-                    case 'deprecated':
-                      return <StatusIndicator type="warning">Deprecated</StatusIndicator>;
-                    case 'extended_support':
-                      return <StatusIndicator type="info">Extended Support</StatusIndicator>;
-                    case 'end_of_life':
-                      return <StatusIndicator type="error">End of Life</StatusIndicator>;
-                    default:
-                      return <StatusIndicator>{item.status}</StatusIndicator>;
-                  }
-                },
+                cell: (item) => (
+                  <StatusIndicator type={statusMeta(item.status).indicator}>{statusMeta(item.status).label}</StatusIndicator>
+                ),
                 width: 160,
               },
               {
