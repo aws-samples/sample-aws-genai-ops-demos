@@ -20,7 +20,9 @@ import Popover from '@cloudscape-design/components/popover';
 import { getLifecycleData, getActionPlans, createActionPlan, getScanners, DeprecationItem, ActionPlan, ScanCoverage } from '../api';
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
+  resourceCount, resourceWord,
 } from '../lifecycle';
+import ResourceDetails from '../components/ResourceDetails';
 
 const SCOPE_OPTIONS = [
   { label: 'Needs attention', value: 'concerns' },
@@ -54,6 +56,8 @@ export default function MyResources() {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ owner: '', priority: 'medium', target_date: '', notes: '' });
+  // Row whose resource list is open in the details view (?details=<item_id>)
+  const detailsId = params.get('details');
 
   useEffect(() => { load(); }, []);
 
@@ -108,6 +112,10 @@ export default function MyResources() {
     setParams(p, { replace: true });
   };
 
+  const detailsRow = useMemo(() => (detailsId ? rows.find((r) => r.item_id === detailsId) || null : null), [rows, detailsId]);
+  const factFor = (r: DeprecationItem) =>
+    r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
+
   const handleAddToPlan = async () => {
     if (!form.owner.trim()) { flash('error', 'Owner is required'); return; }
     setSubmitting(true);
@@ -116,7 +124,7 @@ export default function MyResources() {
       try {
         const res = await createActionPlan({
           service_name: r.service_name, item_id: r.item_id,
-          item_name: `${serviceLabel(r.service_name)} ${itemName(r)} (${r.service_specific?.total_affected ?? 0} resources)`,
+          item_name: `${serviceLabel(r.service_name)} ${itemName(r)} (${resourceCount(r)} ${resourceWord(resourceCount(r))})`,
           owner: form.owner, priority: form.priority, target_date: form.target_date, notes: form.notes,
         });
         res.success ? ok++ : ko++;
@@ -197,7 +205,7 @@ export default function MyResources() {
           {
             id: 'status', header: 'Status', cell: (r) => {
               const m = statusMeta(r.status);
-              const fact = r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
+              const fact = factFor(r);
               return (
                 <SpaceBetween size="xxxs">
                   <StatusIndicator type={m.indicator}>{m.label}</StatusIndicator>
@@ -232,12 +240,14 @@ export default function MyResources() {
             },
           },
           {
-            id: 'resources', header: 'Resources', cell: (r) => (
-              <SpaceBetween size="xxxs">
-                <Badge color="grey">{r.service_specific?.total_affected ?? 0}</Badge>
-                <Box variant="small" color="text-body-secondary">{r.service_specific?.affected_resources}</Box>
-              </SpaceBetween>
-            ),
+            id: 'resources', header: 'Resources', cell: (r) => {
+              const n = resourceCount(r);
+              return n
+                ? <Link onFollow={(e) => { e.preventDefault(); updateParams({ details: r.item_id }); }} href="#" ariaLabel={`Show the ${n} ${resourceWord(n)} of ${itemName(r)}`}>
+                    {n} {resourceWord(n)}
+                  </Link>
+                : <Box color="text-body-secondary">0</Box>;
+            },
           },
           { id: 'region', header: 'Region', cell: (r) => r.region || '-', sortingField: 'region' },
           {
@@ -251,6 +261,15 @@ export default function MyResources() {
           { id: 'verified', header: 'Seen', cell: (r) => <Box variant="small">{formatDate(r.last_verified)}</Box> },
         ]}
       />
+
+      {detailsRow && (
+        <ResourceDetails
+          row={detailsRow}
+          fact={factFor(detailsRow)}
+          plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)}
+          onDismiss={() => updateParams({ details: '' })}
+        />
+      )}
 
       <Modal
         visible={showPlanModal}

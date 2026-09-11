@@ -148,8 +148,13 @@ class LifecycleIndex:
         return best
 
 
+# Upper bound on resource names stored per inventory row (DynamoDB item limit is
+# 400 KB; 500 ARN-length names stay far below it). total_affected is always exact.
+MAX_RESOURCE_NAMES = 500
+
+
 def build_inventory_item(service_key: str, identifier: str, display_name: str,
-                         candidates: List, affected_resources: str, total_affected: int,
+                         candidates: List, affected_resources, total_affected: int,
                          source_url: str, index: "LifecycleIndex",
                          fallback_status: str = "unknown") -> Dict:
     """Emit a unified inventory row keyed like extraction rows (#98 E7).
@@ -158,9 +163,19 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
     'AWS Lambda') and item_id is prefixed 'inventory#', so inventory shares
     the key vocabulary of the rest of the system (UI filters, Health
     enrichment) while staying distinguishable and provenance-tagged.
+
+    affected_resources may be a list of resource names (preferred, #141) or a
+    legacy summary string. The row stores the full list (capped) as
+    affected_resource_names for the details view, plus a short summary string.
     """
     match = index.lookup(service_key, candidates)
     now = datetime.now()
+    if isinstance(affected_resources, (list, tuple)):
+        names = sorted(str(n) for n in affected_resources)
+        summary = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
+    else:
+        names = []
+        summary = str(affected_resources or "")
     return {
         "service_name": service_key,
         "item_id": f"inventory#{identifier}",
@@ -174,7 +189,8 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
             "identifier": identifier,
             "deprecation_date": (match or {}).get("deprecation_date", "N/A"),
             "end_of_support_date": (match or {}).get("end_of_support_date", "N/A"),
-            "affected_resources": affected_resources,
+            "affected_resources": summary,
+            "affected_resource_names": names[:MAX_RESOURCE_NAMES],
             "total_affected": total_affected,
             "matched_lifecycle_item": (match or {}).get("item_id", ""),
         },
@@ -204,7 +220,7 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
                 identifier=runtime,
                 display_name=f"Lambda {runtime} Runtime",
                 candidates=[runtime],
-                affected_resources=", ".join(functions[:5]) + (f" (+{len(functions)-5} more)" if len(functions) > 5 else ""),
+                affected_resources=functions,
                 total_affected=len(functions),
                 source_url="https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html",
                 index=index,
@@ -284,7 +300,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 identifier=engine_key,
                 display_name=f"RDS {engine_key.replace('-', ' ').title()}",
                 candidates=_rds_match_candidates(engine, version),
-                affected_resources=", ".join(instances),
+                affected_resources=instances,
                 total_affected=len(instances),
                 source_url="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/",
                 index=index,
@@ -318,7 +334,7 @@ def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> L
                 identifier=f"k8s-{version}",
                 display_name=f"Kubernetes {version}",
                 candidates=[version, f"k8s-{version}", f"eks-{version}"],
-                affected_resources=", ".join(cluster_names),
+                affected_resources=cluster_names,
                 total_affected=len(cluster_names),
                 source_url="https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html",
                 index=index,
@@ -355,7 +371,7 @@ def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = No
                 identifier=engine_key,
                 display_name=f"ElastiCache {engine_key.replace('-', ' ').title()}",
                 candidates=[engine_key],
-                affected_resources=", ".join(clusters),
+                affected_resources=clusters,
                 total_affected=len(clusters),
                 source_url="https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/",
                 index=index,
@@ -392,7 +408,7 @@ def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None
                 identifier=version,
                 display_name=f"OpenSearch {version}",
                 candidates=[version, bare_version, f"opensearch-{bare_version}"],
-                affected_resources=", ".join(domain_names),
+                affected_resources=domain_names,
                 total_affected=len(domain_names),
                 source_url="https://docs.aws.amazon.com/opensearch-service/latest/developerguide/",
                 index=index,
@@ -430,7 +446,7 @@ def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> L
                 identifier=f"kafka-{version}",
                 display_name=f"Apache Kafka {version}",
                 candidates=[f"kafka-{version}", version],
-                affected_resources=", ".join(cluster_names),
+                affected_resources=cluster_names,
                 total_affected=len(cluster_names),
                 source_url="https://docs.aws.amazon.com/msk/latest/developerguide/supported-kafka-versions.html",
                 index=index,
@@ -467,7 +483,7 @@ def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = Non
                 identifier=f"docdb-{version}",
                 display_name=f"DocumentDB {version} (MongoDB compatibility)",
                 candidates=[f"docdb-{version}", f"documentdb-{version}", version],
-                affected_resources=", ".join(cluster_names),
+                affected_resources=cluster_names,
                 total_affected=len(cluster_names),
                 source_url="https://docs.aws.amazon.com/documentdb/latest/developerguide/",
                 index=index,
@@ -504,7 +520,7 @@ def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) 
                 identifier=f"neptune-{version}",
                 display_name=f"Neptune {version}",
                 candidates=[f"neptune-{version}", version],
-                affected_resources=", ".join(cluster_names),
+                affected_resources=cluster_names,
                 total_affected=len(cluster_names),
                 source_url="https://docs.aws.amazon.com/neptune/latest/userguide/",
                 index=index,
@@ -541,7 +557,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
                 identifier=version_key,
                 display_name=f"Glue {version_key.replace('glue-', '')}",
                 candidates=[version_key, version_key.replace('glue-', '')],
-                affected_resources=", ".join(job_names[:5]) + (f" (+{len(job_names)-5} more)" if len(job_names) > 5 else ""),
+                affected_resources=job_names,
                 total_affected=len(job_names),
                 source_url="https://docs.aws.amazon.com/glue/latest/dg/release-notes.html",
                 index=index,
@@ -594,7 +610,7 @@ def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = 
                 identifier=platform_key,
                 display_name=f"Beanstalk {platform_key}",
                 candidates=[platform_key, platform_key.replace('-', ' ')],
-                affected_resources=", ".join(env_names),
+                affected_resources=env_names,
                 total_affected=len(env_names),
                 source_url="https://docs.aws.amazon.com/elasticbeanstalk/latest/platforms/",
                 index=index,
@@ -643,7 +659,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
                 identifier=family,
                 display_name=f"EC2 {family.upper()} Instance Family",
                 candidates=[family, f"ec2-{family}"],
-                affected_resources=", ".join(instance_ids[:5]) + (f" (+{len(instance_ids)-5} more)" if len(instance_ids) > 5 else ""),
+                affected_resources=instance_ids,
                 total_affected=len(instance_ids),
                 source_url="https://aws.amazon.com/ec2/previous-generation/",
                 index=index,

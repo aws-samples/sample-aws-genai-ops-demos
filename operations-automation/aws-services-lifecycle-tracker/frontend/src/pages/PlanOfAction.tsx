@@ -23,7 +23,7 @@ import {
   ActionPlan,
   DeprecationItem
 } from '../api';
-import { isConcern, urgencySort, serviceLabel, itemName, statusMeta } from '../lifecycle';
+import { isConcern, urgencySort, serviceLabel, itemName, statusMeta, resourceCount, resourceWord } from '../lifecycle';
 
 const STATUS_OPTIONS = [
   { label: 'Not Started', value: 'not_started' },
@@ -212,7 +212,7 @@ export default function PlanOfAction() {
   // Picker options: my resources, urgent first, with status and resource count
   const deprecationOptions = candidates.map(d => ({
     label: `${serviceLabel(d.service_name)} - ${itemName(d)}`,
-    description: `${statusMeta(d.status).label} - ${d.service_specific?.total_affected ?? 0} resource(s): ${d.service_specific?.affected_resources || ''}`,
+    description: `${statusMeta(d.status).label} - ${resourceCount(d)} ${resourceWord(resourceCount(d))}${d.region ? ` in ${d.region}` : ''}`,
     value: `${d.service_name}|${d.item_id}|${serviceLabel(d.service_name)} ${itemName(d)}`,
     tags: isConcern(d.status) ? ['needs attention'] : undefined,
   }));

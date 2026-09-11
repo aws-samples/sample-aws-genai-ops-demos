@@ -147,3 +147,24 @@ export const resourcesByFact = (inventory: DeprecationItem[]): Map<string, Depre
   }
   return m;
 };
+
+// Number of resources behind an inventory row (exact, even when the stored
+// name list is capped).
+export const resourceCount = (row: DeprecationItem): number =>
+  Number(row.service_specific?.total_affected) || 0;
+
+export const resourceWord = (n: number): string => (n === 1 ? 'resource' : 'resources');
+
+// Resource names behind an inventory row. Prefers the full list stored since
+// #141 (affected_resource_names, capped server-side); falls back to splitting
+// the legacy summary string for rows written by older scans.
+export const resourceNames = (row: DeprecationItem): string[] => {
+  const list = row.service_specific?.affected_resource_names;
+  if (Array.isArray(list) && list.length) return list.map(String);
+  const legacy = String(row.service_specific?.affected_resources || '');
+  return legacy
+    .replace(/\s*\(\+\d+ more\)\s*$/, '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+};

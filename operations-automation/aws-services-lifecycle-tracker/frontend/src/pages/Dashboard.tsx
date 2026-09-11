@@ -19,7 +19,7 @@ import {
 } from '../api';
 import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
-  urgencySort, serviceLabel, itemName,
+  urgencySort, serviceLabel, itemName, resourceCount, resourceWord,
 } from '../lifecycle';
 import HealthPanel from '../components/HealthPanel';
 
@@ -286,12 +286,12 @@ export default function Dashboard() {
                     const d = getDeadline(r);
                     return d ? <SpaceBetween size="xxxs"><Box>{formatDate(d.date)}</Box><Box variant="small" color="text-body-secondary">{formatDaysLeft(d)}</Box></SpaceBetween> : <Box color="text-body-secondary">-</Box>;
                   } },
-                  { id: 'resources', header: 'My resources', cell: (r) => (
-                    <SpaceBetween size="xxxs">
-                      <Badge color="grey">{r.service_specific?.total_affected ?? 0}</Badge>
-                      <Box variant="small" color="text-body-secondary">{r.service_specific?.affected_resources}</Box>
-                    </SpaceBetween>
-                  ) },
+                  { id: 'resources', header: 'My resources', cell: (r) => {
+                    const n = resourceCount(r);
+                    return n
+                      ? <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&details=${encodeURIComponent(r.item_id)}`); }} href="#">{n} {resourceWord(n)}</Link>
+                      : <Box color="text-body-secondary">0</Box>;
+                  } },
                   { id: 'region', header: 'Region', cell: (r) => r.region || '-' },
                 ]}
                 footer={exposure.concerns.length > deadlines.length && (

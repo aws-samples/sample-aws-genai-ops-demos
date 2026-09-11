@@ -164,7 +164,13 @@ export default function Catalog() {
               const rows = mine.get(`${f.service_name}|${f.item_id}`) || [];
               const n = rows.reduce((s, r) => s + (Number(r.service_specific?.total_affected) || 0), 0);
               return n
-                ? <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?q=${encodeURIComponent(rows[0].service_specific?.identifier || '')}&status=all`); }} href="#">
+                ? <Link onFollow={(e) => {
+                    e.preventDefault();
+                    // one region -> open its details directly; several -> filtered list
+                    navigate(rows.length === 1
+                      ? `/resources?status=all&details=${encodeURIComponent(rows[0].item_id)}`
+                      : `/resources?q=${encodeURIComponent(rows[0].service_specific?.identifier || '')}&status=all`);
+                  }} href="#">
                     <StatusIndicator type={isConcern(f.status) ? 'warning' : 'info'}>{n} resource{n === 1 ? '' : 's'}</StatusIndicator>
                   </Link>
                 : <Box variant="small" color="text-body-secondary">none</Box>;

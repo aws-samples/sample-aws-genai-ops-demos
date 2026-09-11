@@ -10,7 +10,7 @@ import SegmentedControl from '@cloudscape-design/components/segmented-control';
 import Alert from '@cloudscape-design/components/alert';
 import Link from '@cloudscape-design/components/link';
 import { getLifecycleData, DeprecationItem } from '../api';
-import { statusMeta, serviceLabel, itemName, formatDate, isInventory } from '../lifecycle';
+import { statusMeta, serviceLabel, itemName, formatDate, isInventory, resourceCount, resourceWord } from '../lifecycle';
 
 // Dates that mark a deadline (in the order they are listed per item)
 const MILESTONES: Array<[string, string]> = [
@@ -134,8 +134,10 @@ export default function Timeline() {
                           <Box variant="small" color="text-body-secondary">{m.label}</Box>
                         </div>
                         {mine && (
-                          <Box variant="small" color="text-body-secondary">
-                            {m.item.service_specific?.total_affected ?? 0} resource{Number(m.item.service_specific?.total_affected) === 1 ? '' : 's'}: {m.item.service_specific?.affected_resources}
+                          <Box variant="small">
+                            <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&details=${encodeURIComponent(m.item.item_id)}`); }} href="#" fontSize="body-s">
+                              {resourceCount(m.item)} {resourceWord(resourceCount(m.item))}{m.item.region ? ` in ${m.item.region}` : ''}
+                            </Link>
                           </Box>
                         )}
                       </SpaceBetween>
