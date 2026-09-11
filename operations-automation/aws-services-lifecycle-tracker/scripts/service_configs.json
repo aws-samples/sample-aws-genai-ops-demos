@@ -22,8 +22,7 @@
         "deprecation_date",
         "status"
       ],
-      "enabled": true,
-      "health_event_mapping": "LAMBDA"
+      "enabled": true
     },
     "eks": {
       "name": "Amazon EKS",
@@ -45,8 +44,7 @@
         "identifier",
         "end_of_standard_support_date"
       ],
-      "enabled": true,
-      "health_event_mapping": "EKS"
+      "enabled": true
     },
     "rds": {
       "name": "Amazon RDS",
@@ -75,8 +73,7 @@
         "engine",
         "version"
       ],
-      "enabled": true,
-      "health_event_mapping": "RDS"
+      "enabled": true
     },
     "aurora": {
       "name": "Amazon Aurora",
@@ -102,8 +99,7 @@
         "version",
         "end_of_standard_support_date"
       ],
-      "enabled": true,
-      "health_event_mapping": "RDS"
+      "enabled": true
     },
     "elasticache": {
       "name": "Amazon ElastiCache",
@@ -130,8 +126,7 @@
         "version",
         "end_of_standard_support_date"
       ],
-      "enabled": true,
-      "health_event_mapping": "ELASTICACHE"
+      "enabled": true
     },
     "opensearch": {
       "name": "Amazon OpenSearch Service",
@@ -156,8 +151,7 @@
         "end_of_standard_support_date",
         "end_of_extended_support_date"
       ],
-      "enabled": true,
-      "health_event_mapping": "OPENSEARCH"
+      "enabled": true
     },
     "elasticbeanstalk": {
       "name": "AWS Elastic Beanstalk",
@@ -179,8 +173,7 @@
         "identifier",
         "runtime_version"
       ],
-      "enabled": true,
-      "health_event_mapping": "ELASTICBEANSTALK"
+      "enabled": true
     },
     "msk": {
       "name": "Amazon MSK (Managed Streaming for Apache Kafka)",
@@ -202,8 +195,7 @@
         "kafka_version",
         "end_of_support_date"
       ],
-      "enabled": true,
-      "health_event_mapping": "KAFKA"
+      "enabled": true
     },
     "neptune": {
       "name": "Amazon Neptune",
@@ -227,8 +219,7 @@
         "version",
         "status"
       ],
-      "enabled": true,
-      "health_event_mapping": "NEPTUNE"
+      "enabled": true
     },
     "glue": {
       "name": "AWS Glue",
@@ -252,8 +243,7 @@
         "glue_version",
         "status"
       ],
-      "enabled": true,
-      "health_event_mapping": "GLUE"
+      "enabled": true
     },
     "documentdb": {
       "name": "Amazon DocumentDB",
@@ -278,8 +268,7 @@
         "version",
         "status"
       ],
-      "enabled": true,
-      "health_event_mapping": "DOCUMENTDB"
+      "enabled": true
     }
   }
 }

@@ -5,7 +5,6 @@ import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import Badge from '@cloudscape-design/components/badge';
 import Button from '@cloudscape-design/components/button';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import Table from '@cloudscape-design/components/table';
@@ -14,53 +13,10 @@ import Spinner from '@cloudscape-design/components/spinner';
 import {
   getServices,
   getDeprecations,
-  fetchHealthEvents,
   ServiceConfig,
   DeprecationItem,
-  HealthEvent,
 } from '../api';
 import { statusMeta } from '../lifecycle';
-
-function getSeverityIndicator(severity: string) {
-  switch (severity) {
-    case 'critical':
-      return <StatusIndicator type="error">Critical</StatusIndicator>;
-    case 'high':
-      return <StatusIndicator type="warning">High</StatusIndicator>;
-    case 'medium':
-      return <StatusIndicator type="info">Medium</StatusIndicator>;
-    case 'low':
-      return <StatusIndicator type="success">Low</StatusIndicator>;
-    default:
-      return <StatusIndicator>{severity}</StatusIndicator>;
-  }
-}
-
-function getCategoryBadge(category: string) {
-  switch (category) {
-    case 'issue':
-      return <Badge color="red">Incident</Badge>;
-    case 'scheduledChange':
-      return <Badge color="blue">Scheduled maintenance</Badge>;
-    case 'accountNotification':
-      return <Badge color="grey">Notification</Badge>;
-    default:
-      return <Badge>{category}</Badge>;
-  }
-}
-
-function getStatusBadge(statusCode: string) {
-  switch (statusCode) {
-    case 'open':
-      return <StatusIndicator type="error">Open</StatusIndicator>;
-    case 'upcoming':
-      return <StatusIndicator type="warning">Upcoming</StatusIndicator>;
-    case 'closed':
-      return <StatusIndicator type="success">Resolved</StatusIndicator>;
-    default:
-      return <StatusIndicator>{statusCode}</StatusIndicator>;
-  }
-}
 
 export default function ServiceDetail() {
   const { serviceName } = useParams<{ serviceName: string }>();
@@ -68,10 +24,8 @@ export default function ServiceDetail() {
 
   const [service, setService] = useState<ServiceConfig | null>(null);
   const [deprecations, setDeprecations] = useState<DeprecationItem[]>([]);
-  const [healthEvents, setHealthEvents] = useState<HealthEvent[]>([]);
   const [loadingService, setLoadingService] = useState(true);
   const [loadingDeprecations, setLoadingDeprecations] = useState(true);
-  const [loadingHealth, setLoadingHealth] = useState(true);
 
   useEffect(() => {
     if (serviceName) {
@@ -83,7 +37,6 @@ export default function ServiceDetail() {
     await Promise.all([
       loadService(),
       loadDeprecations(),
-      loadHealthEvents(),
     ]);
   };
 
@@ -109,18 +62,6 @@ export default function ServiceDetail() {
       console.error('Failed to load deprecations:', err);
     } finally {
       setLoadingDeprecations(false);
-    }
-  };
-
-  const loadHealthEvents = async () => {
-    try {
-      setLoadingHealth(true);
-      const events = await fetchHealthEvents({ service: serviceName });
-      setHealthEvents(events);
-    } catch (err) {
-      console.error('Failed to load health events:', err);
-    } finally {
-      setLoadingHealth(false);
     }
   };
 
@@ -151,10 +92,6 @@ export default function ServiceDetail() {
     );
   }
 
-  const activeHealthEvents = healthEvents.filter(
-    (e) => e.status_code === 'open' || e.status_code === 'upcoming'
-  );
-
   return (
     <SpaceBetween size="l">
       {/* Header with back navigation */}
@@ -167,7 +104,7 @@ export default function ServiceDetail() {
                 Back to services
               </Button>
             }
-            description={`Details and Health events for ${service.name}`}
+            description={`Extraction status and catalog entries for ${service.name}`}
           >
             {service.name}
           </Header>
@@ -202,85 +139,6 @@ export default function ServiceDetail() {
           </div>
         </ColumnLayout>
       </Container>
-
-      {/* Health Events Section */}
-      <ExpandableSection
-        variant="container"
-        defaultExpanded={true}
-        headerText={`AWS Health events (${activeHealthEvents.length} active)`}
-        headerDescription="Incidents, scheduled maintenance, and notifications affecting this service"
-      >
-        {loadingHealth ? (
-          <Box textAlign="center" padding="l">
-            <Spinner /> Loading Health events...
-          </Box>
-        ) : activeHealthEvents.length === 0 ? (
-          <Box textAlign="center" padding="l">
-            <StatusIndicator type="success">
-              No active Health events — normal operational status
-            </StatusIndicator>
-          </Box>
-        ) : (
-          <Table
-            columnDefinitions={[
-              {
-                id: 'severity',
-                header: 'Severity',
-                cell: (item) => getSeverityIndicator(item.severity),
-                width: 120,
-              },
-              {
-                id: 'category',
-                header: 'Type',
-                cell: (item) => getCategoryBadge(item.event_type_category),
-                width: 160,
-              },
-              {
-                id: 'status',
-                header: 'Status',
-                cell: (item) => getStatusBadge(item.status_code),
-                width: 110,
-              },
-              {
-                id: 'description',
-                header: 'Description',
-                cell: (item) => (
-                  <SpaceBetween size="xxxs">
-                    <Box variant="strong">{item.event_type_code}</Box>
-                    <Box variant="small" color="text-body-secondary">
-                      {item.description.length > 150
-                        ? `${item.description.substring(0, 150)}...`
-                        : item.description}
-                    </Box>
-                  </SpaceBetween>
-                ),
-              },
-              {
-                id: 'region',
-                header: 'Region',
-                cell: (item) => item.region || '-',
-                width: 130,
-              },
-              {
-                id: 'start_time',
-                header: 'Start',
-                cell: (item) =>
-                  item.start_time
-                    ? new Date(item.start_time).toLocaleString()
-                    : '-',
-                width: 170,
-              },
-            ]}
-            items={activeHealthEvents}
-            variant="embedded"
-            empty={
-              <Box textAlign="center" color="inherit" padding="s">
-                No active Health events
-              </Box>
-            }
-          />
-        )}
-      </ExpandableSection>
 
       {/* Lifecycle / Deprecation Items Section */}
       <ExpandableSection

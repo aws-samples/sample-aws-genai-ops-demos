@@ -1,5 +1,5 @@
 """
-Plain Lambda serving UI events and scheduled Health collection (issue #139).
+Plain Lambda serving UI events and the weekly schedule (issue #139).
 
 Two invocation shapes:
 - API Gateway HTTP API (payload v2, Cognito JWT authorizer already enforced):
@@ -9,7 +9,6 @@ Two invocation shapes:
     GET  /refresh/{arn}                           -> condensed execution status
 - EventBridge Scheduler (direct invoke):
     {"action": "start_refresh", "refresh_origin": "Auto"} -> weekly pipeline run
-    {"action": "collect_health_events"}                    -> hourly Health poll
   Any other router payload -> actions.dispatch
 
 The browser holds no IAM permissions: everything reaches AWS through this

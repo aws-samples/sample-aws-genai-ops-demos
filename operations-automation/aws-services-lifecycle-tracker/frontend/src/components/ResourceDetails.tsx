@@ -16,7 +16,7 @@ import Header from '@cloudscape-design/components/header';
 import type { DeprecationItem, ActionPlan } from '../api';
 import {
   statusMeta, getDeadline, formatDate, formatDaysLeft, serviceLabel, itemName,
-  resourceCount, resourceDetails, resourceWord, ResourceRef,
+  resourceCount, resourceDetails, resourceWord, healthFlagged, healthEventLabel, ResourceRef,
 } from '../lifecycle';
 
 interface Props {
@@ -46,6 +46,7 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
   const d = getDeadline(row);
   const count = resourceCount(row);
   const hasArns = resources.some((r) => r.arn);
+  const flagged = healthFlagged(row);
   const dates = fact
     ? Object.entries(fact.service_specific || {}).filter(([k, v]) => k.endsWith('_date') && v && v !== 'N/A')
     : [];
@@ -105,7 +106,10 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
             <Header
               variant="h3"
               counter={`(${count})`}
-              description={resources.length < count ? `Showing the first ${resources.length}; the scan stores a capped list.` : undefined}
+              description={[
+                flagged ? `${flagged} named in an open AWS Health notice.` : '',
+                resources.length < count ? `Showing the first ${resources.length}; the scan stores a capped list.` : '',
+              ].filter(Boolean).join(' ') || undefined}
             >
               {resourceWord(count).replace(/^r/, 'R')}
             </Header>
@@ -129,7 +133,24 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
                 : <Box color="text-body-secondary">-</Box>,
             },
             {
-              id: 'console', header: 'Console', width: 130, cell: (r) => r.console_url
+              id: 'health', header: 'AWS Health', width: 220, cell: (r) => {
+                const h = r.health;
+                if (!h) return <Box color="text-body-secondary">-</Box>;
+                const resolved = h.entity_status === 'RESOLVED';
+                return (
+                  <SpaceBetween size="xxxs">
+                    <StatusIndicator type={resolved ? 'success' : 'warning'}>{resolved ? 'Resolved by AWS' : 'Flagged by AWS'}</StatusIndicator>
+                    <Box variant="small">
+                      {h.console_url
+                        ? <Link href={h.console_url} external fontSize="body-s">{healthEventLabel(h.event_type)}</Link>
+                        : healthEventLabel(h.event_type)}
+                    </Box>
+                  </SpaceBetween>
+                );
+              },
+            },
+            {
+              id: 'console', header: 'Console', width: 110, cell: (r) => r.console_url
                 ? <Link href={r.console_url} external fontSize="body-s">Open</Link>
                 : <Box color="text-body-secondary">-</Box>,
             },

@@ -9,7 +9,7 @@ is actually using.
 import boto3
 import os
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 # Get region from environment
 REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
@@ -1043,6 +1043,8 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
     if not discovery_result["success"]:
         return discovery_result
     
+    health_status = cross_check_health(discovery_result["items"])
+    
     # Save to the inventory table; reconciliation is confined to the scopes
     # whose scanners succeeded (issue #116).
     save_result = save_to_dynamodb(
@@ -1065,5 +1067,60 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
         "stale_removed": save_result.get("stale_removed", 0),
         "summary": discovery_result["summary"],
         "services_failed": discovery_result["services_failed"],
+        "health": health_status,
         "discovery_date": discovery_result["discovery_date"]
     }
+
+
+HEALTH_STATUS_KEY = "_health_match"  # control row in the backend-owned state table
+
+
+def cross_check_health(items: List[Dict]) -> Dict:
+    """Cross-check inventory rows with AWS Health (issue #141), in place.
+
+    Marks resources that AWS itself names in an open planned-lifecycle notice
+    (one Health query per region present in the rows), records the outcome in
+    the state table and returns it. Never fails a scan: Health unavailable
+    (no Business/Enterprise Support, missing permission) is just reported.
+    """
+    from health_match import match_health_events, apply_health_flags, health_status_summary
+    partition = _caller_identity().get("partition", "aws")
+    regions = sorted({item.get("region") or REGION for item in items}) or [REGION]
+    flagged, events, reasons, available = 0, 0, [], False
+    checked_at = None
+    for region in regions:
+        match = match_health_events(region, partition)
+        checked_at = match["checked_at"]
+        if match["available"]:
+            available = True
+            events += match["events"]
+            flagged += apply_health_flags([i for i in items if (i.get("region") or REGION) == region], match)
+        elif match["reason"] and match["reason"] not in reasons:
+            reasons.append(match["reason"])
+    status = health_status_summary(
+        {"available": available, "reason": "; ".join(reasons) or None, "checked_at": checked_at, "events": events},
+        flagged,
+    )
+    _save_health_status(status)
+    return status
+
+
+def _save_health_status(status: Dict) -> None:
+    """Persist the last Health cross-check outcome so the UI can explain
+    whether the Health column is live, and why not when it is not."""
+    try:
+        from database_reads import state_table
+        state_table.put_item(Item={"service_name": HEALTH_STATUS_KEY, **status})
+    except Exception as e:  # pragma: no cover - never fail the scan on this
+        print(f"Could not save health status: {e}")
+
+
+def load_health_status() -> Optional[Dict]:
+    try:
+        from database_reads import state_table
+        item = state_table.get_item(Key={"service_name": HEALTH_STATUS_KEY}).get("Item")
+        if item:
+            item.pop("service_name", None)
+        return item
+    except Exception:
+        return None

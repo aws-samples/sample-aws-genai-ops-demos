@@ -21,7 +21,6 @@ import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
   urgencySort, serviceLabel, itemName, resourceCount, resourceWord,
 } from '../lifecycle';
-import HealthPanel from '../components/HealthPanel';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -319,11 +318,6 @@ export default function Dashboard() {
                 ]}
               />
             ),
-          },
-          {
-            id: 'health',
-            label: 'AWS Health',
-            content: <HealthPanel />,
           },
         ]}
       />

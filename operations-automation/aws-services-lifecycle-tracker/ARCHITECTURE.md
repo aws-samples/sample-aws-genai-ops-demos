@@ -19,7 +19,7 @@ The AWS Services Lifecycle Tracker is a serverless application that keeps two th
                                 ▼
                  ┌──────────────────────────────────────────────────────────────┐
                  │ aws-services-lifecycle-api (Lambda)                          │
-                 │  action router · start/adopt/observe pipeline · Health poll  │
+                 │  action router · start/adopt/observe pipeline · schedule     │
                  └──────────────┬───────────────────────────────────────────────┘
                                 │ lambda:Invoke (Event, DurableExecutionName)
                                 ▼
@@ -33,10 +33,10 @@ The AWS Services Lifecycle Tracker is a serverless application that keeps two th
                  │ DynamoDB                                                     │
                  │  aws-services-lifecycle (facts) · aws-account-inventory      │
                  │  service-extraction-config · service-extraction-state        │
-                 │  deprecation-action-plans · aws-health-events                │
+                 │  deprecation-action-plans                                    │
                  └──────────────────────────────────────────────────────────────┘
 
-EventBridge Scheduler ──▶ API Lambda:  weekly {"action":"start_refresh"} · hourly {"action":"collect_health_events"}
+EventBridge Scheduler ──▶ API Lambda:  weekly {"action":"start_refresh"}
 ```
 
 ## CDK Stack Decomposition
@@ -87,16 +87,17 @@ Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each s
 4. The UI stores the execution ARN in `sessionStorage` and polls `GET /refresh/{arn}`, which returns status, progress (count of succeeded `extract-*`/`scan-*` steps from the execution history) and, on success, the summary
 5. The pipeline runs to completion regardless of the browser; the SNS message is the offline record
 
-### Health Events (hourly)
+### AWS Health cross-check (part of every scan)
 
-1. Scheduler invokes the API Lambda with `{"action": "collect_health_events"}`
-2. `HealthCollector` paginates `DescribeEvents` (global endpoint) with backoff, enriches via `DescribeEventDetails`, correlates with tracked services
-3. Events are stored in `aws-health-events` with a 90-day TTL; a state-table lock prevents overlapping collections
+1. `reconcile_inventory` calls `account_discovery.cross_check_health()` before writing the inventory
+2. `health_match.py` lists open/upcoming `scheduledChange` + `accountNotification` events for the scanned region (`DescribeEvents`, global endpoint) and their affected entities (`DescribeAffectedEntities`)
+3. Entities are joined with the inventory by ARN (or identifier): each matching resource gets a `health` block (event type, PENDING/RESOLVED, console link) and each row a `health_flagged` count
+4. The outcome (available, reason, events seen, resources flagged) is stored as the `_health_match` control row of the state table and shown on Sources & coverage. No Support plan → `SubscriptionRequiredException` → reported, never fatal
 
 ### Reads (dashboard, services, plans)
 
 1. Frontend calls `POST /actions` with `{"action": "list_services" | "get_metrics" | "list_deprecations" | ...}`
-2. API Gateway validates the Cognito ID token, the API Lambda dispatches to `actions.py` → `database_reads.py` / `action_plans.py` / `health_reads.py`
+2. API Gateway validates the Cognito ID token, the API Lambda dispatches to `actions.py` → `database_reads.py` / `action_plans.py`
 
 ## DynamoDB Tables
 
@@ -104,14 +105,12 @@ Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each s
 service-extraction-config   PK service_name        What to extract (URLs, focus, schema, enabled). Repo-owned:
                                                    populated at deploy; the Lambdas may only read/UpdateItem.
 service-extraction-state    PK service_name        Runtime state owned by the Lambdas: extraction metadata,
-                                                   Health collection lock/cursor.
+                                                   `_health_match` cross-check outcome.
 aws-services-lifecycle      PK service_name        Public deprecation facts (one row per version/runtime/
                             SK item_id             platform), GSI status-index.
 aws-account-inventory       PK service_name        Resources found in the account, tagged with run_id and
                             SK item_id             matched to a fact (status, days remaining).
 deprecation-action-plans    PK plan_id             Remediation tracking; GSIs owner-index, plan-status-index.
-aws-health-events           PK event_arn           AWS Health events; GSIs service-index, status-index; TTL.
-                            SK event_type_category
 ```
 
 The facts table and the inventory table are deliberately separate: `save_to_dynamodb()` refuses to write to the facts table.
@@ -128,7 +127,7 @@ User ──▶ Cognito User Pool (email/password, no self-signup)
          API Lambda (the only principal with DynamoDB / Bedrock / Lambda permissions)
 ```
 
-The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health read; discovery List/Describe only; the API function may invoke/observe the pipeline function.
+The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health `DescribeEvents`/`DescribeAffectedEntities`; discovery List/Describe only; the API function may invoke/observe the pipeline function.
 
 ## Backend Module Structure
 
@@ -140,11 +139,10 @@ The browser never receives AWS credentials. IAM boundaries: backend-owned tables
 | `workflow_orchestrator.py` | Single-service extraction workflow |
 | `data_extractor.py` | HTML parsing + AI normalization engine |
 | `account_discovery.py` | Scanners, `LifecycleIndex`, inventory reconciliation |
-| `health_collector.py`, `health_enricher.py`, `health_reads.py`, `health_monitoring.py` | AWS Health integration |
+| `health_match.py` | AWS Health cross-check: open notices joined with the inventory by ARN |
 | `database_reads.py` | Read operations (metrics, configs, listings) |
 | `database_writes.py` | Write operations + status categorization |
 | `action_plans.py` | Plan of Action CRUD |
-| `concurrency_lock.py` | State-table lock for the Health collection |
 
 ## Status Categorization Logic
 

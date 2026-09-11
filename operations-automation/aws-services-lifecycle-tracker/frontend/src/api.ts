@@ -4,7 +4,7 @@
 // the Cognito ID token in the Authorization header (validated by the API's
 // JWT authorizer). The browser holds no AWS credentials.
 //
-//   POST /actions          -> router actions (read/write DynamoDB, action plans, health)
+//   POST /actions          -> router actions (read/write DynamoDB, action plans)
 //   POST /refresh          -> start (or adopt) the durable refresh pipeline
 //   GET  /refresh/{arn}    -> pipeline execution status for polling / re-attach
 import { getIdToken } from './auth';
@@ -65,9 +65,19 @@ export interface ScannerInfo {
   service_keys: string[];
 }
 
+// Outcome of the AWS Health cross-check run with the last scan (#141)
+export interface HealthCheckStatus {
+  available: boolean;
+  reason: string | null;
+  checked_at: string | null;
+  events: number;
+  flagged_resources: number;
+}
+
 export interface ScanCoverage {
   scanners: ScannerInfo[];
   last_scan: { last_verified: string | null; resources: number; regions: string[] };
+  health: HealthCheckStatus | null;
 }
 
 export interface DashboardMetrics {
@@ -157,6 +167,7 @@ export const getScanners = async (): Promise<ScanCoverage> => {
   return {
     scanners: result.scanners || [],
     last_scan: result.last_scan || { last_verified: null, resources: 0, regions: [] },
+    health: result.health || null,
   };
 };
 
@@ -366,78 +377,4 @@ export const deleteActionPlan = async (
     action: 'delete_action_plan',
     plan_id: planId
   });
-};
-
-// Health Event Types
-export interface HealthEvent {
-  event_arn: string;
-  service_name: string;
-  health_service?: string;
-  event_type_code: string;
-  event_type_category: 'issue' | 'accountNotification' | 'scheduledChange';
-  region: string;
-  availability_zone?: string;
-  start_time: string;
-  end_time?: string;
-  last_updated_time?: string;
-  status_code: 'open' | 'closed' | 'upcoming';
-  description: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  priority?: string;
-  lifecycle_context?: Record<string, any>;
-  affected_entities?: any[];
-  notification_status?: 'active' | 'resolved';
-  resolution_time?: string;
-}
-
-export interface HealthSummary {
-  active_events: HealthEvent[];
-  by_service: Record<string, HealthEvent[]>;
-  total_active: number;
-}
-
-// Health API Functions
-
-export const fetchHealthSummary = async (): Promise<HealthSummary> => {
-  const result = await invokeAction({
-    action: 'get_health_summary'
-  });
-
-  const events: HealthEvent[] = result.events || result.active_events || [];
-  const byService: Record<string, HealthEvent[]> = {};
-
-  for (const event of events) {
-    const service = event.service_name || 'Unknown';
-    if (!byService[service]) {
-      byService[service] = [];
-    }
-    byService[service].push(event);
-  }
-
-  return {
-    active_events: events,
-    by_service: result.by_service || byService,
-    total_active: result.total_active ?? events.length
-  };
-};
-
-export const fetchHealthEvents = async (filters?: {
-  service?: string;
-  event_type_category?: string;
-  severity?: string;
-  status_code?: string;
-}): Promise<HealthEvent[]> => {
-  const result = await invokeAction({
-    action: 'list_health_events',
-    filters
-  });
-  return result.events || [];
-};
-
-export const fetchHealthEvent = async (eventArn: string): Promise<HealthEvent | null> => {
-  const result = await invokeAction({
-    action: 'get_health_event',
-    event_arn: eventArn
-  });
-  return result.event || null;
 };

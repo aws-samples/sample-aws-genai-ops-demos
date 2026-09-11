@@ -155,11 +155,32 @@ export const resourceCount = (row: DeprecationItem): number =>
 
 export const resourceWord = (n: number): string => (n === 1 ? 'resource' : 'resources');
 
+// AWS Health notice naming this resource (stamped at scan time, #141)
+export interface HealthFlag {
+  event_arn: string;
+  event_type: string;      // e.g. AWS_LAMBDA_PLANNED_LIFECYCLE_EVENT
+  event_status: string;    // open | upcoming
+  entity_status: string;   // PENDING | RESOLVED | (empty)
+  start_time?: string;
+  end_time?: string;
+  console_url?: string;
+}
+
 export interface ResourceRef {
   name: string;
   arn?: string;
   console_url?: string;
+  health?: HealthFlag;
 }
+
+// Resources of a row that AWS Health names in an open notice (exact count
+// stored by the scan; 0 when Health was unavailable).
+export const healthFlagged = (row: DeprecationItem): number =>
+  Number(row.service_specific?.health_flagged) || 0;
+
+// Human wording for an AWS Health event type code
+export const healthEventLabel = (code: string): string =>
+  code.replace(/^AWS_/, '').replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
 // Resources behind an inventory row, richest source first: per-resource
 // details (name, ARN, console deep link; stored since #141, capped
@@ -168,7 +189,10 @@ export interface ResourceRef {
 export const resourceDetails = (row: DeprecationItem): ResourceRef[] => {
   const details = row.service_specific?.affected_resource_details;
   if (Array.isArray(details) && details.length) {
-    return details.map((d: any) => ({ name: String(d.name ?? ''), arn: d.arn || undefined, console_url: d.console_url || undefined }));
+    return details.map((d: any) => ({
+      name: String(d.name ?? ''), arn: d.arn || undefined, console_url: d.console_url || undefined,
+      health: d.health && d.health.event_arn ? (d.health as HealthFlag) : undefined,
+    }));
   }
   const list = row.service_specific?.affected_resource_names;
   if (Array.isArray(list) && list.length) return list.map((n: unknown) => ({ name: String(n) }));

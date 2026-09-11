@@ -2,7 +2,7 @@
 Action router and shared helpers for the AWS Services Lifecycle Tracker.
 
 Compute-agnostic: no AgentCore, Step Functions or Lambda specifics live here.
-Used by api.py (UI + scheduled Health collection) and pipeline.py
+Used by api.py (UI actions, pipeline control) and pipeline.py
 (the durable refresh pipeline). Issue #139.
 """
 import json
@@ -13,22 +13,9 @@ from database_reads import (
     get_metrics,
     convert_decimals
 )
-from health_reads import (
-    list_health_events,
-    get_health_event,
-    get_health_summary,
-)
 from database_writes import update_service_config
 from workflow_orchestrator import extract_service_lifecycle
 from account_discovery import discover_and_save
-from health_collector import HealthCollector
-from health_enricher import HealthEnricher
-from concurrency_lock import acquire_lock, release_lock
-from health_monitoring import (
-    track_collection_result,
-    is_health_collection_enabled,
-    disable_health_collection,
-)
 
 
 def get_all_enabled_services() -> list:
@@ -209,170 +196,6 @@ Service Results:
         print(f"Warning: Failed to send notification: {str(e)}")
 
 
-def _handle_collect_health_events(payload: dict) -> dict:
-    """
-    Handle the collect_health_events action.
-
-    Workflow:
-    0. Check if Health collection is enabled (graceful degradation)
-    1. Acquire the concurrency lock
-    2. Get service configs to build the service_filter list (from health_event_mapping)
-    3. Call HealthCollector.collect_events(service_filter)
-    4. Enrich events via HealthEnricher
-    5. Write enriched events to DynamoDB via batch write
-    6. Release the lock
-    7. Track collection result (success/failure counter + CloudWatch alarm)
-    8. Return success/failure result
-    """
-    import os
-
-    # Step 0: Check if Health collection is enabled (graceful degradation - Req 9.3)
-    if not is_health_collection_enabled():
-        return {
-            'success': False,
-            'reason': 'health_collection_disabled',
-            'error': 'Health collection is disabled due to previous errors (e.g., insufficient permissions). '
-                     'Use enable_health_collection to re-enable.'
-        }
-
-    # Step 1: Acquire concurrency lock
-    lock_acquired = acquire_lock()
-    if not lock_acquired:
-        return {
-            'success': False,
-            'reason': 'concurrent_execution',
-            'error': 'Another health collection is already in progress'
-        }
-
-    try:
-        # Step 2: Get service configs and build service_filter from health_event_mapping
-        services_result = list_services()
-        if 'error' in services_result:
-            track_collection_result(success=False)
-            return {
-                'success': False,
-                'error': f"Failed to load service configs: {services_result['error']}"
-            }
-
-        service_configs = {}
-        service_filter = []
-        for service in services_result.get('services', []):
-            service_name = service.get('service_name', '')
-            if not service_name or service_name.startswith('_'):
-                continue
-            service_configs[service_name] = service
-            mapping = service.get('health_event_mapping')
-            if mapping:
-                service_filter.append(mapping)
-
-        # Step 3: Collect events from AWS Health API
-        collector = HealthCollector()
-        collection_result = collector.collect_events(
-            service_filter=service_filter if service_filter else None
-        )
-
-        if not collection_result.get('success'):
-            # Check for AccessDeniedException → graceful degradation (Req 9.3)
-            errors = collection_result.get('errors', [])
-            for error in errors:
-                if 'AccessDeniedException' in str(error) or 'not authorized' in str(error).lower():
-                    disable_health_collection(
-                        reason=f"AccessDeniedException: insufficient permissions for Health API. "
-                               f"Details: {error}"
-                    )
-                    break
-
-            track_collection_result(success=False)
-            return {
-                'success': False,
-                'error': 'Health event collection failed',
-                'details': errors
-            }
-
-        raw_events = collection_result.get('events', [])
-
-        # Step 4: Enrich events with lifecycle data
-        enricher = HealthEnricher()
-        enriched_events = enricher.enrich_events(raw_events, service_configs)
-
-        # Step 5: Write enriched events to DynamoDB
-        events_written = 0
-        write_errors = []
-        if enriched_events:
-            events_written, write_errors = _batch_write_health_events(enriched_events)
-
-        # Step 7: Track success (resets failure counter - Req 8.2)
-        track_collection_result(success=True)
-
-        # Step 8: Return result
-        return {
-            'success': True,
-            'events_collected': collection_result.get('events_collected', 0),
-            'events_enriched': len(enriched_events),
-            'events_written': events_written,
-            'errors': collection_result.get('errors', []) + write_errors
-        }
-
-    except Exception as e:
-        # Track failure (increments counter, may emit CloudWatch alarm - Req 8.2)
-        track_collection_result(success=False)
-        return {
-            'success': False,
-            'error': f'Health collection failed: {str(e)}'
-        }
-    finally:
-        # Step 6: Always release the lock
-        release_lock()
-
-
-def _batch_write_health_events(events: list) -> tuple:
-    """
-    Write enriched health events to the aws-health-events DynamoDB table.
-
-    Uses batch_writer for efficient bulk inserts.
-
-    Args:
-        events: List of enriched health event dicts ready for DynamoDB.
-
-    Returns:
-        Tuple of (events_written count, list of error strings).
-    """
-    import os
-    import boto3
-    from aws_utils import get_region
-
-    region = get_region()
-    dynamodb_resource = boto3.resource('dynamodb', region_name=region)
-    table_name = os.environ.get('HEALTH_TABLE_NAME', 'aws-health-events')
-    table = dynamodb_resource.Table(table_name)
-
-    events_written = 0
-    errors = []
-
-    try:
-        with table.batch_writer() as batch:
-            for event in events:
-                try:
-                    # Ensure required keys are present
-                    if not event.get('event_arn') or not event.get('event_type_category'):
-                        errors.append(
-                            f"Skipping event with missing key fields: "
-                            f"arn={event.get('event_arn')}"
-                        )
-                        continue
-                    batch.put_item(Item=event)
-                    events_written += 1
-                except Exception as item_error:
-                    errors.append(
-                        f"Failed to write event {event.get('event_arn', 'unknown')}: "
-                        f"{str(item_error)}"
-                    )
-    except Exception as e:
-        errors.append(f"Batch write failed: {str(e)}")
-
-    return events_written, errors
-
-
 def _last_scan_info() -> dict:
     """When the inventory was last written, how many rows, which regions (issue #141)."""
     from database_reads import inventory_table
@@ -419,13 +242,15 @@ def handle_api_action(action: str, payload: dict) -> dict:
     elif action == 'list_scanners':
         # Scanner coverage for the UI (issue #141): which config service keys
         # have an account scanner behind them, and the last completed scan.
-        from account_discovery import SCANNER_SERVICE_KEYS
+        from account_discovery import SCANNER_SERVICE_KEYS, load_health_status
         return {
             'scanners': [
                 {'label': label, 'service_keys': keys}
                 for label, keys in SCANNER_SERVICE_KEYS.items()
             ],
             'last_scan': _last_scan_info(),
+            # Outcome of the AWS Health cross-check of the last scan (#141)
+            'health': load_health_status(),
         }
     
     elif action == 'discover_account':
@@ -474,21 +299,6 @@ def handle_api_action(action: str, payload: dict) -> dict:
         from action_plans import delete_action_plan
         plan_id = payload.get('plan_id')
         return delete_action_plan(plan_id)
-    
-    # Health Event operations
-    elif action == 'collect_health_events':
-        return _handle_collect_health_events(payload)
-    
-    elif action == 'list_health_events':
-        filters = payload.get('filters', {})
-        return list_health_events(filters)
-    
-    elif action == 'get_health_event':
-        event_arn = payload.get('event_arn')
-        return get_health_event(event_arn)
-    
-    elif action == 'get_health_summary':
-        return get_health_summary()
     
     else:
         return {'error': f'Unknown action: {action}'}

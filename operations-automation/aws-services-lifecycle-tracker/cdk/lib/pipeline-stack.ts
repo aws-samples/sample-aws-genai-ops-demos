@@ -17,7 +17,6 @@ export interface PipelineStackProps extends cdk.StackProps {
   stateTable: dynamodb.ITable;
   inventoryTable: dynamodb.ITable;
   actionPlanTable: dynamodb.ITable;
-  healthEventsTable: dynamodb.ITable;
 }
 
 const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
@@ -69,8 +68,8 @@ function bundleBackendLocally(outputDir: string): boolean {
  *    (extract -> scan -> reconcile -> notify) as one checkpointed execution.
  *    Invoked through the `live` alias (durable functions need a qualified ARN).
  *  - api: plain function behind API Gateway (see ApiStack) serving UI actions,
- *    starting/observing pipeline executions, and running the scheduled
- *    Health poll.
+ *    starting/observing pipeline executions, and receiving the weekly
+ *    schedule.
  * Replaces the Step Functions machine and the AgentCore runtime.
  */
 export class PipelineStack extends cdk.Stack {
@@ -115,7 +114,6 @@ export class PipelineStack extends cdk.Stack {
       STATE_TABLE_NAME: props.stateTable.tableName,
       INVENTORY_TABLE_NAME: props.inventoryTable.tableName,
       ACTION_PLAN_TABLE_NAME: props.actionPlanTable.tableName,
-      HEALTH_TABLE_NAME: props.healthEventsTable.tableName,
       NOTIFICATION_TOPIC_ARN: this.notificationTopic.topicArn,
     };
 
@@ -125,7 +123,7 @@ export class PipelineStack extends cdk.Stack {
     // repo-owned configuration table (no Put/Delete/BatchWrite).
     // ------------------------------------------------------------------
     const dataAccessPolicy = new iam.ManagedPolicy(this, 'LifecycleDataAccess', {
-      description: 'Lifecycle tracker Lambda access to DynamoDB, Bedrock, Health and read-only discovery APIs',
+      description: 'Lifecycle tracker Lambda access to DynamoDB, Bedrock, AWS Health and read-only discovery APIs',
       statements: [
         new iam.PolicyStatement({
           sid: 'DynamoDBAgentOwnedAccess',
@@ -135,7 +133,7 @@ export class PipelineStack extends cdk.Stack {
           ],
           resources: [
             props.lifecycleTable, props.stateTable, props.inventoryTable,
-            props.actionPlanTable, props.healthEventsTable,
+            props.actionPlanTable,
           ].flatMap((table) => [table.tableArn, `${table.tableArn}/index/*`]),
         }),
         new iam.PolicyStatement({
@@ -152,8 +150,10 @@ export class PipelineStack extends cdk.Stack {
           ],
         }),
         new iam.PolicyStatement({
+          // Scan-time cross-check: which inventory ARNs appear in open planned
+          // lifecycle notices (#141). Needs Business/Enterprise Support at runtime.
           sid: 'HealthAPIAccess',
-          actions: ['health:DescribeEvents', 'health:DescribeEventDetails', 'health:DescribeAffectedEntities', 'health:DescribeEventTypes'],
+          actions: ['health:DescribeEvents', 'health:DescribeAffectedEntities'],
           resources: ['*'], // Health API has no resource-level permissions
         }),
         new iam.PolicyStatement({
@@ -217,7 +217,7 @@ export class PipelineStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // Plain API function (UI actions, pipeline control, Health poll)
+    // Plain API function (UI actions, pipeline control, weekly schedule)
     // ------------------------------------------------------------------
     const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
       logGroupName: `/aws/lambda/${API_FUNCTION_NAME}`,
@@ -227,7 +227,7 @@ export class PipelineStack extends cdk.Stack {
 
     this.apiFunction = new lambda.Function(this, 'ApiFunction', {
       functionName: API_FUNCTION_NAME,
-      description: 'Lifecycle tracker API: UI actions, refresh pipeline control, scheduled Health collection',
+      description: 'Lifecycle tracker API: UI actions, refresh pipeline control, weekly schedule entry point',
       runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
       handler: 'api.handler',
@@ -281,15 +281,6 @@ export class PipelineStack extends cdk.Stack {
       target: scheduleTarget({ action: 'start_refresh', refresh_origin: 'Auto' }),
     });
 
-    const healthSchedule = new scheduler.CfnSchedule(this, 'HealthCollectionSchedule', {
-      name: 'aws-health-events-collection',
-      description: 'Hourly AWS Health events poll',
-      scheduleExpression: 'rate(1 hour)',
-      scheduleExpressionTimezone: 'UTC',
-      flexibleTimeWindow: { mode: 'OFF' },
-      target: scheduleTarget({ action: 'collect_health_events', refresh_origin: 'Auto' }),
-    });
-
     // ------------------------------------------------------------------
     // Outputs
     // ------------------------------------------------------------------
@@ -299,14 +290,13 @@ export class PipelineStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'ApiFunctionArn', {
       value: this.apiFunction.functionArn,
-      description: 'ARN of the API function (UI actions, pipeline control, Health poll)',
+      description: 'ARN of the API function (UI actions, pipeline control, weekly schedule)',
     });
     new cdk.CfnOutput(this, 'NotificationTopicArn', {
       value: this.notificationTopic.topicArn,
       description: 'SNS topic receiving refresh completion summaries',
     });
     new cdk.CfnOutput(this, 'WeeklyScheduleName', { value: weeklySchedule.name! });
-    new cdk.CfnOutput(this, 'HealthScheduleName', { value: healthSchedule.name! });
     new cdk.CfnOutput(this, 'DeadLetterQueueUrl', { value: deadLetterQueue.queueUrl });
   }
 }

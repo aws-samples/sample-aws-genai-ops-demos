@@ -140,10 +140,17 @@ def scan_cell(step: StepContext, cell: dict) -> dict:
 
 @durable_step
 def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scanned_keys: List[str]) -> dict:
-    """Upsert this run's inventory and reconcile ONLY successfully scanned scopes."""
-    return account_discovery.save_to_dynamodb(
+    """Upsert this run's inventory and reconcile ONLY successfully scanned scopes.
+
+    Before writing, resources are cross-checked with AWS Health (#141) so each
+    row knows which of its resources AWS has already flagged in a notice.
+    """
+    health = account_discovery.cross_check_health(items)
+    result = account_discovery.save_to_dynamodb(
         items, run_id=run_id, scanned_services=sorted(set(scanned_keys)),
     )
+    result["health"] = health
+    return result
 
 
 @durable_step
@@ -188,6 +195,9 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
         if reconcile_result:
             lines.append(f"  Reconciled: {reconcile_result.get('items_saved', 0)} saved, "
                          f"{reconcile_result.get('stale_removed', 0)} stale removed")
+            health = reconcile_result.get("health") or {}
+            lines.append(f"  AWS Health: {health.get('flagged_resources', 0)} resources flagged"
+                         if health.get("available") else f"  AWS Health: unavailable ({health.get('reason', 'n/a')})")
         boto3.client("sns", region_name=run["function_region"]).publish(
             TopicArn=topic_arn,
             Subject="AWS Lifecycle Tracker - Refresh Complete",

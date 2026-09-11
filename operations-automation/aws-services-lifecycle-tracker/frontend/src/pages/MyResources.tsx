@@ -20,7 +20,7 @@ import Popover from '@cloudscape-design/components/popover';
 import { getLifecycleData, getActionPlans, createActionPlan, getScanners, DeprecationItem, ActionPlan, ScanCoverage } from '../api';
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
-  resourceCount, resourceWord,
+  resourceCount, resourceWord, healthFlagged,
 } from '../lifecycle';
 import ResourceDetails from '../components/ResourceDetails';
 
@@ -242,10 +242,14 @@ export default function MyResources() {
           {
             id: 'resources', header: 'Resources', cell: (r) => {
               const n = resourceCount(r);
+              const h = healthFlagged(r);
               return n
-                ? <Link onFollow={(e) => { e.preventDefault(); updateParams({ details: r.item_id }); }} href="#" ariaLabel={`Show the ${n} ${resourceWord(n)} of ${itemName(r)}`}>
-                    {n} {resourceWord(n)}
-                  </Link>
+                ? <SpaceBetween size="xxxs">
+                    <Link onFollow={(e) => { e.preventDefault(); updateParams({ details: r.item_id }); }} href="#" ariaLabel={`Show the ${n} ${resourceWord(n)} of ${itemName(r)}`}>
+                      {n} {resourceWord(n)}
+                    </Link>
+                    {h > 0 && <Box variant="small" color="text-status-warning">{h} flagged by AWS Health</Box>}
+                  </SpaceBetween>
                 : <Box color="text-body-secondary">0</Box>;
             },
           },

@@ -64,6 +64,8 @@ def mocks():
          patch.object(lp.account_discovery, "LifecycleIndex", return_value=MagicMock()), \
          patch.object(lp.account_discovery, "save_to_dynamodb",
                       return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
+         patch.object(lp.account_discovery, "cross_check_health",
+                      return_value={"available": False, "reason": "test", "events": 0, "flagged_resources": 0}), \
          patch.dict(lp.SCANNERS, {"Lambda": _fake_scanner_ok, "EKS": _fake_scanner_boom}, clear=True), \
          patch.dict(lp.account_discovery.SCANNER_SERVICE_KEYS,
                     {"Lambda": ["lambda"], "EKS": ["eks"]}, clear=True), \

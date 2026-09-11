@@ -38,7 +38,6 @@ const pipelineStack = new PipelineStack(app, `AWSServicesLifecycleTrackerPipelin
   stateTable: dataStack.stateTable,
   inventoryTable: dataStack.inventoryTable,
   actionPlanTable: dataStack.actionPlanTable,
-  healthEventsTable: dataStack.healthEventsTable,
   description: 'AWS Services Lifecycle Tracker Pipeline: Lambda durable function refreshing deprecation data and account inventory (uksb-do9bhieqqh)(tag:lifecycle-tracker,operations-automation)',
 });
 

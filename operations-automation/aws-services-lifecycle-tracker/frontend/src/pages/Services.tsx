@@ -357,6 +357,24 @@ export default function Services() {
             Sources & coverage
           </Header>
         }
+        footer={coverage && (
+          <Box variant="small" color="text-body-secondary">
+            <strong>AWS Health cross-check:</strong>{' '}
+            {!coverage.health
+              ? 'not run yet (happens during each account scan).'
+              : coverage.health.available
+                ? <>
+                    <StatusIndicator type="success">active</StatusIndicator>{' '}
+                    {coverage.health.events} open or upcoming notice{coverage.health.events === 1 ? '' : 's'} checked,{' '}
+                    {coverage.health.flagged_resources} of your resources named in one
+                    {coverage.health.checked_at ? ` (${new Date(coverage.health.checked_at).toLocaleString()})` : ''}.
+                  </>
+                : <>
+                    <StatusIndicator type="stopped">unavailable</StatusIndicator>{' '}
+                    {coverage.health.reason || 'unknown reason'}. Catalog and scan results are unaffected.
+                  </>}
+          </Box>
+        )}
       />
     </SpaceBetween>
   );

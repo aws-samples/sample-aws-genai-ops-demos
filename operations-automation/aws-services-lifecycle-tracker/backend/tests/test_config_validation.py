@@ -56,17 +56,9 @@ class TestValidateServiceConfigValid:
         assert is_valid is True
         assert errors == []
 
-    def test_valid_config_with_health_event_mapping(self):
-        """A config with optional health_event_mapping should be valid."""
-        config = _make_valid_config(health_event_mapping="LAMBDA")
-        is_valid, errors = validate_service_config(config)
-        assert is_valid is True
-        assert errors == []
-
     def test_valid_config_with_all_optional_fields(self):
         """A config with all optional fields should be valid."""
         config = _make_valid_config(
-            health_event_mapping="LAMBDA",
             schema_key="runtimes",
             enabled=True,
             last_extraction="2025-01-01T00:00:00Z",
@@ -214,17 +206,6 @@ class TestValidateServiceConfigTypeErrors:
 
 class TestValidateServiceConfigOptionalFields:
     """Tests for optional field handling."""
-
-    def test_health_event_mapping_valid(self):
-        config = _make_valid_config(health_event_mapping="LAMBDA")
-        is_valid, errors = validate_service_config(config)
-        assert is_valid is True
-
-    def test_health_event_mapping_invalid_type(self):
-        config = _make_valid_config(health_event_mapping=123)
-        is_valid, errors = validate_service_config(config)
-        assert is_valid is False
-        assert any("health_event_mapping" in e for e in errors)
 
     def test_schema_key_valid(self):
         config = _make_valid_config(schema_key="runtimes")
