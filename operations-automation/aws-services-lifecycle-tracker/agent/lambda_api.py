@@ -7,8 +7,10 @@ Two invocation shapes:
     POST /refresh          body {mode?, services?} -> start (or adopt) a durable
                                                      pipeline execution
     GET  /refresh/{arn}                           -> condensed execution status
-- EventBridge Scheduler (direct invoke): {"action": "collect_health_events"}
-  or any other router payload -> actions.dispatch
+- EventBridge Scheduler (direct invoke):
+    {"action": "start_refresh", "refresh_origin": "Auto"} -> weekly pipeline run
+    {"action": "collect_health_events"}                    -> hourly Health poll
+  Any other router payload -> actions.dispatch
 
 The browser holds no IAM permissions: everything reaches AWS through this
 function, so its role carries the permissions the UI used to need.
@@ -69,7 +71,15 @@ def start_refresh(body: dict) -> dict:
     if body.get("regions"):
         payload["regions"] = body["regions"]
 
-    name = body.get("execution_name") or f"refresh-manual-{int(time.time())}"
+    # Scheduled runs get a date-based name (one weekly run per day at most,
+    # duplicates collapse onto the same execution); manual runs get a
+    # timestamp. Allowed charset is [a-zA-Z0-9-_], max 64.
+    if body.get("execution_name"):
+        name = body["execution_name"]
+    elif payload["refresh_origin"] == "Auto":
+        name = f"refresh-weekly-{time.strftime('%Y-%m-%d', time.gmtime())}"
+    else:
+        name = f"refresh-manual-{int(time.time())}"
     resp = _lambda_client().invoke(
         FunctionName=PIPELINE_FUNCTION_ARN,
         InvocationType="Event",
@@ -152,5 +162,11 @@ def handler(event, context):
             return _http(status, result)
         return _http(404, {"error": f"No route for {method} {path}"})
 
-    # Direct invocation (EventBridge Scheduler, CLI, tests)
+    # Direct invocation (EventBridge Scheduler, CLI, tests). The weekly
+    # schedule goes through here too ({"action": "start_refresh",
+    # "refresh_origin": "Auto"}) so scheduled and manual runs share the
+    # naming and adopt-running logic above.
+    if isinstance(event, dict) and event.get("action") == "start_refresh":
+        result, _ = start_refresh(event)
+        return result
     return dispatch(event)

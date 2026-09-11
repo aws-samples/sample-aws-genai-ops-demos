@@ -1,8 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { DataStack } from '../lib/data-stack';
-import { AWSServicesLifecycleTrackerScheduler } from '../lib/scheduler-stack';
-import { AWSServicesLifecycleTrackerInfraStack } from '../lib/infra-stack';
+import { PipelineStack } from '../lib/pipeline-stack';
 
 describe('Health Infrastructure - DynamoDB Table', () => {
   let dataTemplate: Template;
@@ -75,20 +74,39 @@ describe('Health Infrastructure - DynamoDB Table', () => {
   });
 });
 
-describe('Health Infrastructure - IAM Permissions', () => {
-  let infraTemplate: Template;
+
+describe('Pipeline stack - IAM and schedules (issue #139)', () => {
+  let pipelineTemplate: Template;
 
   beforeAll(() => {
-    const app = new cdk.App();
-    const stack = new AWSServicesLifecycleTrackerInfraStack(app, 'TestInfraStack');
-    infraTemplate = Template.fromStack(stack);
+    const app = new cdk.App({ context: { 'aws:cdk:bundling-stacks': [] } }); // skip pip bundling in unit tests
+    const dataStack = new DataStack(app, 'TestDataStack');
+    const stack = new PipelineStack(app, 'TestPipelineStack', {
+      lifecycleTable: dataStack.lifecycleTable,
+      configTable: dataStack.configTable,
+      stateTable: dataStack.stateTable,
+      inventoryTable: dataStack.inventoryTable,
+      actionPlanTable: dataStack.actionPlanTable,
+      healthEventsTable: dataStack.healthEventsTable,
+    });
+    pipelineTemplate = Template.fromStack(stack);
+  });
+
+  test('pipeline function is a durable function with a live alias', () => {
+    pipelineTemplate.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'aws-services-lifecycle-pipeline',
+      Handler: 'lambda_pipeline.handler',
+      DurableConfig: Match.objectLike({ ExecutionTimeout: 7200, RetentionPeriodInDays: 14 }),
+    });
+    pipelineTemplate.hasResourceProperties('AWS::Lambda::Alias', { Name: 'live' });
   });
 
   test('Health API permissions include all required actions', () => {
-    infraTemplate.hasResourceProperties('AWS::IAM::Policy', {
+    pipelineTemplate.hasResourceProperties('AWS::IAM::ManagedPolicy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
+            Sid: 'HealthAPIAccess',
             Effect: 'Allow',
             Action: Match.arrayWith([
               'health:DescribeEvents',
@@ -103,64 +121,29 @@ describe('Health Infrastructure - IAM Permissions', () => {
     });
   });
 
-  test('DynamoDB permissions include aws-health-events table', () => {
-    infraTemplate.hasResourceProperties('AWS::IAM::Policy', {
+  test('configuration table gets no PutItem/DeleteItem/BatchWriteItem (issue #116 boundary)', () => {
+    pipelineTemplate.hasResourceProperties('AWS::IAM::ManagedPolicy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
-            Sid: 'DynamoDBAccess',
-            Effect: 'Allow',
-            Action: Match.arrayWith([
-              'dynamodb:GetItem',
-              'dynamodb:PutItem',
-              'dynamodb:UpdateItem',
-              'dynamodb:DeleteItem',
-              'dynamodb:Query',
-              'dynamodb:Scan',
-              'dynamodb:BatchGetItem',
-              'dynamodb:BatchWriteItem',
-            ]),
-            Resource: Match.arrayWith([
-              {
-                'Fn::Join': [
-                  '',
-                  Match.arrayWith([
-                    Match.stringLikeRegexp('.*:table/aws-health-events'),
-                  ]),
-                ],
-              },
-            ]),
+            Sid: 'DynamoDBConfigReadAndUpdate',
+            Action: Match.not(Match.arrayWith(['dynamodb:PutItem'])),
           }),
         ]),
       },
     });
   });
-});
 
-describe('Health Infrastructure - EventBridge Schedule', () => {
-  let schedulerTemplate: Template;
-
-  beforeAll(() => {
-    const app = new cdk.App();
-    const stack = new AWSServicesLifecycleTrackerScheduler(app, 'TestSchedulerStack', {
-      agentRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-agent',
-    });
-    schedulerTemplate = Template.fromStack(stack);
-  });
-
-  test('Health collection schedule exists with rate(5 minutes)', () => {
-    schedulerTemplate.hasResourceProperties('AWS::Scheduler::Schedule', {
+  test('schedules target the API function with router payloads', () => {
+    pipelineTemplate.hasResourceProperties('AWS::Scheduler::Schedule', {
       Name: 'aws-health-events-collection',
-      ScheduleExpression: 'rate(5 minutes)',
+      ScheduleExpression: 'rate(1 hour)',
+      Target: Match.objectLike({ Input: Match.stringLikeRegexp('collect_health_events') }),
     });
-  });
-
-  test('Health schedule targets AgentCore with collect_health_events action', () => {
-    schedulerTemplate.hasResourceProperties('AWS::Scheduler::Schedule', {
-      Name: 'aws-health-events-collection',
-      Target: Match.objectLike({
-        Arn: 'arn:aws:scheduler:::aws-sdk:bedrockagentcore:invokeAgentRuntime',
-      }),
+    pipelineTemplate.hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'aws-services-lifecycle-weekly-refresh',
+      ScheduleExpression: 'rate(7 days)',
+      Target: Match.objectLike({ Input: Match.stringLikeRegexp('start_refresh') }),
     });
   });
 });

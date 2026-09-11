@@ -1,19 +1,19 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
-export interface AuthStackProps extends cdk.StackProps {
-  agentRuntimeArn?: string;
-}
-
+/**
+ * Cognito user pool for the admin SPA.
+ *
+ * Since issue #139 the browser only needs the ID token: every AWS call goes
+ * through the HTTP API's JWT authorizer, so there is no identity pool and no
+ * IAM role for authenticated users anymore.
+ */
 export class AuthStack extends cdk.Stack {
     public readonly userPool: cognito.UserPool;
     public readonly userPoolClient: cognito.UserPoolClient;
-    public readonly identityPool: cognito.CfnIdentityPool;
-    public readonly authenticatedRole: iam.Role;
 
-    constructor(scope: Construct, id: string, props: AuthStackProps) {
+    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
         // Cognito User Pool - ADMIN ONLY (no self-signup)
@@ -56,92 +56,8 @@ export class AuthStack extends cdk.Stack {
             preventUserExistenceErrors: true,
         });
 
-        // Cognito Identity Pool for AWS credentials
-        this.identityPool = new cognito.CfnIdentityPool(this, 'LifecycleTrackerIdentityPool', {
-            identityPoolName: 'aws-services-lifecycle-tracker-identity-pool',
-            allowUnauthenticatedIdentities: false, // Require authentication
-            cognitoIdentityProviders: [{
-                clientId: this.userPoolClient.userPoolClientId,
-                providerName: this.userPool.userPoolProviderName,
-                serverSideTokenCheck: true, // Enable server-side token validation
-            }],
-        });
-
-        // IAM Role for authenticated users (admin access to AgentCore)
-        this.authenticatedRole = new iam.Role(this, 'AuthenticatedRole', {
-            assumedBy: new iam.WebIdentityPrincipal('cognito-identity.amazonaws.com', {
-                'StringEquals': {
-                    'cognito-identity.amazonaws.com:aud': this.identityPool.ref,
-                },
-                'ForAnyValue:StringLike': {
-                    'cognito-identity.amazonaws.com:amr': 'authenticated',
-                },
-            }),
-            // Removed overly broad BedrockAgentCoreFullAccess policy
-            inlinePolicies: {
-                CognitoIdentityAccess: new iam.PolicyDocument({
-                    statements: [
-                        new iam.PolicyStatement({
-                            effect: iam.Effect.ALLOW,
-                            actions: ['cognito-identity:GetCredentialsForIdentity'],
-                            resources: ['*'],
-                        }),
-                    ],
-                }),
-                // Refresh All orchestration (#126): the frontend starts and
-                // observes the Step Functions batch directly (same
-                // direct-SDK-call pattern as InvokeAgentRuntime above). ARNs
-                // are derived from the state machine's fixed name so the Auth
-                // stack (deployed before the Scheduler stack) needs no
-                // cross-stack reference.
-                RefreshOrchestrationAccess: new iam.PolicyDocument({
-                    statements: [
-                        new iam.PolicyStatement({
-                            effect: iam.Effect.ALLOW,
-                            actions: [
-                                'states:StartExecution',
-                                'states:ListExecutions',
-                            ],
-                            resources: [
-                                `arn:aws:states:${this.region}:${this.account}:stateMachine:aws-services-lifecycle-refresh-all`,
-                            ],
-                        }),
-                        new iam.PolicyStatement({
-                            effect: iam.Effect.ALLOW,
-                            actions: ['states:DescribeExecution'],
-                            resources: [
-                                `arn:aws:states:${this.region}:${this.account}:execution:aws-services-lifecycle-refresh-all:*`,
-                            ],
-                        }),
-                    ],
-                }),
-                BedrockAgentCoreAccess: new iam.PolicyDocument({
-                    statements: [
-                        new iam.PolicyStatement({
-                            effect: iam.Effect.ALLOW,
-                            actions: [
-                                'bedrock-agentcore:InvokeAgentRuntime',
-                                'bedrock-agentcore:InvokeAgentRuntimeForUser',
-                            ],
-                            resources: ['*'], // Consider restricting to specific agent ARNs if known
-                        }),
-                    ],
-                }),
-            },
-        });
-
-        // Attach role to identity pool (simplified without role mappings)
-        new cognito.CfnIdentityPoolRoleAttachment(this, 'IdentityPoolRoleAttachment', {
-            identityPoolId: this.identityPool.ref,
-            roles: {
-                authenticated: this.authenticatedRole.roleArn,
-            },
-        });
-
         // Note: Admin user will be created manually after deployment
         // Use AWS CLI: aws cognito-idp admin-create-user --user-pool-id <POOL_ID> --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS
-
-
 
         // Outputs
         new cdk.CfnOutput(this, 'UserPoolId', {
@@ -162,20 +78,9 @@ export class AuthStack extends cdk.Stack {
             exportName: 'AWSServicesLifecycleTrackerUserPoolClientId',
         });
 
-        new cdk.CfnOutput(this, 'IdentityPoolId', {
-            value: this.identityPool.ref,
-            description: 'Cognito Identity Pool ID',
-            exportName: 'AWSServicesLifecycleTrackerIdentityPoolId',
-        });
-
         new cdk.CfnOutput(this, 'AdminUsername', {
             value: 'admin',
             description: 'Admin username (password must be set manually)',
-        });
-
-        new cdk.CfnOutput(this, 'AdminEmail', {
-            value: 'admin@company.com',
-            description: 'Admin email (change this in the code before deployment)',
         });
     }
 }
