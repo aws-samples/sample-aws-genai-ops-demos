@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -159,6 +160,121 @@ def main() -> int:
         r = call(fn, test_id="t")
         check(not r["ok"] and "discover_dlt_config" in r["error"],
               f"{name} before discovery is refused")
+
+    print("run timing (no clock for the model to guess with)")
+    import datetime as dt
+    from tools.dlt_tools import _DLT_OVERHEAD_S, _parse_dlt_time, _run_timing
+
+    # DLT sends "2026-09-04 06:03:19" — no separator, no zone, value is UTC.
+    # fromisoformat would leave it naive and silently compare as local time.
+    t = _parse_dlt_time("2026-09-04 06:03:19")
+    check(t is not None and t.tzinfo == dt.timezone.utc and t.hour == 6,
+          "a DLT timestamp is parsed as UTC, not local time")
+    check(_parse_dlt_time(None) is None and _parse_dlt_time("nope") is None,
+          "an unparseable timestamp yields None rather than raising")
+
+    def body(started_ago: int, **over) -> dict:
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+            seconds=started_ago)
+        return {"startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+                "testScenario": {"execution": [{"ramp-up": "15s",
+                                                "hold-for": "60s"}]},
+                **over}
+
+    tm = _run_timing(body(30))
+    check(tm["expected_seconds"] == 15 + 60 + _DLT_OVERHEAD_S,
+          "expected_seconds is ramp-up + hold-for + measured overhead")
+    check(28 <= tm["elapsed_seconds"] <= 32,
+          f"elapsed_seconds comes from startTime (got {tm.get('elapsed_seconds')})")
+    check(tm["remaining_seconds"] == tm["expected_seconds"] - tm["elapsed_seconds"],
+          "remaining_seconds is the difference, not a guess")
+
+    # The load shape comes from the API response, never from _registered: a run
+    # longer than the idle timeout is polled by a fresh process with no state.
+    from tools import dlt_tools as dltm
+    check(not dltm._registered,
+          "run timing is derived without anything registered in this process")
+
+    over = _run_timing(body(9999))
+    check(over["remaining_seconds"] == 0,
+          "an overrun run clamps remaining to zero instead of going negative")
+
+    # Absent is not zero. A missing field must stay missing so the model has
+    # nothing to round off into a confident number.
+    check("elapsed_seconds" not in _run_timing({"status": "queued"}),
+          "a run that has not started reports no elapsed time at all")
+    no_shape = _run_timing({"startTime": "2026-09-04 06:03:19"})
+    check("elapsed_seconds" in no_shape and "expected_seconds" not in no_shape,
+          "elapsed is still reported when the load shape is unavailable")
+    check("expected_seconds" not in _run_timing(
+              body(30, testScenario={"execution": [{"ramp-up": "15x",
+                                                    "hold-for": "60s"}]})),
+          "an unparseable duration drops expected rather than assuming seconds")
+
+    done = _run_timing({"startTime": "2026-09-04 06:03:19",
+                        "endTime": "2026-09-04 06:06:58"})
+    check(done["elapsed_seconds"] == 219,
+          "a finished run measures to endTime, not to now")
+
+    check("Twenty to thirty seconds" not in poll_test_status.tool_spec[
+              "description"],
+          "the unfollowable polling-interval instruction is gone")
+
+    print("in-call waiting (a sleep costs no tokens; a re-read costs a round trip)")
+    # Stub the DLT call so the wait path runs without AWS or real time: the run
+    # reports `running` for the first few reads, then `complete`.
+    reads: list[float] = []
+    slept: list[float] = []
+
+    def fake_call(method, url, region, body=None):
+        reads.append(time.monotonic())
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=200)
+        return 200, {
+            "status": "complete" if len(reads) >= 3 else "running",
+            "taskFailureCount": 0,
+            "startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+            "testScenario": {"execution": [{"ramp-up": "15s", "hold-for": "60s"}]},
+        }
+
+    real_call, real_sleep, real_cfg = dltm._sigv4_call, time.sleep, dict(dltm._config)
+    dltm._sigv4_call = fake_call
+    time.sleep = lambda s: slept.append(s)
+    dltm._config = {"api_endpoint": "https://example.invalid", "api_region": "us-east-2"}
+    try:
+        r = call(poll_test_status, test_id="t")
+        check(r["ok"] and len(reads) == 1 and not slept,
+              "the default reads once and never sleeps (cancel needs a fast read)")
+
+        reads.clear(); slept.clear()
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["status"] == "complete" and len(reads) == 3,
+              "waiting re-reads inside the one call until the run is terminal")
+        check(slept == [dltm._WAIT_GAP, dltm._WAIT_GAP],
+              f"it sleeps between reads, not between model calls (got {slept})")
+        check("waited_seconds" in r,
+              "the call reports how long it waited rather than leaving it implied")
+
+        # A run with more than _WAIT_OFFER_MAX left cannot be waited out inside
+        # one AgentCore request, so the wait path is declined -- but the read
+        # still succeeds, which is what keeps cancel_test reachable.
+        reads.clear(); slept.clear()
+        long_started = dt.datetime.now(dt.timezone.utc)
+
+        def long_run(method, url, region, body=None):
+            reads.append(time.monotonic())
+            return 200, {"status": "running", "taskFailureCount": 0,
+                         "startTime": long_started.strftime("%Y-%m-%d %H:%M:%S"),
+                         "testScenario": {"execution": [{"ramp-up": "30s",
+                                                         "hold-for": "40m"}]}}
+
+        dltm._sigv4_call = long_run
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["ok"] and r["status"] == "running" and not slept,
+              "a run too long to wait out still returns its status, unrefused")
+        check(r["remaining_seconds"] > dltm._WAIT_OFFER_MAX and len(reads) == 1,
+              "no waiting happens when the run outlasts a single request")
+    finally:
+        dltm._sigv4_call, time.sleep, dltm._config = real_call, real_sleep, real_cfg
 
     print("multi-engine dispatch")
     r12 = call(validate_script, script_path="/nonexistent.xyz")

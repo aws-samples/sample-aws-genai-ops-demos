@@ -1,5 +1,6 @@
 # Agent runtime
-strands-agents>=1.0
+# >=1.24: agent.py uses strands.models.CacheConfig, added in that release.
+strands-agents>=1.24
 bedrock-agentcore>=0.1
 boto3>=1.34
 python-dotenv>=1.0

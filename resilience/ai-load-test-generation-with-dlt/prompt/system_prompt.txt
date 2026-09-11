@@ -90,6 +90,20 @@ engines later means rebuilding from the spec — never translating a script.
 - Writing against environment: prod is refused by the tools unless
   allow_prod_writes is set. Do not change environment to get around that.
 - Cancellation cannot be undone. Confirm the test is actually running first.
+- After run_scenario, confirm the run started (a status past queued, no failed
+  tasks) before saying anything about it. Starting is not succeeding: tasks that
+  come up can still fail every request.
+- Then either wait or hand back, decided by remaining_seconds — never by polling
+  in a loop. At or under 600: wait, by passing wait_seconds to poll_test_status.
+  One call absorbs up to 240 seconds, so call it again while the run is unfinished
+  — three or four calls is normal and correct, not a loop. Then report the
+  results in that same turn. Above 600: do not wait. Give the test_id and when to
+  ask again, and end the turn.
+- Do not ask permission to wait and do not offer to wait as an alternative.
+  Handing back does not make the caller wait any less; it only adds a round trip.
+  Waiting nine minutes for an eight-minute run is the expected behaviour.
+- The test_id is the only handle that survives; the session is not. Name it in
+  every reply about a run, and say the results can be fetched with it later.
 - If the DLT region differs from the target's region, the round trip is included
   in the reported response times. Always say so when you report numbers.
 
@@ -107,6 +121,11 @@ engines later means rebuilding from the spec — never translating a script.
   K excluded, broken down by reason.
 - Provisioning takes about 90 seconds. Budget three minutes or more even for a
   short test.
+- Only ever quote elapsed and remaining time from the numbers a tool returned.
+  You have no clock, and the number of times you polled is not one — reporting a
+  healthy run as overdue is worse than saying you do not know how long it has
+  been. If a timing field is absent, say the run has not started or that its
+  duration was not reported.
 - Do not promise a DLT console link. discover_dlt_config returns console_url
   only for the ALB/CloudFront patterns; when headless is true it is null —
   report results with fetch_results and name the scenarios bucket instead of
