@@ -136,18 +136,34 @@ class TestSupportedFallback:
 # Existing service-specific behavior must not regress
 # ---------------------------------------------------------------------------
 
-class TestLambdaUnchanged:
+class TestLambda:
+    # Since #140 the whole runtimes page is extracted (supported + deprecated
+    # tables), so the verdict is date-driven instead of a blanket 'deprecated'.
     def test_block_date_in_past_is_end_of_life(self):
         item = {'block_function_create_date': _date(-10)}
         assert categorize_item_status(item, 'lambda') == 'end_of_life'
 
-    def test_block_date_in_future_is_deprecated(self):
-        item = {'block_function_create_date': _date(60)}
+    def test_config_field_names_block_update_date_is_honoured(self):
+        # The lambda config emits block_update_date / block_create_date
+        item = {'deprecation_date': _date(-400), 'block_update_date': _date(-10)}
+        assert categorize_item_status(item, 'lambda') == 'end_of_life'
+
+    def test_deprecated_but_not_yet_blocked_is_deprecated(self):
+        item = {'deprecation_date': _date(-100), 'block_update_date': _date(60)}
         assert categorize_item_status(item, 'lambda') == 'deprecated'
 
+    def test_future_deprecation_within_a_year_is_end_of_support_date(self):
+        item = {'deprecation_date': _date(200), 'block_update_date': _date(300)}
+        assert categorize_item_status(item, 'lambda') == 'end_of_support_date'
+
+    def test_future_deprecation_far_out_is_supported(self):
+        # e.g. python3.13, deprecation 2029
+        item = {'deprecation_date': _date(900), 'block_update_date': _date(960)}
+        assert categorize_item_status(item, 'lambda') == 'supported'
+
     def test_no_dates_is_deprecated(self):
-        # Lambda runtimes listed in the deprecation docs are deprecated by definition
-        item = {'name': 'python3.8'}
+        # Only the deprecated table has rows without dates (very old runtimes)
+        item = {'name': 'nodejs4.3'}
         assert categorize_item_status(item, 'lambda') == 'deprecated'
 
 

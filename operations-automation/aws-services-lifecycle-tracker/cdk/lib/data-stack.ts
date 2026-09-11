@@ -388,11 +388,30 @@ def handler(event, context):
             )
             print(f"✅ {config.get('name', service_name)}: Configuration saved (runtime state preserved)")
         
+        # Reconcile: the JSON is the single source of truth for WHICH services
+        # exist (issue #140). A service removed from service_configs.json must
+        # disappear from the table too, otherwise it keeps being extracted.
+        # Only the config table is touched; facts/inventory rows are the
+        # agent's and are left for the next refresh / manual cleanup.
+        removed = 0
+        scan_kwargs = {'ProjectionExpression': 'service_name'}
+        while True:
+            page = config_table.scan(**scan_kwargs)
+            for row in page.get('Items', []):
+                if row['service_name'] not in services_config:
+                    config_table.delete_item(Key={'service_name': row['service_name']})
+                    removed += 1
+                    print(f"🗑️  {row['service_name']}: removed (no longer in service_configs.json)")
+            if 'LastEvaluatedKey' not in page:
+                break
+            scan_kwargs['ExclusiveStartKey'] = page['LastEvaluatedKey']
+        
         return {
             'PhysicalResourceId': 'ServiceConfigPopulator',
             'Data': {
-                'Message': f'Successfully populated {len(services_config)} service configurations',
-                'ServiceCount': len(services_config)
+                'Message': f'Populated {len(services_config)} service configurations, removed {removed}',
+                'ServiceCount': len(services_config),
+                'RemovedCount': removed
             }
         }
         
@@ -405,8 +424,8 @@ def handler(event, context):
       },
     });
 
-    // Grant permissions to write to config table
-    this.configTable.grantWriteData(populatorFunction);
+    // Write (upsert/delete) plus read (scan for the reconcile step)
+    this.configTable.grantReadWriteData(populatorFunction);
 
     // Create custom resource provider
     const provider = new cr.Provider(this, 'ServiceConfigProvider', {
