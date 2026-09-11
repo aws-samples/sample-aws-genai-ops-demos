@@ -67,7 +67,8 @@ class LifecycleIndex:
     first, then prefix containment either way (longest indexed key wins).
     """
 
-    def __init__(self, table_name: str = "aws-services-lifecycle", region: str = None):
+    def __init__(self, table_name: str = None, region: str = None):
+        table_name = table_name or os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
         dynamodb = boto3.resource("dynamodb", region_name=region or REGION)
         self._table = dynamodb.Table(table_name)
         self._cache: Dict[str, Dict[str, Dict]] = {}

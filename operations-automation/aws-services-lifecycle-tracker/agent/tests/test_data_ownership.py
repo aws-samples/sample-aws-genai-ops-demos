@@ -234,8 +234,8 @@ class TestFactsTableGuard:
         """The discover_account branch must not hand a table name to
         discover_and_save - the default (inventory) has to win."""
         import inspect
-        import main
-        source = inspect.getsource(main)
+        import actions
+        source = inspect.getsource(actions)
         branch = source.split("elif action == 'discover_account':")[1].split("elif action ==")[0]
         assert "table_name" not in branch, (
             "discover_account must not pass table_name; discovery resolves the "

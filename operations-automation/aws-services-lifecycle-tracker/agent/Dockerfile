@@ -1,34 +1,15 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
-
-WORKDIR /app
-
-# Environment variables
-ENV UV_SYSTEM_PYTHON=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_NO_PROGRESS=1 \
-    PYTHONUNBUFFERED=1 \
-    DOCKER_CONTAINER=1
+# Single container image for both Lambda functions (issue #139):
+#   lifecycle-pipeline  -> lambda_pipeline.handler (durable)
+#   lifecycle-api       -> lambda_api.handler      (plain)
+# The CDK sets the handler per function via image CMD override.
+FROM public.ecr.aws/lambda/python:3.13
 
 # Install dependencies (separate layer for caching)
-COPY requirements.txt .
-RUN uv pip install -r requirements.txt && \
-    uv pip install aws-opentelemetry-distro>=0.10.1
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
-# Create non-root user
-RUN useradd -m -u 1000 bedrock_agentcore
+# Application code
+COPY . ${LAMBDA_TASK_ROOT}/
 
-# Copy application code
-COPY . .
-
-# Switch to non-root user
-USER bedrock_agentcore
-
-# AgentCore HTTP endpoint
-EXPOSE 8080
-
-# Health check using the /ping endpoint provided by AgentCore SDK
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping', timeout=3)" || exit 1
-
-# Run agent with OpenTelemetry instrumentation
-CMD ["opentelemetry-instrument", "python", "-m", "main"]
+# Default handler; overridden per function in CDK
+CMD ["lambda_api.handler"]
