@@ -97,6 +97,7 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
         'end_of_support_date', 'end_of_life_date', 'eol_date',
         'deprecation_date', 'deprecated_date', 'sunset_date',
         'block_function_create_date', 'block_function_update_date',
+        'block_create_date', 'block_update_date',
         'target_retirement_date', 'retirement_date',
         'end_of_standard_support_date', 'end_of_extended_support_date'
     ]
@@ -110,15 +111,23 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
     
     # SERVICE-SPECIFIC LOGIC
     
-    # Lambda: Simple deprecated → end_of_life lifecycle (no extended support)
+    # Lambda: deprecation date -> deprecated; block-update date -> end_of_life
+    # (no extended support tier). The docs page lists supported runtimes with
+    # their *future* deprecation dates too (#140): those are 'supported' until
+    # the date passes, or 'end_of_support_date' once the date is within a year.
     if service_name == 'lambda':
-        # Check for block dates (when functions can't be created/updated)
-        if 'block_function_create_date' in parsed_dates or 'block_function_update_date' in parsed_dates:
-            block_date = parsed_dates.get('block_function_create_date') or parsed_dates.get('block_function_update_date')
-            if block_date <= current_date:
-                return 'end_of_life'  # Runtime is blocked
-        
-        # Lambda runtimes are just deprecated until they're blocked
+        block_date = (parsed_dates.get('block_update_date') or parsed_dates.get('block_function_update_date')
+                      or parsed_dates.get('block_create_date') or parsed_dates.get('block_function_create_date'))
+        if block_date and block_date <= current_date:
+            return 'end_of_life'  # Runtime is blocked
+        dep_date = parsed_dates.get('deprecation_date') or parsed_dates.get('deprecated_date')
+        if dep_date:
+            if dep_date <= current_date:
+                return 'deprecated'
+            if (dep_date - current_date).days <= 365:
+                return 'end_of_support_date'  # Deprecation announced, less than a year out
+            return 'supported'
+        # Listed without any date: only the deprecated table lacks dates (very old runtimes)
         return 'deprecated'
     
     # MSK: end_of_support_date is a display label, not a lifecycle verdict (#119).

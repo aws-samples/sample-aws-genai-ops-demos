@@ -5,7 +5,7 @@
       "documentation_urls": [
         "https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html#runtimes-deprecated"
       ],
-      "extraction_focus": "Locate the 'Supported runtimes' or 'Deprecated runtimes' tables. Focus on the most important deprecation or block items from 2024 and later. For each runtime, extract: runtime name, runtime identifier, operating system, deprecation_date, block_create_date, and block_update_date.",
+      "extraction_focus": "Locate the 'Deprecated runtimes' table (columns: Name, Identifier, Operating system, Deprecation date, Block function create, Block function update). Extract EVERY row of that table, regardless of how old the deprecation date is - functions in an account may still run any of them. For each runtime, extract: runtime name, runtime identifier, operating system, deprecation_date, block_create_date, and block_update_date.",
       "schema_key": "runtimes",
       "item_properties": {
         "name": "Runtime name",
