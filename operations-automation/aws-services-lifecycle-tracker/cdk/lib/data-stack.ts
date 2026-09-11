@@ -9,6 +9,8 @@ import * as fs from 'fs';
 export class DataStack extends cdk.Stack {
   public readonly lifecycleTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
+  public readonly stateTable: dynamodb.Table;
+  public readonly inventoryTable: dynamodb.Table;
   public readonly actionPlanTable: dynamodb.Table;
   public readonly healthEventsTable: dynamodb.Table;
 
@@ -65,6 +67,53 @@ export class DataStack extends cdk.Stack {
       tableName: 'service-extraction-config',
       partitionKey: {
         name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Agent-owned runtime state table (issue #116, Option B).
+    // Extraction metadata (extraction_count, last_extraction, success_rate,
+    // last_refresh_origin, last_extraction_duration) and the health-collection
+    // control rows (_health_collection_failures, _health_collection_lock) live
+    // here, physically separated from the repo-owned configuration table so no
+    // deploy-time writer can touch runtime state: the populator has no grant on
+    // this table, and the agent has no full-item write on the config table.
+    // TTL enabled for the concurrency-lock row's expires_at-based cleanup.
+    this.stateTable = new dynamodb.Table(this, 'StateTable', {
+      tableName: 'service-extraction-state',
+      partitionKey: {
+        name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Account inventory table (issue #116 follow-on): discovered assets from
+    // account scans live here, fully decoupled from the public deprecation
+    // facts in aws-services-lifecycle. Discovery is this table's only writer;
+    // reconciliation scans stay confined to this small table instead of
+    // sweeping the growing facts table. Same key shape as the lifecycle table
+    // so read paths can union rows, and ready to grow account_id/region
+    // dimensions for the multi-account roadmap (#99 I4).
+    this.inventoryTable = new dynamodb.Table(this, 'InventoryTable', {
+      tableName: 'aws-account-inventory',
+      partitionKey: {
+        name: 'service_name',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'item_id',
         type: dynamodb.AttributeType.STRING,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -183,6 +232,30 @@ export class DataStack extends cdk.Stack {
       exportName: 'AWSServicesLifecycleTrackerConfigTableArn',
     });
 
+    new cdk.CfnOutput(this, 'InventoryTableName', {
+      value: this.inventoryTable.tableName,
+      description: 'DynamoDB table for discovered account inventory (issue #116)',
+      exportName: 'AWSServicesLifecycleTrackerInventoryTableName',
+    });
+
+    new cdk.CfnOutput(this, 'InventoryTableArn', {
+      value: this.inventoryTable.tableArn,
+      description: 'DynamoDB table ARN for discovered account inventory',
+      exportName: 'AWSServicesLifecycleTrackerInventoryTableArn',
+    });
+
+    new cdk.CfnOutput(this, 'StateTableName', {
+      value: this.stateTable.tableName,
+      description: 'DynamoDB table for agent-owned runtime state (issue #116)',
+      exportName: 'AWSServicesLifecycleTrackerStateTableName',
+    });
+
+    new cdk.CfnOutput(this, 'StateTableArn', {
+      value: this.stateTable.tableArn,
+      description: 'DynamoDB table ARN for agent-owned runtime state',
+      exportName: 'AWSServicesLifecycleTrackerStateTableArn',
+    });
+
     new cdk.CfnOutput(this, 'ActionPlanTableName', {
       value: this.actionPlanTable.tableName,
       description: 'DynamoDB table for deprecation action plans',
@@ -274,8 +347,18 @@ def handler(event, context):
         
         for service_name, config in services_config.items():
             update_parts = []
+            remove_parts = []
             expr_names = {}
             expr_values = {}
+            # Evict runtime-state attributes that older deployments wrote into
+            # config rows. They now live in the service-extraction-state table
+            # (issue #116) and stale copies here would be a second, silently
+            # diverging source of truth. REMOVE on an absent attribute is a
+            # no-op, so this is safe on every deploy.
+            for stale_field in sorted(RUNTIME_FIELDS):
+                name_ph = f'#r{len(expr_names)}'
+                expr_names[name_ph] = stale_field
+                remove_parts.append(name_ph)
             for key, value in config.items():
                 if key == 'service_name' or key in RUNTIME_FIELDS:
                     continue
@@ -293,9 +376,13 @@ def handler(event, context):
             if not update_parts:
                 continue
             
+            update_expression = 'SET ' + ', '.join(update_parts)
+            if remove_parts:
+                update_expression += ' REMOVE ' + ', '.join(remove_parts)
+            
             config_table.update_item(
                 Key={'service_name': service_name},
-                UpdateExpression='SET ' + ', '.join(update_parts),
+                UpdateExpression=update_expression,
                 ExpressionAttributeNames=expr_names,
                 ExpressionAttributeValues=expr_values,
             )

@@ -141,9 +141,11 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // DynamoDB permissions for lifecycle data and configuration
+    // DynamoDB permissions for agent-owned tables: lifecycle data, runtime
+    // state (issue #116, Option B), action plans, and health events. The agent
+    // is the sole writer of these tables.
     agentRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'DynamoDBAccess',
+      sid: 'DynamoDBAgentOwnedAccess',
       effect: iam.Effect.ALLOW,
       actions: [
         'dynamodb:GetItem',
@@ -158,12 +160,36 @@ export class AWSServicesLifecycleTrackerInfraStack extends cdk.Stack {
       resources: [
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-services-lifecycle`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-services-lifecycle/index/*`,
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config`,
-        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config/index/*`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-state`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-state/index/*`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-account-inventory`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-account-inventory/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/deprecation-action-plans/index/*`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-health-events`,
         `arn:aws:dynamodb:${this.region}:${this.account}:table/aws-health-events/index/*`,
+      ],
+    }));
+
+    // Repo-owned configuration table: the agent may read it and update
+    // existing rows (the UI's update_service path, e.g. the enabled toggle),
+    // but it gets no PutItem/DeleteItem - full-item writes to configuration
+    // are reserved for the deploy-time populator. Together with the populator
+    // having no grant on the state table, this makes the config/state
+    // ownership boundary IAM-enforced (issue #116, Option B).
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DynamoDBConfigReadAndUpdate',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+        'dynamodb:BatchGetItem',
+      ],
+      resources: [
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/service-extraction-config/index/*`,
       ],
     }));
 

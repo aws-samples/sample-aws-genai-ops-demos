@@ -390,8 +390,9 @@ def generate_config_template(candidates: list[dict]) -> dict:
             "required_fields": required_fields,
             "enabled": True,
             "health_event_mapping": service_name.upper().replace("_", ""),
-            "last_extraction": "",
-            "extraction_count": 0,
+            # Runtime state (extraction_count, last_extraction, ...) is
+            # agent-owned and lives in the service-extraction-state table
+            # (issue #116) - config entries never carry it.
         }
         services[service_name] = config_entry
 

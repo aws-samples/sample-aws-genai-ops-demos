@@ -32,9 +32,16 @@ region = get_region()
 dynamodb = boto3.resource('dynamodb', region_name=region)
 LIFECYCLE_TABLE_NAME = os.environ.get('LIFECYCLE_TABLE_NAME', 'aws-services-lifecycle')
 CONFIG_TABLE_NAME = os.environ.get('CONFIG_TABLE_NAME', 'service-extraction-config')
+# Agent-owned runtime state (issue #116, Option B): extraction metadata and
+# health-collection control rows live here, separate from repo-owned config.
+STATE_TABLE_NAME = os.environ.get('STATE_TABLE_NAME', 'service-extraction-state')
+# Discovered account inventory - decoupled from the public deprecation facts.
+INVENTORY_TABLE_NAME = os.environ.get('INVENTORY_TABLE_NAME', 'aws-account-inventory')
 
 lifecycle_table = dynamodb.Table(LIFECYCLE_TABLE_NAME)
 config_table = dynamodb.Table(CONFIG_TABLE_NAME)
+state_table = dynamodb.Table(STATE_TABLE_NAME)
+inventory_table = dynamodb.Table(INVENTORY_TABLE_NAME)
 
 
 def convert_decimals(obj):
@@ -85,16 +92,31 @@ def list_services() -> dict:
             response = config_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
             services.extend(response.get('Items', []))
         
-        # Exclude internal control rows (issue #98 follow-up): the config table
-        # also stores non-service bookkeeping items with '_'-prefixed keys
-        # (e.g. _health_collection_failures, _health_collection_disabled,
-        # _health_collection_lock) written by health_monitoring.py and
-        # concurrency_lock.py. These must not surface in the Services UI. This
-        # mirrors the same guard used in main._handle_collect_health_events.
+        # Defensive guard (issue #98 follow-up): control rows moved to the
+        # state table under issue #116, but keep filtering '_'-prefixed keys
+        # in case legacy rows remain in an existing deployment's config table.
         services = [
             s for s in services
             if not str(s.get('service_name', '')).startswith('_')
         ]
+        
+        # Merge agent-owned runtime state (issue #116, Option B) into each
+        # config row so the UI keeps its single ServiceConfig shape. Only
+        # state for known services is merged, so control rows in the state
+        # table never surface here.
+        state_response = state_table.scan()
+        state_items = state_response.get('Items', [])
+        while 'LastEvaluatedKey' in state_response:
+            state_response = state_table.scan(ExclusiveStartKey=state_response['LastEvaluatedKey'])
+            state_items.extend(state_response.get('Items', []))
+        state_by_service = {s['service_name']: s for s in state_items if 'service_name' in s}
+        for service in services:
+            state = state_by_service.get(service.get('service_name'))
+            if state:
+                for field in ('extraction_count', 'last_extraction', 'success_rate',
+                              'last_refresh_origin', 'last_extraction_duration'):
+                    if field in state:
+                        service[field] = state[field]
         
         services = convert_decimals(services)
         return {'services': services}
@@ -112,31 +134,36 @@ def list_deprecations(filters: dict = None) -> dict:
     try:
         filters = filters or {}
         
-        if filters.get('service'):
-            response = lifecycle_table.query(
-                KeyConditionExpression='service_name = :service',
-                ExpressionAttributeValues={':service': filters['service']}
-            )
-        else:
-            response = lifecycle_table.scan()
-        
-        items = response.get('Items', [])
-        
-        while 'LastEvaluatedKey' in response:
+        def _collect(table):
             if filters.get('service'):
-                response = lifecycle_table.query(
+                response = table.query(
                     KeyConditionExpression='service_name = :service',
-                    ExpressionAttributeValues={':service': filters['service']},
-                    ExclusiveStartKey=response['LastEvaluatedKey']
+                    ExpressionAttributeValues={':service': filters['service']}
                 )
             else:
-                response = lifecycle_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
-            items.extend(response.get('Items', []))
+                response = table.scan()
+            
+            rows = response.get('Items', [])
+            
+            while 'LastEvaluatedKey' in response:
+                if filters.get('service'):
+                    response = table.query(
+                        KeyConditionExpression='service_name = :service',
+                        ExpressionAttributeValues={':service': filters['service']},
+                        ExclusiveStartKey=response['LastEvaluatedKey']
+                    )
+                else:
+                    response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+                rows.extend(response.get('Items', []))
+            return rows
+        
+        # Union: public deprecation facts + the account's discovered inventory
+        # (issue #116 - inventory lives in its own table; rows stay
+        # distinguishable via the inventory# item_id prefix and provenance tag).
+        items = _collect(lifecycle_table) + _collect(inventory_table)
         
         if filters.get('status'):
             items = [item for item in items if item.get('status') == filters['status']]
-        
-
         
         items = convert_decimals(items)
         return {'items': items}

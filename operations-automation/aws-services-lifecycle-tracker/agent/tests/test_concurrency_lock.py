@@ -36,7 +36,7 @@ class TestAcquireLock:
         import concurrency_lock
         concurrency_lock._current_lock_holder = None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_success(self, mock_config_table):
         """Lock acquisition succeeds when no lock exists."""
         import concurrency_lock
@@ -57,7 +57,7 @@ class TestAcquireLock:
         assert 'acquired_at' in item
         assert 'expires_at' in item
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_failure_concurrent(self, mock_config_table):
         """Lock acquisition fails when lock is already held."""
         import concurrency_lock
@@ -77,7 +77,7 @@ class TestAcquireLock:
         assert result is False
         assert concurrency_lock._current_lock_holder is None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_custom_table(self, mock_config_table):
         """Lock acquisition uses the custom table when specified."""
         import concurrency_lock
@@ -92,7 +92,7 @@ class TestAcquireLock:
         assert result is True
         mock_ddb.Table.assert_called_with('custom-table')
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_custom_lock_id(self, mock_config_table):
         """Lock uses the specified lock_id as service_name."""
         import concurrency_lock
@@ -105,7 +105,7 @@ class TestAcquireLock:
         call_kwargs = mock_config_table.put_item.call_args[1]
         assert call_kwargs['Item']['service_name'] == '_custom_lock'
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_ttl_calculation(self, mock_config_table):
         """Lock expires_at is correctly calculated from ttl_minutes."""
         import concurrency_lock
@@ -125,7 +125,7 @@ class TestAcquireLock:
         # Should be approximately 15 minutes
         assert 14 * 60 <= delta.total_seconds() <= 16 * 60
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_condition_expression(self, mock_config_table):
         """Condition expression allows overwriting expired locks."""
         import concurrency_lock
@@ -141,7 +141,7 @@ class TestAcquireLock:
         assert 'attribute_not_exists' in condition
         assert 'expires_at' in condition
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_acquire_lock_propagates_unexpected_errors(self, mock_config_table):
         """Non-conditional-check errors are propagated."""
         import concurrency_lock
@@ -168,7 +168,7 @@ class TestReleaseLock:
         import concurrency_lock
         concurrency_lock._current_lock_holder = None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_release_lock_success(self, mock_config_table):
         """Lock is released when we hold it."""
         import concurrency_lock
@@ -186,7 +186,7 @@ class TestReleaseLock:
         assert call_kwargs['ExpressionAttributeValues'][':holder'] == holder_id
         assert concurrency_lock._current_lock_holder is None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_release_lock_noop_when_not_held(self, mock_config_table):
         """Release does nothing when no lock is held by this process."""
         import concurrency_lock
@@ -197,7 +197,7 @@ class TestReleaseLock:
 
         mock_config_table.delete_item.assert_not_called()
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_release_lock_fails_silently_if_someone_else_holds(self, mock_config_table):
         """Release fails silently if another holder took over."""
         import concurrency_lock
@@ -218,7 +218,7 @@ class TestReleaseLock:
         concurrency_lock.release_lock()
         assert concurrency_lock._current_lock_holder is None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_release_lock_propagates_unexpected_errors(self, mock_config_table):
         """Non-conditional-check errors are propagated on release."""
         import concurrency_lock
@@ -238,7 +238,7 @@ class TestReleaseLock:
         with pytest.raises(ClientError):
             concurrency_lock.release_lock()
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_release_lock_custom_lock_id(self, mock_config_table):
         """Release uses specified lock_id."""
         import concurrency_lock
@@ -260,7 +260,7 @@ class TestAcquireAndReleaseCycle:
         import concurrency_lock
         concurrency_lock._current_lock_holder = None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_full_cycle(self, mock_config_table):
         """Acquire then release completes cleanly."""
         import concurrency_lock
@@ -277,7 +277,7 @@ class TestAcquireAndReleaseCycle:
         concurrency_lock.release_lock()
         assert concurrency_lock._current_lock_holder is None
 
-    @patch('concurrency_lock.config_table')
+    @patch('concurrency_lock.state_table')
     def test_lock_holder_is_uuid(self, mock_config_table):
         """Lock holder is a valid UUID."""
         import concurrency_lock
