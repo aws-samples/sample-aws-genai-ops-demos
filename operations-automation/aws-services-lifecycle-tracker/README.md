@@ -98,6 +98,46 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 
 **Time:** ~5 minutes. The scripts deploy Data → Auth → Pipeline → Api, build the frontend with the API URL and Cognito IDs, then deploy Frontend, and finish with the website URL, the pipeline alias ARN and the SNS topic.
 
+By default the tracker scans **the account and region you deploy into**. Nothing else is needed for a single account.
+
+### Optional: scan a whole AWS Organization (multi-account)
+
+Hub-and-spoke: the account you deploy into is the **hub**. It lists the organization's accounts with AWS Organizations and assumes a read-only **spoke role** (`LifecycleTrackerScanRole`) in each of them. The spoke role is one IAM role (List/Describe permissions of the 11 scanners + AWS Health read) that trusts only the hub's pipeline role; a **service-managed CloudFormation StackSet** deployed from the hub places it in every member account and in accounts that join later.
+
+```powershell
+.\deploy-all.ps1 -MultiAccount                                   # whole organization
+.\deploy-all.ps1 -MultiAccount -OrgTargets "ou-abcd-11111111,ou-abcd-22222222"   # only these OUs
+```
+```bash
+./deploy-all.sh --multi-account
+./deploy-all.sh --multi-account --org-targets "ou-abcd-11111111,ou-abcd-22222222"
+```
+
+The scripts first run the shared read-only preflight `shared/scripts/check-org-access` and branch on its result:
+
+| Preflight result | What the script does |
+|---|---|
+| Hub can list accounts **and** run service-managed StackSets (it is the management account or a [StackSets delegated administrator](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-delegated-admin.html)) | Deploys the **Org stack** (StackSet) after the Pipeline stack and sets the scan targets. Done. |
+| Hub can list accounts but cannot run StackSets | Deploys everything except the Org stack and prints the one `cdk deploy ... --context hubAccountId=<hub>` command a **management-account** admin runs once. Until then spoke accounts show as failed in scan summaries. |
+| Hub cannot list accounts | Stops with the fix (the management account has to delegate the Organizations read APIs to the hub through the organization's resource-based policy, or make the hub a delegated administrator). Use a manual account list instead (below). |
+
+Prerequisites that only the management account can set: [trusted access for StackSets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-enable-trusted-access.html) (AWS Organizations console → Services → CloudFormation StackSets), and, if the hub is a member account, its registration as StackSets delegated administrator. The preflight prints the exact commands.
+
+**What the scan does per account.** Every (account, region, scanner) triple is one durable step; a spoke that cannot be assumed fails only its own cells and is listed in the summary (`accounts_failed`), the rest of the run is unaffected. Inventory rows are keyed `inventory#<account>#<region>#<identifier>` and carry `account_id` / `account_name`; the AWS Health cross-check runs per account with the assumed role (it needs a Business/Enterprise Support plan *in that account*). The hub is always scanned with its own credentials.
+
+**Manual account list** (no Organizations access, or a handful of accounts): deploy the Spoke stack yourself in each account and write the targets row. The Spoke stack needs no `cdk bootstrap`.
+
+```powershell
+# in each spoke account (any credentials with IAM rights there)
+cd cdk; npx cdk deploy AWSServicesLifecycleTrackerSpoke-<region> --context hubAccountId=<HUB_ACCOUNT_ID>
+# in the hub: what to scan (control row of the state table)
+aws dynamodb put-item --table-name service-extraction-state --item '{"service_name":{"S":"_scan_targets"},"source":{"S":"manual"},"accounts":{"L":[{"M":{"id":{"S":"222222222222"},"name":{"S":"Account A"}}}]},"regions":{"L":[{"S":"eu-central-1"},{"S":"us-east-1"}]}}'
+```
+
+`_scan_targets` fields: `source` (`hub` | `manual` | `organization` | `ou`), `accounts` (manual list, also the fallback when Organizations denies access), `ou_ids`, `exclude_accounts`, `regions` (default: the deployment region). The last run's resolved account list (names, OU paths, errors) is stored in the `_scan_accounts` row and shown in the UI under Sources & coverage.
+
+Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeline and the Spoke/Org stacks to add an `sts:ExternalId` condition to the spoke trust policy.
+
 ### Test Your System
 
 1. **Create an admin user** with the two `aws cognito-idp` commands printed at the end of the deployment, then sign in at the CloudFront URL.
@@ -138,6 +178,8 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 | **AWSServicesLifecycleTrackerPipeline-{region}** | Refresh pipeline (main stack) | Lambda durable function + `live` alias, API Lambda, SNS topic, SQS DLQ, EventBridge schedules, IAM | Data |
 | **AWSServicesLifecycleTrackerApi-{region}** | UI API | API Gateway HTTP API + Cognito JWT authorizer | Pipeline, Auth |
 | **AWSServicesLifecycleTrackerFrontend-{region}** | Admin interface | S3 bucket, CloudFront distribution, React UI | Api, Auth |
+| **AWSServicesLifecycleTrackerSpoke-{region}** *(multi-account, per spoke account)* | Read-only scan role | IAM role `LifecycleTrackerScanRole` trusting the hub pipeline role; no bootstrap needed | None |
+| **AWSServicesLifecycleTrackerOrg-{region}** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying CloudFormation StackSet whose template is the Spoke stack | Organizations trusted access |
 
 ## Project Structure
 
@@ -149,7 +191,8 @@ project-root/
 │   ├── actions.py                  # Action router (list/update services, plans, scanners, ...)
 │   ├── workflow_orchestrator.py    # Single-service extraction workflow
 │   ├── data_extractor.py           # HTML parsing + Amazon Nova normalization
-│   ├── account_discovery.py        # Account scanners + inventory reconciliation
+│   ├── account_discovery.py        # Account scanners + inventory reconciliation (per account/region)
+│   ├── org_targets.py              # Scan targets: organization / OU / manual list -> accounts (#144)
 │   ├── database_reads.py           # READ operations (metrics, configs, deprecations)
 │   ├── database_writes.py          # WRITE operations + status categorization
 │   ├── action_plans.py             # Plan of Action CRUD

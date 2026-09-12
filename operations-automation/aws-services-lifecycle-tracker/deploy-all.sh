@@ -2,11 +2,30 @@
 # AWS Services Lifecycle Tracker - Complete Deployment Script
 # macOS/Linux version - mirrors deploy-all.ps1
 #
-# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Frontend
+# Stacks (in order): Data -> Auth -> Pipeline -> [Org] -> Api -> Frontend
 # No Docker needed: the Lambda bundle is built locally with pip (pure-Python
 # dependencies resolved as Linux/arm64 wheels).
+#
+# Default: scans the account you deploy into (single-account).
+# --multi-account: hub-and-spoke scan of an AWS Organization from this account
+#   (the "hub"). Runs shared/scripts/check-org-access.sh first; when the hub may
+#   run service-managed StackSets, the Org stack rolls the read-only spoke role
+#   out to every member account. Otherwise the hub stacks still deploy and the
+#   one command a management-account admin has to run is printed.
+# --org-targets <ids>: comma-separated organization root (r-xxxx) and/or OU ids
+#   to scan and roll out to. Default: the whole organization (its root).
 
 set -e  # Exit on error
+
+MULTI_ACCOUNT=false
+ORG_TARGETS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --multi-account) MULTI_ACCOUNT=true; shift ;;
+        --org-targets) ORG_TARGETS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--multi-account] [--org-targets r-xxxx,ou-xxxx-yyyyyyyy]"; exit 1 ;;
+    esac
+done
 
 echo -e "\033[0;36m=== AWS Services Lifecycle Tracker Deployment ===\033[0m"
 
@@ -36,6 +55,33 @@ fi
 # encoded in stack names always matches the region stacks are deployed into.
 region="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region)}}"
 
+# Multi-account preflight (read-only; exit codes documented in check-org-access.sh)
+ORG_ROLLOUT=false
+if [ "$MULTI_ACCOUNT" = true ]; then
+    echo -e "\n\033[0;33mChecking multi-account (organization) access...\033[0m"
+    set +e
+    ../../shared/scripts/check-org-access.sh
+    org_check=$?
+    set -e
+    if [ $org_check -eq 2 ]; then
+        echo -e "\033[0;31mThis account cannot list the organization's accounts, so --multi-account is not possible from here.\033[0m"
+        echo -e "\033[0;33mApply the fix printed above, or deploy without --multi-account and add accounts manually (see README, 'Manual account list').\033[0m"
+        exit 1
+    elif [ $org_check -ne 0 ] && [ $org_check -ne 3 ]; then
+        echo -e "\033[0;31mMulti-account preflight failed\033[0m"
+        exit 1
+    fi
+    [ $org_check -eq 0 ] && ORG_ROLLOUT=true
+    if [ -z "$ORG_TARGETS" ]; then
+        ORG_TARGETS=$(aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager)
+    fi
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo -e "\033[0;90m      Scan targets: $ORG_TARGETS (spoke role rolled out from this account)\033[0m"
+    else
+        echo -e "\033[0;90m      Scan targets: $ORG_TARGETS (spoke role rollout must be run by the management account)\033[0m"
+    fi
+fi
+
 # Deploy data stack
 echo -e "\n\033[0;33mDeploying data stack...\033[0m"
 echo -e "\033[0;90m      (Creating DynamoDB tables and populating service configurations)\033[0m"
@@ -50,6 +96,31 @@ echo -e "\033[0;90m      (Creating Cognito User Pool with email verification and
 echo -e "\n\033[0;33mDeploying pipeline stack...\033[0m"
 echo -e "\033[0;90m      (Bundling Python code with pip, creating the Lambda durable function, API function, SNS topic and schedules)\033[0m"
 ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerPipeline-$region" --skip-bootstrap
+
+# Multi-account: roll the spoke role out (StackSet) and tell the pipeline what to scan
+if [ "$MULTI_ACCOUNT" = true ]; then
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo -e "\n\033[0;33mDeploying org stack (spoke role StackSet)...\033[0m"
+        echo -e "\033[0;90m      (Service-managed StackSet placing the read-only LifecycleTrackerScanRole in every account under $ORG_TARGETS)\033[0m"
+        ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "AWSServicesLifecycleTrackerOrg-$region" --skip-bootstrap --cdk-context "orgTargets=$ORG_TARGETS"
+    fi
+
+    echo -e "\n\033[0;33mConfiguring scan targets...\033[0m"
+    regions_json="[{\"S\": \"$region\"}]"
+    if [[ ",$ORG_TARGETS," == *",ou-"* ]]; then
+        ou_json=""
+        IFS=',' read -ra target_ids <<< "$ORG_TARGETS"
+        for t in "${target_ids[@]}"; do
+            t="${t// /}"; [ -z "$t" ] && continue
+            ou_json="$ou_json${ou_json:+,}{\"S\": \"$t\"}"
+        done
+        item="{\"service_name\": {\"S\": \"_scan_targets\"}, \"source\": {\"S\": \"ou\"}, \"ou_ids\": {\"L\": [$ou_json]}, \"regions\": {\"L\": $regions_json}}"
+    else
+        item="{\"service_name\": {\"S\": \"_scan_targets\"}, \"source\": {\"S\": \"organization\"}, \"regions\": {\"L\": $regions_json}}"
+    fi
+    aws dynamodb put-item --table-name "service-extraction-state" --item "$item" --no-cli-pager
+    echo -e "\033[0;90m      Scan targets set: $ORG_TARGETS in $region (editable later in the UI, Sources & coverage)\033[0m"
+fi
 
 # Deploy API stack (HTTP API + Cognito JWT authorizer)
 echo -e "\n\033[0;33mDeploying API stack...\033[0m"
@@ -109,3 +180,17 @@ echo -e "\033[0;90m  2. Sign in at the Website URL above and click Refresh to ru
 echo -e "\033[0;90m  3. Optional: subscribe an email to the notifications topic to receive run summaries:\033[0m"
 echo -e "     aws sns subscribe --topic-arn $topic_arn --protocol email --notification-endpoint you@example.com"
 echo -e "\033[0;90m  4. The weekly schedule runs the same pipeline automatically; Health events are polled hourly\033[0m"
+if [ "$MULTI_ACCOUNT" = true ]; then
+    hub_account=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+    echo -e "\n\033[0;33mMulti-account:\033[0m"
+    echo -e "\033[0;90m  Hub account $hub_account scans every active account under $ORG_TARGETS in $region\033[0m"
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo -e "\033[0;90m  Spoke role: StackSet aws-services-lifecycle-tracker-spoke (auto-deploys to accounts joining later)\033[0m"
+        echo -e "     aws cloudformation list-stack-instances --stack-set-name aws-services-lifecycle-tracker-spoke --region $region"
+    else
+        echo -e "\033[0;33m  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:\033[0m"
+        echo -e "     cd cdk && npx cdk deploy AWSServicesLifecycleTrackerOrg-$region --context orgTargets=$ORG_TARGETS --context hubAccountId=$hub_account --require-approval never"
+        echo -e "\033[0;90m     (or register this account as a StackSets delegated administrator, see the preflight output above, and re-run with --multi-account)\033[0m"
+        echo -e "\033[0;90m  Until then, spoke accounts are reported as failed in each scan; the hub itself is scanned normally.\033[0m"
+    fi
+fi

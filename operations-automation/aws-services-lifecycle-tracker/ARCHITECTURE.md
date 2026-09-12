@@ -28,6 +28,7 @@ The AWS Services Lifecycle Tracker is a serverless application that keeps two th
 │ Bedrock/Nova  │◀┤  start-run → map extract-<svc> → map scan-<Scanner>-<region> │
 │ Account APIs  │◀┤  → reconcile-inventory → summarize-and-notify (SNS)          │
 └───────────────┘ └──────────────┬───────────────────────────────────────────────┘
+        ▲ sts:AssumeRole LifecycleTrackerScanRole (multi-account: one per spoke account)
                                  ▼
                  ┌──────────────────────────────────────────────────────────────┐
                  │ DynamoDB                                                     │
@@ -48,6 +49,8 @@ EventBridge Scheduler ──▶ API Lambda:  weekly {"action":"start_refresh"}
 | **Pipeline** (main) | Refresh pipeline | Durable Lambda (`durableConfig` 2 h / 14 d) + `live` alias, API Lambda, shared data-access managed policy, SNS topic, SQS DLQ, EventBridge schedules, log groups |
 | **Api** | UI API | HTTP API, JWT authorizer, Lambda integration, CORS |
 | **Frontend** | Admin UI | S3 static hosting, CloudFront distribution with OAC |
+| **Spoke** *(multi-account, per spoke account)* | Read-only scan role | `LifecycleTrackerScanRole` (`scan-permissions.ts`: scanner List/Describe + Health read), trust = hub account root + `aws:PrincipalArn` = hub pipeline role, optional ExternalId. `BootstraplessSynthesizer`: plain IAM, no CDK bootstrap |
+| **Org** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying `CfnStackSet` targeting the given root/OUs minus the hub; its `TemplateBody` is the Spoke stack synthesized in-process, so a hand-deployed and a StackSet-deployed spoke are identical |
 
 ### Dependency Graph
 
@@ -55,6 +58,7 @@ EventBridge Scheduler ──▶ API Lambda:  weekly {"action":"start_refresh"}
 Data ──▶ Pipeline ──▶ Api ──▶ Frontend
 Auth ────────────────▶ Api
 Auth ─────────────────────────▶ Frontend
+Org (hub) ──StackSet──▶ Spoke (every member account)      # multi-account only
 ```
 
 Both Lambda functions are built from the same `backend/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.14 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
@@ -65,10 +69,10 @@ Both Lambda functions are built from the same `backend/` directory. `pipeline-st
 
 | Step | Kind | What it does |
 |------|------|--------------|
-| `start-run` | step | Mints `run_id`, timestamp, region list and resolves enabled services - the only place non-deterministic values are produced |
+| `start-run` | step | Mints `run_id`, timestamp, resolves enabled services and the **scan targets** (`org_targets.resolve_targets`: `_scan_targets` row → accounts via Organizations for `organization`/`ou`, manual list otherwise; hub always first; result persisted as `_scan_accounts`) - the only place non-deterministic values are produced |
 | `extract` | map, `max_concurrency=5`, `tolerated_failure_percentage=100` | One step `extract-<service>` per service (3 attempts, backoff): fetch docs → BeautifulSoup → Nova normalization → write facts + metadata. Returns counts only |
-| `scan` | map, same policy | One step `scan-<Scanner>-<region>` per scanner × region (2 attempts): `discover_*()` against account APIs, matched against the facts via `LifecycleIndex`. Returns the discovered items |
-| `reconcile-inventory` | step | `save_to_dynamodb(items, run_id, scanned_services)`: upserts this run's rows and removes stale rows **only** for scopes whose scan step succeeded |
+| `scan` | map, `max_concurrency=10`, same policy | One step `scan-<Scanner>-<account>-<region>` per scanner × account × region (2 attempts): `discover_*()` against account APIs with the hub credentials or an assumed spoke-role session (`session_for_account`), matched against the facts via `LifecycleIndex`. Returns the discovered items stamped with `account_id`/`account_name` |
+| `reconcile-inventory` | step | `save_to_dynamodb(items, run_id, scanned_scopes)`: upserts this run's rows (`inventory#<account>#<region>#<id>`) and removes stale rows **only** for (account, region, service) scopes whose scan step succeeded |
 | `summarize-and-notify` | step | Builds the run summary (execution result read by the UI) and publishes it to SNS |
 
 Input contract: `{"mode": "full" | "extract" | "scan", "services"?: [...], "regions"?: [...], "refresh_origin": "manual" | "Auto"}`.
@@ -100,6 +104,17 @@ Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each s
 2. `reconcile_inventory` calls `account_discovery.estimate_cost_exposure()`: `cost_estimator.PriceBook` loads Extended Support unit prices for the scanned region from the Price List API (one call per year tier), `VcpuBook` resolves vCPUs per instance class via EC2, the catalog's major-version row gives the dates
 3. Each RDS/Aurora resource gets an `extended_support` block (inputs, unit price and source, monthly Yr1-2 / Yr3, 12-month forecast, dates); each row a `cost_exposure` aggregate; the outcome is stored as `_cost_exposure` control row. Pricing never fails a scan
 
+### Multi-account scan (hub-and-spoke, #144)
+
+Optional; default is the deploying account only.
+
+1. **Targets.** `_scan_targets` (state table) says what to scan: `source` `hub` | `manual` | `organization` | `ou`, plus `accounts`, `ou_ids`, `exclude_accounts`, `regions`. `deploy-all --multi-account` seeds it; the UI edits it
+2. **Resolution** (`start-run`). `organization` → `ListAccounts`; `ou` → `ListAccountsForParent` recursively; ACTIVE accounts only; `ListParents`/`DescribeOrganizationalUnit` give each account its OU path. `AccessDenied` → manual list + error in the summary, never fatal. The hub (caller identity) is always included and scanned first with its own credentials
+3. **Credentials.** For a spoke, `session_for_account()` assumes `arn:<partition>:iam::<account>:role/LifecycleTrackerScanRole` (env `SPOKE_ROLE_NAME`, optional `SPOKE_EXTERNAL_ID`). The hub pipeline role has `sts:AssumeRole` on that role name in any account and the Organizations read actions
+4. **Trust.** The spoke role trusts the hub account root with `aws:PrincipalArn` = the hub pipeline role's fixed name (`aws-services-lifecycle-pipeline-role`), so the trust policy is valid before the hub role exists, and only that role can use it
+5. **Rollout.** `OrgStack` deploys a service-managed StackSet from the hub (management account or StackSets delegated administrator) to the root/OUs; auto-deployment covers accounts joining later; `accountFilterType: DIFFERENCE` keeps the hub out. Preflight `shared/scripts/check-org-access` (exit 0 / 2 / 3) drives what `deploy-all` does; without StackSets rights the Spoke stack can be deployed per account by hand (no bootstrap)
+6. **Blast radius.** Each (account, region, scanner) cell is its own durable step: a spoke that cannot be assumed fails its own cells only and is listed in `accounts_failed`; reconciliation never deletes rows of a scope that was not scanned successfully. Health cross-check and Extended Support pricing run per account with the assumed session (Health needs a Support plan in that account); pricing data comes from the hub (public)
+
 ### Reads (dashboard, services, plans)
 
 1. Frontend calls `POST /actions` with `{"action": "list_services" | "get_metrics" | "list_deprecations" | ...}`
@@ -111,11 +126,13 @@ Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each s
 service-extraction-config   PK service_name        What to extract (URLs, focus, schema, enabled). Repo-owned:
                                                    populated at deploy; the Lambdas may only read/UpdateItem.
 service-extraction-state    PK service_name        Runtime state owned by the Lambdas: extraction metadata,
-                                                   `_health_match` cross-check outcome.
+                                                   control rows `_health_match`, `_cost_exposure`,
+                                                   `_scan_targets` (what to scan), `_scan_accounts` (last resolution).
 aws-services-lifecycle      PK service_name        Public deprecation facts (one row per version/runtime/
                             SK item_id             platform), GSI status-index.
-aws-account-inventory       PK service_name        Resources found in the account, tagged with run_id and
-                            SK item_id             matched to a fact (status, days remaining).
+aws-account-inventory       PK service_name        Resources found in the scanned account(s), tagged with run_id,
+                            SK item_id             account_id/account_name, matched to a fact (status, days remaining).
+                                                   item_id = inventory#<account>#<region>#<identifier>.
 deprecation-action-plans    PK plan_id             Remediation tracking; GSIs owner-index, plan-status-index.
 ```
 

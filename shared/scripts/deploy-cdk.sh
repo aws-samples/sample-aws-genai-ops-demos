@@ -9,6 +9,10 @@ CDK_DIRECTORY=""
 STACK_NAME=""
 DESTROY_STACK=false
 SKIP_BOOTSTRAP=false
+# Optional CDK context entries (--cdk-context key=value, repeatable), passed as
+# `--context key=value`. Lets a demo enable optional stacks (e.g. multi-account
+# rollout) without hardcoding account/organization ids in cdk.json.
+CDK_CONTEXT_ARGS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -28,9 +32,13 @@ while [[ $# -gt 0 ]]; do
             SKIP_BOOTSTRAP=true
             shift
             ;;
+        --cdk-context)
+            CDK_CONTEXT_ARGS="$CDK_CONTEXT_ARGS --context \"$2\""
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 --cdk-directory <path> [--stack-name <name>] [--destroy] [--skip-bootstrap]"
+            echo "Usage: $0 --cdk-directory <path> [--stack-name <name>] [--destroy] [--skip-bootstrap] [--cdk-context key=value ...]"
             exit 1
             ;;
     esac
@@ -208,9 +216,9 @@ else
     echo -e "\033[0;33mDeploying CDK stack...\033[0m"
     set +e
     if [ -z "$STACK_NAME" ]; then
-        eval npx -y cdk deploy --require-approval never --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+        eval npx -y cdk deploy --require-approval never --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
     else
-        eval npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+        eval npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
     fi
     cdk_exit=$?
     set -e

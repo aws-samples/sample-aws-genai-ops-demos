@@ -91,9 +91,12 @@ new SpokeStack(app, `AWSServicesLifecycleTrackerSpoke-${region}`, {
 // or a StackSets delegated administrator (shared/scripts/check-org-access).
 const orgTargets: string = app.node.tryGetContext('orgTargets') || '';
 if (orgTargets) {
+  // hubAccountId context lets the management account run this stack on behalf
+  // of a hub that is not a StackSets delegated administrator.
   new OrgStack(app, `AWSServicesLifecycleTrackerOrg-${region}`, {
     env,
-    hubAccountId: process.env.CDK_DEFAULT_ACCOUNT || '',
+    synthesizer: new cdk.BootstraplessSynthesizer(), // inline template, no assets
+    hubAccountId: app.node.tryGetContext('hubAccountId') || process.env.CDK_DEFAULT_ACCOUNT || '',
     targetOuIds: orgTargets.split(',').map((s: string) => s.trim()).filter(Boolean),
     externalId: spokeExternalId,
     description: 'AWS Services Lifecycle Tracker Org: StackSet placing the read-only spoke role in every member account',
