@@ -155,6 +155,21 @@ export const resourceCount = (row: DeprecationItem): number =>
 
 export const resourceWord = (n: number): string => (n === 1 ? 'resource' : 'resources');
 
+// --- Accounts (multi-account scan, #144) ------------------------------------
+
+// Account of an inventory row; rows written before #144 have none.
+export const accountId = (row: DeprecationItem): string => row.account_id || '';
+
+// "Account A (222222222222)" when the name is known, else the id alone.
+export const accountLabel = (id: string, name?: string): string => (name ? `${name} (${id})` : id || '-');
+
+// Distinct accounts present in a set of rows, hub-independent, sorted by label.
+export const accountsIn = (rows: DeprecationItem[]): Array<{ id: string; name: string }> => {
+  const m = new Map<string, string>();
+  for (const r of rows) if (r.account_id) m.set(r.account_id, r.account_name || m.get(r.account_id) || '');
+  return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => accountLabel(a.id, a.name).localeCompare(accountLabel(b.id, b.name)));
+};
+
 // AWS Health notice naming this resource (stamped at scan time, #141)
 export interface HealthFlag {
   event_arn: string;

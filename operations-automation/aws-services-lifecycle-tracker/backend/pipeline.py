@@ -161,7 +161,7 @@ def scan_cell(step: StepContext, cell: dict) -> dict:
 
 @durable_step
 def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scanned_keys: List[str],
-                        scanned_scopes: List[Dict] = None) -> dict:
+                        scanned_scopes: List[Dict] = None, accounts_failed: List[str] = None) -> dict:
     """Upsert this run's inventory and reconcile ONLY successfully scanned scopes.
 
     Before writing, resources are cross-checked with AWS Health (#141) so each
@@ -174,6 +174,9 @@ def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scann
     )
     result["health"] = health
     result["cost_exposure"] = cost
+    # Which accounts this run actually covered (for Sources & coverage, #144)
+    scoped = {sc.get("account_id", "") for sc in (scanned_scopes or [])}
+    account_discovery.record_scan_outcome(sorted(scoped), sorted(set(accounts_failed or []) - scoped))
     return result
 
 
@@ -292,7 +295,8 @@ def handler(event: dict, context: DurableContext) -> dict:
                                              completion_config=_TOLERATE_ALL))
         scan_summary, items, scanned_keys = summarize_scan(cells, batch)
         reconcile_result = context.step(
-            reconcile_inventory(run["run_id"], items, scanned_keys, scan_summary["scanned_scopes"]),
+            reconcile_inventory(run["run_id"], items, scanned_keys, scan_summary["scanned_scopes"],
+                                scan_summary["accounts_failed"]),
             name="reconcile-inventory")
 
     return context.step(

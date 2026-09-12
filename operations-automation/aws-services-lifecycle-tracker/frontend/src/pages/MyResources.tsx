@@ -20,7 +20,7 @@ import Popover from '@cloudscape-design/components/popover';
 import { getLifecycleData, getActionPlans, createActionPlan, getScanners, DeprecationItem, ActionPlan, ScanCoverage } from '../api';
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
-  resourceCount, resourceWord, healthFlagged, costExposure, formatUsd,
+  resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel,
 } from '../lifecycle';
 import ResourceDetails from '../components/ResourceDetails';
 
@@ -52,6 +52,7 @@ export default function MyResources() {
   const [filterText, setFilterText] = useState(params.get('q') || '');
   const [scope, setScope] = useState(params.get('status') || 'concerns');
   const [service, setService] = useState(params.get('service') || 'all');
+  const [account, setAccount] = useState(params.get('account') || 'all');
   const [selected, setSelected] = useState<DeprecationItem[]>([]);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -95,15 +96,19 @@ export default function MyResources() {
   }, [facts]);
 
   const services = useMemo(() => [...new Set(rows.map((r) => r.service_name))].sort(), [rows]);
+  // Accounts seen in the inventory (#144); the column and filter only appear with more than one
+  const accounts = useMemo(() => accountsIn(rows), [rows]);
+  const multiAccount = accounts.length > 1;
 
   const filtered = useMemo(() => {
     let out = [...rows];
     if (scope === 'concerns') out = out.filter((r) => isConcern(r.status));
     else if (scope !== 'all') out = out.filter((r) => r.status === scope);
     if (service !== 'all') out = out.filter((r) => r.service_name === service);
+    if (account !== 'all') out = out.filter((r) => r.account_id === account);
     if (filterText) {
       const q = filterText.toLowerCase();
-      out = out.filter((r) => `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''}`.toLowerCase().includes(q));
+      out = out.filter((r) => `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''} ${r.account_id || ''} ${r.account_name || ''}`.toLowerCase().includes(q));
     }
     out.sort(urgencySort);
     if (sorting?.sortingColumn) {
@@ -113,7 +118,7 @@ export default function MyResources() {
       out.sort((a, b) => (sorting.isDescending ? -1 : 1) * cmp(a, b));
     }
     return out;
-  }, [rows, scope, service, filterText, sorting]);
+  }, [rows, scope, service, account, filterText, sorting]);
 
   const updateParams = (next: Record<string, string>) => {
     const p = new URLSearchParams(params);
@@ -168,7 +173,7 @@ export default function MyResources() {
           <Header
             variant="h1"
             counter={`(${filtered.length})`}
-            description={`What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
+            description={`What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
             actions={
               <Button variant="primary" disabled={selected.length === 0} onClick={() => setShowPlanModal(true)}>
                 Create plan{selected.length ? ` (${selected.length})` : ''}
@@ -190,6 +195,12 @@ export default function MyResources() {
               onChange={({ detail }) => { setService(detail.selectedOption.value!); updateParams({ service: detail.selectedOption.value! }); }}
               options={[{ label: 'All services', value: 'all' }, ...services.map((s) => ({ label: serviceLabel(s), value: s }))]}
               selectedAriaLabel="Selected" />
+            {multiAccount && (
+              <Select selectedOption={{ label: account === 'all' ? 'All accounts' : accountLabel(account, accounts.find((a) => a.id === account)?.name), value: account }}
+                onChange={({ detail }) => { setAccount(detail.selectedOption.value!); updateParams({ account: detail.selectedOption.value! }); }}
+                options={[{ label: 'All accounts', value: 'all' }, ...accounts.map((a) => ({ label: accountLabel(a.id, a.name), value: a.id }))]}
+                selectedAriaLabel="Selected" />
+            )}
           </div>
         }
         empty={
@@ -286,6 +297,15 @@ export default function MyResources() {
               );
             },
           },
+          ...(multiAccount ? [{
+            id: 'account', header: 'Account', sortingField: 'account_id',
+            cell: (r: DeprecationItem) => r.account_id
+              ? <SpaceBetween size="xxxs">
+                  <Box>{r.account_name || r.account_id}</Box>
+                  {r.account_name && <Box variant="small" color="text-body-secondary">{r.account_id}</Box>}
+                </SpaceBetween>
+              : <Box color="text-body-secondary">-</Box>,
+          } as TableProps.ColumnDefinition<DeprecationItem>] : []),
           { id: 'region', header: 'Region', cell: (r) => r.region || '-', sortingField: 'region' },
           {
             id: 'plan', header: 'Plan', cell: (r) => {

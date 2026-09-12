@@ -98,3 +98,33 @@ def test_access_denied_falls_back_to_manual_list_and_reports():
                         org_client=FakeOrg(denied=True))
     assert [a["id"] for a in r["accounts"]] == [HUB, "222222222222"]
     assert len(r["errors"]) == 1 and "AccessDeniedException" in r["errors"][0]
+
+
+# --- save_scan_targets (UI editor) validation -------------------------------
+from unittest.mock import MagicMock, patch
+
+
+def _save(targets):
+    import account_discovery
+    import database_reads
+    table = MagicMock()
+    with patch.object(database_reads, "state_table", table):
+        out = account_discovery.save_scan_targets(targets)
+    return out, table
+
+
+def test_save_targets_normalizes_and_stores():
+    out, table = _save({"source": "OU", "ou_ids": ["ou-abcd-12345678"], "accounts": [{"id": " 222222222222 ", "name": "A"}],
+                        "exclude_accounts": ["333333333333"], "regions": ["EU-CENTRAL-1"]})
+    assert out["success"] and out["targets"] == {
+        "source": "ou", "accounts": [{"id": "222222222222", "name": "A"}], "ou_ids": ["ou-abcd-12345678"],
+        "exclude_accounts": ["333333333333"], "regions": ["eu-central-1"]}
+    assert table.put_item.call_args.kwargs["Item"]["service_name"] == "_scan_targets"
+
+
+def test_save_targets_rejects_bad_input():
+    assert "source" in _save({"source": "everything"})[0]["error"]
+    assert "12-digit" in _save({"source": "manual", "accounts": [{"id": "12"}]})[0]["error"]
+    assert "OU id" in _save({"source": "ou", "ou_ids": ["prod"]})[0]["error"]
+    assert "at least one OU" in _save({"source": "ou"})[0]["error"]
+    assert "region" in _save({"source": "hub", "regions": ["Frankfurt"]})[0]["error"]

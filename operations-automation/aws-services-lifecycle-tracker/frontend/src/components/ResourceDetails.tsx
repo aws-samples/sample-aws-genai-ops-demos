@@ -124,7 +124,10 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
           <Field label="Deadline">
             {d ? <>{formatDate(d.date)} <Box variant="small" color="text-body-secondary">{formatDaysLeft(d)}</Box></> : '-'}
           </Field>
-          <Field label="Region">{row.region || '-'}</Field>
+          <Field label="Account / Region">
+            {row.account_id ? <>{row.account_name || row.account_id}{row.account_name && <Box variant="small" color="text-body-secondary">{row.account_id}</Box>}</> : null}
+            <Box variant={row.account_id ? 'small' : 'span'} color={row.account_id ? 'text-body-secondary' : 'inherit'}>{row.region || '-'}</Box>
+          </Field>
           <Field label="Plan">
             {plan ? <StatusIndicator type={plan.plan_status === 'completed' ? 'success' : 'in-progress'}>{plan.owner}</StatusIndicator> : <Box color="text-body-secondary">unassigned</Box>}
           </Field>

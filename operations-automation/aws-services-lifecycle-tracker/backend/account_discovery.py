@@ -227,6 +227,63 @@ def save_resolved_accounts(resolved: Dict) -> None:
     _save_control_row(SCAN_ACCOUNTS_KEY, {**resolved, "resolved_at": datetime.now(timezone.utc).isoformat()})
 
 
+VALID_TARGET_SOURCES = ("hub", "manual", "organization", "ou")
+_ACCOUNT_ID = re.compile(r"^\d{12}$")
+_OU_ID = re.compile(r"^(r-[a-z0-9]{4,32}|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})$")
+
+
+def save_scan_targets(targets: Dict) -> Dict:
+    """Validate and store the _scan_targets control row (UI editor, #144).
+
+    Returns {"success": True, "targets": <stored>} or {"success": False, "error": str}.
+    """
+    source = str(targets.get("source") or "hub").lower()
+    if source not in VALID_TARGET_SOURCES:
+        return {"success": False, "error": f"source must be one of {', '.join(VALID_TARGET_SOURCES)}"}
+    accounts, ou_ids, excluded, regions = [], [], [], []
+    for a in targets.get("accounts") or []:
+        aid = str((a or {}).get("id", "")).strip()
+        if not _ACCOUNT_ID.match(aid):
+            return {"success": False, "error": f"'{aid}' is not a 12-digit account id"}
+        accounts.append({"id": aid, "name": str((a or {}).get("name", "")).strip()[:120]})
+    for ou in targets.get("ou_ids") or []:
+        ou = str(ou).strip()
+        if not _OU_ID.match(ou):
+            return {"success": False, "error": f"'{ou}' is not an organization root or OU id"}
+        ou_ids.append(ou)
+    for aid in targets.get("exclude_accounts") or []:
+        aid = str(aid).strip()
+        if not _ACCOUNT_ID.match(aid):
+            return {"success": False, "error": f"'{aid}' is not a 12-digit account id"}
+        excluded.append(aid)
+    for r in targets.get("regions") or []:
+        r = str(r).strip().lower()
+        if not re.match(r"^[a-z]{2}(-[a-z]+)+-\d$", r):
+            return {"success": False, "error": f"'{r}' is not a region code"}
+        regions.append(r)
+    if source == "ou" and not ou_ids:
+        return {"success": False, "error": "source 'ou' needs at least one OU id"}
+    if source == "manual" and not accounts:
+        return {"success": False, "error": "source 'manual' needs at least one account"}
+    stored = {"source": source, "accounts": accounts, "ou_ids": ou_ids, "exclude_accounts": excluded, "regions": regions}
+    try:
+        from database_reads import state_table
+        state_table.put_item(Item={"service_name": SCAN_TARGETS_KEY, **stored})
+    except Exception as e:
+        return {"success": False, "error": f"could not save targets: {e}"}
+    return {"success": True, "targets": stored}
+
+
+def record_scan_outcome(accounts_scanned: List[str], accounts_failed: List[str]) -> None:
+    """Stamp the last run's per-account outcome on the _scan_accounts row so
+    the UI can show covered vs failed accounts without reading the execution."""
+    from datetime import datetime, timezone
+    row = load_control_row(SCAN_ACCOUNTS_KEY) or {}
+    row.update({"accounts_scanned": list(accounts_scanned), "accounts_failed": list(accounts_failed),
+                "scanned_at": datetime.now(timezone.utc).isoformat()})
+    _save_control_row(SCAN_ACCOUNTS_KEY, row)
+
+
 def load_scan_targets() -> Dict:
     """Accounts and regions to scan (#144). Empty dict = hub account, deployment region."""
     from decimal import Decimal

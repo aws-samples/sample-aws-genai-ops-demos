@@ -56,6 +56,8 @@ export interface DeprecationItem {
   extraction_date: string;
   last_verified: string;
   region?: string;            // inventory rows: region that was scanned (issue #141)
+  account_id?: string;        // inventory rows: account that was scanned (issue #144)
+  account_name?: string;      // inventory rows: its name from Organizations, if known
   provenance?: string;        // inventory rows: 'account_discovery'
   service_specific: Record<string, any>;
 }
@@ -74,11 +76,50 @@ export interface HealthCheckStatus {
   flagged_resources: number;
 }
 
+// Outcome of the Extended Support pricing pass of the last scan (#142)
+export interface CostExposureStatus {
+  available: boolean;
+  reason: string | null;
+  checked_at: string | null;
+  resources_priced: number;
+  monthly: number;
+  forecast_12m: number;
+  currency: string;
+}
+
+// What to scan: the _scan_targets control row (#144). Empty = hub account, deployment region.
+export type ScanTargetSource = 'hub' | 'manual' | 'organization' | 'ou';
+export interface ScanTargets {
+  source: ScanTargetSource;
+  accounts: Array<{ id: string; name: string }>;
+  ou_ids: string[];
+  exclude_accounts: string[];
+  regions: string[];
+}
+
+// What the last run resolved the targets into (_scan_accounts control row, #144)
+export interface ResolvedAccount { id: string; name: string; ou_path: string; status: string }
+export interface ResolvedAccounts {
+  source: ScanTargetSource;
+  accounts: ResolvedAccount[];
+  regions: string[];
+  errors: string[];
+  resolved_at: string | null;
+  accounts_scanned?: string[];
+  accounts_failed?: string[];
+  scanned_at?: string | null;
+}
+
 export interface ScanCoverage {
   scanners: ScannerInfo[];
-  last_scan: { last_verified: string | null; resources: number; regions: string[] };
+  last_scan: { last_verified: string | null; resources: number; regions: string[]; accounts: string[] };
   health: HealthCheckStatus | null;
+  cost_exposure: CostExposureStatus | null;
+  accounts: ResolvedAccounts | null;
+  targets: ScanTargets;
 }
+
+export const EMPTY_TARGETS: ScanTargets = { source: 'hub', accounts: [], ou_ids: [], exclude_accounts: [], regions: [] };
 
 export interface DashboardMetrics {
   total_services: number;
@@ -166,10 +207,17 @@ export const getScanners = async (): Promise<ScanCoverage> => {
   const result = await invokeAction({ action: 'list_scanners' });
   return {
     scanners: result.scanners || [],
-    last_scan: result.last_scan || { last_verified: null, resources: 0, regions: [] },
+    last_scan: { accounts: [], ...(result.last_scan || { last_verified: null, resources: 0, regions: [] }) },
     health: result.health || null,
+    cost_exposure: result.cost_exposure || null,
+    accounts: result.accounts || null,
+    targets: { ...EMPTY_TARGETS, ...(result.targets || {}) },
   };
 };
+
+// Store what the next scans should cover (#144). The backend validates ids/regions.
+export const saveScanTargets = async (targets: ScanTargets): Promise<{ success: boolean; error?: string; targets?: ScanTargets }> =>
+  invokeAction({ action: 'save_scan_targets', targets });
 
 // --- Refresh pipeline (Lambda durable function) -----------------------------
 // The whole refresh (web extraction -> account scan -> reconcile -> notify)
@@ -189,6 +237,8 @@ export interface ScanPhaseSummary {
   failed_cells: string[];
   items_discovered: number;
   needs_attention: number;
+  accounts_scanned?: string[];
+  accounts_failed?: string[];
 }
 
 export interface RefreshSummary {
@@ -199,6 +249,8 @@ export interface RefreshSummary {
   finished_at: string;
   extract: RefreshPhaseSummary;
   scan: ScanPhaseSummary;
+  targets_source?: string;
+  targets_errors?: string[];
   inventory?: { items_saved?: number; stale_removed?: number; [key: string]: unknown };
 }
 
