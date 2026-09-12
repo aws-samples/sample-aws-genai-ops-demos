@@ -10,6 +10,8 @@ shared/
 ├── scripts/                            # Shared deployment and utility scripts
 │   ├── check-prerequisites.ps1         # Prerequisites validation (PowerShell)
 │   ├── check-prerequisites.sh          # Prerequisites validation (Bash)
+│   ├── check-org-access.ps1            # Multi-account (hub-and-spoke) prerequisites (PowerShell)
+│   ├── check-org-access.sh             # Multi-account (hub-and-spoke) prerequisites (Bash)
 │   ├── deploy-cdk.ps1                  # CDK deployment automation (PowerShell)
 │   └── deploy-cdk.sh                   # CDK deployment automation (Bash)
 └── utils/                              # Shared utility functions
@@ -233,6 +235,37 @@ Validates common requirements before deployment:
 
 > `devops-agent` probes the **Agent Space region**, not the deploy region — the two can
 > differ. Every other service is probed in the deploy region.
+
+### Multi-account (hub-and-spoke) Check
+
+For demos that look across an AWS Organization from one **hub** account, with a read-only role in every member account (**spoke**) rolled out by a CloudFormation StackSet. Three management-account prerequisites must be in place, and a deploy script cannot fix them itself, so this check reports each one with the exact command an administrator has to run in the management account:
+
+| # | Prerequisite | How the hub gets it |
+|---|---|---|
+| 1 | List the organization's accounts (`organizations:ListAccounts`) | Hub is the management account, or the management account delegated the Organizations read APIs through the [organization resource policy](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_delegate_policies.html) |
+| 2 | Trusted access between Organizations and CloudFormation StackSets | `aws organizations enable-aws-service-access --service-principal member.org.stacksets.cloudformation.amazonaws.com` |
+| 3 | Run service-managed StackSets from the hub | Hub is the management account, or a [StackSets delegated administrator](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-delegated-admin.html) |
+
+The check is **read-only** and never changes anything.
+
+**PowerShell**:
+```powershell
+& "..\..\shared\scripts\check-org-access.ps1"          # report; -Json for machine-readable output
+switch ($LASTEXITCODE) {
+    0 { <# multi-account scan + StackSet rollout possible #> }
+    2 { <# cannot list accounts: single-account mode or a manual account list #> }
+    3 { <# accounts listable; management account must deploy the spoke StackSet once #> }
+}
+$global:ORG_ID; $global:ORG_IS_MANAGEMENT; $global:ORG_CAN_LIST_ACCOUNTS; $global:ORG_CAN_ROLLOUT_STACKSETS
+```
+
+**Bash**:
+```bash
+source ../../shared/scripts/check-org-access.sh       # or ./check-org-access.sh --json
+# exit/return code 0 | 2 | 3 as above; exports ORG_ID, ORG_IS_MANAGEMENT, ORG_CAN_LIST_ACCOUNTS, ORG_CAN_ROLLOUT_STACKSETS
+```
+
+Convention for demos: make multi-account **opt-in** (`-MultiAccount` / `--multi-account` on `deploy-all`). Without the switch the check may run informationally but the demo deploys single-account; with it, exit code 2 is blocking and exit code 3 deploys and prints the StackSet instruction. The hub's Lambda role still needs the same `organizations:*` read actions in its own IAM policy; the resource policy alone is not enough. AWS recommends not running the hub in the management account itself.
 
 ### CDK Deployment
 
