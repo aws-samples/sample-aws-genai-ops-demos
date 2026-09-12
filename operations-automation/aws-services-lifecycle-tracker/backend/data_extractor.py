@@ -32,7 +32,6 @@ SERVICE_CONFIG_REQUIRED_FIELDS = [
 
 # Optional fields that are valid but not required
 SERVICE_CONFIG_OPTIONAL_FIELDS = [
-    'health_event_mapping',
     'schema_key',
     'enabled',
     'last_extraction',
@@ -45,7 +44,7 @@ def validate_service_config(config: dict) -> Tuple[bool, List[str]]:
     Validate a Service_Config dictionary against the expected schema.
 
     Checks that all required fields are present and have the correct types.
-    Optional fields (e.g. health_event_mapping) are allowed without causing errors.
+    Optional fields (e.g. schema_key) are allowed without causing errors.
 
     Args:
         config: A service configuration dictionary to validate.
@@ -94,9 +93,6 @@ def validate_service_config(config: dict) -> Tuple[bool, List[str]]:
             errors.append("Field 'required_fields' must not be empty")
 
     # Optional field type validation (only if present)
-    if 'health_event_mapping' in config and not isinstance(config['health_event_mapping'], str):
-        errors.append("Field 'health_event_mapping' must be a string")
-
     if 'schema_key' in config and not isinstance(config['schema_key'], str):
         errors.append("Field 'schema_key' must be a string")
 

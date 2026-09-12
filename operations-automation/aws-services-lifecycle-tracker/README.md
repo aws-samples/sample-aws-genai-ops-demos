@@ -10,7 +10,7 @@ Automatically track AWS service deprecations, find the resources in your account
 - **🤖 Hybrid AI Extraction**: BeautifulSoup HTML parsing + Amazon Nova AI normalization for reliable data extraction
 - **🧠 Intelligent Status Categorization**: deprecated / extended_support / end_of_life based on retirement dates
 - **🎛️ Admin Interface**: React + Cloudscape UI behind Cognito; all calls go through an HTTP API with a JWT authorizer (the browser holds no AWS credentials)
-- **🩺 AWS Health integration**: Hourly poll of Health events correlated with tracked deprecations (paid Support plan required)
+- **🩺 AWS Health cross-check**: each scan asks AWS Health which of *your* resources appear in an open planned-lifecycle notice, and marks them (paid Support plan required)
 - **📦 No Docker, no container registry**: Python code is bundled locally with pip; deploys in a few minutes
 
 ## Interactive Demo
@@ -19,10 +19,6 @@ Experience this demo in an interactive click-through walkthrough:
 
 ▶️ [Launch Interactive Demo](https://app.storylane.io/share/jtv9je6phpy4)
 
-
-## Demo
-
-![Demo](img/LifeCycle.gif)
 
 ## Architecture
 
@@ -44,7 +40,7 @@ Experience this demo in an interactive click-through walkthrough:
 │ Pipeline stack (main)                                                                │
 │                                                                                      │
 │  ┌─ aws-services-lifecycle-api (Lambda) ─────────────────────────────────────────┐   │
-│  │  UI actions (reads/writes) · start/observe pipeline runs · hourly Health poll │   │
+│  │  UI actions (reads/writes) · start/observe pipeline runs · weekly schedule    │   │
 │  └───────────────┬───────────────────────────────────────────────────────────────┘   │
 │                  │ lambda:Invoke (Event, DurableExecutionName)                       │
 │                  ▼                                                                   │
@@ -53,18 +49,15 @@ Experience this demo in an interactive click-through walkthrough:
 │  │            ─> reconcile-inventory ─> summarize-and-notify (SNS)               │   │
 │  └───────────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                      │
-│  EventBridge Scheduler: weekly refresh · hourly Health    SNS topic · SQS DLQ        │
+│  EventBridge Scheduler: weekly refresh                    SNS topic · SQS DLQ        │
 └──────────────────────────────┬───────────────────────────────────────────────────────┘
                                ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │ Data stack (DynamoDB)                                                                │
 │  aws-services-lifecycle (public deprecation facts)  · aws-account-inventory (yours)  │
 │  service-extraction-config · service-extraction-state · deprecation-action-plans     │
-│  aws-health-events                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
-
-![Architecture Diagram](img/lifecycle.drawio.svg)
 
 **System flow:**
 1. **Refresh** (UI button, weekly schedule, or CLI) starts one durable execution of the pipeline function
@@ -83,7 +76,7 @@ Facts and inventory live in separate tables: the public deprecation data is neve
 - **Python 3.11+** with `pip` - used to bundle the Lambda code locally (no Docker needed)
 - **AWS credentials** with permissions for CloudFormation, Lambda, API Gateway, DynamoDB, Cognito, EventBridge Scheduler, SNS, SQS, CloudFront, S3 and IAM
 - **Amazon Bedrock** model access for Amazon Nova in your region
-- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health panel. Without it the Health poll gets a `SubscriptionRequiredException` and the panel stays empty; everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html)
+- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health cross-check. Without it the scan gets a `SubscriptionRequiredException`, reports Health as unavailable on the Sources & coverage page, and everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html)
 
 ### ⚠️ Region Requirements
 
@@ -149,17 +142,17 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 
 ```
 project-root/
-├── agent/                          # Python code shared by both Lambda functions
-│   ├── lambda_pipeline.py          # Durable function: extract -> scan -> reconcile -> notify
-│   ├── lambda_api.py               # API Lambda: HTTP routes, pipeline control, scheduler entry
-│   ├── actions.py                  # Action router (list/update services, plans, health, ...)
+├── backend/                          # Python code of both Lambda functions
+│   ├── pipeline.py          # Durable function: extract -> scan -> reconcile -> notify
+│   ├── api.py               # API Lambda: HTTP routes, pipeline control, scheduler entry
+│   ├── actions.py                  # Action router (list/update services, plans, scanners, ...)
 │   ├── workflow_orchestrator.py    # Single-service extraction workflow
 │   ├── data_extractor.py           # HTML parsing + Amazon Nova normalization
 │   ├── account_discovery.py        # Account scanners + inventory reconciliation
 │   ├── database_reads.py           # READ operations (metrics, configs, deprecations)
 │   ├── database_writes.py          # WRITE operations + status categorization
 │   ├── action_plans.py             # Plan of Action CRUD
-│   ├── health_*.py                 # AWS Health collection, enrichment, reads
+│   ├── health_match.py             # AWS Health cross-check of scanned resources (by ARN)
 │   ├── requirements.txt            # boto3, aws-durable-execution-sdk-python, bs4, requests
 │   └── tests/                      # pytest (incl. DurableFunctionTestRunner pipeline tests)
 │
@@ -194,9 +187,9 @@ project-root/
 | File | Purpose | When to Modify |
 |------|---------|----------------|
 | **`scripts/service_configs.json`** | Service definitions - documentation URLs, extraction focus, schema | Add new services to monitor |
-| **`agent/account_discovery.py`** + **`cdk/lib/pipeline-stack.ts`** | Scanners and their read-only IAM grants | Add a service to the account scan |
-| **`agent/database_writes.py`** | Status categorization logic | Customize status thresholds or date fields |
-| **`agent/lambda_pipeline.py`** | Pipeline steps, concurrency, retry and failure-tolerance settings | Change how a refresh runs |
+| **`backend/account_discovery.py`** + **`cdk/lib/pipeline-stack.ts`** | Scanners and their read-only IAM grants | Add a service to the account scan |
+| **`backend/database_writes.py`** | Status categorization logic | Customize status thresholds or date fields |
+| **`backend/pipeline.py`** | Pipeline steps, concurrency, retry and failure-tolerance settings | Change how a refresh runs |
 | **`frontend/src/pages/Dashboard.tsx`** | Dashboard UI | Customize layout or metrics |
 
 ## Service Configuration Management
@@ -206,7 +199,7 @@ project-root/
 All service definitions live in **`scripts/service_configs.json`**. The tracker ships with 11 services, each meeting two rules that every addition must meet too:
 
 1. **The documentation page contains an HTML table with lifecycle dates** (end of support, retirement, deprecation). The extractor only sends tables to the model; on a page without one the model has nothing real to work with and will invent rows. `scripts/audit_service_configs.py` checks this for you.
-2. **An account scanner exists for the service** (`agent/account_discovery.py`). Without one the service only ever produces a facts list, never ""what you own that is affected"", which is the point of the demo.
+2. **An account scanner exists for the service** (`backend/account_discovery.py`). Without one the service only ever produces a facts list, never ""what you own that is affected"", which is the point of the demo.
 
 #### Service Configuration Schema
 
@@ -318,15 +311,14 @@ python scripts/audit_service_configs.py --service your-new-service
         "end_of_extended_support_date": "End of extended support"
       },
       "required_fields": ["name", "identifier", "end_of_standard_support_date"],
-      "enabled": true,
-      "health_event_mapping": "YOURSERVICE"
+      "enabled": true
     }
   }
 }
 ```
    Put at least one date field in `required_fields`: an item without a lifecycle date is not a lifecycle fact.
 
-3. **Add a scanner** in `agent/account_discovery.py` (`discover_<service>()` + an entry in `SCANNERS` / `SCANNER_SERVICE_KEYS`) and its read-only IAM actions in `cdk/lib/pipeline-stack.ts`.
+3. **Add a scanner** in `backend/account_discovery.py` (`discover_<service>()` + an entry in `SCANNERS` / `SCANNER_SERVICE_KEYS`) and its read-only IAM actions in `cdk/lib/pipeline-stack.ts`.
 
 4. **Redeploy** Data (config) and Pipeline (code):
 ```bash
@@ -369,7 +361,7 @@ The `extraction_focus` field is crucial - it's the AI prompt that guides data ex
 
 ### The refresh pipeline (Lambda durable function)
 
-`agent/lambda_pipeline.py` is a single `@durable_execution` handler. Every unit of work is a named, checkpointed step, so a crash or timeout resumes from the last checkpoint instead of restarting, and the execution history is the audit trail of the run.
+`backend/pipeline.py` is a single `@durable_execution` handler. Every unit of work is a named, checkpointed step, so a crash or timeout resumes from the last checkpoint instead of restarting, and the execution history is the audit trail of the run.
 
 ```
 start-run                       run_id, timestamp, region, enabled services (one step: non-deterministic values)
@@ -386,22 +378,21 @@ Design points:
 - **Idempotent starts**: the execution name is the idempotency key (Lambda enforces it). The weekly schedule uses `refresh-weekly-<date>`, manual runs `refresh-manual-<epoch>`; a second start while one is RUNNING adopts the running execution instead.
 - **Input contract**: `{"mode": "full|extract|scan", "services"?: [...], "regions"?: [...], "refresh_origin": "manual|Auto"}`. The UI's Refresh button sends `full`; per-service refresh sends `extract` with one service.
 
-Local tests use `aws-durable-execution-sdk-python-testing` (`agent/tests/test_lambda_pipeline.py`):
+Local tests use `aws-durable-execution-sdk-python-testing` (`backend/tests/test_pipeline.py`):
 
 ```bash
-cd agent && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
+cd backend && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
 ```
 
 ### The API function
 
-`agent/lambda_api.py` is a plain Lambda serving three things:
-- **HTTP API routes** (JWT-protected): `POST /actions` (router actions such as `list_services`, `update_service`, action plans, health reads), `POST /refresh` (start or adopt a pipeline execution), `GET /refresh/{arn}` (status, progress, final summary).
+`backend/api.py` is a plain Lambda serving two things:
+- **HTTP API routes** (JWT-protected): `POST /actions` (router actions such as `list_services`, `update_service`, action plans, `list_scanners`), `POST /refresh` (start or adopt a pipeline execution), `GET /refresh/{arn}` (status, progress, final summary).
 - **Weekly schedule**: `{"action": "start_refresh", "refresh_origin": "Auto"}` - same naming and adopt-running logic as the UI.
-- **Hourly Health poll**: `{"action": "collect_health_events"}`.
 
 Long-running work never runs behind the API (30 s limit): anything that extracts or scans goes through the pipeline.
 
-### Agent modules
+### Backend modules
 
 - **`workflow_orchestrator.py`** - `extract_service_lifecycle()`: config → fetch → normalize → store → metadata, for one service
 - **`data_extractor.py`** - BeautifulSoup table parsing + Amazon Nova normalization with service-specific prompts
@@ -409,32 +400,20 @@ Long-running work never runs behind the API (30 s limit): anything that extracts
 - **`database_reads.py` / `database_writes.py`** - DynamoDB access; `categorize_item_status()` lives in writes
 - **`actions.py`** - the action router used by the API function
 
-### 🧠 Intelligent Status Categorization
+### 🧠 Status categorization
 
-The system automatically categorizes deprecation items based on their lifecycle dates:
+`categorize_item_status()` in `backend/database_writes.py` derives one status per fact from its normalized dates (`deprecation_date`, `end_of_support_date`, `end_of_life_date`, `block_*_date`, ...). Inventory rows inherit the status of the fact they match. The UI vocabulary lives in `frontend/src/lifecycle.ts`:
 
-```python
-def categorize_item_status(item: Dict[str, Any]) -> str:
-    """
-    Intelligently categorize item status based on dates
-    Returns: 'deprecated', 'extended_support', or 'end_of_life'
-    """
-    # Analyzes fields like:
-    # - target_retirement_date, retirement_date
-    # - end_of_support_date, end_of_life_date  
-    # - block_function_create_date, block_function_update_date
-    
-    # Logic examples:
-    # - Within 6 months of retirement → 'extended_support'
-    # - Past retirement date → 'end_of_life'
-    # - Otherwise → 'deprecated'
-```
+| Stored status | Shown as | Meaning |
+|---|---|---|
+| `end_of_life` | End of life | The end date passed: the version is gone or blocked |
+| `deprecated` | Deprecated | Deprecation is effective now (still runs, no more support) |
+| `extended_support` | Past standard support | Standard support ended; fees or final stretch |
+| `end_of_support_date` | Ending within a year | End of support announced, less than 365 days away |
+| `supported` | Supported | Nothing to do |
+| `unknown` | Not matched | Scanned resource with no catalog entry |
 
-**Result**: Dashboard shows actionable status breakdown:
-- **75 Deprecated** - Plan migration within timeline
-- **19 Extended Support** - Extra costs apply, upgrade recommended  
-- **2 End of Life** - Immediate action required
-
+The first four count as "needs attention" on the dashboard and in My resources.
 
 
 ## Operations
@@ -444,7 +423,6 @@ def categorize_item_status(item: Dict[str, Any]) -> str:
 | Schedule | Cadence | Target | Payload |
 |----------|---------|--------|---------|
 | `aws-services-lifecycle-weekly-refresh` | every 7 days | API function | `{"action":"start_refresh","refresh_origin":"Auto"}` → full pipeline run |
-| `aws-health-events-collection` | hourly | API function | `{"action":"collect_health_events"}` |
 
 Failed scheduler invocations land in the `aws-services-lifecycle-scheduler-dlq` SQS queue.
 
@@ -480,13 +458,13 @@ cd cdk && npm install
 npx cdk bootstrap                                          # one-time per account/region
 npx cdk deploy AWSServicesLifecycleTrackerData-<region>
 npx cdk deploy AWSServicesLifecycleTrackerAuth-<region>
-npx cdk deploy AWSServicesLifecycleTrackerPipeline-<region> # bundles agent/ with pip (no Docker)
+npx cdk deploy AWSServicesLifecycleTrackerPipeline-<region> # bundles backend/ with pip (no Docker)
 npx cdk deploy AWSServicesLifecycleTrackerApi-<region>
 cd .. && ./scripts/build-frontend.sh <UserPoolId> <UserPoolClientId> <ApiUrl> <region>
 cd cdk && npx cdk deploy AWSServicesLifecycleTrackerFrontend-<region>
 ```
 
-Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `agent/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
+Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `backend/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
 
 ### Optional: a test fleet of databases to scan
 
@@ -513,6 +491,9 @@ python scripts/create_test_databases.py --teardown # delete everything, no snaps
 Every resource is tagged `auto-delete=false`, `Project=aws-services-lifecycle-tracker`, `Purpose=lifecycle-test-fleet`; nothing is publicly accessible and the random master passwords are never stored (nobody connects to these). Only versions **inside** standard support are used: a version past it would incur RDS Extended Support fees (~$0.10 per vCPU-hour) - that is also why the fleet has no MySQL 5.7/8.0, PostgreSQL 13 or DocumentDB 3.6, even though those would show as `extended_support`.
 
 **Cost:** about **$210-240/month** - six RDS instances (~$95 incl. 20 GB gp3 each), DocumentDB db.t3.medium (~$60), Neptune db.t4g.medium (~$65), and the four Aurora Serverless v2 clusters at min 0 ACU, which scale to zero after 5 minutes idle (storage and backup only, a few dollars). Tear it down when you are done demoing.
+
+**Lambda fleet (free):** `scripts/create_test_lambdas.py` creates 50 tiny functions (128 MB, never invoked) across eight deprecated runtimes (nodejs16/18/20, python3.8/3.9, ruby3.2, dotnet6, provided.al2) plus one python3.10 and one dotnet8, so the UI shows versions with many resources behind them. Same tags, same `--status` / `--teardown` flags; runtimes Lambda no longer accepts at create time are reported and skipped. Lambda bills per invocation, so the fleet costs nothing while idle.
+
 ### Cleanup
 
 ```bash
@@ -531,22 +512,11 @@ Deleting the pipeline function waits for RUNNING executions to finish (stop them
 | Pipeline bundling fails during `cdk deploy` | `python`/`python3` with `pip` must be on PATH (3.11+). If pip is unavailable CDK falls back to Docker bundling |
 | Refresh summary lists failed services | Open the execution history: `extract-<service>` shows the error (docs page changed, Bedrock access, ...). The rest of the run is unaffected |
 | `failed_cells` in the scan summary | Scanner had no permission or the service isn't available in that region; inventory for that scope is left untouched |
-| Health panel empty, `SubscriptionRequiredException` in the API logs | AWS Health API needs a Business/Enterprise Support plan |
+| Sources & coverage says the AWS Health cross-check is unavailable | The Health API needs a Business/Enterprise Support plan (`SubscriptionRequiredException`); the scan itself is unaffected |
 | UI shows `401` | Session expired - sign in again. The HTTP API only accepts a valid Cognito ID token |
 | A second Refresh says "already in progress" | Intended: one run at a time; the UI attaches to the running execution |
 
-## Data Model & Intelligent Status System
-
-### 🧠 Intelligent Status Categorization
-
-The system automatically analyzes date fields to categorize each deprecation item:
-
-```typescript
-type DeprecationStatus = 
-  | "deprecated"        // Announced for deprecation, plan migration
-  | "extended_support"  // Within 1 year of retirement, extra costs may apply  
-  | "end_of_life"       // Past retirement date, immediate action required
-```
+## Data Model
 
 ### Status Logic Examples
 
@@ -582,7 +552,7 @@ Different AWS services use different date field names. The system recognizes the
 | **EKS** | `end_of_support_date`, `end_of_extended_support_date` | Support periods determine status |
 | **RDS** | `end_of_standard_support_date`, `end_of_extended_support_date` | Support periods with cost implications |
 
-The intelligent categorization logic in `agent/database_writes.py` automatically recognizes these patterns and applies consistent status classification.
+The intelligent categorization logic in `backend/database_writes.py` automatically recognizes these patterns and applies consistent status classification.
 
 ### DynamoDB Table Structure
 
@@ -701,7 +671,7 @@ All Python dependencies are pure Python, so `pipeline-stack.ts` bundles them loc
 |-------|---------|------------------|
 | **Data** | DynamoDB + service configs | When adding services |
 | **Auth** | Cognito User Pool | Rarely |
-| **Pipeline** | Lambda functions, schedules, notifications | When updating agent code |
+| **Pipeline** | Lambda functions, schedules, notifications | When updating backend code |
 | **Api** | HTTP API + authorizer | Rarely |
 | **Frontend** | React UI + CloudFront | When updating UI |
 
@@ -751,7 +721,7 @@ aws cognito-idp admin-set-user-password \
 
 Approximate monthly costs with the default weekly schedule (11 services, one region):
 
-- **Lambda (pipeline + API)**: a full refresh is ~1 minute of compute at 1 GB plus a few dozen durable-execution checkpoints; the hourly Health poll and UI calls add a few hundred short invocations. Well under $1/month
+- **Lambda (pipeline + API)**: a full refresh is ~1 minute of compute at 1 GB plus a few dozen durable-execution checkpoints; UI calls add a few hundred short invocations. Well under $1/month
 - **Bedrock (Amazon Nova)**: pay per token; ~$1-3/month for weekly extraction of ~30 services
 - **DynamoDB** (on-demand): ~$1-3/month
 - **API Gateway HTTP API**: $1.00 per million requests - negligible
@@ -796,7 +766,7 @@ The admin interface is built with [AWS Cloudscape Design System](https://cloudsc
 - **Run `scripts/audit_service_configs.py`** before and after (`--check-stored`) - a service only ships when its page has a lifecycle table, it has a scanner, and every stored row is found on the page
 
 ### Enhancing Status Logic  
-- **Customize thresholds** in `agent/database_writes.py` (e.g., 3 months vs 6 months for extended_support)
+- **Customize thresholds** in `backend/database_writes.py` (e.g., 3 months vs 6 months for extended_support)
 - **Add service-specific logic** for different AWS service lifecycle patterns
 - **Implement cost impact scoring** based on service usage and deprecation urgency
 
@@ -927,7 +897,7 @@ The Plan of Action feature is fully integrated into the CDK deployment:
 
 - **Data Stack** (`cdk/lib/data-stack.ts`): Creates `deprecation-action-plans` table with GSIs for owner and status queries
 - **Pipeline Stack** (`cdk/lib/pipeline-stack.ts`): Grants the Lambda functions IAM permissions to read/write action plans
-- **Agent** (`agent/action_plans.py`): CRUD operations for action plans
+- **Backend** (`backend/action_plans.py`): CRUD operations for action plans
 - **Frontend** (`frontend/src/pages/PlanOfAction.tsx`): UI for managing action plans
 - **Frontend** (`frontend/src/pages/Deprecations.tsx`): Bulk selection and "Add to Plan of Action" button
 

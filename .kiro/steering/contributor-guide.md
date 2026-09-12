@@ -365,7 +365,7 @@ For container code only, the sanctioned pattern is:
 
 This keeps "use shared utilities everywhere" intact for CDK/deploy code while
 giving container code a documented, consistent path instead of per-demo
-precedent. Existing examples: `aws-services-lifecycle-tracker/agent/aws_utils.py`,
+precedent. Existing examples: `aws-services-lifecycle-tracker/backend/aws_utils.py`,
 `ai-password-reset-chatbot/agent/aws_utils.py`,
 `ai-load-test-generation-with-dlt/aws_utils.py`.
 

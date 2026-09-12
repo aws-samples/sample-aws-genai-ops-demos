@@ -9,18 +9,19 @@ import Box from '@cloudscape-design/components/box';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Toggle from '@cloudscape-design/components/toggle';
 import Link from '@cloudscape-design/components/link';
-import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, ServiceConfig, DashboardMetrics } from '../api';
+import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, getScanners, ServiceConfig, DashboardMetrics, ScanCoverage } from '../api';
 
 export default function Services() {
   const navigate = useNavigate();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [coverage, setCoverage] = useState<ScanCoverage | null>(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState<FlashbarProps.MessageDefinition[]>([]);
   const [extractingService, setExtractingService] = useState<string | null>(null);
   
   // Polling state for individual service extractions
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPollingRef = useRef(false);
 
   useEffect(() => {
@@ -35,7 +36,8 @@ export default function Services() {
   const loadData = async () => {
     await Promise.all([
       loadServices(),
-      loadMetrics()
+      loadMetrics(),
+      getScanners().then(setCoverage).catch(() => setCoverage(null)),
     ]);
   };
 
@@ -209,7 +211,7 @@ export default function Services() {
           },
           {
             id: 'enabled',
-            header: 'Status',
+            header: 'Enabled',
             cell: (item) => (
               <Toggle
                 checked={item.enabled}
@@ -218,8 +220,18 @@ export default function Services() {
             ),
           },
           {
+            id: 'scanner',
+            header: 'Account scanner',
+            cell: (item) => {
+              const s = coverage?.scanners.find((sc) => sc.service_keys.includes(item.service_name));
+              return s
+                ? <StatusIndicator type="success">{s.label}</StatusIndicator>
+                : <StatusIndicator type="pending">facts only</StatusIndicator>;
+            },
+          },
+          {
             id: 'last_extraction',
-            header: 'Last Extraction',
+            header: 'Catalog updated',
             cell: (item) => (
               item.last_extraction ? (
                 <Box>
@@ -232,12 +244,12 @@ export default function Services() {
           },
           {
             id: 'extraction_count',
-            header: 'Extractions',
+            header: 'Updates',
             cell: (item) => item.extraction_count || 0,
           },
           {
             id: 'item_count',
-            header: 'Items',
+            header: 'Facts',
             cell: (item) => {
               const count = metrics?.by_service?.[item.service_name] || 0;
               return (
@@ -266,7 +278,7 @@ export default function Services() {
           },
           {
             id: 'success_rate',
-            header: 'Success Rate',
+            header: 'Success rate',
             cell: (item) => {
               const rate = item.success_rate;
               
@@ -340,11 +352,29 @@ export default function Services() {
           <Header
             variant="h1"
             counter={`(${services.length})`}
-            description="Manage AWS services monitored for deprecation information"
+            description="Where the catalog comes from (AWS documentation pages per service) and which services have an account scanner. Toggle a service off to stop extracting it; the refresh icon updates one service's facts now."
           >
-            Services
+            Sources & coverage
           </Header>
         }
+        footer={coverage && (
+          <Box variant="small" color="text-body-secondary">
+            <strong>AWS Health cross-check:</strong>{' '}
+            {!coverage.health
+              ? 'not run yet (happens during each account scan).'
+              : coverage.health.available
+                ? <>
+                    <StatusIndicator type="success">active</StatusIndicator>{' '}
+                    {coverage.health.events} open or upcoming notice{coverage.health.events === 1 ? '' : 's'} checked,{' '}
+                    {coverage.health.flagged_resources} of your resources named in one
+                    {coverage.health.checked_at ? ` (${new Date(coverage.health.checked_at).toLocaleString()})` : ''}.
+                  </>
+                : <>
+                    <StatusIndicator type="stopped">unavailable</StatusIndicator>{' '}
+                    {coverage.health.reason || 'unknown reason'}. Catalog and scan results are unaffected.
+                  </>}
+          </Box>
+        )}
       />
     </SpaceBetween>
   );

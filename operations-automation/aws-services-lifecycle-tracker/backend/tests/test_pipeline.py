@@ -24,7 +24,7 @@ from aws_durable_execution_sdk_python_testing import DurableFunctionTestRunner
 from aws_durable_execution_sdk_python.execution import InvocationStatus
 from aws_durable_execution_sdk_python.lambda_service import OperationType
 
-import lambda_pipeline as lp
+import pipeline as lp
 
 
 def _run(event: dict):
@@ -64,6 +64,8 @@ def mocks():
          patch.object(lp.account_discovery, "LifecycleIndex", return_value=MagicMock()), \
          patch.object(lp.account_discovery, "save_to_dynamodb",
                       return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
+         patch.object(lp.account_discovery, "cross_check_health",
+                      return_value={"available": False, "reason": "test", "events": 0, "flagged_resources": 0}), \
          patch.dict(lp.SCANNERS, {"Lambda": _fake_scanner_ok, "EKS": _fake_scanner_boom}, clear=True), \
          patch.dict(lp.account_discovery.SCANNER_SERVICE_KEYS,
                     {"Lambda": ["lambda"], "EKS": ["eks"]}, clear=True), \
@@ -77,7 +79,7 @@ class TestFullPipeline:
         assert res.status is InvocationStatus.SUCCEEDED
         out = _result(res)
 
-        # Extraction: 3 services, one agent-reported failure, one raised
+        # Extraction: 3 services, one reported failure, one raised
         assert out["extract"]["total"] == 3
         assert out["extract"]["succeeded"] == 1
         assert sorted(out["extract"]["failed"]) == ["amplify", "broken"]

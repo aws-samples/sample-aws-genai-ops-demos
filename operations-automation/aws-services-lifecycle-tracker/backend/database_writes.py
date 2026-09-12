@@ -1,6 +1,6 @@
 """
 Database WRITE operations for AWS Services Lifecycle Tracker
-These functions should remain with the agent as they're part of the extraction workflow
+Part of the extraction workflow (pipeline Lambda)
 """
 import os
 import boto3
@@ -18,11 +18,6 @@ from datetime import date
 
 from dateutil import parser as date_parser
 
-# Initialize health events table
-_region = get_region()
-_dynamodb = boto3.resource('dynamodb', region_name=_region)
-HEALTH_TABLE_NAME = os.environ.get('HEALTH_TABLE_NAME', 'aws-health-events')
-health_events_table = _dynamodb.Table(HEALTH_TABLE_NAME)
 
 
 # ============================================================================
@@ -270,14 +265,14 @@ def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -
 
 
 # ============================================================================
-# WRITE OPERATIONS - Should stay with agent (part of extraction workflow)
+# WRITE OPERATIONS (extraction workflow)
 # ============================================================================
 
 def store_deprecation_data(service_name: str, items: list) -> dict:
     """
     Store extracted deprecation data in DynamoDB
     
-    KEEP WITH AGENT: This is part of the extraction workflow
+    Part of the extraction workflow
     """
     try:
         config = get_service_config(service_name)
@@ -422,13 +417,13 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
     """
     Update service configuration with extraction metadata
     
-    KEEP WITH AGENT: This tracks agent execution history
+    Tracks extraction history per service
     Returns dict with success status for better error tracking
     """
     try:
         current_timestamp = datetime.now(timezone.utc).isoformat()
         
-        # Get current extraction count and success rate from the agent-owned
+        # Get current extraction count and success rate from the backend-owned
         # state table (issue #116, Option B) - runtime state no longer lives
         # in the repo-owned config table.
         state_response = state_table.get_item(Key={'service_name': service_name})
@@ -454,7 +449,7 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
             update_expression += ', last_extraction_duration = :duration'
             expression_values[':duration'] = Decimal(str(extraction_duration))
         
-        # Upsert extraction metadata into the agent-owned state table
+        # Upsert extraction metadata into the backend-owned state table
         state_table.update_item(
             Key={'service_name': service_name},
             UpdateExpression=update_expression,
@@ -476,7 +471,7 @@ def update_service_metadata(service_name: str, extraction_success: bool, refresh
         }
 
 
-# Runtime-state fields live in the agent-owned state table (issue #116,
+# Runtime-state fields live in the backend-owned state table (issue #116,
 # Option B) and must never be written into the config table - not even via
 # the UI's update_service path.
 _RUNTIME_STATE_FIELDS = {
@@ -493,7 +488,7 @@ def update_service_config(service_name: str, updates: dict) -> dict:
     Update service configuration
     
     FUTURE: Could move to API if we want admin UI to update configs
-    For now, keep with agent for simplicity
+    Kept in the backend for simplicity
     """
     try:
         update_expr_parts = []
@@ -520,188 +515,3 @@ def update_service_config(service_name: str, updates: dict) -> dict:
         return {'success': True}
     except Exception as e:
         return {'error': f'Failed to update service: {str(e)}'}
-
-
-# ============================================================================
-# HEALTH EVENTS WRITE OPERATIONS
-# ============================================================================
-
-def batch_write_health_events(events: list[dict]) -> dict:
-    """
-    Batch write enriched Health events to the aws-health-events DynamoDB table.
-    
-    Uses DynamoDB BatchWriteItem with a maximum of 25 items per batch.
-    Each event is expected to already contain all required fields including 'ttl'.
-    
-    KEEP WITH AGENT: Part of the Health collection workflow.
-    
-    Args:
-        events: List of enriched Health event dicts ready for storage.
-                Each event must contain at minimum: event_arn, event_type_category, ttl.
-    
-    Returns:
-        dict with success status, written_count, and any errors.
-    
-    Requirements: 6.4, 5.4
-    """
-    try:
-        if not events:
-            return {
-                'success': True,
-                'written_count': 0,
-                'errors': [],
-                'message': 'No events to write'
-            }
-
-        written_count = 0
-        errors = []
-        batch_size = 25  # DynamoDB BatchWriteItem limit
-
-        # Process events in batches of 25
-        for i in range(0, len(events), batch_size):
-            batch = events[i:i + batch_size]
-            request_items = []
-
-            for event in batch:
-                # Validate required keys
-                if not event.get('event_arn') or not event.get('event_type_category'):
-                    errors.append(
-                        f"Event missing required keys (event_arn or event_type_category): "
-                        f"{event.get('event_arn', 'unknown')}"
-                    )
-                    continue
-
-                # Convert floats to Decimal for DynamoDB compatibility
-                db_item = _convert_to_dynamodb_item(event)
-                request_items.append({'PutRequest': {'Item': db_item}})
-
-            if not request_items:
-                continue
-
-            # Execute batch write
-            try:
-                response = _dynamodb.meta.client.batch_write_item(
-                    RequestItems={HEALTH_TABLE_NAME: request_items}
-                )
-
-                # Handle unprocessed items (retry once)
-                unprocessed = response.get('UnprocessedItems', {}).get(HEALTH_TABLE_NAME, [])
-                if unprocessed:
-                    retry_response = _dynamodb.meta.client.batch_write_item(
-                        RequestItems={HEALTH_TABLE_NAME: unprocessed}
-                    )
-                    still_unprocessed = retry_response.get('UnprocessedItems', {}).get(HEALTH_TABLE_NAME, [])
-                    if still_unprocessed:
-                        errors.append(f"{len(still_unprocessed)} items unprocessed after retry")
-                    written_count += len(request_items) - len(still_unprocessed)
-                else:
-                    written_count += len(request_items)
-
-            except ClientError as e:
-                errors.append(f"BatchWriteItem error: {e.response['Error']['Message']}")
-
-        return {
-            'success': written_count > 0 or (len(events) == 0),
-            'written_count': written_count,
-            'total_events': len(events),
-            'errors': errors
-        }
-
-    except Exception as e:
-        return {
-            'success': False,
-            'written_count': 0,
-            'error': f'Failed to batch write health events: {str(e)}'
-        }
-
-
-def update_health_event_status(event_arn: str, event_type_category: str, status: str) -> dict:
-    """
-    Update a Health event's status_code and notification_status.
-    
-    When the status is 'closed', also sets the resolution_time to the current timestamp.
-    
-    KEEP WITH AGENT: Part of the Health collection workflow for event lifecycle tracking.
-    
-    Args:
-        event_arn: The ARN of the Health event (partition key).
-        event_type_category: The event type category (sort key: issue | accountNotification | scheduledChange).
-        status: The new status_code value (open | closed | upcoming).
-    
-    Returns:
-        dict with success status or error details.
-    
-    Requirements: 5.4, 6.4
-    """
-    try:
-        if not event_arn or not event_type_category or not status:
-            return {'error': 'event_arn, event_type_category, and status are required'}
-
-        current_time = datetime.now(timezone.utc).isoformat()
-
-        # Build update expression based on status
-        update_expression = 'SET status_code = :status, last_updated_time = :updated'
-        expression_values = {
-            ':status': status,
-            ':updated': current_time
-        }
-
-        # When closing an event, set notification_status to 'resolved' and add resolution_time
-        if status == 'closed':
-            update_expression += ', notification_status = :notif_status, resolution_time = :resolution'
-            expression_values[':notif_status'] = 'resolved'
-            expression_values[':resolution'] = current_time
-        else:
-            update_expression += ', notification_status = :notif_status'
-            expression_values[':notif_status'] = 'active'
-
-        health_events_table.update_item(
-            Key={
-                'event_arn': event_arn,
-                'event_type_category': event_type_category
-            },
-            UpdateExpression=update_expression,
-            ExpressionAttributeValues=expression_values
-        )
-
-        return {
-            'success': True,
-            'event_arn': event_arn,
-            'new_status': status,
-            'updated_at': current_time
-        }
-
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'ResourceNotFoundException':
-            return {'error': f'Health event not found: {event_arn}'}
-        return {'error': f'Failed to update health event status: {e.response["Error"]["Message"]}'}
-    except Exception as e:
-        return {'error': f'Failed to update health event status: {str(e)}'}
-
-
-def _convert_to_dynamodb_item(item: dict) -> dict:
-    """
-    Convert a Python dict to a DynamoDB-compatible item.
-    Converts floats to Decimal and handles nested structures.
-    """
-    converted = {}
-    for key, value in item.items():
-        if value is None:
-            continue  # Skip None values (DynamoDB doesn't support null in this way for attributes)
-        elif isinstance(value, float):
-            converted[key] = Decimal(str(value))
-        elif isinstance(value, int) and not isinstance(value, bool):
-            converted[key] = Decimal(str(value))
-        elif isinstance(value, dict):
-            converted[key] = _convert_to_dynamodb_item(value)
-        elif isinstance(value, list):
-            converted[key] = [
-                _convert_to_dynamodb_item(v) if isinstance(v, dict)
-                else Decimal(str(v)) if isinstance(v, (int, float)) and not isinstance(v, bool)
-                else v
-                for v in value
-            ]
-        else:
-            converted[key] = value
-    return converted

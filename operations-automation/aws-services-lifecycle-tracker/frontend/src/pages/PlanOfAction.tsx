@@ -19,9 +19,11 @@ import {
   createActionPlan, 
   updateActionPlan, 
   deleteActionPlan,
-  getDeprecations,
-  ActionPlan 
+  getLifecycleData,
+  ActionPlan,
+  DeprecationItem
 } from '../api';
+import { isConcern, urgencySort, serviceLabel, itemName, statusMeta, resourceCount, resourceWord } from '../lifecycle';
 
 const STATUS_OPTIONS = [
   { label: 'Not Started', value: 'not_started' },
@@ -60,8 +62,8 @@ export default function PlanOfAction() {
     notes: '',
   });
   
-  // Deprecations for dropdown
-  const [deprecations, setDeprecations] = useState<any[]>([]);
+  // My resources needing attention, for the create-plan picker (issue #141)
+  const [candidates, setCandidates] = useState<DeprecationItem[]>([]);
 
   useEffect(() => {
     loadData();
@@ -70,12 +72,11 @@ export default function PlanOfAction() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [plansData, deprecationsData] = await Promise.all([
-        getActionPlans(),
-        getDeprecations({ status: 'deprecated' })
-      ]);
+      const [plansData, data] = await Promise.all([getActionPlans(), getLifecycleData()]);
       setPlans(plansData);
-      setDeprecations(deprecationsData);
+      // Plans are for things you own: offer inventory rows that need attention first,
+      // then the rest of the inventory (a supported version can still warrant a plan).
+      setCandidates([...data.inventory].sort(urgencySort));
     } catch (err: any) {
       showError(`Failed to load data: ${err.message}`);
     } finally {
@@ -208,10 +209,12 @@ export default function PlanOfAction() {
     }
   };
 
-  // Build deprecation options for select
-  const deprecationOptions = deprecations.map(d => ({
-    label: `${d.service_name} - ${d.service_specific?.name || d.item_id}`,
-    value: `${d.service_name}|${d.item_id}|${d.service_specific?.name || d.item_id}`,
+  // Picker options: my resources, urgent first, with status and resource count
+  const deprecationOptions = candidates.map(d => ({
+    label: `${serviceLabel(d.service_name)} - ${itemName(d)}`,
+    description: `${statusMeta(d.status).label} - ${resourceCount(d)} ${resourceWord(resourceCount(d))}${d.region ? ` in ${d.region}` : ''}`,
+    value: `${d.service_name}|${d.item_id}|${serviceLabel(d.service_name)} ${itemName(d)}`,
+    tags: isConcern(d.status) ? ['needs attention'] : undefined,
   }));
 
 
@@ -228,7 +231,7 @@ export default function PlanOfAction() {
                 Create Action Plan
               </Button>
             }
-            description="Track and manage remediation plans for deprecated resources"
+            description="Who is upgrading what, by when. Create plans here or from My resources."
           >
             Plan of Action ({plans.length})
           </Header>
@@ -253,7 +256,7 @@ export default function PlanOfAction() {
             },
             {
               id: 'item',
-              header: 'Deprecation Item',
+              header: 'Resource',
               cell: item => item.item_name || item.item_id,
               width: 180,
             },
@@ -317,7 +320,7 @@ export default function PlanOfAction() {
         }
       >
         <SpaceBetween size="m">
-          <FormField label="Deprecation Item">
+          <FormField label="Resource (version running in this account)">
             <Select
               selectedOption={deprecationOptions.find(o => o.value === `${formData.service_name}|${formData.item_id}|${formData.item_name}`) || null}
               onChange={({ detail }) => {
@@ -325,7 +328,7 @@ export default function PlanOfAction() {
                 setFormData({ ...formData, service_name: service, item_id: itemId, item_name: itemName });
               }}
               options={deprecationOptions}
-              placeholder="Select a deprecated item"
+              placeholder="Select one of your resources"
             />
           </FormField>
           <FormField label="Owner (email/alias)">
@@ -375,7 +378,7 @@ export default function PlanOfAction() {
         }
       >
         <SpaceBetween size="m">
-          <FormField label="Deprecation Item">
+          <FormField label="Resource (version running in this account)">
             <Box>{formData.service_name} - {formData.item_name}</Box>
           </FormField>
           <FormField label="Owner (email/alias)">

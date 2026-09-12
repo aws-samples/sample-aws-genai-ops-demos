@@ -17,26 +17,51 @@ export interface PipelineStackProps extends cdk.StackProps {
   stateTable: dynamodb.ITable;
   inventoryTable: dynamodb.ITable;
   actionPlanTable: dynamodb.ITable;
-  healthEventsTable: dynamodb.ITable;
 }
 
-const AGENT_DIR = path.join(__dirname, '..', '..', 'agent');
+const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
 const PIPELINE_FUNCTION_NAME = 'aws-services-lifecycle-pipeline';
 const API_FUNCTION_NAME = 'aws-services-lifecycle-api';
+// One place for the Lambda Python version: runtime of both functions, the
+// Docker bundling image and the pip wheel target must agree.
+const PYTHON_RUNTIME = lambda.Runtime.PYTHON_3_14;
+const PYTHON_VERSION = '3.14';
+
+// Repo-wide region/account helpers (shared/utils/aws_utils.py). The Lambda
+// bundle cannot import from outside its own directory, so the file is copied
+// into the staged backend at synth time: one source of truth, no local copy.
+const SHARED_AWS_UTILS = path.join(__dirname, '..', '..', '..', '..', 'shared', 'utils', 'aws_utils.py');
+const STAGE_DIR = path.join(__dirname, '..', '.backend-stage');
+
+/**
+ * Assemble the Lambda source tree: backend/*.py + requirements.txt plus the
+ * shared aws_utils.py. Tests and caches are never staged.
+ */
+function stageBackend(): string {
+  fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+  fs.mkdirSync(STAGE_DIR, { recursive: true });
+  for (const file of fs.readdirSync(BACKEND_DIR)) {
+    if (file.endsWith('.py') || file === 'requirements.txt') {
+      fs.copyFileSync(path.join(BACKEND_DIR, file), path.join(STAGE_DIR, file));
+    }
+  }
+  fs.copyFileSync(SHARED_AWS_UTILS, path.join(STAGE_DIR, 'aws_utils.py'));
+  return STAGE_DIR;
+}
 
 /**
  * Bundle the Python code without Docker: pip resolves Linux/arm64 wheels for
- * the Lambda runtime (all dependencies are pure Python), then the agent
+ * the Lambda runtime (all dependencies are pure Python), then the staged
  * sources are copied alongside. Returning false lets CDK fall back to the
  * Docker bundling image.
  */
-function bundleAgentLocally(outputDir: string): boolean {
+function bundleBackendLocally(stageDir: string, outputDir: string): boolean {
   const pipArgs = [
     '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
     '--platform', 'manylinux2014_aarch64', '--only-binary=:all:',
-    '--python-version', '3.13', '--implementation', 'cp',
+    '--python-version', PYTHON_VERSION, '--implementation', 'cp',
     '--target', outputDir,
-    '-r', path.join(AGENT_DIR, 'requirements.txt'),
+    '-r', path.join(stageDir, 'requirements.txt'),
   ];
   let installed = false;
   for (const python of ['python', 'python3']) {
@@ -49,9 +74,9 @@ function bundleAgentLocally(outputDir: string): boolean {
   if (!installed) {
     return false;
   }
-  for (const file of fs.readdirSync(AGENT_DIR)) {
+  for (const file of fs.readdirSync(stageDir)) {
     if (file.endsWith('.py')) {
-      fs.copyFileSync(path.join(AGENT_DIR, file), path.join(outputDir, file));
+      fs.copyFileSync(path.join(stageDir, file), path.join(outputDir, file));
     }
   }
   return true;
@@ -65,8 +90,8 @@ function bundleAgentLocally(outputDir: string): boolean {
  *    (extract -> scan -> reconcile -> notify) as one checkpointed execution.
  *    Invoked through the `live` alias (durable functions need a qualified ARN).
  *  - api: plain function behind API Gateway (see ApiStack) serving UI actions,
- *    starting/observing pipeline executions, and running the scheduled
- *    Health poll.
+ *    starting/observing pipeline executions, and receiving the weekly
+ *    schedule.
  * Replaces the Step Functions machine and the AgentCore runtime.
  */
 export class PipelineStack extends cdk.Stack {
@@ -92,16 +117,16 @@ export class PipelineStack extends cdk.Stack {
     // ------------------------------------------------------------------
     // Shared code bundle
     // ------------------------------------------------------------------
-    const agentCode = lambda.Code.fromAsset(AGENT_DIR, {
-      exclude: ['tests', '__pycache__', '*.pyc', '.hypothesis', '.pytest_cache'],
+    const stageDir = stageBackend();
+    const backendCode = lambda.Code.fromAsset(stageDir, {
       bundling: {
-        image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+        image: PYTHON_RUNTIME.bundlingImage,
         platform: 'linux/arm64',
         command: [
           'bash', '-c',
           'pip install --quiet -r requirements.txt -t /asset-output && cp *.py /asset-output/',
         ],
-        local: { tryBundle: (outputDir: string) => bundleAgentLocally(outputDir) },
+        local: { tryBundle: (outputDir: string) => bundleBackendLocally(stageDir, outputDir) },
       },
     });
 
@@ -111,17 +136,16 @@ export class PipelineStack extends cdk.Stack {
       STATE_TABLE_NAME: props.stateTable.tableName,
       INVENTORY_TABLE_NAME: props.inventoryTable.tableName,
       ACTION_PLAN_TABLE_NAME: props.actionPlanTable.tableName,
-      HEALTH_TABLE_NAME: props.healthEventsTable.tableName,
       NOTIFICATION_TOPIC_ARN: this.notificationTopic.topicArn,
     };
 
     // ------------------------------------------------------------------
     // Shared data-plane permissions (same boundary as before, issue #116):
-    // full access to agent-owned tables, read + UpdateItem only on the
+    // full access to backend-owned tables, read + UpdateItem only on the
     // repo-owned configuration table (no Put/Delete/BatchWrite).
     // ------------------------------------------------------------------
     const dataAccessPolicy = new iam.ManagedPolicy(this, 'LifecycleDataAccess', {
-      description: 'Lifecycle tracker Lambda access to DynamoDB, Bedrock, Health and read-only discovery APIs',
+      description: 'Lifecycle tracker Lambda access to DynamoDB, Bedrock, AWS Health and read-only discovery APIs',
       statements: [
         new iam.PolicyStatement({
           sid: 'DynamoDBAgentOwnedAccess',
@@ -131,7 +155,7 @@ export class PipelineStack extends cdk.Stack {
           ],
           resources: [
             props.lifecycleTable, props.stateTable, props.inventoryTable,
-            props.actionPlanTable, props.healthEventsTable,
+            props.actionPlanTable,
           ].flatMap((table) => [table.tableArn, `${table.tableArn}/index/*`]),
         }),
         new iam.PolicyStatement({
@@ -148,8 +172,10 @@ export class PipelineStack extends cdk.Stack {
           ],
         }),
         new iam.PolicyStatement({
+          // Scan-time cross-check: which inventory ARNs appear in open planned
+          // lifecycle notices (#141). Needs Business/Enterprise Support at runtime.
           sid: 'HealthAPIAccess',
-          actions: ['health:DescribeEvents', 'health:DescribeEventDetails', 'health:DescribeAffectedEntities', 'health:DescribeEventTypes'],
+          actions: ['health:DescribeEvents', 'health:DescribeAffectedEntities'],
           resources: ['*'], // Health API has no resource-level permissions
         }),
         new iam.PolicyStatement({
@@ -188,10 +214,10 @@ export class PipelineStack extends cdk.Stack {
     this.pipelineFunction = new lambda.Function(this, 'PipelineFunction', {
       functionName: PIPELINE_FUNCTION_NAME,
       description: 'Lifecycle refresh pipeline: extract -> scan -> reconcile -> notify (Lambda durable function)',
-      runtime: lambda.Runtime.PYTHON_3_13,
+      runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
-      handler: 'lambda_pipeline.handler',
-      code: agentCode,
+      handler: 'pipeline.handler',
+      code: backendCode,
       memorySize: 1024,
       timeout: cdk.Duration.minutes(15),
       logGroup: pipelineLogGroup,
@@ -213,7 +239,7 @@ export class PipelineStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // Plain API function (UI actions, pipeline control, Health poll)
+    // Plain API function (UI actions, pipeline control, weekly schedule)
     // ------------------------------------------------------------------
     const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
       logGroupName: `/aws/lambda/${API_FUNCTION_NAME}`,
@@ -223,11 +249,11 @@ export class PipelineStack extends cdk.Stack {
 
     this.apiFunction = new lambda.Function(this, 'ApiFunction', {
       functionName: API_FUNCTION_NAME,
-      description: 'Lifecycle tracker API: UI actions, refresh pipeline control, scheduled Health collection',
-      runtime: lambda.Runtime.PYTHON_3_13,
+      description: 'Lifecycle tracker API: UI actions, refresh pipeline control, weekly schedule entry point',
+      runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
-      handler: 'lambda_api.handler',
-      code: agentCode,
+      handler: 'api.handler',
+      code: backendCode,
       memorySize: 512,
       timeout: cdk.Duration.minutes(5),
       logGroup: apiLogGroup,
@@ -277,15 +303,6 @@ export class PipelineStack extends cdk.Stack {
       target: scheduleTarget({ action: 'start_refresh', refresh_origin: 'Auto' }),
     });
 
-    const healthSchedule = new scheduler.CfnSchedule(this, 'HealthCollectionSchedule', {
-      name: 'aws-health-events-collection',
-      description: 'Hourly AWS Health events poll',
-      scheduleExpression: 'rate(1 hour)',
-      scheduleExpressionTimezone: 'UTC',
-      flexibleTimeWindow: { mode: 'OFF' },
-      target: scheduleTarget({ action: 'collect_health_events', refresh_origin: 'Auto' }),
-    });
-
     // ------------------------------------------------------------------
     // Outputs
     // ------------------------------------------------------------------
@@ -295,14 +312,13 @@ export class PipelineStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'ApiFunctionArn', {
       value: this.apiFunction.functionArn,
-      description: 'ARN of the API function (UI actions, pipeline control, Health poll)',
+      description: 'ARN of the API function (UI actions, pipeline control, weekly schedule)',
     });
     new cdk.CfnOutput(this, 'NotificationTopicArn', {
       value: this.notificationTopic.topicArn,
       description: 'SNS topic receiving refresh completion summaries',
     });
     new cdk.CfnOutput(this, 'WeeklyScheduleName', { value: weeklySchedule.name! });
-    new cdk.CfnOutput(this, 'HealthScheduleName', { value: healthSchedule.name! });
     new cdk.CfnOutput(this, 'DeadLetterQueueUrl', { value: deadLetterQueue.queueUrl });
   }
 }

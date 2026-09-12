@@ -27,3 +27,9 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+
+.hypothesis/
+.pytest_cache/
+
+# CDK synth-time staging of backend + shared/utils (pipeline-stack.ts)
+cdk/.backend-stage/

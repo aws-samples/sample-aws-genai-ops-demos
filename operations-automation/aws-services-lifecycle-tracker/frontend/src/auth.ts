@@ -6,21 +6,21 @@
  * 🆔 ID Token (getIdToken):
  *    - WHO the user is (identity)
  *    - Contains: sub, email, name, aud (audience)
- *    - Used for: Cognito Identity Pool → AWS credentials
- *    - Required for: Our AgentCore access via IAM
+ *    - Used for: the Authorization header of every API call; the HTTP API's
+ *      Cognito JWT authorizer validates it (see api.ts)
  * 
  * 🔑 Access Token (getAccessToken):
  *    - WHAT the user can access (authorization)
  *    - Contains: scopes, permissions, client_id
- *    - Used for: Direct API calls with OAuth2 scopes
- *    - NOT used for: Cognito Identity Pool (missing 'aud' claim)
+ *    - Kept for completeness; the API only checks the ID token
  * 
  * 🔄 Refresh Token:
  *    - Used to get new ID/Access tokens when they expire
  *    - Automatically handled in getAccessToken()
  * 
  * OUR ARCHITECTURE:
- * User → Cognito User Pool → ID Token → Cognito Identity Pool → AWS Credentials → AgentCore (IAM)
+ * User → Cognito User Pool → ID Token → API Gateway (JWT authorizer) → Lambda
+ * The browser never holds AWS credentials.
  */
 
 import {

@@ -12,7 +12,6 @@ export class DataStack extends cdk.Stack {
   public readonly stateTable: dynamodb.Table;
   public readonly inventoryTable: dynamodb.Table;
   public readonly actionPlanTable: dynamodb.Table;
-  public readonly healthEventsTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -77,13 +76,13 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // Agent-owned runtime state table (issue #116, Option B).
+    // Backend-owned runtime state table (issue #116, Option B).
     // Extraction metadata (extraction_count, last_extraction, success_rate,
-    // last_refresh_origin, last_extraction_duration) and the health-collection
-    // control rows (_health_collection_failures, _health_collection_lock) live
+    // last_refresh_origin, last_extraction_duration) and control rows such as
+    // the last AWS Health cross-check (_health_match) live
     // here, physically separated from the repo-owned configuration table so no
     // deploy-time writer can touch runtime state: the populator has no grant on
-    // this table, and the agent has no full-item write on the config table.
+    // this table, and the backend has no full-item write on the config table.
     // TTL enabled for the concurrency-lock row's expires_at-based cleanup.
     this.stateTable = new dynamodb.Table(this, 'StateTable', {
       tableName: 'service-extraction-state',
@@ -165,48 +164,6 @@ export class DataStack extends cdk.Stack {
       },
     });
 
-    // Health Events table for AWS Health API integration
-    this.healthEventsTable = new dynamodb.Table(this, 'HealthEventsTable', {
-      tableName: 'aws-health-events',
-      partitionKey: {
-        name: 'event_arn',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'event_type_category',
-        type: dynamodb.AttributeType.STRING,
-      },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      timeToLiveAttribute: 'ttl',
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-
-    // GSI for querying health events by service name
-    this.healthEventsTable.addGlobalSecondaryIndex({
-      indexName: 'service-index',
-      partitionKey: {
-        name: 'service_name',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'start_time',
-        type: dynamodb.AttributeType.STRING,
-      },
-    });
-
-    // GSI for querying health events by status code
-    this.healthEventsTable.addGlobalSecondaryIndex({
-      indexName: 'status-index',
-      partitionKey: {
-        name: 'status_code',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'start_time',
-        type: dynamodb.AttributeType.STRING,
-      },
-    });
-
     // Outputs for other stacks
     new cdk.CfnOutput(this, 'LifecycleTableName', {
       value: this.lifecycleTable.tableName,
@@ -246,13 +203,13 @@ export class DataStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'StateTableName', {
       value: this.stateTable.tableName,
-      description: 'DynamoDB table for agent-owned runtime state (issue #116)',
+      description: 'DynamoDB table for backend-owned runtime state (issue #116)',
       exportName: 'AWSServicesLifecycleTrackerStateTableName',
     });
 
     new cdk.CfnOutput(this, 'StateTableArn', {
       value: this.stateTable.tableArn,
-      description: 'DynamoDB table ARN for agent-owned runtime state',
+      description: 'DynamoDB table ARN for backend-owned runtime state',
       exportName: 'AWSServicesLifecycleTrackerStateTableArn',
     });
 
@@ -268,18 +225,6 @@ export class DataStack extends cdk.Stack {
       exportName: 'AWSServicesLifecycleTrackerActionPlanTableArn',
     });
 
-    new cdk.CfnOutput(this, 'HealthEventsTableName', {
-      value: this.healthEventsTable.tableName,
-      description: 'DynamoDB table for AWS Health events',
-      exportName: 'AWSServicesLifecycleTrackerHealthEventsTableName',
-    });
-
-    new cdk.CfnOutput(this, 'HealthEventsTableArn', {
-      value: this.healthEventsTable.tableArn,
-      description: 'DynamoDB table ARN for Health events',
-      exportName: 'AWSServicesLifecycleTrackerHealthEventsTableArn',
-    });
-
     // Custom Resource to populate service configurations
     this.createServiceConfigPopulator();
   }
@@ -291,7 +236,7 @@ export class DataStack extends cdk.Stack {
 
     // Lambda function to populate configurations
     const populatorFunction = new lambda.Function(this, 'ServiceConfigPopulator', {
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_14,
       handler: 'index.handler',
       timeout: cdk.Duration.minutes(5),
       code: lambda.Code.fromInline(`
@@ -300,7 +245,7 @@ import boto3
 import os
 from decimal import Decimal
 
-# Runtime/state fields are OWNED BY THE AGENT and must never be written by the
+# Runtime/state fields are OWNED BY THE BACKEND (Lambda runtime) and must never be written by the
 # deploy-time populator (issue #116): a full-item put_item here used to wipe
 # extraction history on every deploy, making services show as "Never extracted".
 RUNTIME_FIELDS = {
@@ -319,7 +264,7 @@ def handler(event, context):
     """Seed/refresh static service configuration WITHOUT touching runtime state.
 
     Static, repo-owned fields (documentation_urls, extraction_focus, ...) are
-    updated on every deploy so config changes propagate. Agent-owned runtime
+    updated on every deploy so config changes propagate. Backend-owned runtime
     fields are never written. update_item upserts, so new services are created.
     """
 
@@ -392,7 +337,7 @@ def handler(event, context):
         # exist (issue #140). A service removed from service_configs.json must
         # disappear from the table too, otherwise it keeps being extracted.
         # Only the config table is touched; facts/inventory rows are the
-        # agent's and are left for the next refresh / manual cleanup.
+        # backend's and are left for the next refresh / manual cleanup.
         removed = 0
         scan_kwargs = {'ProjectionExpression': 'service_name'}
         while True:
@@ -440,7 +385,7 @@ def handler(event, context):
         TableName: this.configTable.tableName,
         // Force the populator to run on every deployment. This is SAFE (and
         // desirable) because the populator only writes static, repo-owned
-        // config fields and never touches agent-owned runtime state (#116).
+        // config fields and never touches backend-owned runtime state (#116).
         Timestamp: Date.now().toString(),
       },
     });
