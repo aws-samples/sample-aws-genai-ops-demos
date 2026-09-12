@@ -68,6 +68,20 @@ describe('Pipeline stack', () => {
     });
   });
 
+  test('Extended Support pricing needs Price List + EC2 instance-type reads only (#142)', () => {
+    template.hasResourceProperties('AWS::IAM::ManagedPolicy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Sid: 'ExtendedSupportPricing',
+            Action: ['pricing:GetProducts', 'ec2:DescribeInstanceTypes'],
+            Resource: '*',
+          }),
+        ]),
+      },
+    });
+  });
+
   test('configuration table gets no PutItem/DeleteItem/BatchWriteItem (issue #116 boundary)', () => {
     template.hasResourceProperties('AWS::IAM::ManagedPolicy', {
       PolicyDocument: {

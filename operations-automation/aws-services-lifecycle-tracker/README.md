@@ -10,6 +10,7 @@ Automatically track AWS service deprecations, find the resources in your account
 - **🤖 Hybrid AI Extraction**: BeautifulSoup HTML parsing + Amazon Nova AI normalization for reliable data extraction
 - **🧠 Intelligent Status Categorization**: deprecated / extended_support / end_of_life based on retirement dates
 - **🎛️ Admin Interface**: React + Cloudscape UI behind Cognito; all calls go through an HTTP API with a JWT authorizer (the browser holds no AWS credentials)
+- **💸 Extended Support cost exposure**: for every RDS/Aurora resource, what the Extended Support surcharge will be (per month and over the next 12 months), with the calculation shown
 - **🩺 AWS Health cross-check**: each scan asks AWS Health which of *your* resources appear in an open planned-lifecycle notice, and marks them (paid Support plan required)
 - **📦 No Docker, no container registry**: Python code is bundled locally with pip; deploys in a few minutes
 
@@ -153,6 +154,7 @@ project-root/
 │   ├── database_writes.py          # WRITE operations + status categorization
 │   ├── action_plans.py             # Plan of Action CRUD
 │   ├── health_match.py             # AWS Health cross-check of scanned resources (by ARN)
+│   ├── cost_estimator.py           # RDS/Aurora Extended Support surcharge per resource (#142)
 │   ├── requirements.txt            # boto3, aws-durable-execution-sdk-python, bs4, requests
 │   └── tests/                      # pytest (incl. DurableFunctionTestRunner pipeline tests)
 │
@@ -493,6 +495,21 @@ Every resource is tagged `auto-delete=false`, `Project=aws-services-lifecycle-tr
 **Cost:** about **$210-240/month** - six RDS instances (~$95 incl. 20 GB gp3 each), DocumentDB db.t3.medium (~$60), Neptune db.t4g.medium (~$65), and the four Aurora Serverless v2 clusters at min 0 ACU, which scale to zero after 5 minutes idle (storage and backup only, a few dollars). Tear it down when you are done demoing.
 
 **Lambda fleet (free):** `scripts/create_test_lambdas.py` creates 50 tiny functions (128 MB, never invoked) across eight deprecated runtimes (nodejs16/18/20, python3.8/3.9, ruby3.2, dotnet6, provided.al2) plus one python3.10 and one dotnet8, so the UI shows versions with many resources behind them. Same tags, same `--status` / `--teardown` flags; runtimes Lambda no longer accepts at create time are reported and skipped. Lambda bills per invocation, so the fleet costs nothing while idle.
+
+### RDS Extended Support cost exposure
+
+When a major engine version leaves RDS standard support, instances still on it are billed **Extended Support** on top of the normal price: per vCPU-hour for provisioned instances, per ACU-hour for Aurora Serverless v2, roughly double from the third year. The scan prices that surcharge for every RDS/Aurora resource it finds:
+
+```
+provisioned:    vCPUs x (2 if Multi-AZ) x $/vCPU-hour x 730 h   per month
+Serverless v2:  max ACU x $/ACU-hour x 730 h                     per month (min ACU also shown)
+Year 1-2 rate from the day after end of standard support, Year 3 rate two years later,
+nothing after end of Extended Support (AWS upgrades the instance).
+```
+
+All inputs are live, nothing is hardcoded: unit prices come from the **AWS Price List Query API** for the scanned region (`extendedSupportPricingYear`), vCPU counts from `ec2:DescribeInstanceTypes`, dates from the catalog's major-version row. When a version has no SKU of its own yet, the engine family's rate is used and the figure is marked *estimate*. Engines without an Extended Support offer (MariaDB, SQL Server, Oracle) are shown as "no Extended Support": they are upgraded automatically at end of standard support.
+
+The result is on the dashboard (KPI "Extended Support, next 12 months"), on My resources (sortable "Cost exposure" column) and, resource by resource, in the details view, where the exact formula and dates are displayed. Deliberate simplifications: list prices, always-on (730 h/month), no Reserved Instance or actual-usage data; the point is to order remediation by money, not to replace the bill. Adapted from [rds-extended-support-cost-estimator](https://github.com/aws-samples/rds-extended-support-cost-estimator), whose formula is kept while its hardcoded dates and instance map are replaced by the sources above.
 
 ### Cleanup
 

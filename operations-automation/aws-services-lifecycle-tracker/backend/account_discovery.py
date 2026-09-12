@@ -106,6 +106,8 @@ class LifecycleIndex:
                     or specific.get("end_of_life_date")
                     or ""
                 ) or "N/A",
+                # RDS/Aurora only: when the paid Extended Support window closes (#142)
+                "end_of_extended_support_date": str(specific.get("end_of_extended_support_date") or "") or "N/A",
                 "item_id": row.get("item_id", ""),
             }
             for candidate in (specific.get("identifier"), specific.get("version"), specific.get("name")):
@@ -241,8 +243,10 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
             res = dict(r) if isinstance(r, dict) else {"name": str(r)}
             res["name"] = str(res.get("name", ""))
             res.setdefault("arn", "")
-            details.append({"name": res["name"], "arn": res["arn"],
-                            "console_url": console_url(service_key, region, res)})
+            # Scanner-provided attributes (instance class, Multi-AZ, engine,
+            # Serverless v2 capacity, ...) travel with the resource so later
+            # enrichment (cost exposure #142) needs no second API call.
+            details.append({**res, "console_url": console_url(service_key, region, res)})
         details.sort(key=lambda d: d["name"])
         names = [d["name"] for d in details]
         summary = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
@@ -341,6 +345,21 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
     engine_instances = {}
     
     try:
+        # Aurora Serverless v2 capacity lives on the cluster (#142): one pass
+        # over clusters gives min/max ACU for every db.serverless member.
+        serverless_by_cluster = {}
+        try:
+            for page in rds_client.get_paginator("describe_db_clusters").paginate():
+                for cluster in page.get("DBClusters", []):
+                    cfg = cluster.get("ServerlessV2ScalingConfiguration")
+                    if cfg:
+                        serverless_by_cluster[cluster["DBClusterIdentifier"]] = {
+                            "min_acu": float(cfg.get("MinCapacity", 0)),
+                            "max_acu": float(cfg.get("MaxCapacity", 0)),
+                        }
+        except Exception as e:  # cost sizing is best effort; the scan itself must not fail
+            print(f"Warning: could not read Aurora cluster capacity: {e}")
+
         paginator = rds_client.get_paginator("describe_db_instances")
         for page in paginator.paginate():
             for db in page["DBInstances"]:
@@ -363,7 +382,20 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 
                 if key not in engine_instances:
                     engine_instances[key] = []
-                engine_instances[key].append({"name": db["DBInstanceIdentifier"], "arn": db.get("DBInstanceArn", "")})
+                resource = {
+                    "name": db["DBInstanceIdentifier"],
+                    "arn": db.get("DBInstanceArn", ""),
+                    # Sizing attributes for the Extended Support cost estimate (#142)
+                    "engine": engine,
+                    "engine_version": db["EngineVersion"],
+                    "instance_class": db.get("DBInstanceClass", ""),
+                    "multi_az": bool(db.get("MultiAZ", False)),
+                }
+                if db.get("DBClusterIdentifier"):
+                    resource["cluster"] = db["DBClusterIdentifier"]
+                    if db["DBClusterIdentifier"] in serverless_by_cluster:
+                        resource["serverless_v2"] = serverless_by_cluster[db["DBClusterIdentifier"]]
+                engine_instances[key].append(resource)
         
         for (engine, major, version), instances in engine_instances.items():
             # Aurora engines have their own extraction source/config key
@@ -826,10 +858,11 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
             item["provenance"] = DISCOVERY_PROVENANCE
             item["discovery_run_id"] = run_id
 
-        # Upsert this run's inventory (put on an existing key replaces it)
+        # Upsert this run's inventory (put on an existing key replaces it).
+        # Cost figures are floats; DynamoDB only takes Decimal.
         with table.batch_writer() as batch:
             for item in items:
-                batch.put_item(Item=item)
+                batch.put_item(Item=_dynamo_safe(item))
 
         # Reconcile per successfully-scanned service: query that service's
         # inventory rows and delete those not written by this run.
@@ -1073,6 +1106,94 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
 
 
 HEALTH_STATUS_KEY = "_health_match"  # control row in the backend-owned state table
+COST_STATUS_KEY = "_cost_exposure"   # outcome of the last Extended Support pricing pass (#142)
+
+
+def estimate_cost_exposure(items: List[Dict]) -> Dict:
+    """Price the RDS/Aurora Extended Support surcharge of scanned resources, in place (#142).
+
+    Each RDS/Aurora resource gains an 'extended_support' block (unit price,
+    monthly Yr1-2 / Yr3, 12-month forecast, dates) and each row a
+    'cost_exposure' aggregate. Prices come from the Price List API for the
+    scanned region, vCPUs from EC2, dates from the catalog's major-version row.
+    Never fails a scan; returns a storable status.
+    """
+    from datetime import datetime, timezone
+    from cost_estimator import EXTENDED_SUPPORT_ENGINES, PriceBook, VcpuBook, estimate_resource, major_version, row_exposure
+
+    status = {"checked_at": datetime.now(timezone.utc).isoformat(), "available": False, "reason": None,
+              "resources_priced": 0, "monthly": 0.0, "forecast_12m": 0.0, "currency": "USD"}
+    books: Dict[str, tuple] = {}
+    indexes: Dict[str, "LifecycleIndex"] = {}
+    reasons: List[str] = []
+    try:
+        for item in items:
+            if item.get("service_name") not in ("rds", "aurora"):
+                continue
+            region = item.get("region") or REGION
+            if region not in books:
+                books[region] = (PriceBook(region), VcpuBook(region))
+                indexes[region] = LifecycleIndex(region=region)
+            prices, vcpus = books[region]
+            details = item.get("service_specific", {}).get("affected_resource_details", [])
+            for res in details:
+                engine = res.get("engine", "")
+                major_row = None
+                if engine in EXTENDED_SUPPORT_ENGINES:
+                    _, service_key, slug = EXTENDED_SUPPORT_ENGINES[engine]
+                    major = major_version(engine, res.get("engine_version", ""))
+                    major_row = indexes[region].lookup(service_key, [f"{slug}-{major}"])
+                try:
+                    res["extended_support"] = estimate_resource(res, prices, vcpus, major_row)
+                except Exception as e:  # one odd resource must not hide the others
+                    res["extended_support"] = {"eligible": False, "currency": "USD", "reason": "error",
+                                               "note": f"{type(e).__name__}: {str(e)[:120]}"}
+                    if str(e) not in reasons:
+                        reasons.append(f"{res.get('name')}: {type(e).__name__}: {str(e)[:100]}")
+            exposure = row_exposure(details)
+            item["service_specific"]["cost_exposure"] = exposure
+            status["resources_priced"] += exposure["resources_priced"]
+            status["monthly"] = round(status["monthly"] + exposure["monthly"], 2)
+            status["forecast_12m"] = round(status["forecast_12m"] + exposure["forecast_12m"], 2)
+            if prices.error and prices.error not in reasons:
+                reasons.append(prices.error)
+        status["available"] = any(b[0].available for b in books.values()) or not books
+        status["reason"] = "; ".join(reasons) or None
+    except Exception as e:  # pragma: no cover - defensive: pricing must never break a scan
+        status["reason"] = f"{type(e).__name__}: {str(e)[:160]}"
+    _save_control_row(COST_STATUS_KEY, status)
+    return status
+
+
+def _save_control_row(key: str, status: Dict) -> None:
+    try:
+        from database_reads import state_table
+        state_table.put_item(Item=_dynamo_safe({"service_name": key, **status}))
+    except Exception as e:  # pragma: no cover - never fail the scan on this
+        print(f"Could not save control row {key}: {e}")
+
+
+def load_control_row(key: str) -> Optional[Dict]:
+    try:
+        from database_reads import state_table
+        item = state_table.get_item(Key={"service_name": key}).get("Item")
+        if item:
+            item.pop("service_name", None)
+        return item
+    except Exception:
+        return None
+
+
+def _dynamo_safe(value):
+    """DynamoDB rejects Python floats: convert them (recursively) to Decimal."""
+    from decimal import Decimal
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {k: _dynamo_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dynamo_safe(v) for v in value]
+    return value
 
 
 def cross_check_health(items: List[Dict]) -> Dict:
@@ -1107,19 +1228,8 @@ def cross_check_health(items: List[Dict]) -> Dict:
 def _save_health_status(status: Dict) -> None:
     """Persist the last Health cross-check outcome so the UI can explain
     whether the Health column is live, and why not when it is not."""
-    try:
-        from database_reads import state_table
-        state_table.put_item(Item={"service_name": HEALTH_STATUS_KEY, **status})
-    except Exception as e:  # pragma: no cover - never fail the scan on this
-        print(f"Could not save health status: {e}")
+    _save_control_row(HEALTH_STATUS_KEY, status)
 
 
 def load_health_status() -> Optional[Dict]:
-    try:
-        from database_reads import state_table
-        item = state_table.get_item(Key={"service_name": HEALTH_STATUS_KEY}).get("Item")
-        if item:
-            item.pop("service_name", None)
-        return item
-    except Exception:
-        return None
+    return load_control_row(HEALTH_STATUS_KEY)

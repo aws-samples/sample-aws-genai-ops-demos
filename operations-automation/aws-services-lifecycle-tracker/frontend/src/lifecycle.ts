@@ -166,12 +166,76 @@ export interface HealthFlag {
   console_url?: string;
 }
 
+// RDS/Aurora Extended Support estimate for one resource (stamped at scan time, #142).
+// Every input of the calculation is stored so the UI can show the arithmetic.
+export interface ExtendedSupportEstimate {
+  eligible: boolean;
+  reason?: 'no_extended_support' | 'no_price' | 'unknown_instance_class' | 'no_capacity' | 'error';
+  note?: string;
+  currency: string;
+  engine_family?: string;
+  major_version?: string;
+  instance_class?: string;
+  serverless?: boolean;
+  multi_az?: boolean;
+  vcpus?: number;
+  billable_vcpus?: number;
+  min_acu?: number;
+  max_acu?: number;
+  unit?: 'vCPU-hour' | 'ACU-hour';
+  price_yr1_2?: number;
+  price_yr3?: number;
+  price_source?: 'sku' | 'family-estimate';
+  monthly_yr1_2?: number;
+  monthly_yr1_2_min?: number;
+  monthly_yr3?: number;
+  forecast_12m?: number;
+  standard_support_end?: string | null;
+  extended_support_start?: string | null;
+  year3_start?: string | null;
+  extended_support_end?: string | null;
+  in_extended_support?: boolean;
+}
+
+// Row-level aggregate of the estimates above
+export interface CostExposure {
+  currency: string;
+  resources_priced: number;
+  resources_total: number;
+  monthly: number;
+  monthly_yr3: number;
+  forecast_12m: number;
+  in_extended_support: number;
+  estimated: number;
+}
+
+export const HOURS_PER_MONTH = 730; // always-on assumption, same as the backend
+
 export interface ResourceRef {
   name: string;
   arn?: string;
   console_url?: string;
   health?: HealthFlag;
+  extended_support?: ExtendedSupportEstimate;
 }
+
+export const costExposure = (row: DeprecationItem): CostExposure | null => {
+  const c = row.service_specific?.cost_exposure;
+  return c && typeof c === 'object' ? (c as CostExposure) : null;
+};
+
+export const formatUsd = (n: number | undefined | null, digits = 0): string =>
+  n === undefined || n === null ? '-' : `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+
+// The calculation, spelled out: "2 vCPU × 2 (Multi-AZ) × $0.122/vCPU-h × 730 h"
+export const estimateFormula = (e: ExtendedSupportEstimate): string => {
+  if (!e.eligible || e.price_yr1_2 === undefined) return '';
+  if (e.serverless) {
+    return `${e.max_acu ?? 0} ACU (max) × $${e.price_yr1_2}/ACU-h × ${HOURS_PER_MONTH} h`;
+  }
+  const az = e.multi_az ? ' × 2 (Multi-AZ)' : '';
+  return `${e.vcpus ?? '?'} vCPU${az} × $${e.price_yr1_2}/vCPU-h × ${HOURS_PER_MONTH} h`;
+};
 
 // Resources of a row that AWS Health names in an open notice (exact count
 // stored by the scan; 0 when Health was unavailable).
@@ -192,6 +256,7 @@ export const resourceDetails = (row: DeprecationItem): ResourceRef[] => {
     return details.map((d: any) => ({
       name: String(d.name ?? ''), arn: d.arn || undefined, console_url: d.console_url || undefined,
       health: d.health && d.health.event_arn ? (d.health as HealthFlag) : undefined,
+      extended_support: d.extended_support && typeof d.extended_support === 'object' ? (d.extended_support as ExtendedSupportEstimate) : undefined,
     }));
   }
   const list = row.service_specific?.affected_resource_names;

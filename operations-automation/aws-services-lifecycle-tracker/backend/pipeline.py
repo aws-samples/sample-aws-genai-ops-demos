@@ -146,10 +146,12 @@ def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scann
     row knows which of its resources AWS has already flagged in a notice.
     """
     health = account_discovery.cross_check_health(items)
+    cost = account_discovery.estimate_cost_exposure(items)  # RDS/Aurora Extended Support (#142)
     result = account_discovery.save_to_dynamodb(
         items, run_id=run_id, scanned_services=sorted(set(scanned_keys)),
     )
     result["health"] = health
+    result["cost_exposure"] = cost
     return result
 
 
@@ -198,6 +200,10 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
             health = reconcile_result.get("health") or {}
             lines.append(f"  AWS Health: {health.get('flagged_resources', 0)} resources flagged"
                          if health.get("available") else f"  AWS Health: unavailable ({health.get('reason', 'n/a')})")
+            cost = reconcile_result.get("cost_exposure") or {}
+            if cost.get("resources_priced"):
+                lines.append(f"  Extended Support exposure: ${cost.get('monthly', 0):,.0f}/month once in Extended Support, "
+                             f"${cost.get('forecast_12m', 0):,.0f} over the next 12 months ({cost['resources_priced']} RDS/Aurora resources)")
         boto3.client("sns", region_name=run["function_region"]).publish(
             TopicArn=topic_arn,
             Subject="AWS Lifecycle Tracker - Refresh Complete",

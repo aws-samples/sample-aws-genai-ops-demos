@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import Table from '@cloudscape-design/components/table';
+import Table, { TableProps } from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -20,7 +20,7 @@ import Popover from '@cloudscape-design/components/popover';
 import { getLifecycleData, getActionPlans, createActionPlan, getScanners, DeprecationItem, ActionPlan, ScanCoverage } from '../api';
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
-  resourceCount, resourceWord, healthFlagged,
+  resourceCount, resourceWord, healthFlagged, costExposure, formatUsd,
 } from '../lifecycle';
 import ResourceDetails from '../components/ResourceDetails';
 
@@ -58,6 +58,8 @@ export default function MyResources() {
   const [form, setForm] = useState({ owner: '', priority: 'medium', target_date: '', notes: '' });
   // Row whose resource list is open in the details view (?details=<item_id>)
   const detailsId = params.get('details');
+  // Column sorting; default order is urgency (see urgencySort)
+  const [sorting, setSorting] = useState<TableProps.SortingState<DeprecationItem> | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -103,8 +105,15 @@ export default function MyResources() {
       const q = filterText.toLowerCase();
       out = out.filter((r) => `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''}`.toLowerCase().includes(q));
     }
-    return out.sort(urgencySort);
-  }, [rows, scope, service, filterText]);
+    out.sort(urgencySort);
+    if (sorting?.sortingColumn) {
+      const col = sorting.sortingColumn;
+      const cmp = col.sortingComparator
+        ?? ((a: DeprecationItem, b: DeprecationItem) => String((a as any)[col.sortingField!] ?? '').localeCompare(String((b as any)[col.sortingField!] ?? '')));
+      out.sort((a, b) => (sorting.isDescending ? -1 : 1) * cmp(a, b));
+    }
+    return out;
+  }, [rows, scope, service, filterText, sorting]);
 
   const updateParams = (next: Record<string, string>) => {
     const p = new URLSearchParams(params);
@@ -148,6 +157,9 @@ export default function MyResources() {
         onSelectionChange={({ detail }) => setSelected(detail.selectedItems)}
         trackBy="item_id"
         items={filtered}
+        sortingColumn={sorting?.sortingColumn}
+        sortingDescending={sorting?.isDescending}
+        onSortingChange={({ detail }) => setSorting(detail)}
         loading={loading}
         loadingText="Loading your resources..."
         variant="full-page"
@@ -251,6 +263,27 @@ export default function MyResources() {
                     {h > 0 && <Box variant="small" color="text-status-warning">{h} flagged by AWS Health</Box>}
                   </SpaceBetween>
                 : <Box color="text-body-secondary">0</Box>;
+            },
+          },
+          {
+            id: 'cost', header: 'Cost exposure', sortingComparator: (a, b) => (costExposure(a)?.forecast_12m ?? 0) - (costExposure(b)?.forecast_12m ?? 0),
+            cell: (r) => {
+              const c = costExposure(r);
+              if (!c || !c.resources_priced) {
+                return (r.service_name === 'rds' || r.service_name === 'aurora')
+                  ? <Box variant="small" color="text-body-secondary">{c ? 'no Extended Support' : '-'}</Box>
+                  : <Box color="text-body-secondary">-</Box>;
+              }
+              return (
+                <SpaceBetween size="xxxs">
+                  <Link onFollow={(e) => { e.preventDefault(); updateParams({ details: r.item_id }); }} href="#" ariaLabel={`Extended Support estimate for ${itemName(r)}`}>
+                    <Box variant="strong" color={c.in_extended_support ? 'text-status-error' : 'inherit'}>{formatUsd(c.monthly)}/mo</Box>
+                  </Link>
+                  <Box variant="small" color="text-body-secondary">
+                    {c.in_extended_support ? 'billing now' : `${formatUsd(c.forecast_12m)} next 12 mo`}{c.estimated ? ' · est.' : ''}
+                  </Box>
+                </SpaceBetween>
+              );
             },
           },
           { id: 'region', header: 'Region', cell: (r) => r.region || '-', sortingField: 'region' },

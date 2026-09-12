@@ -19,7 +19,7 @@ import {
 } from '../api';
 import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
-  urgencySort, serviceLabel, itemName, resourceCount, resourceWord,
+  urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd,
 } from '../lifecycle';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
@@ -173,6 +173,17 @@ export default function Dashboard() {
     [facts]);
   const factServices = useMemo(() => new Set(facts.map((f) => f.service_name)).size, [facts]);
 
+  // RDS/Aurora Extended Support surcharge across the inventory (#142)
+  const money = useMemo(() => {
+    let monthly = 0, forecast = 0, priced = 0, now = 0;
+    for (const r of inventory) {
+      const c = costExposure(r);
+      if (!c) continue;
+      monthly += c.monthly; forecast += c.forecast_12m; priced += c.resources_priced; now += c.in_extended_support;
+    }
+    return { monthly, forecast, priced, now };
+  }, [inventory]);
+
   if (loading) {
     return (
       <Container>
@@ -183,7 +194,7 @@ export default function Dashboard() {
     );
   }
 
-  const kpi = (label: string, value: number, sub: string, color?: 'text-status-error' | 'text-status-warning' | 'text-status-success' | 'text-status-info', onClick?: () => void) => (
+  const kpi = (label: string, value: number | string, sub: string, color?: 'text-status-error' | 'text-status-warning' | 'text-status-success' | 'text-status-info', onClick?: () => void) => (
     <div>
       <Box variant="awsui-key-label">{label}</Box>
       <Box variant="h1" fontSize="display-l" fontWeight="bold" color={color}>
@@ -234,11 +245,14 @@ export default function Dashboard() {
         }
       >
         <SpaceBetween size="l">
-          <ColumnLayout columns={4} variant="text-grid">
+          <ColumnLayout columns={money.priced ? 5 : 4} variant="text-grid">
             {kpi('Past end of life', total(exposure.byUrgency.past), `${exposure.byUrgency.past.length} version${exposure.byUrgency.past.length === 1 ? '' : 's'} - act now`, 'text-status-error', () => goResources('end_of_life'))}
             {kpi('Ending within 90 days', total(exposure.byUrgency.soon), `${exposure.byUrgency.soon.length} version${exposure.byUrgency.soon.length === 1 ? '' : 's'} - plan the upgrade`, 'text-status-error', () => goResources())}
             {kpi('Ending within a year', total(exposure.byUrgency.year), `${exposure.byUrgency.year.length} version${exposure.byUrgency.year.length === 1 ? '' : 's'} - schedule it`, 'text-status-warning', () => goResources())}
             {kpi('Fine for now', total(exposure.fine), `${exposure.fine.length} version${exposure.fine.length === 1 ? '' : 's'} supported or not matched`, 'text-status-success', () => goResources('supported'))}
+            {money.priced > 0 && kpi('Extended Support, next 12 months', formatUsd(money.forecast),
+              money.now ? `${formatUsd(money.monthly)}/month once all in Extended Support · ${money.now} billing now` : `${formatUsd(money.monthly)}/month once all ${money.priced} RDS/Aurora resources are in Extended Support`,
+              money.now ? 'text-status-error' : 'text-status-warning', () => navigate('/resources?service=rds&status=all'))}
           </ColumnLayout>
 
           <Box variant="small" color="text-body-secondary">
