@@ -104,3 +104,45 @@ describe('Pipeline stack', () => {
     });
   });
 });
+
+describe('Spoke stack (#144)', () => {
+  test('one read-only role trusting the hub pipeline role, with ExternalId when given', () => {
+    const { SpokeStack } = require('../lib/spoke-stack');
+    const { SCANNER_READ_ACTIONS, HEALTH_READ_ACTIONS } = require('../lib/scan-permissions');
+    const app = new cdk.App();
+    const template = Template.fromStack(new SpokeStack(app, 'TestSpoke', { hubAccountId: '111111111111', externalId: 'secret-1' }));
+    template.resourceCountIs('AWS::IAM::Role', 1);
+    template.resourceCountIs('AWS::Lambda::Function', 0);
+    template.hasResourceProperties('AWS::IAM::Role', {
+      RoleName: 'LifecycleTrackerScanRole',
+      AssumeRolePolicyDocument: {
+        Statement: [Match.objectLike({
+          Principal: { AWS: Match.objectLike({ 'Fn::Join': Match.anyValue() }) },
+          Condition: {
+            ArnEquals: { 'aws:PrincipalArn': Match.objectLike({ 'Fn::Join': Match.anyValue() }) },
+            StringEquals: { 'sts:ExternalId': 'secret-1' },
+          },
+        })],
+      },
+    });
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: { Statement: [Match.objectLike({ Action: [...SCANNER_READ_ACTIONS, ...HEALTH_READ_ACTIONS], Resource: '*' })] },
+    });
+  });
+
+  test('hub pipeline role is named and may assume the spoke role only', () => {
+    const app = new cdk.App({ context: { 'aws:cdk:bundling-stacks': [] } });
+    const dataStack = new DataStack(app, 'TestDataStack2');
+    const template = Template.fromStack(new PipelineStack(app, 'TestPipelineStack2', {
+      lifecycleTable: dataStack.lifecycleTable, configTable: dataStack.configTable, stateTable: dataStack.stateTable,
+      inventoryTable: dataStack.inventoryTable, actionPlanTable: dataStack.actionPlanTable,
+    }));
+    template.hasResourceProperties('AWS::IAM::Role', { RoleName: 'aws-services-lifecycle-pipeline-role' });
+    template.hasResourceProperties('AWS::IAM::ManagedPolicy', {
+      PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({
+        Sid: 'HubAndSpokeScan', Action: 'sts:AssumeRole',
+        Resource: Match.objectLike({ 'Fn::Join': Match.arrayWith([Match.arrayWith([Match.stringLikeRegexp('role/LifecycleTrackerScanRole')])]) }),
+      })]) },
+    });
+  });
+});

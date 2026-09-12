@@ -6,6 +6,7 @@ import { AuthStack } from '../lib/auth-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { ApiStack } from '../lib/api-stack';
 import { FrontendStack } from '../lib/frontend-stack';
+import { SpokeStack } from '../lib/spoke-stack';
 import { getRegion } from '../../../../shared/utils/aws-utils';
 
 const app = new cdk.App();
@@ -17,6 +18,11 @@ const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
   region: region,
 };
+
+// Optional confused-deputy guard for the multi-account scan (#144): the same
+// value must be given to the hub (Pipeline stack) and to every spoke.
+//   --context spokeExternalId=<opaque string>
+const spokeExternalId: string | undefined = app.node.tryGetContext('spokeExternalId') || undefined;
 
 // Data stack (DynamoDB tables)
 const dataStack = new DataStack(app, `AWSServicesLifecycleTrackerData-${region}`, {
@@ -38,6 +44,7 @@ const pipelineStack = new PipelineStack(app, `AWSServicesLifecycleTrackerPipelin
   stateTable: dataStack.stateTable,
   inventoryTable: dataStack.inventoryTable,
   actionPlanTable: dataStack.actionPlanTable,
+  spokeExternalId,
   description: 'AWS Services Lifecycle Tracker Pipeline: Lambda durable function refreshing deprecation data and account inventory (uksb-do9bhieqqh)(tag:lifecycle-tracker,operations-automation)',
 });
 
@@ -58,6 +65,20 @@ new FrontendStack(app, `AWSServicesLifecycleTrackerFrontend-${region}`, {
   apiUrl: apiStack.apiUrl,
   region: region,
   description: 'AWS Services Lifecycle Tracker Frontend: Admin interface (S3 + CloudFront)',
+});
+
+// Spoke stack (multi-account scan, #144): ONE read-only role, deployed in a
+// MEMBER account with that account's credentials, pointing at the hub:
+//   npx cdk deploy AWSServicesLifecycleTrackerSpoke-<region> --context hubAccountId=<hub account id>
+// Independent of the stacks above (nothing else of the tracker exists in a
+// spoke). Without the context value it defaults to the current account so a
+// synth of the whole app still works. No tracking tag: the Pipeline stack is
+// the demo's single tracked stack.
+new SpokeStack(app, `AWSServicesLifecycleTrackerSpoke-${region}`, {
+  env,
+  hubAccountId: app.node.tryGetContext('hubAccountId') || process.env.CDK_DEFAULT_ACCOUNT || '000000000000',
+  externalId: spokeExternalId,
+  description: 'AWS Services Lifecycle Tracker Spoke: read-only scan role assumed by the hub account',
 });
 
 app.synth();
