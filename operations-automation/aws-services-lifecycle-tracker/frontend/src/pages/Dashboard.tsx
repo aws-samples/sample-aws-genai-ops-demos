@@ -173,6 +173,17 @@ export default function Dashboard() {
     [facts]);
   const factServices = useMemo(() => new Set(facts.map((f) => f.service_name)).size, [facts]);
 
+  // RDS/Aurora Extended Support surcharge across the inventory (#142)
+  const money = useMemo(() => {
+    let monthly = 0, forecast = 0, priced = 0, now = 0;
+    for (const r of inventory) {
+      const c = costExposure(r);
+      if (!c) continue;
+      monthly += c.monthly; forecast += c.forecast_12m; priced += c.resources_priced; now += c.in_extended_support;
+    }
+    return { monthly, forecast, priced, now };
+  }, [inventory]);
+
   if (loading) {
     return (
       <Container>
@@ -192,17 +203,6 @@ export default function Dashboard() {
       <Box variant="small" color="text-body-secondary">{sub}</Box>
     </div>
   );
-
-  // RDS/Aurora Extended Support surcharge across the inventory (#142)
-  const money = useMemo(() => {
-    let monthly = 0, forecast = 0, priced = 0, now = 0;
-    for (const r of inventory) {
-      const c = costExposure(r);
-      if (!c) continue;
-      monthly += c.monthly; forecast += c.forecast_12m; priced += c.resources_priced; now += c.in_extended_support;
-    }
-    return { monthly, forecast, priced, now };
-  }, [inventory]);
 
   const goResources = (status?: string) => navigate(status ? `/resources?status=${status}` : '/resources');
 
