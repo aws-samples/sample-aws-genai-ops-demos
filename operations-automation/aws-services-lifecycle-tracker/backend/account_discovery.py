@@ -216,7 +216,15 @@ def session_for_account(account_id: str, region: str = None):
     )
 
 
-SCAN_TARGETS_KEY = "_scan_targets"  # control row: {accounts:[{id,name,ou_path}], regions:[...], source}
+SCAN_TARGETS_KEY = "_scan_targets"      # control row: what to scan (see org_targets.py)
+SCAN_ACCOUNTS_KEY = "_scan_accounts"    # control row: what the last run resolved that into
+
+
+def save_resolved_accounts(resolved: Dict) -> None:
+    """Persist the account list of the last run (names, OU paths, source,
+    errors) so the UI can show coverage without calling Organizations."""
+    from datetime import datetime, timezone
+    _save_control_row(SCAN_ACCOUNTS_KEY, {**resolved, "resolved_at": datetime.now(timezone.utc).isoformat()})
 
 
 def load_scan_targets() -> Dict:

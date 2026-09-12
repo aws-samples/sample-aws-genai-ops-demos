@@ -146,3 +146,38 @@ describe('Spoke stack (#144)', () => {
     });
   });
 });
+
+describe('Org stack (#144)', () => {
+  const { OrgStack } = require('../lib/org-stack');
+
+  test('service-managed StackSet rolls the spoke role to the org minus the hub', () => {
+    const app = new cdk.App();
+    const stack = new OrgStack(app, 'TestOrg', {
+      env: { account: '111111111111', region: 'eu-central-1' },
+      hubAccountId: '111111111111',
+      targetOuIds: ['r-abcd', 'ou-abcd-12345678'],
+    });
+    const template = Template.fromStack(stack);
+    template.resourceCountIs('AWS::CloudFormation::StackSet', 1);
+    template.hasResourceProperties('AWS::CloudFormation::StackSet', {
+      PermissionModel: 'SERVICE_MANAGED',
+      AutoDeployment: { Enabled: true, RetainStacksOnAccountRemoval: false },
+      StackInstancesGroup: [{
+        DeploymentTargets: { OrganizationalUnitIds: ['r-abcd', 'ou-abcd-12345678'], AccountFilterType: 'DIFFERENCE', Accounts: ['111111111111'] },
+        Regions: ['eu-central-1'],
+      }],
+    });
+    // The embedded template is the SpokeStack: plain IAM, no CDK bootstrap dependency
+    const ss = template.findResources('AWS::CloudFormation::StackSet');
+    const body = JSON.parse(Object.values(ss)[0].Properties.TemplateBody);
+    const types = Object.values(body.Resources as Record<string, { Type: string }>).map((r) => r.Type).sort();
+    expect(types).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role']);
+    expect(body.Rules).toBeUndefined();
+    expect(body.Parameters).toBeUndefined();
+  });
+
+  test('rejects targets that are not root / OU ids', () => {
+    expect(() => new OrgStack(new cdk.App(), 'BadOrg', { hubAccountId: '111111111111', targetOuIds: ['123456789012'] }))
+      .toThrow(/not an organization root or OU id/);
+  });
+});

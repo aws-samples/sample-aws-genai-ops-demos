@@ -32,9 +32,11 @@ from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 import account_discovery
 from actions import get_all_enabled_services, slim_extraction_result
 from workflow_orchestrator import extract_service_lifecycle
+from org_targets import resolve_targets
 
 MODES = ("full", "extract", "scan")
 DEFAULT_CONCURRENCY = 5
+SCAN_CONCURRENCY = 10  # scan cells multiply with accounts x regions (#144)
 
 # Scanner label -> scanner function. Labels match account_discovery.SCANNER_SERVICE_KEYS.
 SCANNERS = {
@@ -107,21 +109,20 @@ def start_run(step: StepContext, spec: dict) -> dict:
     import uuid
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     services = spec["services"] if spec["services"] else get_all_enabled_services()
-    # Scan targets (#144): the _scan_targets control row, else hub + this region
-    targets = account_discovery.load_scan_targets()
+    # Scan targets (#144): the _scan_targets control row resolved against AWS
+    # Organizations when it points at the organization or OUs; hub-only otherwise.
     hub = account_discovery._caller_identity().get("account", "")
-    accounts = [{"id": a.get("id", ""), "name": a.get("name", "")} for a in (targets.get("accounts") or [])] \
-        or [{"id": hub, "name": ""}]
-    if not any(a["id"] == hub for a in accounts):
-        accounts.insert(0, {"id": hub, "name": ""})  # the hub always scans itself
+    resolved = resolve_targets(account_discovery.load_scan_targets(), hub, region)
+    account_discovery.save_resolved_accounts(resolved)  # for the UI (Sources & coverage)
     return {
         "run_id": str(uuid.uuid4()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "function_region": region,
         "services": services,
-        "regions": spec["regions"] or targets.get("regions") or [region],
-        "accounts": accounts,
-        "targets_source": targets.get("source") or "hub",
+        "regions": spec["regions"] or resolved["regions"],
+        "accounts": [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]],
+        "targets_source": resolved["source"],
+        "targets_errors": resolved["errors"],
     }
 
 
@@ -190,6 +191,8 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "regions": run["regions"],
         "accounts": [a["id"] for a in run.get("accounts", [])],
+        "targets_source": run.get("targets_source", "hub"),
+        "targets_errors": run.get("targets_errors", []),
         "extract": extract_summary,
         "scan": scan_summary,
         "inventory": reconcile_result,
@@ -213,7 +216,12 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
         lines += [
             f"Inventory (account scan): {sc['cells_succeeded']}/{sc['cells_total']} scanner cells succeeded, "
             f"{sc['items_discovered']} assets discovered, {sc['needs_attention']} need attention",
+            f"  Accounts ({run.get('targets_source', 'hub')}): {len(run.get('accounts', []))} targeted, "
+            f"{len(sc.get('accounts_scanned', []))} scanned"
+            + (f", failed: {', '.join(sc['accounts_failed'])}" if sc.get("accounts_failed") else ""),
         ]
+        for err in run.get("targets_errors", []):
+            lines.append(f"  Targets: {err}")
         if sc["failed_cells"]:
             lines.append("  Failed: " + ", ".join(sc["failed_cells"]))
         if reconcile_result:
@@ -280,7 +288,7 @@ def handler(event: dict, context: DurableContext) -> dict:
                             config=_SCAN_RETRY)
 
         batch = context.map(cells, _scan, name="scan",
-                            config=MapConfig(max_concurrency=DEFAULT_CONCURRENCY,
+                            config=MapConfig(max_concurrency=SCAN_CONCURRENCY,
                                              completion_config=_TOLERATE_ALL))
         scan_summary, items, scanned_keys = summarize_scan(cells, batch)
         reconcile_result = context.step(

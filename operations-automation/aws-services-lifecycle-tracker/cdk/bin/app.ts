@@ -7,6 +7,7 @@ import { PipelineStack } from '../lib/pipeline-stack';
 import { ApiStack } from '../lib/api-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 import { SpokeStack } from '../lib/spoke-stack';
+import { OrgStack } from '../lib/org-stack';
 import { getRegion } from '../../../../shared/utils/aws-utils';
 
 const app = new cdk.App();
@@ -78,7 +79,25 @@ new SpokeStack(app, `AWSServicesLifecycleTrackerSpoke-${region}`, {
   env,
   hubAccountId: app.node.tryGetContext('hubAccountId') || process.env.CDK_DEFAULT_ACCOUNT || '000000000000',
   externalId: spokeExternalId,
+  synthesizer: new cdk.BootstraplessSynthesizer(), // one IAM role, no assets: no `cdk bootstrap` in the spoke
   description: 'AWS Services Lifecycle Tracker Spoke: read-only scan role assumed by the hub account',
 });
+
+// Org stack (multi-account scan, #144): StackSet rolling the spoke role out to
+// every account of the organization root / OUs, deployed FROM the hub. Only
+// instantiated when targets are given, so single-account users never see it:
+//   npx cdk deploy AWSServicesLifecycleTrackerOrg-<region> --context orgTargets=r-xxxx[,ou-xxxx-yyyyyyyy]
+// Requires StackSets trusted access and the hub to be the management account
+// or a StackSets delegated administrator (shared/scripts/check-org-access).
+const orgTargets: string = app.node.tryGetContext('orgTargets') || '';
+if (orgTargets) {
+  new OrgStack(app, `AWSServicesLifecycleTrackerOrg-${region}`, {
+    env,
+    hubAccountId: process.env.CDK_DEFAULT_ACCOUNT || '',
+    targetOuIds: orgTargets.split(',').map((s: string) => s.trim()).filter(Boolean),
+    externalId: spokeExternalId,
+    description: 'AWS Services Lifecycle Tracker Org: StackSet placing the read-only spoke role in every member account',
+  });
+}
 
 app.synth();

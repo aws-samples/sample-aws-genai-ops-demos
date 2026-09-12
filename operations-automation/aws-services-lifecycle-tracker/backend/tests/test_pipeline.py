@@ -69,6 +69,7 @@ def mocks():
                                                          account_name=kw.get("account_name", ""))), \
          patch.object(lp.account_discovery, "_caller_identity", return_value={"partition": "aws", "account": HUB_ACCOUNT}), \
          patch.object(lp.account_discovery, "load_scan_targets", return_value={}), \
+         patch.object(lp.account_discovery, "save_resolved_accounts"), \
          patch.object(lp.account_discovery, "session_for_account", return_value=None), \
          patch.object(lp.account_discovery, "save_to_dynamodb",
                       return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
