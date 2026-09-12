@@ -34,15 +34,16 @@ def _chunks(seq: List, size: int):
         yield seq[i:i + size]
 
 
-def health_client(region: str):
+def health_client(region: str, session=None):
     """Health client for the partition that `region` belongs to.
 
     botocore's endpoint ruleset maps the pseudo-region "<partition>-global" to
     the single global Health endpoint; a real region would build a
     health.<region> host that only exists in the partition's home region.
+    `session` selects whose account is queried (Health is account-scoped).
     """
     partition = boto3.session.Session().get_partition_for_region(region)
-    return boto3.client("health", region_name=f"{partition}-global")
+    return (session or boto3).client("health", region_name=f"{partition}-global")
 
 
 def match_health_events(region: str, client=None) -> Dict:

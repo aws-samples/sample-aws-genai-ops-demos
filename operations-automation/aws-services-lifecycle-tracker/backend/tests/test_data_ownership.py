@@ -25,6 +25,11 @@ def _index_with_rows(rows):
     index._cache = {}
     index._table = MagicMock()
     index._table.query.return_value = {"Items": rows}
+    # scope stamped on rows (#144); no STS call in unit tests
+    index.region = "eu-west-3"
+    index.account_id = "123456789012"
+    index.account_name = "Test account"
+    index.session = None
     return index
 
 
@@ -106,7 +111,9 @@ class TestBuildInventoryItem:
             candidates=["1.31"], affected_resources="cluster-a", total_affected=1,
             source_url="https://example", index=index)
         assert item["service_name"] == "eks"                      # config key, not display name
-        assert item["item_id"] == "inventory#k8s-1.31"            # inventory-prefixed
+        assert item["item_id"] == "inventory#123456789012#eu-west-3#k8s-1.31"  # one row per account/region/version (#144)
+        assert item["account_id"] == "123456789012" and item["account_name"] == "Test account"
+        assert item["region"] == "eu-west-3"
         assert item["status"] == "extended_support"               # joined verdict
         assert item["service_specific"]["matched_lifecycle_item"] == "versions#1.31"
 

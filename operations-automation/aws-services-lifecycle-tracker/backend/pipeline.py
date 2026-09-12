@@ -76,20 +76,24 @@ def normalize_spec(event: dict) -> dict:
     }
 
 
-def scan_cells_for(spec: dict, regions: List[str]) -> List[Dict]:
-    """Build (scanner label, region) cells. Pure.
+def scan_cells_for(spec: dict, regions: List[str], accounts: List[Dict] = None) -> List[Dict]:
+    """Build (account, region, scanner label) cells. Pure.
 
     If a services subset was requested, only scanners that emit rows for those
-    service keys run (RDS scanner covers both 'rds' and 'aurora').
+    service keys run (RDS scanner covers both 'rds' and 'aurora'). `accounts`
+    is [{id, name}] (#144); None means the hub account only.
     """
     wanted = set(spec["services"]) if spec["services"] else None
+    accounts = accounts or [{"id": "", "name": ""}]
     cells = []
-    for label in SCANNERS:
-        keys = account_discovery.SCANNER_SERVICE_KEYS.get(label, [])
-        if wanted is not None and not (wanted & set(keys)):
-            continue
-        for region in regions:
-            cells.append({"label": label, "region": region, "service_keys": keys})
+    for account in accounts:
+        for label in SCANNERS:
+            keys = account_discovery.SCANNER_SERVICE_KEYS.get(label, [])
+            if wanted is not None and not (wanted & set(keys)):
+                continue
+            for region in regions:
+                cells.append({"label": label, "region": region, "service_keys": keys,
+                              "account_id": account.get("id", ""), "account_name": account.get("name", "")})
     return cells
 
 
@@ -103,12 +107,21 @@ def start_run(step: StepContext, spec: dict) -> dict:
     import uuid
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     services = spec["services"] if spec["services"] else get_all_enabled_services()
+    # Scan targets (#144): the _scan_targets control row, else hub + this region
+    targets = account_discovery.load_scan_targets()
+    hub = account_discovery._caller_identity().get("account", "")
+    accounts = [{"id": a.get("id", ""), "name": a.get("name", "")} for a in (targets.get("accounts") or [])] \
+        or [{"id": hub, "name": ""}]
+    if not any(a["id"] == hub for a in accounts):
+        accounts.insert(0, {"id": hub, "name": ""})  # the hub always scans itself
     return {
         "run_id": str(uuid.uuid4()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "function_region": region,
         "services": services,
-        "regions": spec["regions"] or [region],
+        "regions": spec["regions"] or targets.get("regions") or [region],
+        "accounts": accounts,
+        "targets_source": targets.get("source") or "hub",
     }
 
 
@@ -125,13 +138,20 @@ def extract_cell(step: StepContext, service_name: str, refresh_origin: str) -> d
 
 @durable_step
 def scan_cell(step: StepContext, cell: dict) -> dict:
-    """Run one scanner in one region; join verdicts against the facts table."""
+    """Run one scanner in one (account, region); join verdicts against the facts table.
+
+    For a spoke account the scanner runs with credentials from the spoke role
+    (#144); the facts table is always read with the hub's own credentials.
+    """
     scanner = SCANNERS[cell["label"]]
-    index = account_discovery.LifecycleIndex(region=cell["region"])
+    session = account_discovery.session_for_account(cell.get("account_id", ""), cell["region"])
+    index = account_discovery.LifecycleIndex(region=cell["region"], account_id=cell.get("account_id") or None,
+                                             account_name=cell.get("account_name", ""), session=session)
     items = scanner(cell["region"], index)
     return {
         "label": cell["label"],
         "region": cell["region"],
+        "account_id": index.account_id,
         "service_keys": cell["service_keys"],
         "items": items,
         "ok": True,
@@ -139,7 +159,8 @@ def scan_cell(step: StepContext, cell: dict) -> dict:
 
 
 @durable_step
-def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scanned_keys: List[str]) -> dict:
+def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scanned_keys: List[str],
+                        scanned_scopes: List[Dict] = None) -> dict:
     """Upsert this run's inventory and reconcile ONLY successfully scanned scopes.
 
     Before writing, resources are cross-checked with AWS Health (#141) so each
@@ -148,7 +169,7 @@ def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scann
     health = account_discovery.cross_check_health(items)
     cost = account_discovery.estimate_cost_exposure(items)  # RDS/Aurora Extended Support (#142)
     result = account_discovery.save_to_dynamodb(
-        items, run_id=run_id, scanned_services=sorted(set(scanned_keys)),
+        items, run_id=run_id, scanned_services=sorted(set(scanned_keys)), scanned_scopes=scanned_scopes,
     )
     result["health"] = health
     result["cost_exposure"] = cost
@@ -168,6 +189,7 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
         "started_at": run["started_at"],
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "regions": run["regions"],
+        "accounts": [a["id"] for a in run.get("accounts", [])],
         "extract": extract_summary,
         "scan": scan_summary,
         "inventory": reconcile_result,
@@ -251,10 +273,10 @@ def handler(event: dict, context: DurableContext) -> dict:
     scan_summary = dict(EMPTY_SCAN)
     reconcile_result = {}
     if spec["mode"] in ("full", "scan"):
-        cells = scan_cells_for(spec, run["regions"])
+        cells = scan_cells_for(spec, run["regions"], run.get("accounts"))
 
         def _scan(ctx: DurableContext, cell: dict, index: int, _all) -> dict:
-            return ctx.step(scan_cell(cell), name=f"scan-{cell['label']}-{cell['region']}",
+            return ctx.step(scan_cell(cell), name=f"scan-{cell['label']}-{cell['account_id']}-{cell['region']}",
                             config=_SCAN_RETRY)
 
         batch = context.map(cells, _scan, name="scan",
@@ -262,7 +284,8 @@ def handler(event: dict, context: DurableContext) -> dict:
                                              completion_config=_TOLERATE_ALL))
         scan_summary, items, scanned_keys = summarize_scan(cells, batch)
         reconcile_result = context.step(
-            reconcile_inventory(run["run_id"], items, scanned_keys), name="reconcile-inventory")
+            reconcile_inventory(run["run_id"], items, scanned_keys, scan_summary["scanned_scopes"]),
+            name="reconcile-inventory")
 
     return context.step(
         summarize_and_notify(run, spec, extract_summary, scan_summary, reconcile_result),
@@ -304,13 +327,15 @@ def summarize_extract(services: List[str], batch) -> dict:
 
 
 def summarize_scan(cells: List[Dict], batch):
-    items, scanned_keys, failed_cells = [], [], []
+    items, scanned_keys, failed_cells, scopes = [], [], [], []
     for cell, result in zip(cells, _results_by_index(batch, len(cells))):
         if result is not None:
             items.extend(result["items"])
             scanned_keys.extend(result["service_keys"])
+            scopes.append({"account_id": result.get("account_id") or cell.get("account_id", ""),
+                           "region": cell["region"], "service_keys": result["service_keys"]})
         else:
-            failed_cells.append(f"{cell['label']}@{cell['region']}")
+            failed_cells.append(f"{cell['label']}@{cell.get('account_id') or 'hub'}/{cell['region']}")
     needs_attention = sum(1 for i in items if i.get("status") in ("deprecated", "end_of_life"))
     summary = {
         "cells_total": len(cells),
@@ -319,5 +344,8 @@ def summarize_scan(cells: List[Dict], batch):
         "items_discovered": len(items),
         "needs_attention": needs_attention,
         "scanned_service_keys": sorted(set(scanned_keys)),
+        "scanned_scopes": scopes,
+        "accounts_scanned": sorted({sc["account_id"] for sc in scopes}),
+        "accounts_failed": sorted({c.get("account_id", "") for c in cells} - {sc["account_id"] for sc in scopes}),
     }
     return summary, items, scanned_keys

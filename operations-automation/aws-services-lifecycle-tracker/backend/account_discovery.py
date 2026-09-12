@@ -67,10 +67,17 @@ class LifecycleIndex:
     first, then prefix containment either way (longest indexed key wins).
     """
 
-    def __init__(self, table_name: str = None, region: str = None):
+    def __init__(self, table_name: str = None, region: str = None, account_id: str = None,
+                 account_name: str = "", session=None):
         table_name = table_name or os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
-        # The region being scanned; stamped on every inventory row (issue #141)
+        # The scope being scanned (issue #144): region + account, stamped on every
+        # inventory row. `session` holds the credentials to read THAT account
+        # (None = the hub's own); scanners build their clients from it. The facts
+        # table itself is always read with the hub's credentials.
         self.region = region or REGION
+        self.account_id = account_id or _caller_identity().get("account", "")
+        self.account_name = account_name or ""
+        self.session = session
         dynamodb = boto3.resource("dynamodb", region_name=self.region)
         self._table = dynamodb.Table(table_name)
         self._cache: Dict[str, Dict[str, Dict]] = {}
@@ -172,10 +179,56 @@ def _caller_identity() -> Dict[str, str]:
     return _CALLER
 
 
-def build_arn(service: str, region: str, resource: str) -> str:
-    """ARN for a regional resource of the caller's account, e.g. glue job/x."""
+def build_arn(service: str, region: str, resource: str, account: str = None) -> str:
+    """ARN for a regional resource, e.g. glue job/x (defaults to the caller's account)."""
     ident = _caller_identity()
-    return f"arn:{ident['partition']}:{service}:{region}:{ident['account']}:{resource}"
+    return f"arn:{ident['partition']}:{service}:{region}:{account or ident['account']}:{resource}"
+
+
+def _client(index: "LifecycleIndex", service: str, region: str):
+    """boto3 client for the account the index describes (hub or assumed spoke)."""
+    return (index.session or boto3).client(service, region_name=region)
+
+
+SPOKE_ROLE_NAME = os.environ.get("SPOKE_ROLE_NAME", "LifecycleTrackerScanRole")
+
+
+def session_for_account(account_id: str, region: str = None):
+    """Credentials to scan `account_id`: None for the hub itself, otherwise a
+    boto3 Session from assuming the spoke role (#144, hub-and-spoke)."""
+    hub = _caller_identity().get("account", "")
+    if not account_id or account_id == hub:
+        return None
+    ident = _caller_identity()
+    kwargs = {
+        "RoleArn": f"arn:{ident['partition']}:iam::{account_id}:role/{SPOKE_ROLE_NAME}",
+        "RoleSessionName": "lifecycle-tracker-scan",
+        "DurationSeconds": 3600,
+    }
+    external_id = os.environ.get("SPOKE_EXTERNAL_ID")
+    if external_id:
+        kwargs["ExternalId"] = external_id
+    creds = boto3.client("sts", region_name=region or REGION).assume_role(**kwargs)["Credentials"]
+    return boto3.session.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+
+
+SCAN_TARGETS_KEY = "_scan_targets"  # control row: {accounts:[{id,name,ou_path}], regions:[...], source}
+
+
+def load_scan_targets() -> Dict:
+    """Accounts and regions to scan (#144). Empty dict = hub account, deployment region."""
+    from decimal import Decimal
+    try:
+        from database_reads import state_table
+        row = state_table.get_item(Key={"service_name": SCAN_TARGETS_KEY}).get("Item") or {}
+    except Exception:
+        return {}
+    row.pop("service_name", None)
+    return {k: (int(v) if isinstance(v, Decimal) else v) for k, v in row.items()}
 
 
 def console_url(service_key: str, region: str, res: Dict) -> str:
@@ -253,11 +306,16 @@ def build_inventory_item(service_key: str, identifier: str, display_name: str,
     else:
         names = []
         summary = str(affected_resources or "")
+    account_id = getattr(index, "account_id", "") or _caller_identity().get("account", "")
     return {
         "service_name": service_key,
-        "item_id": f"inventory#{identifier}",
+        # One row per (account, region, version): the same runtime in two
+        # accounts or regions must not overwrite each other (#144).
+        "item_id": f"inventory#{account_id}#{region}#{identifier}",
         "status": match["status"] if match else fallback_status,
         "region": region,
+        "account_id": account_id,
+        "account_name": getattr(index, "account_name", "") or "",
         "source_url": source_url,
         "extraction_date": now.strftime("%Y-%m-%d"),
         "last_verified": now.isoformat() + "Z",
@@ -279,7 +337,7 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
     """Discover Lambda functions and their runtimes in the account"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    lambda_client = boto3.client("lambda", region_name=region)
+    lambda_client = _client(index, "lambda", region)
     items = []
     runtime_functions = {}
     
@@ -340,7 +398,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
     """Discover RDS instances and their engine versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    rds_client = boto3.client("rds", region_name=region)
+    rds_client = _client(index, "rds", region)
     items = []
     engine_instances = {}
     
@@ -421,7 +479,7 @@ def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> L
     """Discover EKS clusters and their Kubernetes versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    eks_client = boto3.client("eks", region_name=region)
+    eks_client = _client(index, "eks", region)
     items = []
     version_clusters = {}
     
@@ -455,7 +513,7 @@ def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = No
     """Discover ElastiCache clusters and their engine versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    elasticache_client = boto3.client("elasticache", region_name=region)
+    elasticache_client = _client(index, "elasticache", region)
     items = []
     engine_clusters = {}
     
@@ -492,7 +550,7 @@ def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None
     """Discover OpenSearch domains and their versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    opensearch_client = boto3.client("opensearch", region_name=region)
+    opensearch_client = _client(index, "opensearch", region)
     items = []
     version_domains = {}
     
@@ -529,7 +587,7 @@ def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> L
     """Discover MSK (Kafka) clusters and their versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    msk_client = boto3.client("kafka", region_name=region)
+    msk_client = _client(index, "kafka", region)
     items = []
     version_clusters = {}
     
@@ -567,7 +625,7 @@ def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = Non
     """Discover DocumentDB clusters and their engine versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    docdb_client = boto3.client("docdb", region_name=region)
+    docdb_client = _client(index, "docdb", region)
     items = []
     version_clusters = {}
     
@@ -604,7 +662,7 @@ def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) 
     """Discover Neptune clusters and their engine versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    neptune_client = boto3.client("neptune", region_name=region)
+    neptune_client = _client(index, "neptune", region)
     items = []
     version_clusters = {}
     
@@ -641,7 +699,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
     """Discover Glue jobs and their versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    glue_client = boto3.client("glue", region_name=region)
+    glue_client = _client(index, "glue", region)
     items = []
     version_jobs = {}
     
@@ -655,7 +713,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
                 
                 if key not in version_jobs:
                     version_jobs[key] = []
-                version_jobs[key].append({"name": job_name, "arn": build_arn("glue", region, f"job/{job_name}")})
+                version_jobs[key].append({"name": job_name, "arn": build_arn("glue", region, f"job/{job_name}", account=index.account_id)})
         
         for version_key, job_names in version_jobs.items():
             items.append(build_inventory_item(
@@ -678,7 +736,7 @@ def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = 
     """Discover Elastic Beanstalk environments and their platform versions"""
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    eb_client = boto3.client("elasticbeanstalk", region_name=region)
+    eb_client = _client(index, "elasticbeanstalk", region)
     items = []
     platform_envs = {}
     
@@ -737,7 +795,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
     """
     region = region or REGION
     index = index or LifecycleIndex(region=region)
-    ec2_client = boto3.client("ec2", region_name=region)
+    ec2_client = _client(index, "ec2", region)
     items = []
     type_instances = {}
     
@@ -754,7 +812,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
                     
                     if family not in type_instances:
                         type_instances[family] = []
-                    type_instances[family].append({"name": instance_id, "arn": build_arn("ec2", region, f"instance/{instance_id}")})
+                    type_instances[family].append({"name": instance_id, "arn": build_arn("ec2", region, f"instance/{instance_id}", account=index.account_id)})
         
         for family, instance_ids in type_instances.items():
             # Only report previous-generation instance families
@@ -805,7 +863,8 @@ SCANNER_SERVICE_KEYS = {
 
 
 def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = None,
-                     run_id: str = None, scanned_services: List[str] = None) -> Dict:
+                     run_id: str = None, scanned_services: List[str] = None,
+                     scanned_scopes: List[Dict] = None) -> Dict:
     """
     Upsert discovered inventory rows and reconcile stale ones (issue #116).
 
@@ -826,6 +885,11 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
         scanned_services: Service keys whose scanners completed successfully;
             reconciliation is confined to these. Defaults to the service keys
             present in items (which loses empty-result scopes - pass it).
+        scanned_scopes: Finer scoping (#144): [{account_id, region, service_keys}]
+            cells that completed. When given, a stale row is deleted only if its
+            (account_id, region) was actually rescanned for its service; rows of
+            an account whose scan failed are left untouched. Rows without an
+            account_id (pre-#144 key format) are always reconciled away.
 
     Returns:
         Dictionary with save results
@@ -868,18 +932,29 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
         # inventory rows and delete those not written by this run.
         if scanned_services is None:
             scanned_services = sorted({i["service_name"] for i in items})
+        if scanned_scopes:
+            scanned_services = sorted({k for sc in scanned_scopes for k in sc.get("service_keys", [])})
+            scoped = {(sc["account_id"], sc["region"], k) for sc in scanned_scopes for k in sc.get("service_keys", [])}
+        else:
+            scoped = None
+
+        def _in_scope(row) -> bool:
+            if scoped is None or not row.get("account_id"):
+                return True
+            return (row.get("account_id"), row.get("region"), row["service_name"]) in scoped
 
         stale_keys = []
         for service_key in scanned_services:
             kwargs = {
                 "KeyConditionExpression": "service_name = :s",
                 "ExpressionAttributeValues": {":s": service_key},
-                "ProjectionExpression": "service_name, item_id, discovery_run_id",
+                "ProjectionExpression": "service_name, item_id, discovery_run_id, account_id, #r",
+                "ExpressionAttributeNames": {"#r": "region"},
             }
             response = table.query(**kwargs)
             while True:
                 for row in response.get("Items", []):
-                    if row.get("discovery_run_id") != run_id:
+                    if row.get("discovery_run_id") != run_id and _in_scope(row):
                         stale_keys.append({
                             "service_name": row["service_name"],
                             "item_id": row["item_id"],
@@ -1204,17 +1279,26 @@ def cross_check_health(items: List[Dict]) -> Dict:
     the state table and returns it. Never fails a scan: Health unavailable
     (no Business/Enterprise Support, missing permission) is just reported.
     """
-    from health_match import match_health_events, apply_health_flags, health_status_summary
-    regions = sorted({item.get("region") or REGION for item in items}) or [REGION]
+    from health_match import match_health_events, apply_health_flags, health_status_summary, health_client
+    hub = _caller_identity().get("account", "")
+    scopes = sorted({(item.get("account_id") or hub, item.get("region") or REGION) for item in items}) or [(hub, REGION)]
     flagged, events, reasons, available = 0, 0, [], False
     checked_at = None
-    for region in regions:
-        match = match_health_events(region)
-        checked_at = match["checked_at"]
+    for account_id, region in scopes:
+        # Health is account-scoped: a spoke's notices are only visible with the
+        # spoke's own credentials (#144).
+        try:
+            session = session_for_account(account_id, region)
+            match = match_health_events(region, client=health_client(region, session))
+        except Exception as e:
+            match = {"available": False, "reason": f"{account_id}: {type(e).__name__}: {str(e)[:120]}",
+                     "checked_at": None, "events": 0, "entities": {}}
+        checked_at = match["checked_at"] or checked_at
         if match["available"]:
             available = True
             events += match["events"]
-            flagged += apply_health_flags([i for i in items if (i.get("region") or REGION) == region], match)
+            flagged += apply_health_flags(
+                [i for i in items if (i.get("account_id") or hub) == account_id and (i.get("region") or REGION) == region], match)
         elif match["reason"] and match["reason"] not in reasons:
             reasons.append(match["reason"])
     status = health_status_summary(
