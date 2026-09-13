@@ -1360,7 +1360,7 @@ def cross_check_health(items: List[Dict], scanned_scopes: List[Dict] = None) -> 
         try:
             session = session_for_account(account_id, region)
             if "tier" not in acct:
-                acct.update(support_tier(session))  # one Support call per account, not per region
+                acct.update(support_tier(region, session))  # one Support call per account, not per region
             match = match_health_events(region, client=health_client(region, session))
         except Exception as e:
             match = {"available": False, "reason": f"{account_id}: {type(e).__name__}: {str(e)[:120]}",

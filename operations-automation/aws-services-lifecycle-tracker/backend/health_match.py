@@ -173,14 +173,25 @@ SUPPORT_TIER_LABELS = {
 HEALTH_TIERS = ("business", "enterprise")
 
 
-def support_tier(session=None) -> Dict:
+# The Support API is global with one endpoint per partition, in that partition's
+# home region. Derived from the deployment region's partition, like health_client().
+SUPPORT_HOME_REGION = {"aws": "us-east-1", "aws-cn": "cn-north-1", "aws-us-gov": "us-gov-west-1"}
+
+
+def support_client(region: str, session=None):
+    partition = boto3.session.Session().get_partition_for_region(region)
+    return (session or boto3).client("support", region_name=SUPPORT_HOME_REGION.get(partition, region))
+
+
+def support_tier(region: str, session=None) -> Dict:
     """Infer the Support tier of the account behind `session` (default: hub).
 
+    `region` is the deployment region, used only to pick the partition endpoint.
     Returns {"tier": basic|developer|business|enterprise|unknown, "reason": str|None,
              "severities": [codes]}. Never raises.
     """
     from botocore.exceptions import ClientError
-    client = (session or boto3).client("support", region_name="us-east-1")  # Support API is global
+    client = support_client(region, session)
     try:
         codes = [s["code"] for s in client.describe_severity_levels(language="en").get("severityLevels", [])]
     except ClientError as e:

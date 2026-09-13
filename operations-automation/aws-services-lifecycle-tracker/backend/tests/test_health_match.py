@@ -102,7 +102,8 @@ class _SupportSession:
         self._codes, self._error = codes or [], error
 
     def client(self, name, region_name=None):
-        assert name == "support" and region_name == "us-east-1"
+        assert name == "support"
+        self.region_name = region_name
         return self
 
     def describe_severity_levels(self, language="en"):
@@ -112,13 +113,22 @@ class _SupportSession:
 
 
 def test_support_tier_from_severity_ceiling():
-    assert support_tier(_SupportSession(["low", "normal", "high", "urgent", "critical"]))["tier"] == "enterprise"
-    assert support_tier(_SupportSession(["low", "normal", "high", "urgent"]))["tier"] == "business"
-    assert support_tier(_SupportSession(["low", "normal"]))["tier"] == "developer"
+    assert support_tier("eu-central-1", _SupportSession(["low", "normal", "high", "urgent", "critical"]))["tier"] == "enterprise"
+    assert support_tier("eu-central-1", _SupportSession(["low", "normal", "high", "urgent"]))["tier"] == "business"
+    assert support_tier("eu-central-1", _SupportSession(["low", "normal"]))["tier"] == "developer"
+
+
+def test_support_endpoint_follows_the_partition():
+    s = _SupportSession(["low"])
+    support_tier("eu-central-1", s); assert s.region_name == "us-east-1"
+    s = _SupportSession(["low"])
+    support_tier("cn-northwest-1", s); assert s.region_name == "cn-north-1"
+    s = _SupportSession(["low"])
+    support_tier("us-gov-east-1", s); assert s.region_name == "us-gov-west-1"
 
 
 def test_support_tier_basic_and_denied():
-    basic = support_tier(_SupportSession(error="SubscriptionRequiredException"))
+    basic = support_tier("eu-central-1", _SupportSession(error="SubscriptionRequiredException"))
     assert basic == {"tier": "basic", "reason": None, "severities": []}
-    denied = support_tier(_SupportSession(error="AccessDeniedException"))
+    denied = support_tier("eu-central-1", _SupportSession(error="AccessDeniedException"))
     assert denied["tier"] == "unknown" and "AccessDeniedException" in denied["reason"]
