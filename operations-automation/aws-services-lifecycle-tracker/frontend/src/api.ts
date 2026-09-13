@@ -68,12 +68,25 @@ export interface ScannerInfo {
 }
 
 // Outcome of the AWS Health cross-check run with the last scan (#141)
+export type SupportTier = 'basic' | 'developer' | 'business' | 'enterprise' | 'unknown';
+
+// Per-account outcome of the Health pass (#144): Support tier inferred from
+// the case severities the account may open, and whether Health answered.
+export interface AccountHealthStatus {
+  tier?: SupportTier;
+  health_available: boolean;
+  reason: string | null;
+  events: number;
+  flagged: number;
+}
+
 export interface HealthCheckStatus {
   available: boolean;
   reason: string | null;
   checked_at: string | null;
   events: number;
   flagged_resources: number;
+  by_account?: Record<string, AccountHealthStatus>;
 }
 
 // Outcome of the Extended Support pricing pass of the last scan (#142)

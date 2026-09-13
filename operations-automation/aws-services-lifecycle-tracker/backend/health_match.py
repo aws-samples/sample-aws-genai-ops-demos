@@ -147,3 +147,55 @@ def health_status_summary(match: Dict, flagged: int) -> Dict:
         "events": int(match.get("events", 0)),
         "flagged_resources": int(flagged),
     }
+
+
+# --- Support tier (multi-account transparency, #144) --------------------------
+#
+# No API returns an account's Support plan. AWS documents one way to infer it:
+# the case severities the account may open (support:DescribeSeverityLevels).
+# https://aws.amazon.com/blogs/mt/aws-partners-determine-aws-support-plans-in-organization/
+# Since the Dec 2025 lineup (Business Support+, Enterprise Support, Unified
+# Operations, legacy plans still active) several plans share a ceiling, so we
+# report tiers, not plan names:
+#   SubscriptionRequiredException -> basic       (no Health API, no Support API)
+#   highest 'normal'              -> developer   (no Health API)
+#   highest 'urgent'              -> business    (Business, Business Support+)
+#   'critical'                    -> enterprise  (Enterprise, Enterprise On-Ramp, Unified Operations)
+# Health notices are only visible for accounts in the business/enterprise tiers.
+
+SUPPORT_TIER_LABELS = {
+    "basic": "Basic",
+    "developer": "Developer",
+    "business": "Business tier",
+    "enterprise": "Enterprise tier",
+    "unknown": "Unknown",
+}
+HEALTH_TIERS = ("business", "enterprise")
+
+
+def support_tier(session=None) -> Dict:
+    """Infer the Support tier of the account behind `session` (default: hub).
+
+    Returns {"tier": basic|developer|business|enterprise|unknown, "reason": str|None,
+             "severities": [codes]}. Never raises.
+    """
+    from botocore.exceptions import ClientError
+    client = (session or boto3).client("support", region_name="us-east-1")  # Support API is global
+    try:
+        codes = [s["code"] for s in client.describe_severity_levels(language="en").get("severityLevels", [])]
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code == "SubscriptionRequiredException":
+            return {"tier": "basic", "reason": None, "severities": []}
+        return {"tier": "unknown", "reason": f"{code}: {str(e)[:120]}", "severities": []}
+    except Exception as e:  # pragma: no cover
+        return {"tier": "unknown", "reason": f"{type(e).__name__}: {str(e)[:120]}", "severities": []}
+    if "critical" in codes:
+        tier = "enterprise"
+    elif "urgent" in codes or "high" in codes:
+        tier = "business"
+    elif codes:
+        tier = "developer"
+    else:
+        tier = "unknown"
+    return {"tier": tier, "reason": None, "severities": codes}

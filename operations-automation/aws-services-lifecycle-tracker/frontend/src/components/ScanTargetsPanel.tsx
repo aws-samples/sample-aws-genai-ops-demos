@@ -14,6 +14,7 @@ import Button from '@cloudscape-design/components/button';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import { ScanCoverage, ScanTargets, ScanTargetSource, EMPTY_TARGETS, saveScanTargets } from '../api';
 import { accountLabel } from '../lifecycle';
+import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 
 // Multi-account coverage (#144): which accounts the last scan resolved and
 // reached, and the editor of the _scan_targets control row. Single-account
@@ -114,6 +115,7 @@ export default function ScanTargetsPanel({ coverage, onSaved }: Props) {
                 </SpaceBetween>
               ) },
               { id: 'ou', header: 'Organizational unit', cell: (a) => a.ou_path || <Box color="text-body-secondary">-</Box> },
+              { id: 'support', header: <SupportTierHeader />, cell: (a) => <SupportTierCell status={coverage?.health?.by_account?.[a.id]} /> },
               { id: 'coverage', header: 'Last scan', cell: (a) => scanned.has(a.id)
                   ? <StatusIndicator type="success">covered</StatusIndicator>
                   : failed.has(a.id)

@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from health_match import match_health_events, apply_health_flags, health_status_summary  # noqa: E402
+from health_match import match_health_events, apply_health_flags, health_status_summary, support_tier  # noqa: E402
 
 EVENT_ARN = "arn:aws:health:eu-central-1::event/LAMBDA/AWS_LAMBDA_PLANNED_LIFECYCLE_EVENT/abc"
 FN_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:old-fn"
@@ -93,3 +93,32 @@ def test_subscription_required_is_reported_not_raised():
 def test_access_denied_names_the_missing_permissions():
     result = match_health_events("eu-central-1", client=FailingHealth("AccessDeniedException"))
     assert result["available"] is False and "health:DescribeEvents" in result["reason"]
+
+
+# --- Support tier inference (#144) ------------------------------------------
+
+class _SupportSession:
+    def __init__(self, codes=None, error=None):
+        self._codes, self._error = codes or [], error
+
+    def client(self, name, region_name=None):
+        assert name == "support" and region_name == "us-east-1"
+        return self
+
+    def describe_severity_levels(self, language="en"):
+        if self._error:
+            raise ClientError({"Error": {"Code": self._error, "Message": "x"}}, "DescribeSeverityLevels")
+        return {"severityLevels": [{"code": c} for c in self._codes]}
+
+
+def test_support_tier_from_severity_ceiling():
+    assert support_tier(_SupportSession(["low", "normal", "high", "urgent", "critical"]))["tier"] == "enterprise"
+    assert support_tier(_SupportSession(["low", "normal", "high", "urgent"]))["tier"] == "business"
+    assert support_tier(_SupportSession(["low", "normal"]))["tier"] == "developer"
+
+
+def test_support_tier_basic_and_denied():
+    basic = support_tier(_SupportSession(error="SubscriptionRequiredException"))
+    assert basic == {"tier": "basic", "reason": None, "severities": []}
+    denied = support_tier(_SupportSession(error="AccessDeniedException"))
+    assert denied["tier"] == "unknown" and "AccessDeniedException" in denied["reason"]

@@ -77,7 +77,7 @@ Facts and inventory live in separate tables: the public deprecation data is neve
 - **Python 3.11+** with `pip` - used to bundle the Lambda code locally (no Docker needed)
 - **AWS credentials** with permissions for CloudFormation, Lambda, API Gateway, DynamoDB, Cognito, EventBridge Scheduler, SNS, SQS, CloudFront, S3 and IAM
 - **Amazon Bedrock** model access for Amazon Nova in your region
-- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health cross-check. Without it the scan gets a `SubscriptionRequiredException`, reports Health as unavailable on the Sources & coverage page, and everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html)
+- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health cross-check. Without it the scan gets a `SubscriptionRequiredException`, reports Health as unavailable on the Sources & coverage page, and everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html). In multi-account mode the check runs per account with the spoke role, so a spoke is only cross-checked if *that account* has a plan; the hub's plan does not cover it (the organizational view of Health would, see the follow-up issue linked in the multi-account section)
 
 ### ⚠️ Region Requirements
 
@@ -124,6 +124,8 @@ The scripts first run the shared read-only preflight `shared/scripts/check-org-a
 Prerequisites that only the management account can set: [trusted access for StackSets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-enable-trusted-access.html) (AWS Organizations console → Services → CloudFormation StackSets), and, if the hub is a member account, its registration as StackSets delegated administrator. The preflight prints the exact commands.
 
 **What the scan does per account.** Every (account, region, scanner) triple is one durable step; a spoke that cannot be assumed fails only its own cells and is listed in the summary (`accounts_failed`), the rest of the run is unaffected. Inventory rows are keyed `inventory#<account>#<region>#<identifier>` and carry `account_id` / `account_name`; the AWS Health cross-check runs per account with the assumed role (it needs a Business/Enterprise Support plan *in that account*). The hub is always scanned with its own credentials.
+
+**Support plan column.** So that an empty Health badge is never mistaken for "nothing planned", the dashboard's *By account* tab and the Accounts panel show each account's Support tier next to what Health did there ("Health: 26 notices, 51 flagged" or "Health not checked"). No API returns the plan; the tier is inferred the way [AWS documents it](https://aws.amazon.com/blogs/mt/aws-partners-determine-aws-support-plans-in-organization/), from the case severities the account may open (`support:DescribeSeverityLevels`, part of the spoke role): `SubscriptionRequiredException` → Basic, up to `normal` → Developer, up to `urgent` → Business tier (Business, Business Support+), `critical` → Enterprise tier (Enterprise, Enterprise On-Ramp, Unified Operations). Only the two paid tiers can be cross-checked with Health.
 
 **Manual account list** (no Organizations access, or a handful of accounts): deploy the Spoke stack yourself in each account and write the targets row. The Spoke stack needs no `cdk bootstrap`.
 

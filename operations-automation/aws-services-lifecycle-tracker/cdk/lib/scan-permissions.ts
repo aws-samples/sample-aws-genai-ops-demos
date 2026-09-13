@@ -24,6 +24,10 @@ export const SCANNER_READ_ACTIONS: string[] = [
  *  resources they name. Account-scoped, so the spoke needs it too. */
 export const HEALTH_READ_ACTIONS: string[] = [
   'health:DescribeEvents', 'health:DescribeAffectedEntities',
+  // Support tier inference (#144): no API returns the plan; the case severities
+  // an account may open are the AWS-documented proxy. Tells the user whether
+  // Health could answer for that account at all.
+  'support:DescribeSeverityLevels',
 ];
 
 /** Name of the read-only role the hub assumes in each spoke account. Must

@@ -1336,7 +1336,7 @@ def _dynamo_safe(value):
     return value
 
 
-def cross_check_health(items: List[Dict]) -> Dict:
+def cross_check_health(items: List[Dict], scanned_scopes: List[Dict] = None) -> Dict:
     """Cross-check inventory rows with AWS Health (issue #141), in place.
 
     Marks resources that AWS itself names in an open planned-lifecycle notice
@@ -1344,32 +1344,45 @@ def cross_check_health(items: List[Dict]) -> Dict:
     the state table and returns it. Never fails a scan: Health unavailable
     (no Business/Enterprise Support, missing permission) is just reported.
     """
-    from health_match import match_health_events, apply_health_flags, health_status_summary, health_client
+    from health_match import match_health_events, apply_health_flags, health_status_summary, health_client, support_tier
     hub = _caller_identity().get("account", "")
-    scopes = sorted({(item.get("account_id") or hub, item.get("region") or REGION) for item in items}) or [(hub, REGION)]
+    # Every (account, region) the run scanned, even those with no resource: the
+    # Support tier is reported for all of them (#144). Falls back to the rows.
+    scopes = sorted({(sc.get("account_id") or hub, sc.get("region") or REGION) for sc in (scanned_scopes or [])}
+                    | {(item.get("account_id") or hub, item.get("region") or REGION) for item in items}) or [(hub, REGION)]
     flagged, events, reasons, available = 0, 0, [], False
     checked_at = None
+    by_account: Dict[str, Dict] = {}  # per-account transparency (#144): tier + whether Health answered
     for account_id, region in scopes:
         # Health is account-scoped: a spoke's notices are only visible with the
         # spoke's own credentials (#144).
+        acct = by_account.setdefault(account_id, {"health_available": False, "reason": None, "events": 0, "flagged": 0})
         try:
             session = session_for_account(account_id, region)
+            if "tier" not in acct:
+                acct.update(support_tier(session))  # one Support call per account, not per region
             match = match_health_events(region, client=health_client(region, session))
         except Exception as e:
             match = {"available": False, "reason": f"{account_id}: {type(e).__name__}: {str(e)[:120]}",
                      "checked_at": None, "events": 0, "entities": {}}
+            acct.setdefault("tier", "unknown")
         checked_at = match["checked_at"] or checked_at
         if match["available"]:
             available = True
             events += match["events"]
-            flagged += apply_health_flags(
+            n = apply_health_flags(
                 [i for i in items if (i.get("account_id") or hub) == account_id and (i.get("region") or REGION) == region], match)
-        elif match["reason"] and match["reason"] not in reasons:
-            reasons.append(match["reason"])
+            flagged += n
+            acct.update({"health_available": True, "events": acct["events"] + match["events"], "flagged": acct["flagged"] + n})
+        else:
+            if match["reason"] and match["reason"] not in reasons:
+                reasons.append(match["reason"])
+            acct["reason"] = acct["reason"] or match["reason"]
     status = health_status_summary(
         {"available": available, "reason": "; ".join(reasons) or None, "checked_at": checked_at, "events": events},
         flagged,
     )
+    status["by_account"] = {k: {kk: vv for kk, vv in v.items() if kk != "severities"} for k, v in by_account.items()}
     _save_health_status(status)
     return status
 

@@ -21,6 +21,7 @@ import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
   urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd,
 } from '../lifecycle';
+import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -379,6 +380,7 @@ export default function Dashboard() {
                   { id: 'concerns', header: 'Need attention', cell: ([, v]) => v.concerns
                       ? <StatusIndicator type={v.worst <= 1 ? 'error' : 'warning'}>{v.concerns} of {v.rows}</StatusIndicator>
                       : <StatusIndicator type="success">none</StatusIndicator> },
+                  { id: 'support', header: <SupportTierHeader />, cell: ([k]) => <SupportTierCell status={coverage?.health?.by_account?.[k]} /> },
                   { id: 'money', header: 'Extended Support', cell: ([, v]) => v.forecast || v.monthly
                       ? <SpaceBetween size="xxxs"><Box variant="strong">{formatUsd(v.monthly)}/mo</Box><Box variant="small" color="text-body-secondary">{formatUsd(v.forecast)} next 12 mo</Box></SpaceBetween>
                       : <Box color="text-body-secondary">-</Box> },

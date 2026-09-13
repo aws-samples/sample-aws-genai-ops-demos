@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { DataStack } from '../lib/data-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
+import { HEALTH_READ_ACTIONS } from '../lib/scan-permissions';
 
 describe('Data stack', () => {
   let template: Template;
@@ -60,7 +61,7 @@ describe('Pipeline stack', () => {
           Match.objectLike({
             Sid: 'HealthAPIAccess',
             Effect: 'Allow',
-            Action: ['health:DescribeEvents', 'health:DescribeAffectedEntities'],
+            Action: HEALTH_READ_ACTIONS,
             Resource: '*',
           }),
         ]),
