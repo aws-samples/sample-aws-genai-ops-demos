@@ -15,12 +15,79 @@ from botocore.config import Config
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Pin SigV4 + regional endpoint so presigned download links are valid. The
-# default global endpoint + temporary Lambda credentials produced malformed
-# SigV2 URLs that S3 rejected with AccessDenied.
+# See src/tools/export_report.py for the rationale: sign with a dedicated
+# presigner role we assume ourselves so download URLs are reliable for their
+# full X-Amz-Expires, and fall back to short-lived Lambda credentials only if
+# the presigner role isn't wired in.
 _REGION = os.environ.get("AWS_REGION", "us-east-1")
-s3_client = boto3.client("s3", region_name=_REGION, config=Config(signature_version="s3v4"))
+_S3_CONFIG = Config(signature_version="s3v4")
 REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
+PRESIGNER_ROLE_ARN = os.environ.get("PRESIGNER_ROLE_ARN", "")
+PRESIGN_TTL_SECONDS = 3600
+
+
+class _SigningContext:
+    """Split read + sign clients so bucket listing rides on the Lambda role
+    and only presigning uses the assumed presigner role.
+    """
+
+    def __init__(self, read_client, sign_client, expires_in: int, source: str):
+        self.read_client = read_client
+        self.sign_client = sign_client
+        self.expires_in = expires_in
+        self.source = source
+
+
+def _build_lambda_role_s3():
+    session = boto3.session.Session(region_name=_REGION)
+    frozen = session.get_credentials().get_frozen_credentials()
+    return session.client(
+        "s3",
+        region_name=_REGION,
+        config=_S3_CONFIG,
+        aws_access_key_id=frozen.access_key,
+        aws_secret_access_key=frozen.secret_key,
+        aws_session_token=frozen.token,
+    )
+
+
+def _build_signing_context() -> "_SigningContext":
+    read_client = _build_lambda_role_s3()
+
+    if PRESIGNER_ROLE_ARN:
+        try:
+            sts = boto3.client("sts", region_name=_REGION)
+            creds = sts.assume_role(
+                RoleArn=PRESIGNER_ROLE_ARN,
+                RoleSessionName="list-exports-presigner",
+                DurationSeconds=PRESIGN_TTL_SECONDS,
+            )["Credentials"]
+            sign_client = boto3.client(
+                "s3",
+                region_name=_REGION,
+                config=_S3_CONFIG,
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+            )
+            return _SigningContext(
+                read_client, sign_client, PRESIGN_TTL_SECONDS, "assumed_role"
+            )
+        except Exception as assume_err:
+            logger.warning(
+                "assume_role for presigner failed; falling back to Lambda role "
+                "credentials for signing (with a short URL expiry): %s",
+                assume_err,
+            )
+
+    return _SigningContext(read_client, read_client, 300, "lambda_role")
+
+
+def _build_s3_client():
+    """Backwards-compatible helper; returns a Lambda-role S3 client suitable
+    for reads. New code should call _build_signing_context().
+    """
+    return _build_lambda_role_s3()
 
 
 def handler(event, context=None):
@@ -47,17 +114,19 @@ def handler(event, context=None):
     limit = min(event.get("limit", 20), 50)
 
     try:
+        signing = _build_signing_context()
+        logger.info("list_exports signing method=%s action=%s", signing.source, action)
         if action == "get_link":
-            return _get_fresh_link(filename)
+            return _get_fresh_link(signing, filename)
         else:
-            return _list_files(prefix, limit)
+            return _list_files(signing.read_client, prefix, limit)
 
     except Exception as e:
         logger.error(f"Error in list_exports: {e}", exc_info=True)
         return {"error": str(e)}
 
 
-def _list_files(prefix: str, limit: int) -> dict:
+def _list_files(s3_client, prefix: str, limit: int) -> dict:
     """List all exported files in the bucket."""
     try:
         params = {
@@ -110,16 +179,15 @@ def _list_files(prefix: str, limit: int) -> dict:
         return {"error": str(e)}
 
 
-def _get_fresh_link(filename: str) -> dict:
+def _get_fresh_link(signing, filename: str) -> dict:
     """Generate a fresh presigned URL for a specific file."""
     if not filename:
         return {"error": "filename is required for get_link action"}
 
     try:
-        # Search ALL objects (paginated) for the filename — the old code only
-        # looked at the first 10 keys, so files beyond that were "not found".
+        # Bucket listing rides on the Lambda role.
         target_key = None
-        paginator = s3_client.get_paginator("list_objects_v2")
+        paginator = signing.read_client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=REPORTS_BUCKET):
             for obj in page.get("Contents", []):
                 if obj["Key"].endswith(filename) or filename in obj["Key"]:
@@ -131,18 +199,29 @@ def _get_fresh_link(filename: str) -> dict:
         if not target_key:
             return {"error": f"File '{filename}' not found in exports bucket."}
 
-        url = s3_client.generate_presigned_url(
+        # Presigned URL rides on the (stable) assumed presigner role.
+        url = signing.sign_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": REPORTS_BUCKET, "Key": target_key},
-            ExpiresIn=3600,
+            ExpiresIn=signing.expires_in,
         )
 
         return {
             "filename": filename,
             "s3_path": f"s3://{REPORTS_BUCKET}/{target_key}",
             "download_url": url,
-            "valid_for": "1 hour",
+            "valid_for": _format_valid_for(signing.expires_in),
         }
 
     except Exception as e:
         return {"error": str(e)}
+
+
+def _format_valid_for(seconds: int) -> str:
+    if seconds >= 3600 and seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"{hours} hour" + ("s" if hours != 1 else "")
+    if seconds >= 60:
+        minutes = seconds // 60
+        return f"{minutes} minutes"
+    return f"{seconds} seconds"
