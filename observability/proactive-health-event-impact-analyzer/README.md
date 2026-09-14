@@ -18,6 +18,12 @@ When AWS Health publishes an event — scheduled maintenance, operational issues
 | **Key Technologies** | AWS DevOps Agent, Step Functions, EventBridge, Lambda, DynamoDB, SNS, Secrets Manager, Systems Manager OpsCenter |
 | **Estimated Cost** | ~$5-15/month (varies with event volume) |
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/aogsgwacfvtb)
+
 ## Architecture
 
 ```
