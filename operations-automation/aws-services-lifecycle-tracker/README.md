@@ -140,6 +140,11 @@ aws dynamodb put-item --table-name service-extraction-state --item '{"service_na
 
 Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeline and the Spoke/Org stacks to add an `sts:ExternalId` condition to the spoke trust policy.
 
+**Known limits of the multi-account mode**
+
+- **Multi-region is implemented but not battle-tested.** `regions` in `_scan_targets` fans the scan out per region (one cell per account × region × scanner, rows keyed with the region); our verification ran on a 5-account organization in a single region. Expect it to work; treat a multi-region run as something to check before you trust it.
+- **Basic and Developer Support accounts are scanned, not Health-checked.** The AWS Health API only answers for the Business and Enterprise tiers, and it answers per account, so a spoke on Basic Support gets its resources matched against the catalog but never cross-checked with AWS Health notices. The UI shows this per account (Support plan column, "Health not checked") rather than hiding it; the hub's plan does not extend to spokes. The organizational view of AWS Health (one plan on the management account, `DescribeEventsForOrganization`) would lift this and is the natural follow-up.
+
 ### Test Your System
 
 1. **Create an admin user** with the two `aws cognito-idp` commands printed at the end of the deployment, then sign in at the CloudFront URL.
