@@ -290,6 +290,15 @@ source ../../shared/scripts/check-prerequisites.sh
 # Region available in $AWS_REGION
 ```
 
+**Global services follow the partition, not a literal region.** AWS Health, AWS Support, IAM and similar have one endpoint per partition; writing `region_name="us-east-1"` for them is still a hardcoded region (it breaks in GovCloud and China). Derive the endpoint from the deployment region's partition:
+
+```python
+partition = boto3.session.Session().get_partition_for_region(region)
+health = session.client("health", region_name=f"{partition}-global")            # pseudo-region resolved by botocore
+SUPPORT_HOME = {"aws": "us-east-1", "aws-cn": "cn-north-1", "aws-us-gov": "us-gov-west-1"}
+support = session.client("support", region_name=SUPPORT_HOME.get(partition, region))
+```
+
 ### CDK Stack Naming
 
 **MUST include region suffix** in all stack IDs to prevent global resource conflicts:
@@ -410,6 +419,29 @@ Write-Host "  Region:        $region" -ForegroundColor Cyan
 - Bash: `-s|--skip-setup` flag
 - Purpose: skip deployment on subsequent runs, only execute the operation
 
+**Optional stacks take their inputs from `--context`, never from `cdk.json`.** Account ids, organization root/OU ids or any deployment-specific value must not be committed. The shared `deploy-cdk` scripts forward them:
+```powershell
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "MyDemoOrg-$region" -SkipBootstrap -CdkContext "orgTargets=$OrgTargets"
+```
+```bash
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "MyDemoOrg-$region" --skip-bootstrap --cdk-context "orgTargets=$ORG_TARGETS"
+```
+In `app.ts` / `app.py`, instantiate the optional stack only when its context key is present, so the default synth never depends on it.
+
+### Multi-Account Deployments (hub-and-spoke)
+
+Single-account is always the default: a user deploying into one account must not have to know that multi-account exists. When a demo can also work across an AWS Organization, follow the pattern established by the lifecycle tracker (#143, #144):
+
+1. **Opt-in flag**: `deploy-all.ps1 -MultiAccount [-OrgTargets r-...,ou-...]` / `deploy-all.sh --multi-account [--org-targets ...]`. Not `-SkipSetup`, not a second script.
+2. **Preflight first, read-only**: call `shared/scripts/check-org-access.ps1|.sh` and branch on its exit code. `0`: deploy the rollout stack. `3`: deploy the hub, skip the rollout, print the one command a management-account admin runs. `2`: stop with the fix it printed and point to the manual account list. It prints the exact management-account commands; never try to fix org-level settings from a deploy script.
+3. **Hub and spoke**: the account you deploy into is the hub. It lists accounts with AWS Organizations and assumes one **read-only spoke role** with a fixed name in each member account. Scan/read actions live in one file (`cdk/lib/scan-permissions.ts`-style single source) used by both the hub role and the spoke role so they cannot drift.
+4. **Spoke trust**: trust the hub *account root* with an `aws:PrincipalArn` condition on the hub role's fixed name (optional `sts:ExternalId`). Trusting the role ARN directly fails when the hub role does not exist yet, and would break when it is recreated.
+5. **Rollout = StackSet, one source of truth**: an `Org` stack with a service-managed, auto-deploying `CfnStackSet` targeting the root/OUs (hub excluded with `accountFilterType: DIFFERENCE`), whose `TemplateBody` is the Spoke stack synthesized in-process. Synthesize Spoke (and Org) with `cdk.BootstraplessSynthesizer()`: plain IAM, no `cdk bootstrap` in member accounts. Accept `--context hubAccountId=` so the management account can run the Org stack on behalf of a hub that is not a StackSets delegated administrator.
+6. **Tracking**: Spoke and Org stacks carry **no** tracking tag; the main stack of the demo keeps the only one.
+7. **Blast radius**: per-account work is one unit (durable step, map cell) per (account, region, unit). One unreachable account fails its own units only and is reported (`accounts_failed`), never the run; never delete/reconcile data of a scope that was not processed successfully.
+8. **Data model**: rows carry `account_id` / `account_name`; keys include the account and the region (`<kind>#<account>#<region>#<id>`), otherwise the same identifier in two accounts overwrites itself.
+9. **Manual fallback**: document how to deploy the Spoke stack by hand in each account and configure an explicit account list, for users without Organizations access or with a handful of accounts.
+
 ### Frontend Configuration
 
 **Never hardcode** API endpoints or environment-specific values.
@@ -451,6 +483,7 @@ $configContent | Out-File -FilePath "frontend/config.js" -Encoding UTF8
 - AWS security best practices
 - Include troubleshooting guidance
 - Cost documentation with estimates
+- **Say what was not checked.** When a result depends on something per account (a Support plan for the Health API, an opt-in, a quota), record the per-account outcome and show it next to the result, so an empty badge reads "not checked" and not "nothing found". Example: the Health cross-check needs a Business-tier plan *in the account being checked*; the lifecycle tracker infers each account's Support tier the way AWS documents it (ceiling of `support:DescribeSeverityLevels`: exception → Basic, `normal` → Developer, `urgent` → Business tier, `critical` → Enterprise tier) and displays it with an (i) explaining why.
 
 ---
 
@@ -490,6 +523,10 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - End deployment scripts silently without showing outputs
 - Use `python3` in PowerShell scripts (Windows uses `python`)
 - Create separate CONTRIBUTING.md or LICENSE in demo directories
+- Hardcode `us-east-1` for global services (derive the endpoint from the partition)
+- Commit account or organization ids in `cdk.json` (pass them with `-CdkContext` / `--cdk-context`)
+- Make multi-account the default, or require `cdk bootstrap` in member accounts
+- Put a tracking tag on Spoke/Org stacks
 
 ✅ **Do:**
 - Use shared utilities for region/account detection
@@ -500,3 +537,6 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Use shared prerequisites scripts
 - End scripts with user-friendly deployment summary
 - Test on Windows before submitting
+- Gate multi-account behind `-MultiAccount` / `--multi-account` and run `check-org-access` first
+- Keep hub and spoke permissions in one source file
+- Report per-account outcomes ("not checked" vs "nothing found")
