@@ -6,7 +6,11 @@ param(
     [string]$CdkDirectory,
     [string]$StackName = "",
     [switch]$DestroyStack = $false,
-    [switch]$SkipBootstrap = $false
+    [switch]$SkipBootstrap = $false,
+    # Optional CDK context entries ("key=value"), passed as `--context key=value`.
+    # Lets a demo enable optional stacks (e.g. multi-account rollout) without
+    # hardcoding account/organization ids in cdk.json.
+    [string[]]$CdkContext = @()
 )
 
 # Set PYTHONPATH to include shared utilities
@@ -166,10 +170,12 @@ try {
         Write-Host "Deploying CDK stack..." -ForegroundColor Yellow
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
+        $contextArgs = @()
+        foreach ($kv in $CdkContext) { if ($kv) { $contextArgs += @("--context", $kv) } }
         if ([string]::IsNullOrEmpty($StackName)) {
-            npx -y cdk deploy --require-approval never --no-cli-pager 2>$null
+            npx -y cdk deploy --require-approval never --no-cli-pager @contextArgs 2>$null
         } else {
-            npx -y cdk deploy $StackName --require-approval never --no-cli-pager 2>$null
+            npx -y cdk deploy $StackName --require-approval never --no-cli-pager @contextArgs 2>$null
         }
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction

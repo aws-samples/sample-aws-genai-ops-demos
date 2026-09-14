@@ -57,11 +57,21 @@ def _fake_scanner_boom(region, index):
     raise RuntimeError("AccessDenied")
 
 
+HUB_ACCOUNT = "111111111111"
+
+
 @pytest.fixture
 def mocks():
     with patch.object(lp, "get_all_enabled_services", return_value=["lambda", "amplify", "broken"]), \
          patch.object(lp, "extract_service_lifecycle", side_effect=_fake_extract), \
-         patch.object(lp.account_discovery, "LifecycleIndex", return_value=MagicMock()), \
+         patch.object(lp.account_discovery, "LifecycleIndex",
+                      side_effect=lambda **kw: MagicMock(account_id=kw.get("account_id") or HUB_ACCOUNT,
+                                                         account_name=kw.get("account_name", ""))), \
+         patch.object(lp.account_discovery, "_caller_identity", return_value={"partition": "aws", "account": HUB_ACCOUNT}), \
+         patch.object(lp.account_discovery, "load_scan_targets", return_value={}), \
+         patch.object(lp.account_discovery, "save_resolved_accounts"), \
+         patch.object(lp.account_discovery, "record_scan_outcome"), \
+         patch.object(lp.account_discovery, "session_for_account", return_value=None), \
          patch.object(lp.account_discovery, "save_to_dynamodb",
                       return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
          patch.object(lp.account_discovery, "cross_check_health",
@@ -90,13 +100,14 @@ class TestFullPipeline:
         # Scan: 2 cells (function region only), one raised
         assert out["scan"]["cells_total"] == 2
         assert out["scan"]["cells_succeeded"] == 1
-        assert out["scan"]["failed_cells"] == ["EKS@eu-central-1"]
+        assert out["scan"]["failed_cells"] == [f"EKS@{HUB_ACCOUNT}/eu-central-1"]
+        assert out["accounts"] == [HUB_ACCOUNT]                      # hub only without _scan_targets (#144)
         assert out["scan"]["items_discovered"] == 1
         assert out["scan"]["needs_attention"] == 1
 
         # Steps exist by name (never by index)
         names = _step_names(res)
-        assert {"start-run", "extract-lambda", "extract-amplify", "scan-Lambda-eu-central-1",
+        assert {"start-run", "extract-lambda", "extract-amplify", f"scan-Lambda-{HUB_ACCOUNT}-eu-central-1",
                 "reconcile-inventory", "summarize-and-notify"} <= names
 
     def test_reconciliation_scoped_to_succeeded_scanner_cells(self, mocks):
@@ -137,6 +148,17 @@ class TestModes:
         # Only the Lambda scanner emits 'lambda' rows -> EKS cell not built
         assert out["scan"]["cells_total"] == 1
         assert out["scan"]["failed_cells"] == []
+
+    def test_scan_targets_add_accounts_and_hub_is_always_included(self, mocks):
+        targets = {"accounts": [{"id": "222222222222", "name": "Account A"}], "regions": ["eu-central-1"], "source": "manual"}
+        with patch.object(lp.account_discovery, "load_scan_targets", return_value=targets):
+            out = _result(_run({"mode": "scan"}))
+        assert out["accounts"] == [HUB_ACCOUNT, "222222222222"]      # hub prepended
+        assert out["scan"]["cells_total"] == 4                        # 2 scanners x 2 accounts
+        # the fake EKS scanner raises for both accounts, Lambda succeeds for both
+        assert out["scan"]["accounts_scanned"] == [HUB_ACCOUNT, "222222222222"]
+        assert out["scan"]["accounts_failed"] == []
+        assert sorted(out["scan"]["failed_cells"]) == [f"EKS@{HUB_ACCOUNT}/eu-central-1", "EKS@222222222222/eu-central-1"]
 
     def test_regions_multiply_scan_cells(self, mocks):
         out = _result(_run({"mode": "scan", "regions": ["eu-central-1", "us-west-2"]}))

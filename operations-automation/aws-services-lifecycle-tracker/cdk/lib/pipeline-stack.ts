@@ -7,6 +7,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
+import { HEALTH_READ_ACTIONS, HUB_PIPELINE_ROLE_NAME, SCANNER_READ_ACTIONS, SPOKE_ROLE_NAME } from './scan-permissions';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,6 +18,8 @@ export interface PipelineStackProps extends cdk.StackProps {
   stateTable: dynamodb.ITable;
   inventoryTable: dynamodb.ITable;
   actionPlanTable: dynamodb.ITable;
+  /** Optional sts:ExternalId presented when assuming spoke roles (#144). */
+  spokeExternalId?: string;
 }
 
 const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
@@ -175,7 +178,7 @@ export class PipelineStack extends cdk.Stack {
           // Scan-time cross-check: which inventory ARNs appear in open planned
           // lifecycle notices (#141). Needs Business/Enterprise Support at runtime.
           sid: 'HealthAPIAccess',
-          actions: ['health:DescribeEvents', 'health:DescribeAffectedEntities'],
+          actions: HEALTH_READ_ACTIONS,
           resources: ['*'], // Health API has no resource-level permissions
         }),
         new iam.PolicyStatement({
@@ -187,19 +190,25 @@ export class PipelineStack extends cdk.Stack {
         }),
         new iam.PolicyStatement({
           sid: 'AccountResourceDiscovery',
-          actions: [
-            'lambda:ListFunctions',
-            'rds:DescribeDBInstances', 'rds:DescribeDBClusters',
-            'eks:ListClusters', 'eks:DescribeCluster',
-            'elasticache:DescribeCacheClusters',
-            'es:ListDomainNames', 'es:DescribeDomain',
-            'kafka:ListClustersV2',
-            'neptune:DescribeDBClusters',
-            'glue:GetJobs',
-            'elasticbeanstalk:DescribeEnvironments',
-            'ec2:DescribeInstances',
-          ],
+          actions: SCANNER_READ_ACTIONS,
           resources: ['*'], // List/Describe calls: read-only, no resource scoping available
+        }),
+        new iam.PolicyStatement({
+          // Multi-account scan (#144): assume the read-only spoke role in member
+          // accounts, and resolve account lists / names from Organizations
+          // (works for the management account or a delegated administrator).
+          sid: 'HubAndSpokeScan',
+          actions: ['sts:AssumeRole'],
+          resources: [`arn:${this.partition}:iam::*:role/${SPOKE_ROLE_NAME}`],
+        }),
+        new iam.PolicyStatement({
+          sid: 'OrganizationsRead',
+          actions: [
+            'organizations:DescribeOrganization', 'organizations:ListAccounts', 'organizations:DescribeAccount',
+            'organizations:ListRoots', 'organizations:ListOrganizationalUnitsForParent', 'organizations:ListParents',
+            'organizations:DescribeOrganizationalUnit', 'organizations:ListAccountsForParent',
+          ],
+          resources: ['*'],
         }),
         new iam.PolicyStatement({
           sid: 'PublishNotifications',
@@ -218,8 +227,16 @@ export class PipelineStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Fixed role name so spoke trust policies can pin the exact principal.
+    const pipelineRole = new iam.Role(this, 'PipelineRole', {
+      roleName: HUB_PIPELINE_ROLE_NAME,
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      description: 'Lifecycle tracker pipeline role (hub): scans this account and assumes spoke roles',
+    });
+
     this.pipelineFunction = new lambda.Function(this, 'PipelineFunction', {
       functionName: PIPELINE_FUNCTION_NAME,
+      role: pipelineRole,
       description: 'Lifecycle refresh pipeline: extract -> scan -> reconcile -> notify (Lambda durable function)',
       runtime: PYTHON_RUNTIME,
       architecture: lambda.Architecture.ARM_64,
@@ -228,7 +245,11 @@ export class PipelineStack extends cdk.Stack {
       memorySize: 1024,
       timeout: cdk.Duration.minutes(15),
       logGroup: pipelineLogGroup,
-      environment: tableEnvironment,
+      environment: {
+        ...tableEnvironment,
+        SPOKE_ROLE_NAME,
+        ...(props.spokeExternalId ? { SPOKE_EXTERNAL_ID: props.spokeExternalId } : {}),
+      },
       durableConfig: {
         executionTimeout: cdk.Duration.hours(2),
         retentionPeriod: cdk.Duration.days(14),

@@ -21,6 +21,7 @@ import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
   urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd,
 } from '../lifecycle';
+import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -168,6 +169,29 @@ export default function Dashboard() {
     return [...m.entries()].sort((a, b) => a[1].worst - b[1].worst || b[1].concerns - a[1].concerns);
   }, [inventory]);
 
+  // Per-account breakdown (#144): attention + Extended Support money, shown only with several accounts
+  const byAccount = useMemo(() => {
+    const m = new Map<string, { name: string; rows: number; resources: number; concerns: number; worst: number; monthly: number; forecast: number }>();
+    for (const r of inventory) {
+      if (!r.account_id) continue;
+      const e = m.get(r.account_id) || { name: r.account_name || '', rows: 0, resources: 0, concerns: 0, worst: 99, monthly: 0, forecast: 0 };
+      e.name = e.name || r.account_name || '';
+      e.rows += 1;
+      e.resources += Number(r.service_specific?.total_affected) || 0;
+      if (isConcern(r.status)) e.concerns += 1;
+      e.worst = Math.min(e.worst, statusMeta(r.status).rank);
+      const c = costExposure(r);
+      if (c) { e.monthly += c.monthly; e.forecast += c.forecast_12m; }
+      m.set(r.account_id, e);
+    }
+    // accounts scanned without any resource still count as covered
+    for (const id of coverage?.accounts?.accounts_scanned || []) {
+      if (!m.has(id)) m.set(id, { name: coverage?.accounts?.accounts.find((a) => a.id === id)?.name || '', rows: 0, resources: 0, concerns: 0, worst: 99, monthly: 0, forecast: 0 });
+    }
+    return [...m.entries()].sort((a, b) => a[1].worst - b[1].worst || b[1].concerns - a[1].concerns || b[1].forecast - a[1].forecast);
+  }, [inventory, coverage]);
+  const multiAccount = byAccount.length > 1;
+
   const lastFactsRefresh = useMemo(
     () => facts.reduce<string | null>((max, f) => (!max || f.last_verified > max ? f.last_verified : max), null),
     [facts]);
@@ -258,7 +282,9 @@ export default function Dashboard() {
           <Box variant="small" color="text-body-secondary">
             <StatusIndicator type={coverage?.last_scan.last_verified ? 'success' : 'pending'}>
               Account scan: {coverage?.last_scan.resources ?? 0} resource groups across {byService.length} services
+              {multiAccount ? ` and ${byAccount.length} accounts` : ''}
               {coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}, {relative(coverage?.last_scan.last_verified)}
+              {coverage?.accounts?.accounts_failed?.length ? ` (${coverage.accounts.accounts_failed.length} account${coverage.accounts.accounts_failed.length === 1 ? '' : 's'} unreachable)` : ''}
             </StatusIndicator>
             {'   '}
             <StatusIndicator type={facts.length ? 'success' : 'pending'}>
@@ -305,6 +331,7 @@ export default function Dashboard() {
                       ? <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&details=${encodeURIComponent(r.item_id)}`); }} href="#">{n} {resourceWord(n)}</Link>
                       : <Box color="text-body-secondary">0</Box>;
                   } },
+                  ...(multiAccount ? [{ id: 'account', header: 'Account', cell: (r: DeprecationItem) => r.account_name || r.account_id || '-' }] : []),
                   { id: 'region', header: 'Region', cell: (r) => r.region || '-' },
                 ]}
                 footer={exposure.concerns.length > deadlines.length && (
@@ -333,6 +360,34 @@ export default function Dashboard() {
               />
             ),
           },
+          ...(multiAccount ? [{
+            id: 'accounts',
+            label: `By account (${byAccount.length})`,
+            content: (
+              <Table
+                variant="embedded"
+                items={byAccount}
+                trackBy={([k]) => k}
+                columnDefinitions={[
+                  { id: 'account', header: 'Account', cell: ([k, v]) => (
+                    <SpaceBetween size="xxxs">
+                      <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&account=${k}`); }} href="#">{v.name || k}</Link>
+                      {v.name && <Box variant="small" color="text-body-secondary">{k}</Box>}
+                    </SpaceBetween>
+                  ) },
+                  { id: 'resources', header: 'Resources', cell: ([, v]) => v.resources },
+                  { id: 'versions', header: 'Versions in use', cell: ([, v]) => v.rows },
+                  { id: 'concerns', header: 'Need attention', cell: ([, v]) => v.concerns
+                      ? <StatusIndicator type={v.worst <= 1 ? 'error' : 'warning'}>{v.concerns} of {v.rows}</StatusIndicator>
+                      : <StatusIndicator type="success">none</StatusIndicator> },
+                  { id: 'support', header: <SupportTierHeader />, cell: ([k]) => <SupportTierCell status={coverage?.health?.by_account?.[k]} /> },
+                  { id: 'money', header: 'Extended Support', cell: ([, v]) => v.forecast || v.monthly
+                      ? <SpaceBetween size="xxxs"><Box variant="strong">{formatUsd(v.monthly)}/mo</Box><Box variant="small" color="text-body-secondary">{formatUsd(v.forecast)} next 12 mo</Box></SpaceBetween>
+                      : <Box color="text-body-secondary">-</Box> },
+                ]}
+              />
+            ),
+          }] : []),
         ]}
       />
     </SpaceBetween>

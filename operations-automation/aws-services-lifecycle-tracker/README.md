@@ -77,7 +77,7 @@ Facts and inventory live in separate tables: the public deprecation data is neve
 - **Python 3.11+** with `pip` - used to bundle the Lambda code locally (no Docker needed)
 - **AWS credentials** with permissions for CloudFormation, Lambda, API Gateway, DynamoDB, Cognito, EventBridge Scheduler, SNS, SQS, CloudFront, S3 and IAM
 - **Amazon Bedrock** model access for Amazon Nova in your region
-- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health cross-check. Without it the scan gets a `SubscriptionRequiredException`, reports Health as unavailable on the Sources & coverage page, and everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html)
+- **Paid AWS Support plan** (**Business, Enterprise On-Ramp, Enterprise, or Unified Operations**) - only for the AWS Health cross-check. Without it the scan gets a `SubscriptionRequiredException`, reports Health as unavailable on the Sources & coverage page, and everything else works. See [What is AWS Health](https://docs.aws.amazon.com/health/latest/ug/what-is-aws-health.html). In multi-account mode the check runs per account with the spoke role, so a spoke is only cross-checked if *that account* has a plan; the hub's plan does not cover it (the organizational view of Health would, see the follow-up issue linked in the multi-account section)
 
 ### ⚠️ Region Requirements
 
@@ -97,6 +97,53 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 ```
 
 **Time:** ~5 minutes. The scripts deploy Data → Auth → Pipeline → Api, build the frontend with the API URL and Cognito IDs, then deploy Frontend, and finish with the website URL, the pipeline alias ARN and the SNS topic.
+
+By default the tracker scans **the account and region you deploy into**. Nothing else is needed for a single account.
+
+### Optional: scan a whole AWS Organization (multi-account)
+
+Hub-and-spoke: the account you deploy into is the **hub**. It lists the organization's accounts with AWS Organizations and assumes a read-only **spoke role** (`LifecycleTrackerScanRole`) in each of them. The spoke role is one IAM role (List/Describe permissions of the 11 scanners + AWS Health read) that trusts only the hub's pipeline role; a **service-managed CloudFormation StackSet** deployed from the hub places it in every member account and in accounts that join later.
+
+```powershell
+.\deploy-all.ps1 -MultiAccount                                   # whole organization
+.\deploy-all.ps1 -MultiAccount -OrgTargets "ou-abcd-11111111,ou-abcd-22222222"   # only these OUs
+```
+```bash
+./deploy-all.sh --multi-account
+./deploy-all.sh --multi-account --org-targets "ou-abcd-11111111,ou-abcd-22222222"
+```
+
+The scripts first run the shared read-only preflight `shared/scripts/check-org-access` and branch on its result:
+
+| Preflight result | What the script does |
+|---|---|
+| Hub can list accounts **and** run service-managed StackSets (it is the management account or a [StackSets delegated administrator](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-delegated-admin.html)) | Deploys the **Org stack** (StackSet) after the Pipeline stack and sets the scan targets. Done. |
+| Hub can list accounts but cannot run StackSets | Deploys everything except the Org stack and prints the one `cdk deploy ... --context hubAccountId=<hub>` command a **management-account** admin runs once. Until then spoke accounts show as failed in scan summaries. |
+| Hub cannot list accounts | Stops with the fix (the management account has to delegate the Organizations read APIs to the hub through the organization's resource-based policy, or make the hub a delegated administrator). Use a manual account list instead (below). |
+
+Prerequisites that only the management account can set: [trusted access for StackSets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-enable-trusted-access.html) (AWS Organizations console → Services → CloudFormation StackSets), and, if the hub is a member account, its registration as StackSets delegated administrator. The preflight prints the exact commands.
+
+**What the scan does per account.** Every (account, region, scanner) triple is one durable step; a spoke that cannot be assumed fails only its own cells and is listed in the summary (`accounts_failed`), the rest of the run is unaffected. Inventory rows are keyed `inventory#<account>#<region>#<identifier>` and carry `account_id` / `account_name`; the AWS Health cross-check runs per account with the assumed role (it needs a Business/Enterprise Support plan *in that account*). The hub is always scanned with its own credentials.
+
+**Support plan column.** So that an empty Health badge is never mistaken for "nothing planned", the dashboard's *By account* tab and the Accounts panel show each account's Support tier next to what Health did there ("Health: 26 notices, 51 flagged" or "Health not checked"). No API returns the plan; the tier is inferred the way [AWS documents it](https://aws.amazon.com/blogs/mt/aws-partners-determine-aws-support-plans-in-organization/), from the case severities the account may open (`support:DescribeSeverityLevels`, part of the spoke role): `SubscriptionRequiredException` → Basic, up to `normal` → Developer, up to `urgent` → Business tier (Business, Business Support+), `critical` → Enterprise tier (Enterprise, Enterprise On-Ramp, Unified Operations). Only the two paid tiers can be cross-checked with Health.
+
+**Manual account list** (no Organizations access, or a handful of accounts): deploy the Spoke stack yourself in each account and write the targets row. The Spoke stack needs no `cdk bootstrap`.
+
+```powershell
+# in each spoke account (any credentials with IAM rights there)
+cd cdk; npx cdk deploy AWSServicesLifecycleTrackerSpoke-<region> --context hubAccountId=<HUB_ACCOUNT_ID>
+# in the hub: what to scan (control row of the state table)
+aws dynamodb put-item --table-name service-extraction-state --item '{"service_name":{"S":"_scan_targets"},"source":{"S":"manual"},"accounts":{"L":[{"M":{"id":{"S":"222222222222"},"name":{"S":"Account A"}}}]},"regions":{"L":[{"S":"eu-central-1"},{"S":"us-east-1"}]}}'
+```
+
+`_scan_targets` fields: `source` (`hub` | `manual` | `organization` | `ou`), `accounts` (manual list, also the fallback when Organizations denies access), `ou_ids`, `exclude_accounts`, `regions` (default: the deployment region). The last run's resolved account list (names, OU paths, errors) is stored in the `_scan_accounts` row and shown in the UI under Sources & coverage.
+
+Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeline and the Spoke/Org stacks to add an `sts:ExternalId` condition to the spoke trust policy.
+
+**Known limits of the multi-account mode**
+
+- **Multi-region is implemented but not battle-tested.** `regions` in `_scan_targets` fans the scan out per region (one cell per account × region × scanner, rows keyed with the region); our verification ran on a 5-account organization in a single region. Expect it to work; treat a multi-region run as something to check before you trust it.
+- **Basic and Developer Support accounts are scanned, not Health-checked.** The AWS Health API only answers for the Business and Enterprise tiers, and it answers per account, so a spoke on Basic Support gets its resources matched against the catalog but never cross-checked with AWS Health notices. The UI shows this per account (Support plan column, "Health not checked") rather than hiding it; the hub's plan does not extend to spokes. The organizational view of AWS Health (one plan on the management account, `DescribeEventsForOrganization`) would lift this and is the natural follow-up.
 
 ### Test Your System
 
@@ -138,6 +185,8 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 | **AWSServicesLifecycleTrackerPipeline-{region}** | Refresh pipeline (main stack) | Lambda durable function + `live` alias, API Lambda, SNS topic, SQS DLQ, EventBridge schedules, IAM | Data |
 | **AWSServicesLifecycleTrackerApi-{region}** | UI API | API Gateway HTTP API + Cognito JWT authorizer | Pipeline, Auth |
 | **AWSServicesLifecycleTrackerFrontend-{region}** | Admin interface | S3 bucket, CloudFront distribution, React UI | Api, Auth |
+| **AWSServicesLifecycleTrackerSpoke-{region}** *(multi-account, per spoke account)* | Read-only scan role | IAM role `LifecycleTrackerScanRole` trusting the hub pipeline role; no bootstrap needed | None |
+| **AWSServicesLifecycleTrackerOrg-{region}** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying CloudFormation StackSet whose template is the Spoke stack | Organizations trusted access |
 
 ## Project Structure
 
@@ -149,7 +198,8 @@ project-root/
 │   ├── actions.py                  # Action router (list/update services, plans, scanners, ...)
 │   ├── workflow_orchestrator.py    # Single-service extraction workflow
 │   ├── data_extractor.py           # HTML parsing + Amazon Nova normalization
-│   ├── account_discovery.py        # Account scanners + inventory reconciliation
+│   ├── account_discovery.py        # Account scanners + inventory reconciliation (per account/region)
+│   ├── org_targets.py              # Scan targets: organization / OU / manual list -> accounts (#144)
 │   ├── database_reads.py           # READ operations (metrics, configs, deprecations)
 │   ├── database_writes.py          # WRITE operations + status categorization
 │   ├── action_plans.py             # Plan of Action CRUD

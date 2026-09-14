@@ -199,8 +199,8 @@ Service Results:
 def _last_scan_info() -> dict:
     """When the inventory was last written, how many rows, which regions (issue #141)."""
     from database_reads import inventory_table
-    latest, regions, count = None, set(), 0
-    kwargs = {'ProjectionExpression': 'last_verified, #r', 'ExpressionAttributeNames': {'#r': 'region'}}
+    latest, regions, accounts, count = None, set(), set(), 0
+    kwargs = {'ProjectionExpression': 'last_verified, #r, account_id', 'ExpressionAttributeNames': {'#r': 'region'}}
     try:
         while True:
             page = inventory_table.scan(**kwargs)
@@ -211,12 +211,14 @@ def _last_scan_info() -> dict:
                     latest = lv
                 if row.get('region'):
                     regions.add(str(row['region']))
+                if row.get('account_id'):
+                    accounts.add(str(row['account_id']))
             if 'LastEvaluatedKey' not in page:
                 break
             kwargs['ExclusiveStartKey'] = page['LastEvaluatedKey']
     except Exception as e:
         print(f"Warning: could not read inventory for last_scan: {e}")
-    return {'last_verified': latest, 'resources': count, 'regions': sorted(regions)}
+    return {'last_verified': latest, 'resources': count, 'regions': sorted(regions), 'accounts': sorted(accounts)}
 
 
 def handle_api_action(action: str, payload: dict) -> dict:
@@ -242,7 +244,8 @@ def handle_api_action(action: str, payload: dict) -> dict:
     elif action == 'list_scanners':
         # Scanner coverage for the UI (issue #141): which config service keys
         # have an account scanner behind them, and the last completed scan.
-        from account_discovery import SCANNER_SERVICE_KEYS, COST_STATUS_KEY, load_health_status, load_control_row
+        from account_discovery import (SCANNER_SERVICE_KEYS, COST_STATUS_KEY, SCAN_ACCOUNTS_KEY,
+                                       load_health_status, load_control_row, load_scan_targets)
         return {
             'scanners': [
                 {'label': label, 'service_keys': keys}
@@ -253,7 +256,15 @@ def handle_api_action(action: str, payload: dict) -> dict:
             'health': load_health_status(),
             # Outcome of the Extended Support pricing pass of the last scan (#142)
             'cost_exposure': load_control_row(COST_STATUS_KEY),
+            # Multi-account (#144): what the last run resolved and scanned, and what is configured
+            'accounts': load_control_row(SCAN_ACCOUNTS_KEY),
+            'targets': load_scan_targets(),
         }
+
+    elif action == 'save_scan_targets':
+        # Sources & coverage editor (#144): validate and store the _scan_targets row.
+        from account_discovery import save_scan_targets
+        return save_scan_targets(payload.get('targets') or {})
     
     elif action == 'discover_account':
         # Discover actual resources in the customer's AWS account.

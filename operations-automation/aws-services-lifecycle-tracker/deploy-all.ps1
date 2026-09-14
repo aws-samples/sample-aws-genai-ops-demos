@@ -1,8 +1,21 @@
 # AWS Services Lifecycle Tracker - Complete Deployment Script
 #
-# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Frontend
+# Stacks (in order): Data -> Auth -> Pipeline -> [Org] -> Api -> Frontend
 # No Docker needed: the Lambda bundle is built locally with pip (pure-Python
 # dependencies resolved as Linux/arm64 wheels).
+#
+# Default: scans the account you deploy into (single-account).
+# -MultiAccount: hub-and-spoke scan of an AWS Organization from this account
+#   (the "hub"). Runs shared/scripts/check-org-access.ps1 first; when the hub
+#   may run service-managed StackSets, the Org stack rolls the read-only spoke
+#   role out to every member account. Otherwise the hub stacks still deploy and
+#   the one command a management-account admin has to run is printed.
+# -OrgTargets: comma-separated organization root (r-xxxx) and/or OU ids to scan
+#   and roll out to. Default: the whole organization (its root).
+param(
+    [switch]$MultiAccount,
+    [string]$OrgTargets = ""
+)
 
 Write-Host "=== AWS Services Lifecycle Tracker Deployment ===" -ForegroundColor Cyan
 
@@ -36,6 +49,27 @@ if (-not (Test-Path "frontend/dist")) {
 # Get region for stack names
 $region = $global:AWS_REGION
 
+# Multi-account preflight (read-only; exit codes documented in check-org-access.ps1)
+$orgRollout = $false
+if ($MultiAccount) {
+    Write-Host "`nChecking multi-account (organization) access..." -ForegroundColor Yellow
+    & "..\..\shared\scripts\check-org-access.ps1"
+    $orgCheck = $LASTEXITCODE
+    if ($orgCheck -eq 2) {
+        Write-Host "This account cannot list the organization's accounts, so -MultiAccount is not possible from here." -ForegroundColor Red
+        Write-Host "Apply the fix printed above, or deploy without -MultiAccount and add accounts manually (see README, 'Manual account list')." -ForegroundColor Yellow
+        exit 1
+    } elseif ($orgCheck -ne 0 -and $orgCheck -ne 3) {
+        Write-Host "Multi-account preflight failed" -ForegroundColor Red
+        exit 1
+    }
+    $orgRollout = ($orgCheck -eq 0)
+    if ([string]::IsNullOrEmpty($OrgTargets)) {
+        $OrgTargets = aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager
+    }
+    Write-Host "      Scan targets: $OrgTargets $(if ($orgRollout) { '(spoke role rolled out from this account)' } else { '(spoke role rollout must be run by the management account)' })" -ForegroundColor Gray
+}
+
 # Deploy data stack
 Write-Host "`nDeploying data stack..." -ForegroundColor Yellow
 Write-Host "      (Creating DynamoDB tables and populating service configurations)" -ForegroundColor Gray
@@ -64,6 +98,39 @@ Write-Host "      (Bundling Python code with pip, creating the Lambda durable fu
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Pipeline deployment failed" -ForegroundColor Red
     exit 1
+}
+
+# Multi-account: roll the spoke role out (StackSet) and tell the pipeline what to scan
+if ($MultiAccount) {
+    if ($orgRollout) {
+        Write-Host "`nDeploying org stack (spoke role StackSet)..." -ForegroundColor Yellow
+        Write-Host "      (Service-managed StackSet placing the read-only LifecycleTrackerScanRole in every account under $OrgTargets)" -ForegroundColor Gray
+        & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "AWSServicesLifecycleTrackerOrg-$region" -SkipBootstrap -CdkContext "orgTargets=$OrgTargets"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Org stack deployment failed" -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    Write-Host "`nConfiguring scan targets..." -ForegroundColor Yellow
+    $targetIds = $OrgTargets.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $regionsJson = "[{""S"": ""$region""}]"
+    if ($targetIds | Where-Object { $_ -like "ou-*" }) {
+        $ouJson = ($targetIds | ForEach-Object { "{""S"": ""$_""}" }) -join ","
+        $item = "{""service_name"": {""S"": ""_scan_targets""}, ""source"": {""S"": ""ou""}, ""ou_ids"": {""L"": [$ouJson]}, ""regions"": {""L"": $regionsJson}}"
+    } else {
+        $item = "{""service_name"": {""S"": ""_scan_targets""}, ""source"": {""S"": ""organization""}, ""regions"": {""L"": $regionsJson}}"
+    }
+    $itemFile = Join-Path ([System.IO.Path]::GetTempPath()) "lifecycle-scan-targets.json"
+    $item | Out-File -FilePath $itemFile -Encoding ascii
+    aws dynamodb put-item --table-name "service-extraction-state" --item "file://$itemFile" --no-cli-pager
+    Remove-Item $itemFile -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Failed to write scan targets" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "      Scan targets set: $OrgTargets in $region (editable later in the UI, Sources & coverage)" -ForegroundColor Gray
 }
 
 # Deploy API stack (HTTP API + Cognito JWT authorizer)
@@ -139,3 +206,17 @@ Write-Host "  2. Sign in at the Website URL above and click Refresh to run the f
 Write-Host "  3. Optional: subscribe an email to the notifications topic to receive run summaries:" -ForegroundColor Gray
 Write-Host "     aws sns subscribe --topic-arn $topicArn --protocol email --notification-endpoint you@example.com" -ForegroundColor White
 Write-Host "  4. The weekly schedule runs the same pipeline automatically; Health events are polled hourly" -ForegroundColor Gray
+if ($MultiAccount) {
+    $hubAccount = aws sts get-caller-identity --query Account --output text --no-cli-pager
+    Write-Host "`nMulti-account:" -ForegroundColor Yellow
+    Write-Host "  Hub account $hubAccount scans every active account under $OrgTargets in $region" -ForegroundColor Gray
+    if ($orgRollout) {
+        Write-Host "  Spoke role: StackSet aws-services-lifecycle-tracker-spoke (auto-deploys to accounts joining later)" -ForegroundColor Gray
+        Write-Host "     aws cloudformation list-stack-instances --stack-set-name aws-services-lifecycle-tracker-spoke --region $region" -ForegroundColor White
+    } else {
+        Write-Host "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:" -ForegroundColor Yellow
+        Write-Host "     cd cdk; npx cdk deploy AWSServicesLifecycleTrackerOrg-$region --context orgTargets=$OrgTargets --context hubAccountId=$hubAccount --require-approval never" -ForegroundColor White
+        Write-Host "     (or register this account as a StackSets delegated administrator, see the preflight output above, and re-run with -MultiAccount)" -ForegroundColor DarkGray
+        Write-Host "  Until then, spoke accounts are reported as failed in each scan; the hub itself is scanned normally." -ForegroundColor Gray
+    }
+}

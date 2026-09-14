@@ -10,6 +10,7 @@ import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar'
 import Toggle from '@cloudscape-design/components/toggle';
 import Link from '@cloudscape-design/components/link';
 import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, getScanners, ServiceConfig, DashboardMetrics, ScanCoverage } from '../api';
+import ScanTargetsPanel from '../components/ScanTargetsPanel';
 
 export default function Services() {
   const navigate = useNavigate();
@@ -359,6 +360,15 @@ export default function Services() {
         }
         footer={coverage && (
           <Box variant="small" color="text-body-secondary">
+            {coverage.cost_exposure && (
+              <>
+                <strong>Extended Support pricing:</strong>{' '}
+                {coverage.cost_exposure.available
+                  ? <>{coverage.cost_exposure.resources_priced} RDS/Aurora resource{coverage.cost_exposure.resources_priced === 1 ? '' : 's'} priced.</>
+                  : <>{coverage.cost_exposure.reason || 'unavailable'}.</>}
+                {' '}
+              </>
+            )}
             <strong>AWS Health cross-check:</strong>{' '}
             {!coverage.health
               ? 'not run yet (happens during each account scan).'
@@ -375,6 +385,14 @@ export default function Services() {
                   </>}
           </Box>
         )}
+      />
+
+      <ScanTargetsPanel
+        coverage={coverage}
+        onSaved={(content, ok) => {
+          setFlashbarItems([{ type: ok ? 'success' : 'error', dismissible: true, dismissLabel: 'Dismiss', onDismiss: () => setFlashbarItems([]), content, id: `targets-${Date.now()}` }]);
+          if (ok) getScanners().then(setCoverage).catch(() => undefined);
+        }}
       />
     </SpaceBetween>
   );
