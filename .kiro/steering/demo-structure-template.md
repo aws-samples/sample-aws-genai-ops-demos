@@ -66,6 +66,10 @@ demos/[demo-name]/
 ├── ARCHITECTURE.md             # Architecture diagram and explanation
 ├── src/                        # Source code
 ├── infrastructure/             # AWS CDK infrastructure (TypeScript or Python)
+│   └── cdk/lib/
+│       ├── scan-permissions.ts # (multi-account only) read actions shared by hub and spoke roles
+│       ├── spoke-stack.ts      # (multi-account only) read-only role deployed in member accounts, bootstrapless
+│       └── org-stack.ts        # (multi-account only) service-managed StackSet rolling the spoke out; no tracking tag
 ├── sample-data/                # Test data or scenarios (if applicable)
 └── docs/                       # Additional documentation (optional)
 ```
