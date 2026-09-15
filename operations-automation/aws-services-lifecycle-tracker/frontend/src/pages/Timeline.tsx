@@ -117,7 +117,7 @@ export default function Timeline() {
               <SegmentedControl
                 selectedId={lens}
                 onChange={({ detail }) => setLens(detail.selectedId as 'mine' | 'catalog')}
-                options={[{ text: `My resources (${inventory.length})`, id: 'mine' }, { text: `Catalog (${facts.length})`, id: 'catalog' }]}
+                options={[{ text: `My resources (${inventory.length} versions)`, id: 'mine' }, { text: `Catalog (${facts.length} facts)`, id: 'catalog' }]}
               />
             }
           >

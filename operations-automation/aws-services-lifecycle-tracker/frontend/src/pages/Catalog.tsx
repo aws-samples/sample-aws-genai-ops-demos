@@ -104,8 +104,8 @@ export default function Catalog() {
         header={
           <Header
             variant="h1"
-            counter={`(${filtered.length})`}
-            description={`Deprecation facts extracted from the AWS documentation: ${facts.length} across ${services.length} services, ${inMyAccount} of them matching something in your account.`}
+            counter={filtered.length === facts.length ? `(${facts.length})` : `(${filtered.length} of ${facts.length})`}
+            description={`Version facts extracted from the AWS documentation: ${facts.length} across ${services.length} services (${facts.filter((f) => isConcern(f.status)).length} lifecycle concerns, ${facts.length - facts.filter((f) => isConcern(f.status)).length} still supported), ${inMyAccount} of them matching something in your accounts. The list shows the current scope and filters.`}
           >
             Catalog
           </Header>
