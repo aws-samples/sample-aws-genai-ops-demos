@@ -191,7 +191,10 @@ export default function MyResources() {
               </Button>
             }
           >
-            My resources
+            {scope === 'all' ? 'All AWS versions running in your resources'
+              : scope === 'cost' ? 'RDS Extended Support exposure'
+              : scope === 'supported' ? 'Supported AWS versions running in your resources'
+              : 'Deprecated AWS versions impacting your resources'}
           </Header>
         }
         filter={
