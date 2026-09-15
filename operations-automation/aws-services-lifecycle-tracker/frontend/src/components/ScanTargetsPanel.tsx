@@ -9,9 +9,10 @@ import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import FormField from '@cloudscape-design/components/form-field';
 import Select from '@cloudscape-design/components/select';
 import Input from '@cloudscape-design/components/input';
-import Textarea from '@cloudscape-design/components/textarea';
 import Button from '@cloudscape-design/components/button';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
+import AttributeEditor from '@cloudscape-design/components/attribute-editor';
+import TokenGroup from '@cloudscape-design/components/token-group';
 import { ScanCoverage, ScanTargets, ScanTargetSource, EMPTY_TARGETS, saveScanTargets } from '../api';
 import { accountLabel } from '../lifecycle';
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
@@ -27,12 +28,43 @@ const SOURCE_OPTIONS: Array<{ value: ScanTargetSource; label: string; descriptio
   { value: 'manual', label: 'Account list', description: 'The accounts entered below; no Organizations access needed.' },
 ];
 
-const splitList = (text: string): string[] => text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
-const parseAccounts = (text: string) =>
-  text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
-    const [id, ...rest] = l.split(/[\s,;]+/);
-    return { id, name: rest.join(' ').trim() };
-  });
+const ACCOUNT_ID = /^\d{12}$/;
+const OU_ID = /^(r-[a-z0-9]{4,32}|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})$/;
+const REGION = /^[a-z]{2}(-[a-z]+)+-\d$/;
+// Example shown in the Regions field: the region this deployment runs in (set at build time), never a literal
+const DEPLOY_REGION: string = (import.meta as any).env?.VITE_REGION || 'a region code';
+
+// A list of ids edited as tokens: type one (or several, comma separated), Enter adds them
+function TokenListField({ label, description, tokens, onChange, placeholder, validate, invalidText }: {
+  label: string; description: string; tokens: string[]; onChange: (next: string[]) => void;
+  placeholder: string; validate: RegExp; invalidText: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const add = () => {
+    const parts = draft.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const bad = parts.find((t) => !validate.test(t));
+    if (bad) { setError(`'${bad}' ${invalidText}`); return; }
+    onChange([...new Set([...tokens, ...parts])]);
+    setDraft(''); setError('');
+  };
+  return (
+    <FormField label={label} description={description} errorText={error || undefined} stretch>
+      <SpaceBetween size="xs">
+        <SpaceBetween direction="horizontal" size="xs">
+          <Input value={draft} placeholder={placeholder} onChange={({ detail }) => { setDraft(detail.value); setError(''); }}
+            onKeyDown={({ detail }) => { if (detail.key === 'Enter') add(); }} />
+          <Button onClick={add} disabled={!draft.trim()}>Add</Button>
+        </SpaceBetween>
+        {tokens.length > 0 && (
+          <TokenGroup items={tokens.map((t) => ({ label: t, dismissLabel: `Remove ${t}` }))}
+            onDismiss={({ detail }) => onChange(tokens.filter((_, i) => i !== detail.itemIndex))} />
+        )}
+      </SpaceBetween>
+    </FormField>
+  );
+}
 
 interface Props {
   coverage: ScanCoverage | null;
@@ -43,20 +75,23 @@ export default function ScanTargetsPanel({ coverage, onSaved }: Props) {
   const resolved = coverage?.accounts || null;
   const targets = coverage?.targets || EMPTY_TARGETS;
   const [source, setSource] = useState<ScanTargetSource>(targets.source);
-  const [accountsText, setAccountsText] = useState('');
-  const [ouText, setOuText] = useState('');
-  const [excludeText, setExcludeText] = useState('');
-  const [regionsText, setRegionsText] = useState('');
+  const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
+  const [ouIds, setOuIds] = useState<string[]>([]);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   // (Re)fill the form when the stored targets arrive
   useEffect(() => {
     setSource(targets.source);
-    setAccountsText(targets.accounts.map((a) => `${a.id} ${a.name}`.trim()).join('\n'));
-    setOuText(targets.ou_ids.join(', '));
-    setExcludeText(targets.exclude_accounts.join(', '));
-    setRegionsText(targets.regions.join(', '));
+    setAccounts(targets.accounts.map((a) => ({ id: a.id, name: a.name })));
+    setOuIds(targets.ou_ids);
+    setExcluded(targets.exclude_accounts);
+    setRegions(targets.regions);
   }, [coverage]);
+
+  const accountError = (id: string) => (id && !ACCOUNT_ID.test(id.trim()) ? 'Must be a 12-digit account id' : undefined);
+  const accountsValid = accounts.every((a) => !accountError(a.id));
 
   const scanned = new Set(resolved?.accounts_scanned || []);
   const failed = new Set(resolved?.accounts_failed || []);
@@ -66,10 +101,10 @@ export default function ScanTargetsPanel({ coverage, onSaved }: Props) {
     setSaving(true);
     const next: ScanTargets = {
       source,
-      accounts: parseAccounts(accountsText),
-      ou_ids: splitList(ouText),
-      exclude_accounts: splitList(excludeText),
-      regions: splitList(regionsText).map((r) => r.toLowerCase()),
+      accounts: accounts.map((a) => ({ id: a.id.trim(), name: a.name.trim() })).filter((a) => a.id),
+      ou_ids: ouIds,
+      exclude_accounts: excluded,
+      regions: regions.map((r) => r.toLowerCase()),
     };
     try {
       const res = await saveScanTargets(next);
@@ -135,30 +170,50 @@ export default function ScanTargetsPanel({ coverage, onSaved }: Props) {
                 options={SOURCE_OPTIONS}
               />
             </FormField>
+            {(source === 'manual' || source === 'organization' || source === 'ou') && (
+              <FormField label={source === 'manual' ? 'Accounts to scan' : 'Fallback account list'}
+                description={source === 'manual' ? 'Each account needs the spoke role.' : 'Used only when AWS Organizations denies access to the hub.'} stretch>
+                <AttributeEditor
+                  items={accounts}
+                  addButtonText="Add account"
+                  removeButtonText="Remove"
+                  empty="No accounts listed."
+                  onAddButtonClick={() => setAccounts([...accounts, { id: '', name: '' }])}
+                  onRemoveButtonClick={({ detail }) => setAccounts(accounts.filter((_, i) => i !== detail.itemIndex))}
+                  definition={[
+                    {
+                      label: 'Account id',
+                      errorText: (item) => accountError(item.id),
+                      control: (item, index) => (
+                        <Input value={item.id} placeholder="222222222222" inputMode="numeric"
+                          onChange={({ detail }) => setAccounts(accounts.map((a, i) => (i === index ? { ...a, id: detail.value } : a)))} />
+                      ),
+                    },
+                    {
+                      label: 'Name (optional)',
+                      control: (item, index) => (
+                        <Input value={item.name} placeholder="Account A"
+                          onChange={({ detail }) => setAccounts(accounts.map((a, i) => (i === index ? { ...a, name: detail.value } : a)))} />
+                      ),
+                    },
+                  ]}
+                />
+              </FormField>
+            )}
             <ColumnLayout columns={2}>
               {source === 'ou' && (
-                <FormField label="Root / OU ids" description="Comma-separated, e.g. r-abcd, ou-abcd-12345678" stretch>
-                  <Input value={ouText} onChange={({ detail }) => setOuText(detail.value)} placeholder="ou-abcd-12345678" />
-                </FormField>
-              )}
-              {(source === 'manual' || source === 'organization' || source === 'ou') && (
-                <FormField label={source === 'manual' ? 'Accounts' : 'Fallback account list'}
-                  description={source === 'manual' ? 'One per line: account id, then an optional name' : 'Used when Organizations denies access. One per line: id, optional name'} stretch>
-                  <Textarea value={accountsText} onChange={({ detail }) => setAccountsText(detail.value)} rows={3}
-                    placeholder={'222222222222 Account A\n333333333333 Account B'} />
-                </FormField>
+                <TokenListField label="Root / OU ids" description="Accounts under these are scanned, recursively." tokens={ouIds} onChange={setOuIds}
+                  placeholder="ou-abcd-12345678" validate={OU_ID} invalidText="is not an organization root or OU id" />
               )}
               {(source === 'organization' || source === 'ou') && (
-                <FormField label="Exclude accounts" description="Comma-separated account ids" stretch>
-                  <Input value={excludeText} onChange={({ detail }) => setExcludeText(detail.value)} placeholder="444444444444" />
-                </FormField>
+                <TokenListField label="Exclude accounts" description="Never scanned even if listed by Organizations." tokens={excluded} onChange={setExcluded}
+                  placeholder="444444444444" validate={ACCOUNT_ID} invalidText="is not a 12-digit account id" />
               )}
-              <FormField label="Regions" description="Comma-separated; empty = the deployment region" stretch>
-                <Input value={regionsText} onChange={({ detail }) => setRegionsText(detail.value)} placeholder="eu-central-1, us-east-1" />
-              </FormField>
+              <TokenListField label="Regions" description="Empty = the region the tracker is deployed in." tokens={regions} onChange={(r) => setRegions(r.map((x) => x.toLowerCase()))}
+                placeholder={DEPLOY_REGION} validate={REGION} invalidText="is not a region code" />
             </ColumnLayout>
             <Box>
-              <Button variant="primary" loading={saving} onClick={save}>Save targets</Button>
+              <Button variant="primary" loading={saving} disabled={!accountsValid || (source === 'manual' && !accounts.some((a) => a.id.trim()))} onClick={save}>Save targets</Button>
               {coverage?.last_scan.accounts.length ? (
                 <Box variant="small" color="text-body-secondary" display="inline" padding={{ left: 'm' }}>
                   Inventory currently holds resources from {coverage.last_scan.accounts.length} account{coverage.last_scan.accounts.length === 1 ? '' : 's'}
