@@ -4,9 +4,9 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
-import Badge from '@cloudscape-design/components/badge';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import SegmentedControl from '@cloudscape-design/components/segmented-control';
+import Steps, { StepsProps } from '@cloudscape-design/components/steps';
 import Alert from '@cloudscape-design/components/alert';
 import Link from '@cloudscape-design/components/link';
 import { getLifecycleData, DeprecationItem } from '../api';
@@ -36,6 +36,9 @@ const bucketOf = (days: number) =>
   days <= 0 ? 'Passed' : days <= 90 ? 'Next 90 days' : days <= 180 ? '3 to 6 months' : days <= 365 ? '6 to 12 months' : 'Later';
 const BUCKETS = ['Passed', 'Next 90 days', '3 to 6 months', '6 to 12 months', 'Later'];
 const bucketType = (b: string) => (b === 'Passed' || b === 'Next 90 days' ? 'error' : b === '3 to 6 months' ? 'warning' : 'info') as 'error' | 'warning' | 'info';
+// Icon of one milestone: passed = stopped (it happened), soon = error, then warning, later = pending
+const milestoneType = (days: number): StepsProps.Status =>
+  days <= 0 ? 'stopped' : days <= 90 ? 'error' : days <= 180 ? 'warning' : days <= 365 ? 'in-progress' : 'pending';
 
 export default function Timeline() {
   const navigate = useNavigate();
@@ -136,47 +139,41 @@ export default function Timeline() {
                 <Header variant="h3" counter={`(${list.length})`}>
                   <StatusIndicator type={bucketType(bucket)}>{bucket}</StatusIndicator>
                 </Header>
-                {list.map((m, i) => {
-                  const st = statusMeta(m.item.status);
-                  const mine = isInventory(m.item);
-                  return (
-                    <div key={`${m.item.item_id}-${m.label}-${i}`} style={{ display: 'grid', gridTemplateColumns: '110px 1fr auto', gap: '12px', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #e9ebed' }}>
-                      <Box variant="strong">{formatDate(m.date)}</Box>
-                      <SpaceBetween size="xxxs">
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <Badge color="blue">{serviceLabel(m.item.service_name)}</Badge>
-                          {mine
-                            ? <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?q=${encodeURIComponent(m.item.service_specific?.identifier || '')}&status=all`); }} href="#">{itemName(m.item)}</Link>
-                            : <Box variant="strong">{itemName(m.item)}</Box>}
-                          <Box variant="small" color="text-body-secondary">{m.label}</Box>
-                        </div>
-                        {mine && (() => {
-                          const total = m.items.reduce((n, r) => n + resourceCount(r), 0);
-                          const single = m.items.length === 1;
-                          const target = single
-                            ? `/resources?status=all&details=${encodeURIComponent(m.item.item_id)}`
-                            : `/resources?status=all&q=${encodeURIComponent(m.item.service_specific?.identifier || itemName(m.item))}`;
-                          return (
-                            <Box variant="small">
-                              <Link onFollow={(e) => { e.preventDefault(); navigate(target); }} href="#" fontSize="body-s">
-                                {total} {resourceWord(total)}
-                              </Link>
-                              <Box variant="small" color="text-body-secondary" display="inline">
-                                {single
-                                  ? (scopeLabel(m.item, multiAccount) ? ` in ${scopeLabel(m.item, multiAccount)}` : '')
-                                  : ` · ${m.items.map((r) => `${resourceCount(r)} in ${scopeLabel(r, multiAccount) || 'this account'}`).join(', ')}`}
-                              </Box>
-                            </Box>
-                          );
-                        })()}
-                      </SpaceBetween>
-                      <SpaceBetween size="xxxs" alignItems="end">
-                        <StatusIndicator type={st.indicator}>{st.label}</StatusIndicator>
-                        <Box variant="small" color="text-body-secondary">{m.days < 0 ? `${-m.days} days ago` : m.days === 0 ? 'today' : `in ${m.days} days`}</Box>
-                      </SpaceBetween>
-                    </div>
-                  );
-                })}
+                <Steps
+                  ariaLabel={`${bucket} deadlines`}
+                  steps={list.map((m): StepsProps.Step => {
+                    const st = statusMeta(m.item.status);
+                    const mine = isInventory(m.item);
+                    const total = m.items.reduce((n, r) => n + resourceCount(r), 0);
+                    const single = m.items.length === 1;
+                    const target = single
+                      ? `/resources?status=all&details=${encodeURIComponent(m.item.item_id)}`
+                      : `/resources?status=all&q=${encodeURIComponent(m.item.service_specific?.identifier || itemName(m.item))}`;
+                    const when = m.days < 0 ? `${-m.days} days ago` : m.days === 0 ? 'today' : `in ${m.days} days`;
+                    const where = mine
+                      ? (single
+                          ? `${total} ${resourceWord(total)}${scopeLabel(m.item, multiAccount) ? ` in ${scopeLabel(m.item, multiAccount)}` : ''}`
+                          : `${total} ${resourceWord(total)}: ${m.items.map((r) => `${resourceCount(r)} in ${scopeLabel(r, multiAccount) || 'this account'}`).join(', ')}`)
+                      : '';
+                    const title = `${serviceLabel(m.item.service_name)} ${itemName(m.item)}: ${m.label}`;
+                    return {
+                      status: milestoneType(m.days),
+                      statusIconAriaLabel: m.days < 0 ? 'Passed' : m.days <= 90 ? 'Within 90 days' : m.days <= 180 ? 'Within 6 months' : m.days <= 365 ? 'Within a year' : 'Later',
+                      // annotation = the timestamp (component guideline), one line
+                      annotation: formatDate(m.date),
+                      // header = brief summary; a link to the resources when they are mine
+                      header: mine
+                        ? <Link onFollow={(e) => { e.preventDefault(); navigate(target); }} href="#">{title}</Link>
+                        : title,
+                      // details = one line of context
+                      details: (
+                        <Box variant="small" color="text-body-secondary">
+                          {when} · {st.label}{where ? ` · ${where}` : ''}
+                        </Box>
+                      ),
+                    };
+                  })}
+                />
               </SpaceBetween>
             ))}
           </SpaceBetween>
