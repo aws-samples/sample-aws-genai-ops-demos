@@ -27,6 +27,8 @@ REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or
 
 import re
 
+from cost_estimator import major_version  # RDS rows are grouped at the Extended Support level (#142)
+
 # The one detection heuristic kept: which EC2 instance families count as
 # "previous generation" (per https://aws.amazon.com/ec2/previous-generation/).
 # This is membership knowledge (which families to flag), not lifecycle data -
@@ -432,12 +434,22 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
     return items
 
 
-def _rds_match_candidates(engine: str, version: str) -> List[str]:
+def _rds_match_candidates(engine: str, version: str, major: str = None) -> List[str]:
     """Candidate identifiers to match an RDS engine/version against
     extraction rows (which use slugs like 'mysql-8.0.35', 'postgresql-17.6',
-    'oracle-19c', 'sqlserver-2019')."""
+    'oracle-19c', 'sqlserver-2019').
+
+    With `major` (the level Extended Support applies to, see
+    cost_estimator.major_version) the major row is tried FIRST: its end of
+    standard support is the date that starts the Extended Support bill and
+    eventually forces a major upgrade. The minor row's date only means "this
+    minor is auto-upgraded to a newer one", which the row reports separately.
+    """
     base = engine.split("-")[0] if engine.startswith(("oracle", "sqlserver")) else engine
     base = _RDS_ENGINE_ALIASES.get(base, base)
+    if major:
+        rest = _rds_match_candidates(engine, version)
+        return [f"{base}-{major}"] + [c for c in rest if c != f"{base}-{major}"]
     # Aurora MySQL reports '8.0.mysql_aurora.3.11.1' / '5.7.mysql_aurora.2.12.6':
     # the part after 'mysql_aurora.' is the Aurora version the release
     # calendar (and therefore the facts) are keyed on ('aurora-mysql-3.11').
@@ -496,12 +508,12 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 if "mysql_aurora." in version:
                     # '8.0.mysql_aurora.3.11.1' -> '3.11.1' (see _rds_match_candidates)
                     version = version.split("mysql_aurora.", 1)[1]
-                # Group by the version that carries the lifecycle: major.minor for
-                # Aurora/RDS engines ('aurora-mysql-3.11', 'postgres-14'), so two
-                # Aurora MySQL 3.x versions are not lumped together as '3'.
-                parts = version.split('.')
-                major = ".".join(parts[:2]) if engine.startswith("aurora-mysql") and len(parts) >= 2 else parts[0]
-                key = (engine, major, version)
+                # Group at the level RDS attaches Extended Support (and its dates)
+                # to: mysql-8.4 vs mysql-8.0 (one is in Extended Support, the other
+                # has years left), postgres-14, aurora-mysql-3. Same rule as the
+                # cost estimate, so deadline and money come from the same date.
+                major = major_version(engine, db["EngineVersion"])
+                key = (engine, major)
                 
                 if key not in engine_instances:
                     engine_instances[key] = []
@@ -518,9 +530,17 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                     resource["cluster"] = db["DBClusterIdentifier"]
                     if db["DBClusterIdentifier"] in serverless_by_cluster:
                         resource["serverless_v2"] = serverless_by_cluster[db["DBClusterIdentifier"]]
+                # The minor's own end of standard support = the date RDS auto-upgrades
+                # this exact version to a newer minor. Kept per resource, not as the
+                # row's deadline (that one is the major's).
+                service_key = "aurora" if engine.startswith("aurora") else "rds"
+                minor = index.lookup(service_key, [_rds_match_candidates(engine, version)[0]])
+                if minor and minor.get("end_of_support_date") not in (None, "", "N/A"):
+                    resource["minor_version"] = version
+                    resource["minor_end_of_support"] = minor["end_of_support_date"]
                 engine_instances[key].append(resource)
         
-        for (engine, major, version), instances in engine_instances.items():
+        for (engine, major), instances in engine_instances.items():
             # Aurora engines have their own extraction source/config key
             service_key = "aurora" if engine.startswith("aurora") else "rds"
             engine_key = f"{engine}-{major}"
@@ -528,7 +548,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 service_key=service_key,
                 identifier=engine_key,
                 display_name=f"RDS {engine_key.replace('-', ' ').title()}",
-                candidates=_rds_match_candidates(engine, version),
+                candidates=_rds_match_candidates(engine, instances[0]["engine_version"], major),
                 affected_resources=instances,
                 total_affected=len(instances),
                 source_url="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/",

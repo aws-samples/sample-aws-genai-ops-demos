@@ -20,13 +20,14 @@ import Popover from '@cloudscape-design/components/popover';
 import { getLifecycleData, getActionPlans, createActionPlan, getScanners, DeprecationItem, ActionPlan, ScanCoverage } from '../api';
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
-  resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel,
+  resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
 } from '../lifecycle';
 import ResourceDetails from '../components/ResourceDetails';
 
 const SCOPE_OPTIONS = [
   { label: 'Needs attention', value: 'concerns' },
   { label: 'Everything found', value: 'all' },
+  { label: 'Extended Support exposure', value: 'cost' },
   ...Object.entries(STATUS_META).map(([value, m]) => ({ label: m.label, value })),
 ];
 
@@ -103,6 +104,7 @@ export default function MyResources() {
   const filtered = useMemo(() => {
     let out = [...rows];
     if (scope === 'concerns') out = out.filter((r) => isConcern(r.status));
+    else if (scope === 'cost') out = out.filter((r) => (costExposure(r)?.resources_priced ?? 0) > 0);
     else if (scope !== 'all') out = out.filter((r) => r.status === scope);
     if (service !== 'all') out = out.filter((r) => r.service_name === service);
     if (account !== 'all') out = out.filter((r) => r.account_id === account);
@@ -111,6 +113,11 @@ export default function MyResources() {
       out = out.filter((r) => `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''} ${r.account_id || ''} ${r.account_name || ''}`.toLowerCase().includes(q));
     }
     out.sort(urgencySort);
+    if (scope === 'cost' && !sorting?.sortingColumn) {
+      // money first: billing now, then soonest start, then amount
+      out.sort((a, b) => (costExposure(b)?.forecast_12m ?? 0) - (costExposure(a)?.forecast_12m ?? 0)
+        || (costExposure(b)?.monthly ?? 0) - (costExposure(a)?.monthly ?? 0));
+    }
     if (sorting?.sortingColumn) {
       const col = sorting.sortingColumn;
       const cmp = col.sortingComparator
@@ -127,6 +134,8 @@ export default function MyResources() {
   };
 
   const detailsRow = useMemo(() => (detailsId ? rows.find((r) => r.item_id === detailsId) || null : null), [rows, detailsId]);
+  // Same arithmetic as the dashboard KPI, over the rows shown, so the two reconcile
+  const costTotals = useMemo(() => (scope === 'cost' ? costTimeline(filtered) : null), [scope, filtered]);
   const factFor = (r: DeprecationItem) =>
     r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
 
@@ -173,7 +182,9 @@ export default function MyResources() {
           <Header
             variant="h1"
             counter={`(${filtered.length})`}
-            description={`What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
+            description={costTotals
+              ? `RDS/Aurora Extended Support: ${formatUsd(costTotals.forecast12)} over the next 12 months across ${costTotals.priced} priced resource${costTotals.priced === 1 ? '' : 's'}${costTotals.now ? `, ${costTotals.now} billing now (${formatUsd(costTotals.monthlyNow)}/mo)` : ''}${costTotals.within12 ? `, ${costTotals.within12} starting within 12 months (+${formatUsd(costTotals.monthlyWithin12)}/mo)` : ''}${costTotals.later ? `, ${costTotals.later} later` : ''}. Estimates assume always-on at current size.`
+              : `What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
             actions={
               <Button variant="primary" disabled={selected.length === 0} onClick={() => setShowPlanModal(true)}>
                 Create plan{selected.length ? ` (${selected.length})` : ''}
@@ -291,7 +302,11 @@ export default function MyResources() {
                     <Box variant="strong" color={c.in_extended_support ? 'text-status-error' : 'inherit'}>{formatUsd(c.monthly)}/mo</Box>
                   </Link>
                   <Box variant="small" color="text-body-secondary">
-                    {c.in_extended_support ? 'billing now' : `${formatUsd(c.forecast_12m)} next 12 mo`}{c.estimated ? ' · est.' : ''}
+                    {c.in_extended_support
+                      ? 'billing now'
+                      : c.forecast_12m > 0
+                        ? `${formatUsd(c.forecast_12m)} next 12 mo${(() => { const t = costTimeline([r]); return t.nextStart ? ` (from ${formatMonth(t.nextStart)})` : ''; })()}`
+                        : `from ${formatMonth(costTimeline([r]).nextStart) || 'a later date'}`}{c.estimated ? ' · est.' : ''}
                   </Box>
                 </SpaceBetween>
               );

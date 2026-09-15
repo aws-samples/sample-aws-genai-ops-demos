@@ -185,6 +185,18 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
                 ? <Link href={r.console_url} external>{r.name}</Link>
                 : <Box>{r.name}</Box>,
             },
+          ...(resources.some((r) => r.minor_end_of_support) ? [{
+            id: 'minor', header: 'Minor version',
+            cell: (r: ResourceRef) => r.minor_end_of_support
+              ? <SpaceBetween size="xxxs"><Box>{r.minor_version}</Box><Box variant="small" color="text-body-secondary">auto-upgraded by RDS on {formatDate(r.minor_end_of_support)}</Box></SpaceBetween>
+              : <Box color="text-body-secondary">-</Box>,
+          }] : []),
+            ...(resources.some((r) => r.minor_end_of_support) ? [{
+              id: 'minor', header: 'Minor version',
+              cell: (r: ResourceRef) => r.minor_end_of_support
+                ? <SpaceBetween size="xxxs"><Box>{r.minor_version}</Box><Box variant="small" color="text-body-secondary">auto-upgraded by RDS on {formatDate(r.minor_end_of_support)}</Box></SpaceBetween>
+                : <Box color="text-body-secondary">-</Box>,
+            }] : []),
             {
               id: 'arn', header: 'ARN', cell: (r) => r.arn
                 ? <CopyToClipboard variant="inline" textToCopy={r.arn} copyButtonAriaLabel={`Copy ARN of ${r.name}`} copySuccessText="Copied" copyErrorText="Copy failed" />

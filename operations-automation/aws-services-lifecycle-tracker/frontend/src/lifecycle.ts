@@ -232,7 +232,45 @@ export interface ResourceRef {
   console_url?: string;
   health?: HealthFlag;
   extended_support?: ExtendedSupportEstimate;
+  // RDS/Aurora: the exact minor running and the date RDS auto-upgrades it to a
+  // newer minor. Distinct from the row deadline (the major's end of standard
+  // support, which starts the Extended Support bill).
+  minor_version?: string;
+  minor_end_of_support?: string;
 }
+
+// When the Extended Support money of a row (or a set of rows) actually starts.
+// Splits priced resources into billing now / starting within 12 months / later,
+// so the UI never adds a 2031 bill to a 2027 one.
+export interface CostTimeline {
+  priced: number;
+  now: number; monthlyNow: number;
+  within12: number; monthlyWithin12: number;
+  later: number; monthlyLater: number;
+  forecast12: number;
+  nextStart: string | null;   // earliest extended_support_start not yet reached
+}
+
+export const costTimeline = (rows: DeprecationItem[]): CostTimeline => {
+  const t: CostTimeline = { priced: 0, now: 0, monthlyNow: 0, within12: 0, monthlyWithin12: 0, later: 0, monthlyLater: 0, forecast12: 0, nextStart: null };
+  for (const row of rows) {
+    for (const r of resourceDetails(row)) {
+      const e = r.extended_support;
+      if (!e?.eligible || e.monthly_yr1_2 === undefined) continue;
+      t.priced += 1;
+      t.forecast12 += e.forecast_12m ?? 0;
+      if (e.in_extended_support) { t.now += 1; t.monthlyNow += e.monthly_yr1_2; continue; }
+      if (e.extended_support_start && (!t.nextStart || e.extended_support_start < t.nextStart)) t.nextStart = e.extended_support_start;
+      if ((e.forecast_12m ?? 0) > 0) { t.within12 += 1; t.monthlyWithin12 += e.monthly_yr1_2; }
+      else { t.later += 1; t.monthlyLater += e.monthly_yr1_2; }
+    }
+  }
+  return t;
+};
+
+// "Aug 2029" for an ISO date
+export const formatMonth = (iso: string | null | undefined): string =>
+  iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '';
 
 export const costExposure = (row: DeprecationItem): CostExposure | null => {
   const c = row.service_specific?.cost_exposure;
@@ -272,6 +310,8 @@ export const resourceDetails = (row: DeprecationItem): ResourceRef[] => {
       name: String(d.name ?? ''), arn: d.arn || undefined, console_url: d.console_url || undefined,
       health: d.health && d.health.event_arn ? (d.health as HealthFlag) : undefined,
       extended_support: d.extended_support && typeof d.extended_support === 'object' ? (d.extended_support as ExtendedSupportEstimate) : undefined,
+      minor_version: d.minor_version || undefined,
+      minor_end_of_support: d.minor_end_of_support || undefined,
     }));
   }
   const list = row.service_specific?.affected_resource_names;

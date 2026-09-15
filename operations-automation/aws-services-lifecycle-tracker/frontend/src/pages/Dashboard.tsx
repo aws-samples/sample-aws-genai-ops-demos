@@ -19,7 +19,7 @@ import {
 } from '../api';
 import {
   statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
-  urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd,
+  urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd, costTimeline, formatMonth,
 } from '../lifecycle';
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 
@@ -197,16 +197,16 @@ export default function Dashboard() {
     [facts]);
   const factServices = useMemo(() => new Set(facts.map((f) => f.service_name)).size, [facts]);
 
-  // RDS/Aurora Extended Support surcharge across the inventory (#142)
-  const money = useMemo(() => {
-    let monthly = 0, forecast = 0, priced = 0, now = 0;
-    for (const r of inventory) {
-      const c = costExposure(r);
-      if (!c) continue;
-      monthly += c.monthly; forecast += c.forecast_12m; priced += c.resources_priced; now += c.in_extended_support;
-    }
-    return { monthly, forecast, priced, now };
-  }, [inventory]);
+  // RDS/Aurora Extended Support surcharge across the inventory (#142), split by
+  // when it starts so a 2031 bill is never added to a 2027 one
+  const money = useMemo(() => costTimeline(inventory), [inventory]);
+  const moneySub = useMemo(() => {
+    const parts: string[] = [];
+    if (money.now) parts.push(`${money.now} billing now (${formatUsd(money.monthlyNow)}/mo)`);
+    if (money.within12) parts.push(`${money.within12} start${money.within12 === 1 ? 's' : ''} within 12 months (+${formatUsd(money.monthlyWithin12)}/mo${money.nextStart ? `, first in ${formatMonth(money.nextStart)}` : ''})`);
+    if (money.later) parts.push(`${money.later} later`);
+    return parts.join(' · ') || `${money.priced} RDS/Aurora resources priced`;
+  }, [money]);
 
   if (loading) {
     return (
@@ -274,9 +274,8 @@ export default function Dashboard() {
             {kpi('Ending within 90 days', total(exposure.byUrgency.soon), `${exposure.byUrgency.soon.length} version${exposure.byUrgency.soon.length === 1 ? '' : 's'} - plan the upgrade`, 'text-status-error', () => goResources())}
             {kpi('Ending within a year', total(exposure.byUrgency.year), `${exposure.byUrgency.year.length} version${exposure.byUrgency.year.length === 1 ? '' : 's'} - schedule it`, 'text-status-warning', () => goResources())}
             {kpi('Fine for now', total(exposure.fine), `${exposure.fine.length} version${exposure.fine.length === 1 ? '' : 's'} supported or not matched`, 'text-status-success', () => goResources('supported'))}
-            {money.priced > 0 && kpi('Extended Support, next 12 months', formatUsd(money.forecast),
-              money.now ? `${formatUsd(money.monthly)}/month once all in Extended Support · ${money.now} billing now` : `${formatUsd(money.monthly)}/month once all ${money.priced} RDS/Aurora resources are in Extended Support`,
-              money.now ? 'text-status-error' : 'text-status-warning', () => navigate('/resources?service=rds&status=all'))}
+            {money.priced > 0 && kpi('Extended Support, next 12 months', formatUsd(money.forecast12), moneySub,
+              money.now ? 'text-status-error' : money.within12 ? 'text-status-warning' : 'text-status-success', () => goResources('cost'))}
           </ColumnLayout>
 
           <Box variant="small" color="text-body-secondary">
