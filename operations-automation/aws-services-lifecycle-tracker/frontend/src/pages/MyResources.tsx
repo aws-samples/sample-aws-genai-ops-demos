@@ -184,7 +184,7 @@ export default function MyResources() {
             counter={`(${filtered.length})`}
             description={costTotals
               ? `RDS/Aurora Extended Support: ${formatUsd(costTotals.forecast12)} over the next 12 months across ${costTotals.priced} priced resource${costTotals.priced === 1 ? '' : 's'}${costTotals.now ? `, ${costTotals.now} billing now (${formatUsd(costTotals.monthlyNow)}/mo)` : ''}${costTotals.within12 ? `, ${costTotals.within12} starting within 12 months (+${formatUsd(costTotals.monthlyWithin12)}/mo)` : ''}${costTotals.later ? `, ${costTotals.later} later` : ''}. Estimates assume always-on at current size.`
-              : `What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
+              : `Every runtime, engine or platform version the AWS account resource scan found, matched against the catalog of retiring versions; open a row for the resources behind it. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
             actions={
               <Button variant="primary" disabled={selected.length === 0} onClick={() => setShowPlanModal(true)}>
                 Create plan{selected.length ? ` (${selected.length})` : ''}
@@ -221,7 +221,7 @@ export default function MyResources() {
             </Box>
             <Box variant="p">
               {rows.length === 0
-                ? 'Click Refresh on the dashboard to scan this account.'
+                ? 'Click Refresh on My exposure to scan your account(s).'
                 : `Last scan ${relative(coverage?.last_scan.last_verified)}. ${scope === 'concerns' ? 'Switch the scope to "Everything found" to see supported versions too.' : ''}`}
             </Box>
           </Box>
