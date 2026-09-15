@@ -342,6 +342,7 @@ export default function MyResources() {
           row={detailsRow}
           fact={factFor(detailsRow)}
           plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)}
+          multiAccount={multiAccount}
           onDismiss={() => updateParams({ details: '' })}
         />
       )}

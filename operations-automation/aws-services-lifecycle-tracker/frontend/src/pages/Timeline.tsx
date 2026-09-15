@@ -112,7 +112,7 @@ export default function Timeline() {
         header={
           <Header
             variant="h1"
-            counter={`(${milestones.length})`}
+            counter={`(${milestones.length} deadline${milestones.length === 1 ? '' : 's'})`}
             description={lens === 'mine'
               ? 'Deadlines for the versions running in your accounts, soonest first; a version running in several accounts or regions is one entry. Dates that already passed are shown too - those resources are the ones in trouble today.'
               : 'Upcoming deadlines across the whole catalog, whether or not you run the version.'}
@@ -120,7 +120,7 @@ export default function Timeline() {
               <SegmentedControl
                 selectedId={lens}
                 onChange={({ detail }) => setLens(detail.selectedId as 'mine' | 'catalog')}
-                options={[{ text: `My resources (${inventory.length} versions)`, id: 'mine' }, { text: `Catalog (${facts.length} facts)`, id: 'catalog' }]}
+                options={[{ text: 'My resources', id: 'mine' }, { text: 'Whole catalog', id: 'catalog' }]}
               />
             }
           >

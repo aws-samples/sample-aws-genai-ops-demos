@@ -68,6 +68,9 @@ interface Props {
   fact?: DeprecationItem;
   plan?: ActionPlan;
   onDismiss: () => void;
+  // More than one account in the inventory: console deep links then depend on
+  // which account the browser is signed into, so the row's account is spelled out.
+  multiAccount?: boolean;
 }
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -77,8 +80,13 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </div>
 );
 
-export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
+export default function ResourceDetails({ row, fact, plan, onDismiss, multiAccount = false }: Props) {
   const [filter, setFilter] = useState('');
+  // Console links (resource pages, AWS Health events) open in the account the
+  // browser is signed into; Health events are only visible from their own
+  // account. Until an Identity Center deep link exists (#145), say which one.
+  const linkAccount = multiAccount && row?.account_id ? `${row.account_name ? `${row.account_name} ` : ''}(${row.account_id})` : '';
+  const linkHint = linkAccount ? `Opens in the console of account ${linkAccount}; sign in to that account first.` : undefined;
   const resources = useMemo<ResourceRef[]>(() => (row ? resourceDetails(row) : []), [row]);
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -167,6 +175,7 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
               description={[
                 flagged ? `${flagged} named in an open AWS Health notice.` : '',
                 resources.length < count ? `Showing the first ${resources.length}; the scan stores a capped list.` : '',
+                linkAccount ? `Console links open in account ${linkAccount}: sign in to that account first, AWS Health events are only visible there.` : '',
               ].filter(Boolean).join(' ') || undefined}
             >
               {resourceWord(count).replace(/^r/, 'R')}
@@ -182,15 +191,9 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
           columnDefinitions={[
             {
               id: 'name', header: 'Name', cell: (r) => r.console_url
-                ? <Link href={r.console_url} external>{r.name}</Link>
+                ? <Link href={r.console_url} external ariaLabel={linkHint ? `${r.name}. ${linkHint}` : undefined}>{r.name}</Link>
                 : <Box>{r.name}</Box>,
             },
-          ...(resources.some((r) => r.minor_end_of_support) ? [{
-            id: 'minor', header: 'Minor version',
-            cell: (r: ResourceRef) => r.minor_end_of_support
-              ? <SpaceBetween size="xxxs"><Box>{r.minor_version}</Box><Box variant="small" color="text-body-secondary">auto-upgraded by RDS on {formatDate(r.minor_end_of_support)}</Box></SpaceBetween>
-              : <Box color="text-body-secondary">-</Box>,
-          }] : []),
             ...(resources.some((r) => r.minor_end_of_support) ? [{
               id: 'minor', header: 'Minor version',
               cell: (r: ResourceRef) => r.minor_end_of_support
@@ -233,16 +236,22 @@ export default function ResourceDetails({ row, fact, plan, onDismiss }: Props) {
                     <StatusIndicator type={resolved ? 'success' : 'warning'}>{resolved ? 'Resolved by AWS' : 'Flagged by AWS'}</StatusIndicator>
                     <Box variant="small">
                       {h.console_url
-                        ? <Link href={h.console_url} external fontSize="body-s">{healthEventLabel(h.event_type)}</Link>
+                        ? <Link href={h.console_url} external fontSize="body-s" ariaLabel={linkHint ? `${healthEventLabel(h.event_type)}. ${linkHint}` : undefined}>{healthEventLabel(h.event_type)}</Link>
                         : healthEventLabel(h.event_type)}
                     </Box>
+                    {(h.start_time || h.end_time) && (
+                      <Box variant="small" color="text-body-secondary">
+                        {h.start_time ? `from ${formatDate(h.start_time)}` : ''}{h.end_time ? ` to ${formatDate(h.end_time)}` : ''}
+                      </Box>
+                    )}
+                    {linkAccount && <Box variant="small" color="text-body-secondary">visible in account {row?.account_id} only</Box>}
                   </SpaceBetween>
                 );
               },
             },
             {
-              id: 'console', header: 'Console', width: 110, cell: (r) => r.console_url
-                ? <Link href={r.console_url} external fontSize="body-s">Open</Link>
+              id: 'console', header: linkAccount ? `Console (account ${row?.account_id})` : 'Console', width: linkAccount ? 200 : 110, cell: (r) => r.console_url
+                ? <Link href={r.console_url} external fontSize="body-s" ariaLabel={linkHint ? `Open ${r.name}. ${linkHint}` : undefined}>Open</Link>
                 : <Box color="text-body-secondary">-</Box>,
             },
           ]}
