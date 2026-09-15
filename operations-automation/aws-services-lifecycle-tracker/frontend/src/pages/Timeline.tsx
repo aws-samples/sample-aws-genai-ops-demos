@@ -10,7 +10,7 @@ import SegmentedControl from '@cloudscape-design/components/segmented-control';
 import Alert from '@cloudscape-design/components/alert';
 import Link from '@cloudscape-design/components/link';
 import { getLifecycleData, DeprecationItem } from '../api';
-import { statusMeta, serviceLabel, itemName, formatDate, isInventory, resourceCount, resourceWord } from '../lifecycle';
+import { statusMeta, serviceLabel, itemName, formatDate, isInventory, resourceCount, resourceWord, accountLabel } from '../lifecycle';
 
 // Dates that mark a deadline (in the order they are listed per item)
 const MILESTONES: Array<[string, string]> = [
@@ -24,7 +24,13 @@ const MILESTONES: Array<[string, string]> = [
   ['end_of_extended_support_date', 'end of extended support'],
 ];
 
-interface Milestone { item: DeprecationItem; label: string; date: Date; days: number }
+// One version + one deadline. In the "mine" lens the same version can run in
+// several accounts/regions: those rows are merged into one milestone and the
+// per-scope breakdown is listed underneath (#150 item 4).
+interface Milestone { item: DeprecationItem; items: DeprecationItem[]; label: string; date: Date; days: number }
+
+const scopeLabel = (r: DeprecationItem, multiAccount: boolean): string =>
+  multiAccount && r.account_id ? `${accountLabel(r.account_id, r.account_name)}${r.region ? `, ${r.region}` : ''}` : (r.region || '');
 
 const bucketOf = (days: number) =>
   days <= 0 ? 'Passed' : days <= 90 ? 'Next 90 days' : days <= 180 ? '3 to 6 months' : days <= 365 ? '6 to 12 months' : 'Later';
@@ -68,11 +74,22 @@ export default function Timeline() {
         // what already passed - those are the resources in trouble today.
         if (lens === 'catalog' && days < 0) continue;
         if (lens === 'mine' && days < -365) continue;
-        out.push({ item, label, date: d, days });
+        out.push({ item, items: [item], label, date: d, days });
       }
+    }
+    if (lens === 'mine') {
+      // same service + version + milestone + date across accounts/regions = one entry
+      const merged = new Map<string, Milestone>();
+      for (const m of out) {
+        const key = `${m.item.service_name}|${m.item.service_specific?.identifier || itemName(m.item)}|${m.label}|${m.date.toISOString()}`;
+        const e = merged.get(key);
+        if (e) e.items.push(m.item); else merged.set(key, m);
+      }
+      return [...merged.values()].sort((a, b) => a.days - b.days);
     }
     return out.sort((a, b) => a.days - b.days);
   }, [inventory, facts, lens]);
+  const multiAccount = useMemo(() => new Set(inventory.map((r) => r.account_id).filter(Boolean)).size > 1, [inventory]);
 
   const grouped = useMemo(() => {
     const g = new Map<string, Milestone[]>();
@@ -94,7 +111,7 @@ export default function Timeline() {
             variant="h1"
             counter={`(${milestones.length})`}
             description={lens === 'mine'
-              ? 'Deadlines for the versions running in this account, soonest first. Dates that already passed are shown too - those resources are the ones in trouble today.'
+              ? 'Deadlines for the versions running in your accounts, soonest first; a version running in several accounts or regions is one entry. Dates that already passed are shown too - those resources are the ones in trouble today.'
               : 'Upcoming deadlines across the whole catalog, whether or not you run the version.'}
             actions={
               <SegmentedControl
@@ -133,13 +150,25 @@ export default function Timeline() {
                             : <Box variant="strong">{itemName(m.item)}</Box>}
                           <Box variant="small" color="text-body-secondary">{m.label}</Box>
                         </div>
-                        {mine && (
-                          <Box variant="small">
-                            <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&details=${encodeURIComponent(m.item.item_id)}`); }} href="#" fontSize="body-s">
-                              {resourceCount(m.item)} {resourceWord(resourceCount(m.item))}{m.item.region ? ` in ${m.item.region}` : ''}
-                            </Link>
-                          </Box>
-                        )}
+                        {mine && (() => {
+                          const total = m.items.reduce((n, r) => n + resourceCount(r), 0);
+                          const single = m.items.length === 1;
+                          const target = single
+                            ? `/resources?status=all&details=${encodeURIComponent(m.item.item_id)}`
+                            : `/resources?status=all&q=${encodeURIComponent(m.item.service_specific?.identifier || itemName(m.item))}`;
+                          return (
+                            <Box variant="small">
+                              <Link onFollow={(e) => { e.preventDefault(); navigate(target); }} href="#" fontSize="body-s">
+                                {total} {resourceWord(total)}
+                              </Link>
+                              <Box variant="small" color="text-body-secondary" display="inline">
+                                {single
+                                  ? (scopeLabel(m.item, multiAccount) ? ` in ${scopeLabel(m.item, multiAccount)}` : '')
+                                  : ` · ${m.items.map((r) => `${resourceCount(r)} in ${scopeLabel(r, multiAccount) || 'this account'}`).join(', ')}`}
+                              </Box>
+                            </Box>
+                          );
+                        })()}
                       </SpaceBetween>
                       <SpaceBetween size="xxxs" alignItems="end">
                         <StatusIndicator type={st.indicator}>{st.label}</StatusIndicator>
