@@ -117,22 +117,84 @@ def refresh_status(execution_arn: str) -> dict:
     if status in ("FAILED", "TIMED_OUT", "STOPPED"):
         out["error"] = desc.get("Error")
 
-    # Progress: count completed extract/scan steps from the history
-    progress = {"extract_done": 0, "scan_done": 0}
+    out["progress"] = _progress_from_history(client, execution_arn, status)
+    return out, 200
+
+
+def _decode_step_result(payload: str) -> dict:
+    """The durable SDK stores step results in a typed envelope ({"t":"m","v":{...}}); flatten it."""
+    def _dec(node):
+        t, v = node.get("t"), node.get("v")
+        if t == "m":
+            return {k: _dec(val) for k, val in v.items()}
+        if t == "l":
+            return [_dec(x) for x in v]
+        return v
+    try:
+        return _dec(json.loads(payload))
+    except Exception:
+        return {}
+
+
+def _progress_from_history(client, execution_arn: str, status: str) -> dict:
+    """Phases of a run, read from the execution history (best effort, never raises).
+
+    Returns the legacy counters plus `phases`: one entry per pipeline phase with
+    status (pending | in-progress | success | warning | error), done/failed/total
+    and the step names still running, for the Steps component (#150 item 6).
+    """
+    steps = {}          # name -> "started" | "succeeded" | "failed"
+    totals = {"extract_total": None, "scan_total": None}
     try:
         paginator = client.get_paginator("get_durable_execution_history")
-        for page in paginator.paginate(DurableExecutionArn=execution_arn):
+        for page in paginator.paginate(DurableExecutionArn=execution_arn, IncludeExecutionData=True):
             for ev in page.get("Events", []):
-                if ev.get("EventType") == "StepSucceeded":
-                    name = ev.get("Name") or ""
-                    if name.startswith("extract-"):
-                        progress["extract_done"] += 1
-                    elif name.startswith("scan-"):
-                        progress["scan_done"] += 1
+                et, name = ev.get("EventType"), ev.get("Name") or ""
+                if et == "StepStarted":
+                    steps.setdefault(name, "started")
+                elif et == "StepSucceeded":
+                    steps[name] = "succeeded"
+                    if name == "start-run":
+                        run = _decode_step_result(((ev.get("StepSucceededDetails") or {}).get("Result") or {}).get("Payload") or "")
+                        totals["extract_total"] = run.get("extract_total", len(run.get("services") or []) or None)
+                        totals["scan_total"] = run.get("scan_total")
+                elif et == "StepFailed":
+                    steps[name] = "failed"  # a later StepStarted/StepSucceeded (retry) overrides
     except Exception:
-        pass  # progress is best-effort
-    out["progress"] = progress
-    return out, 200
+        pass
+
+    def phase(label: str, prefix: str, total, single: bool = False):
+        names = [n for n in steps if (n == prefix if single else n.startswith(prefix))]
+        done = sum(1 for n in names if steps[n] == "succeeded")
+        failed = sum(1 for n in names if steps[n] == "failed")
+        running = [n[len(prefix):] if not single else n for n in names if steps[n] == "started"]
+        total = total if total is not None else (len(names) or None)
+        if not names:
+            st = "pending"
+        elif running or (total and done + failed < total):
+            st = "in-progress"
+        elif failed:
+            st = "error" if done == 0 else "warning"
+        else:
+            st = "success"
+        return {"label": label, "status": st, "done": done, "failed": failed, "total": total, "running": running[:5]}
+
+    phases = [
+        phase("Prepare the run", "start-run", 1, single=True),
+        phase("Update the catalog from the AWS documentation", "extract-", totals["extract_total"]),
+        phase("Scan the accounts", "scan-", totals["scan_total"]),
+        phase("Cross-check with AWS Health and price Extended Support", "reconcile-inventory", 1, single=True),
+        phase("Summarize and notify", "summarize-and-notify", 1, single=True),
+    ]
+    # A phase that never started while the run is over is 'skipped' (mode extract/scan), not pending
+    if status != "RUNNING":
+        for ph in phases:
+            if ph["status"] == "pending":
+                ph["status"] = "stopped"
+    return {
+        "extract_done": phases[1]["done"], "scan_done": phases[2]["done"],
+        "phases": phases,
+    }
 
 
 # ---------------------------------------------------------------------------

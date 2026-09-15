@@ -22,6 +22,7 @@ import {
   urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd, costTimeline, formatMonth,
 } from '../lifecycle';
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
+import RefreshSteps from '../components/RefreshSteps';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -97,7 +98,7 @@ export default function Dashboard() {
       }
       sessionStorage.removeItem(REFRESH_ARN_KEY);
       setRefreshing(false);
-      setProgress(null);
+      setProgress(execution.progress?.phases ? execution.progress : null);
       await loadData(false);
 
       if (execution.status === 'SUCCEEDED') {
@@ -234,6 +235,8 @@ export default function Dashboard() {
     <SpaceBetween size="l">
       <Flashbar items={flashbarItems} stackItems />
 
+      {progress?.phases && <RefreshSteps phases={progress.phases} running={refreshing} />}
+
       <Container
         header={
           <Header
@@ -242,9 +245,7 @@ export default function Dashboard() {
             actions={
               <SpaceBetween direction="horizontal" size="xxs">
                 <Button variant="primary" iconName="refresh" loading={refreshing} onClick={handleRefresh} disabled={refreshing}>
-                  {refreshing
-                    ? progress ? `Refreshing... (${progress.extract_done} extracted, ${progress.scan_done} scanned)` : 'Refreshing...'
-                    : 'Refresh'}
+                  {refreshing ? 'Refreshing' : 'Refresh'}
                 </Button>
                 <Popover dismissButton={false} position="bottom" size="medium" triggerType="text"
                   content={
