@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import ColumnLayout from '@cloudscape-design/components/column-layout';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Box from '@cloudscape-design/components/box';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Button from '@cloudscape-design/components/button';
@@ -201,12 +201,25 @@ export default function Dashboard() {
   // RDS/Aurora Extended Support surcharge across the inventory (#142), split by
   // when it starts so a 2031 bill is never added to a 2027 one
   const money = useMemo(() => costTimeline(inventory), [inventory]);
+  // Short line under the figure; the full breakdown sits in a popover on it
   const moneySub = useMemo(() => {
-    const parts: string[] = [];
-    if (money.now) parts.push(`${money.now} billing now (${formatUsd(money.monthlyNow)}/mo)`);
-    if (money.within12) parts.push(`${money.within12} start${money.within12 === 1 ? 's' : ''} within 12 months (+${formatUsd(money.monthlyWithin12)}/mo${money.nextStart ? `, first in ${formatMonth(money.nextStart)}` : ''})`);
-    if (money.later) parts.push(`${money.later} later`);
-    return parts.join(' · ') || `${money.priced} RDS/Aurora resources priced`;
+    const short = money.now
+      ? `${money.now} billing now, ${money.within12} more within 12 months`
+      : money.within12
+        ? `${money.within12} of ${money.priced} start within 12 months`
+        : `nothing due within 12 months (${money.priced} priced)`;
+    const lines = [
+      money.now ? `${money.now} billing now: ${formatUsd(money.monthlyNow)}/month` : '',
+      money.within12 ? `${money.within12} start within 12 months: +${formatUsd(money.monthlyWithin12)}/month${money.nextStart ? `, first in ${formatMonth(money.nextStart)}` : ''}` : '',
+      money.later ? `${money.later} later (${formatUsd(money.monthlyLater)}/month once in Extended Support)` : '',
+      'List prices, always-on at current size.',
+    ].filter(Boolean);
+    return (
+      <Popover dismissButton={false} position="bottom" size="medium" triggerType="text" header="How the figure is built"
+        content={<SpaceBetween size="xxs">{lines.map((l, i) => <Box key={i} variant="small">{l}</Box>)}</SpaceBetween>}>
+        {short}
+      </Popover>
+    );
   }, [money]);
 
   if (loading) {
@@ -219,15 +232,18 @@ export default function Dashboard() {
     );
   }
 
-  const kpi = (label: string, value: number | string, sub: string, color?: 'text-status-error' | 'text-status-warning' | 'text-status-success' | 'text-status-info', onClick?: () => void) => (
-    <div>
-      <Box variant="awsui-key-label">{label}</Box>
-      <Box variant="h1" fontSize="display-l" fontWeight="bold" color={color}>
-        {onClick ? <Link onFollow={(e) => { e.preventDefault(); onClick(); }} fontSize="display-l" href="#">{value}</Link> : value}
-      </Box>
-      <Box variant="small" color="text-body-secondary">{sub}</Box>
-    </div>
-  );
+  // One KPI = one key-value pair: label, the figure (a link into My resources), one line of context
+  const kpi = (label: string, value: number | string, sub: React.ReactNode, color?: 'text-status-error' | 'text-status-warning' | 'text-status-success' | 'text-status-info', onClick?: () => void) => ({
+    label,
+    value: (
+      <SpaceBetween size="xs">
+        <Box fontSize="display-l" fontWeight="bold" color={color}>
+          {onClick ? <Link onFollow={(e) => { e.preventDefault(); onClick(); }} fontSize="display-l" href="#" ariaLabel={`${label}: ${value}, open in My resources`}>{value}</Link> : value}
+        </Box>
+        <Box variant="small" color="text-body-secondary">{sub}</Box>
+      </SpaceBetween>
+    ),
+  });
 
   const goResources = (status?: string) => navigate(status ? `/resources?status=${status}` : '/resources');
 
@@ -270,27 +286,44 @@ export default function Dashboard() {
         }
       >
         <SpaceBetween size="l">
-          <ColumnLayout columns={money.priced ? 5 : 4} variant="text-grid">
-            {kpi('Past end of life', total(exposure.byUrgency.past), `${exposure.byUrgency.past.length} version${exposure.byUrgency.past.length === 1 ? '' : 's'} - act now`, 'text-status-error', () => goResources('end_of_life'))}
-            {kpi('Ending within 90 days', total(exposure.byUrgency.soon), `${exposure.byUrgency.soon.length} version${exposure.byUrgency.soon.length === 1 ? '' : 's'} - plan the upgrade`, 'text-status-error', () => goResources())}
-            {kpi('Ending within a year', total(exposure.byUrgency.year), `${exposure.byUrgency.year.length} version${exposure.byUrgency.year.length === 1 ? '' : 's'} - schedule it`, 'text-status-warning', () => goResources())}
-            {kpi('Fine for now', total(exposure.fine), `${exposure.fine.length} version${exposure.fine.length === 1 ? '' : 's'} supported or not matched`, 'text-status-success', () => goResources('supported'))}
-            {money.priced > 0 && kpi('Extended Support, next 12 months', formatUsd(money.forecast12), moneySub,
-              money.now ? 'text-status-error' : money.within12 ? 'text-status-warning' : 'text-status-success', () => goResources('cost'))}
-          </ColumnLayout>
+          <KeyValuePairs
+            columns={money.priced ? 5 : 4}
+            ariaLabel="Exposure summary"
+            items={[
+              kpi('Past end of life', total(exposure.byUrgency.past), `${exposure.byUrgency.past.length} version${exposure.byUrgency.past.length === 1 ? '' : 's'}, act now`, 'text-status-error', () => goResources('end_of_life')),
+              kpi('Ending in 90 days', total(exposure.byUrgency.soon), `${exposure.byUrgency.soon.length} version${exposure.byUrgency.soon.length === 1 ? '' : 's'}, plan the upgrade`, 'text-status-error', () => goResources()),
+              kpi('Ending in a year', total(exposure.byUrgency.year), `${exposure.byUrgency.year.length} version${exposure.byUrgency.year.length === 1 ? '' : 's'}, schedule it`, 'text-status-warning', () => goResources()),
+              kpi('Fine for now', total(exposure.fine), `${exposure.fine.length} version${exposure.fine.length === 1 ? '' : 's'} supported or unmatched`, 'text-status-success', () => goResources('supported')),
+              ...(money.priced > 0 ? [kpi('Extended Support, 12 months', formatUsd(money.forecast12), moneySub,
+                money.now ? 'text-status-error' : money.within12 ? 'text-status-warning' : 'text-status-success', () => goResources('cost'))] : []),
+            ]}
+          />
 
-          <Box variant="small" color="text-body-secondary">
-            <StatusIndicator type={coverage?.last_scan.last_verified ? 'success' : 'pending'}>
-              Account scan: {coverage?.last_scan.resources ?? 0} resource groups across {byService.length} services
-              {multiAccount ? ` and ${byAccount.length} accounts` : ''}
-              {coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}, {relative(coverage?.last_scan.last_verified)}
-              {coverage?.accounts?.accounts_failed?.length ? ` (${coverage.accounts.accounts_failed.length} account${coverage.accounts.accounts_failed.length === 1 ? '' : 's'} unreachable)` : ''}
-            </StatusIndicator>
-            {'   '}
-            <StatusIndicator type={facts.length ? 'success' : 'pending'}>
-              Catalog: {facts.length} facts across {factServices} services, refreshed {relative(lastFactsRefresh)}
-            </StatusIndicator>
-          </Box>
+          <KeyValuePairs
+            columns={2}
+            ariaLabel="Data freshness"
+            items={[
+              {
+                label: 'Account scan',
+                value: (
+                  <StatusIndicator type={coverage?.last_scan.last_verified ? 'success' : 'pending'}>
+                    {coverage?.last_scan.resources ?? 0} resource groups across {byService.length} services
+                    {multiAccount ? ` and ${byAccount.length} accounts` : ''}
+                    {coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}, {relative(coverage?.last_scan.last_verified)}
+                    {coverage?.accounts?.accounts_failed?.length ? ` (${coverage.accounts.accounts_failed.length} account${coverage.accounts.accounts_failed.length === 1 ? '' : 's'} unreachable)` : ''}
+                  </StatusIndicator>
+                ),
+              },
+              {
+                label: 'Catalog',
+                value: (
+                  <StatusIndicator type={facts.length ? 'success' : 'pending'}>
+                    {facts.length} facts across {factServices} services, refreshed {relative(lastFactsRefresh)}
+                  </StatusIndicator>
+                ),
+              },
+            ]}
+          />
         </SpaceBetween>
       </Container>
 
@@ -335,7 +368,7 @@ export default function Dashboard() {
                   { id: 'region', header: 'Region', cell: (r) => r.region || '-' },
                 ]}
                 footer={exposure.concerns.length > deadlines.length && (
-                  <Box textAlign="center"><Link onFollow={(e) => { e.preventDefault(); goResources(); }} href="#">See all {exposure.concerns.length} in My resources</Link></Box>
+                  <Box textAlign="center"><Link onFollow={(e) => { e.preventDefault(); goResources(); }} href="#">See all my deadlines</Link></Box>
                 )}
               />
             ),

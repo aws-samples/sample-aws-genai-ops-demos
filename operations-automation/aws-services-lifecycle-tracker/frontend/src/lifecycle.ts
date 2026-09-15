@@ -268,9 +268,8 @@ export const costTimeline = (rows: DeprecationItem[]): CostTimeline => {
   return t;
 };
 
-// "Aug 2029" for an ISO date
-export const formatMonth = (iso: string | null | undefined): string =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '';
+// "2029-08" for an ISO date (same ISO style as formatDate, locale-independent)
+export const formatMonth = (iso: string | null | undefined): string => (iso ? iso.slice(0, 7) : '');
 
 export const costExposure = (row: DeprecationItem): CostExposure | null => {
   const c = row.service_specific?.cost_exposure;
