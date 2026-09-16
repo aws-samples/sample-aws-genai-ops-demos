@@ -70,3 +70,12 @@ scanners:
       skip_path:
         - path: ".*/eks-investigation-devops-agent/k8s/.*"
           reason: "Illustrative demo Kubernetes manifests, not deployed infrastructure (CKV_K8S_*)"
+
+  # detect-secrets: point explicitly at the repo-root .secrets.baseline so the audited
+  # false positives (test fixtures, config placeholders, resource-type strings, etc.) are
+  # suppressed. ASH is documented to auto-discover .secrets.baseline at the source root,
+  # but the whole-repo scan (--source-dir .) was not applying it, so findings were not
+  # filtered. Wiring baseline_file explicitly makes the suppression deterministic.
+  detect-secrets:
+    options:
+      baseline_file: .secrets.baseline
