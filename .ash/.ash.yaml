@@ -62,8 +62,11 @@ scanners:
 
   # Checkov: skip the one demo's raw Kubernetes manifests. These CKV_K8S_* findings
   # (28 of them, all under eks-investigation-devops-agent/k8s/) are on illustrative demo
-  # manifests, not deployed infrastructure. skip_path takes a regex matched against paths.
+  # manifests, not deployed infrastructure. Each skip_path entry is an object with a
+  # `path` regex (matched against file paths) and a `reason` -- ASH v3.7.1 validates
+  # skip_path as IgnorePathWithReason and rejects a bare string with a schema error.
   checkov:
     options:
       skip_path:
-        - ".*/eks-investigation-devops-agent/k8s/.*"
+        - path: ".*/eks-investigation-devops-agent/k8s/.*"
+          reason: "Illustrative demo Kubernetes manifests, not deployed infrastructure (CKV_K8S_*)"
