@@ -26,9 +26,16 @@ jobs:
             });
 
             // --- Governance file changes ---
+            // Governance = files that define project standards or control CI/CD.
+            // This includes the security-scan config (.ash/) and the Bandit config it
+            // references (bandit.yaml): they govern whether/how the security scan runs,
+            // so weakening them (disabling scanners, raising the severity threshold,
+            // broadening ignore paths) must get the same maintainer-review gate.
             const governanceFiles = files.filter(f =>
               f.filename.startsWith('.kiro/') ||
-              f.filename.startsWith('.github/')
+              f.filename.startsWith('.github/') ||
+              f.filename.startsWith('.ash/') ||
+              f.filename === 'bandit.yaml'
             );
 
             if (governanceFiles.length > 0) {

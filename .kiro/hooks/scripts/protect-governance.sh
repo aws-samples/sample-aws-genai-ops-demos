@@ -41,6 +41,26 @@ while IFS= read -r target_path; do
       echo "These are maintained by repo owners only. Contact the maintainers if changes are needed." >&2
       exit 2
       ;;
+    # Security-scan config: the REPO-ROOT .ash/ (ASH config) and root bandit.yaml it
+    # references govern whether/how the CI security scan runs. Guard them the same way
+    # so the agent can't silently weaken scanning (disable scanners, raise the severity
+    # threshold, broaden ignore paths).
+    #
+    # Root-only on purpose: a demo's OWN .ash/ or bandit.yaml (e.g.
+    # security/prowler-security-findings-agent/.ash/, which demonstrates ASH as a
+    # feature) is demo content, not governance, and must stay editable. This mirrors
+    # governance-guard.yml, which uses startsWith('.ash/') / === 'bandit.yaml' (root-only).
+    #
+    # Paths arrive either repo-relative (".ash/...") or absolute
+    # (".../<workspace>/.ash/..."); the repo-root copy is the one sitting directly under
+    # the workspace dir, whereas a demo copy always has a "<pillar>/<demo>/" segment in
+    # between. We match the relative form and the absolute form anchored on the repo
+    # dir name, so the nested demo copies never match.
+    .ash/*|bandit.yaml|*/sample-aws-genai-ops-demos/.ash/*|*/sample-aws-genai-ops-demos/bandit.yaml)
+      echo "BLOCKED: '$target_path' is a security-scan governance file (repo-root .ash/ or bandit.yaml)." >&2
+      echo "These control the CI security scan and are maintained by repo owners only. Contact the maintainers if changes are needed." >&2
+      exit 2
+      ;;
   esac
 done <<< "$paths"
 
