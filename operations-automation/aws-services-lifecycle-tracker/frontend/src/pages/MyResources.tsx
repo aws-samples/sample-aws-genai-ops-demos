@@ -1,12 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Table, { TableProps } from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Badge from '@cloudscape-design/components/badge';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import TextFilter from '@cloudscape-design/components/text-filter';
+import PropertyFilter, { PropertyFilterProps } from '@cloudscape-design/components/property-filter';
+import CollectionPreferences, { CollectionPreferencesProps } from '@cloudscape-design/components/collection-preferences';
+import Pagination from '@cloudscape-design/components/pagination';
+import { useCollection, PropertyFilterQuery, PropertyFilterToken } from '@cloudscape-design/collection-hooks';
 import Select from '@cloudscape-design/components/select';
 import Button from '@cloudscape-design/components/button';
 import Modal from '@cloudscape-design/components/modal';
@@ -21,15 +24,79 @@ import { getLifecycleData, getActionPlans, createActionPlan, getScanners, Deprec
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
   resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
+  exposureBucket, EXPOSURE_BUCKETS, ExposureBucket,
 } from '../lifecycle';
-import ResourceDetails from '../components/ResourceDetails';
+import ResourceDetails, { resourceDetailsHeader } from '../components/ResourceDetails';
+import { InfoLink } from '../help';
+import { useSplitPanel } from '../split-panel';
 
+// Scope dropdown: three buckets first, then one entry per status in a group
 const SCOPE_OPTIONS = [
-  { label: 'Needs attention', value: 'concerns' },
-  { label: 'Everything found', value: 'all' },
-  { label: 'Extended Support exposure', value: 'cost' },
-  ...Object.entries(STATUS_META).map(([value, m]) => ({ label: m.label, value })),
+  { label: 'Needs attention', value: 'concerns', description: 'End of life, deprecated, past standard support or ending within a year' },
+  { label: 'Everything found', value: 'all', description: 'Including supported and unmatched versions' },
+  { label: 'Extended Support exposure', value: 'cost', description: 'RDS/Aurora versions billing or about to bill Extended Support' },
+  // the four My exposure KPIs
+  { label: 'By horizon', options: (['past', 'soon', 'year', 'later', 'fine'] as ExposureBucket[]).map((value) => ({ label: EXPOSURE_BUCKETS[value], value })) },
+  { label: 'By status', options: Object.entries(STATUS_META).map(([value, m]) => ({ label: m.label, value })) },
 ];
+const isBucket = (v: string): v is ExposureBucket => v in EXPOSURE_BUCKETS;
+const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.flatMap((o) => ('options' in o && o.options ? o.options : [o as { label: string; value: string }]));
+
+// Table preferences (page size, visible columns); kept per browser
+const PREFS_KEY = 'lifecycle-resources-preferences';
+const DEFAULT_PREFS: CollectionPreferencesProps.Preferences = {
+  pageSize: 50,
+  contentDisplay: ['service', 'version', 'status', 'deadline', 'resources', 'cost', 'account', 'region', 'plan', 'verified'].map((id) => ({ id, visible: true })),
+};
+const loadPrefs = (): CollectionPreferencesProps.Preferences => {
+  try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch { return DEFAULT_PREFS; }
+};
+
+// Property filter: one free-text token plus Service / Region / Account properties.
+// Tokens mirror the URL params q, service, region, account so deep links keep working.
+const TOKEN_PARAMS: Record<string, string> = { service_name: 'service', region: 'region', account_id: 'account' };
+const queryFromParams = (p: URLSearchParams): PropertyFilterQuery => {
+  const tokens: PropertyFilterToken[] = [];
+  if (p.get('q')) tokens.push({ operator: ':', value: p.get('q') });
+  for (const [key, param] of Object.entries(TOKEN_PARAMS)) {
+    const v = p.get(param);
+    if (v && v !== 'all') tokens.push({ propertyKey: key, operator: '=', value: v });
+  }
+  return { operation: 'and', tokens };
+};
+const paramsFromQuery = (q: PropertyFilterQuery): Record<string, string> => {
+  const out: Record<string, string> = { q: '', service: '', region: '', account: '' };
+  for (const t of q.tokens) {
+    if (!t.propertyKey) out.q = out.q || String(t.value);
+    else if (t.operator === '=' && TOKEN_PARAMS[t.propertyKey]) out[TOKEN_PARAMS[t.propertyKey]] = out[TOKEN_PARAMS[t.propertyKey]] || String(t.value);
+  }
+  return out;
+};
+const haystack = (r: DeprecationItem) =>
+  `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''} ${r.account_id || ''} ${r.account_name || ''}`.toLowerCase();
+const matchToken = (r: DeprecationItem, t: PropertyFilterToken): boolean => {
+  const v = String(t.value ?? '').toLowerCase();
+  if (!t.propertyKey) return t.operator === '!:' ? !haystack(r).includes(v) : haystack(r).includes(v);
+  const field = String((r as any)[t.propertyKey] ?? '').toLowerCase();
+  return t.operator === '!=' ? field !== v : field === v;
+};
+const matchQuery = (r: DeprecationItem, q: PropertyFilterQuery): boolean =>
+  q.tokens.length === 0 || (q.operation === 'or' ? q.tokens.some((t) => matchToken(r, t)) : q.tokens.every((t) => matchToken(r, t)));
+
+const FILTER_I18N: PropertyFilterProps.I18nStrings = {
+  filteringAriaLabel: 'Filter resources',
+  filteringPlaceholder: 'Search versions and resources, or filter by service, region, account',
+  clearFiltersText: 'Clear filters',
+  operationAndText: 'and', operationOrText: 'or',
+  operatorText: 'Operator', operatorsText: 'Operators',
+  operatorEqualsText: 'equals', operatorDoesNotEqualText: 'does not equal',
+  operatorContainsText: 'contains', operatorDoesNotContainText: 'does not contain',
+  propertyText: 'Property', valueText: 'Value', cancelActionText: 'Cancel', applyActionText: 'Apply',
+  allPropertiesLabel: 'All properties', groupValuesText: 'Values', groupPropertiesText: 'Properties',
+  tokenLimitShowMore: 'Show more', tokenLimitShowFewer: 'Show fewer',
+  editTokenHeader: 'Edit filter', dismissAriaLabel: 'Remove filter', enteredTextLabel: (t) => `Search "${t}"`,
+  removeTokenButtonAriaLabel: (t) => `Remove ${t.propertyKey || 'search'} ${t.operator} ${t.value}`,
+};
 
 const PRIORITY_OPTIONS = [
   { label: 'Low', value: 'low' }, { label: 'Medium', value: 'medium' },
@@ -43,6 +110,7 @@ const relative = (iso: string | null | undefined): string => {
 };
 
 export default function MyResources() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [rows, setRows] = useState<DeprecationItem[]>([]);
   const [facts, setFacts] = useState<DeprecationItem[]>([]);
@@ -50,18 +118,14 @@ export default function MyResources() {
   const [coverage, setCoverage] = useState<ScanCoverage | null>(null);
   const [loading, setLoading] = useState(true);
   const [flashbarItems, setFlashbarItems] = useState<FlashbarProps.MessageDefinition[]>([]);
-  const [filterText, setFilterText] = useState(params.get('q') || '');
   const [scope, setScope] = useState(params.get('status') || 'concerns');
-  const [service, setService] = useState(params.get('service') || 'all');
-  const [account, setAccount] = useState(params.get('account') || 'all');
+  const [preferences, setPreferences] = useState(loadPrefs);
   const [selected, setSelected] = useState<DeprecationItem[]>([]);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ owner: '', priority: 'medium', target_date: '', notes: '' });
   // Row whose resource list is open in the details view (?details=<item_id>)
   const detailsId = params.get('details');
-  // Column sorting; default order is urgency (see urgencySort)
-  const [sorting, setSorting] = useState<TableProps.SortingState<DeprecationItem> | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -101,43 +165,71 @@ export default function MyResources() {
   const accounts = useMemo(() => accountsIn(rows), [rows]);
   const multiAccount = accounts.length > 1;
 
-  const filtered = useMemo(() => {
+  // Scope (dropdown) narrows the rows and sets their default order; the
+  // property filter, column sorting and pagination run on top via useCollection.
+  const scoped = useMemo(() => {
     let out = [...rows];
     if (scope === 'concerns') out = out.filter((r) => isConcern(r.status));
     else if (scope === 'cost') out = out.filter((r) => (costExposure(r)?.resources_priced ?? 0) > 0);
+    else if (isBucket(scope)) out = out.filter((r) => exposureBucket(r) === scope);
     else if (scope !== 'all') out = out.filter((r) => r.status === scope);
-    if (service !== 'all') out = out.filter((r) => r.service_name === service);
-    if (account !== 'all') out = out.filter((r) => r.account_id === account);
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      out = out.filter((r) => `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''} ${r.account_id || ''} ${r.account_name || ''}`.toLowerCase().includes(q));
-    }
     out.sort(urgencySort);
-    if (scope === 'cost' && !sorting?.sortingColumn) {
+    if (scope === 'cost') {
       // money first: billing now, then soonest start, then amount
       out.sort((a, b) => (costExposure(b)?.forecast_12m ?? 0) - (costExposure(a)?.forecast_12m ?? 0)
         || (costExposure(b)?.monthly ?? 0) - (costExposure(a)?.monthly ?? 0));
     }
-    if (sorting?.sortingColumn) {
-      const col = sorting.sortingColumn;
-      const cmp = col.sortingComparator
-        ?? ((a: DeprecationItem, b: DeprecationItem) => String((a as any)[col.sortingField!] ?? '').localeCompare(String((b as any)[col.sortingField!] ?? '')));
-      out.sort((a, b) => (sorting.isDescending ? -1 : 1) * cmp(a, b));
-    }
     return out;
-  }, [rows, scope, service, account, filterText, sorting]);
+  }, [rows, scope]);
 
-  const updateParams = (next: Record<string, string>) => {
-    const p = new URLSearchParams(params);
+  const filteringProperties: PropertyFilterProps.FilteringProperty[] = useMemo(() => [
+    { key: 'service_name', propertyLabel: 'Service', groupValuesLabel: 'Services', operators: ['=', '!='] },
+    { key: 'region', propertyLabel: 'Region', groupValuesLabel: 'Regions', operators: ['=', '!='] },
+    ...(multiAccount ? [{ key: 'account_id', propertyLabel: 'Account', groupValuesLabel: 'Accounts', operators: ['=', '!='] } as PropertyFilterProps.FilteringProperty] : []),
+  ], [multiAccount]);
+  const filteringOptions: PropertyFilterProps.FilteringOption[] = useMemo(() => [
+    ...services.map((s) => ({ propertyKey: 'service_name', value: s, label: serviceLabel(s) })),
+    ...[...new Set(rows.map((r) => r.region).filter(Boolean))].sort().map((v) => ({ propertyKey: 'region', value: v! })),
+    ...(multiAccount ? accounts.map((a) => ({ propertyKey: 'account_id', value: a.id, label: accountLabel(a.id, a.name) })) : []),
+  ], [rows, services, accounts, multiAccount]);
+
+  const { items, allPageItems, filteredItemsCount, collectionProps, propertyFilterProps, paginationProps } = useCollection(scoped, {
+    propertyFiltering: { filteringProperties, defaultQuery: queryFromParams(params), filteringFunction: matchQuery },
+    sorting: {},
+    pagination: { pageSize: preferences.pageSize },
+  });
+
+  // Functional update: the panel's onClose may run long after this render
+  const updateParams = (next: Record<string, string>) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
     for (const [k, v] of Object.entries(next)) { if (v && v !== 'all' && v !== 'concerns') p.set(k, v); else p.delete(k); }
-    setParams(p, { replace: true });
-  };
+    return p;
+  }, { replace: true });
 
   const detailsRow = useMemo(() => (detailsId ? rows.find((r) => r.item_id === detailsId) || null : null), [rows, detailsId]);
   // Same arithmetic as the dashboard KPI, over the rows shown, so the two reconcile
-  const costTotals = useMemo(() => (scope === 'cost' ? costTimeline(filtered) : null), [scope, filtered]);
+  const costTotals = useMemo(() => (scope === 'cost' ? costTimeline([...allPageItems]) : null), [scope, allPageItems]);
+  const shown = filteredItemsCount ?? scoped.length;
+  const hasTokens = propertyFilterProps.query.tokens.length > 0;
+  const clearFilters = () => {
+    propertyFilterProps.onChange({ detail: { tokens: [], operation: 'and' } } as any);
+    setScope('all');
+    updateParams({ q: '', service: '', region: '', account: '', status: 'all' });
+  };
   const factFor = (r: DeprecationItem) =>
     r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
+
+  // The details of the ?details= row live in the AppLayout split panel
+  const setPanel = useSplitPanel();
+  useEffect(() => {
+    if (!detailsRow) { setPanel(null); return; }
+    setPanel({
+      header: resourceDetailsHeader(detailsRow),
+      content: <ResourceDetails row={detailsRow} fact={factFor(detailsRow)} plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)} multiAccount={multiAccount} />,
+      onClose: () => updateParams({ details: '' }),
+    });
+  }, [detailsRow, factById, planByItem, multiAccount]);
+  useEffect(() => () => setPanel(null), []);
 
   const handleAddToPlan = async () => {
     if (!form.owner.trim()) { flash('error', 'Owner is required'); return; }
@@ -166,14 +258,31 @@ export default function MyResources() {
       <Flashbar items={flashbarItems} stackItems />
 
       <Table
+        {...collectionProps}
         selectionType="multi"
         selectedItems={selected}
         onSelectionChange={({ detail }) => setSelected(detail.selectedItems)}
         trackBy="item_id"
-        items={filtered}
-        sortingColumn={sorting?.sortingColumn}
-        sortingDescending={sorting?.isDescending}
-        onSortingChange={({ detail }) => setSorting(detail)}
+        items={items}
+        columnDisplay={preferences.contentDisplay}
+        pagination={<Pagination {...paginationProps} />}
+        preferences={
+          <CollectionPreferences
+            title="Preferences" confirmLabel="Confirm" cancelLabel="Cancel"
+            preferences={preferences}
+            onConfirm={({ detail }) => { setPreferences(detail); localStorage.setItem(PREFS_KEY, JSON.stringify(detail)); }}
+            pageSizePreference={{ title: 'Page size', options: [25, 50, 100].map((n) => ({ value: n, label: `${n} versions` })) }}
+            contentDisplayPreference={{
+              title: 'Columns',
+              options: [
+                { id: 'service', label: 'Service', alwaysVisible: true }, { id: 'version', label: 'Version', alwaysVisible: true },
+                { id: 'status', label: 'Status' }, { id: 'deadline', label: 'Deadline' }, { id: 'resources', label: 'Resources' },
+                { id: 'cost', label: 'Cost exposure' }, { id: 'account', label: 'Account' }, { id: 'region', label: 'Region' },
+                { id: 'plan', label: 'Plan' }, { id: 'verified', label: 'Seen' },
+              ],
+            }}
+          />
+        }
         loading={loading}
         loadingText="Loading your resources..."
         variant="full-page"
@@ -181,49 +290,58 @@ export default function MyResources() {
         header={
           <Header
             variant="h1"
-            counter={`(${filtered.length})`}
+            info={<InfoLink />}
+            counter={shown === scoped.length ? `(${shown})` : `(${shown} of ${scoped.length})`}
             description={costTotals
               ? `RDS/Aurora Extended Support: ${formatUsd(costTotals.forecast12)} over the next 12 months across ${costTotals.priced} priced resource${costTotals.priced === 1 ? '' : 's'}${costTotals.now ? `, ${costTotals.now} billing now (${formatUsd(costTotals.monthlyNow)}/mo)` : ''}${costTotals.within12 ? `, ${costTotals.within12} starting within 12 months (+${formatUsd(costTotals.monthlyWithin12)}/mo)` : ''}${costTotals.later ? `, ${costTotals.later} later` : ''}. Estimates assume always-on at current size.`
-              : `What the account scan found, matched against the catalog. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
+              : `Every runtime, engine or platform version the AWS account resource scan found, matched against the catalog of retiring versions; open a row for the resources behind it. Last scan ${relative(coverage?.last_scan.last_verified)}${(coverage?.last_scan.accounts.length ?? 0) > 1 ? ` across ${coverage!.last_scan.accounts.length} accounts` : ''}${coverage?.last_scan.regions.length ? ` in ${coverage.last_scan.regions.join(', ')}` : ''}.`}
             actions={
               <Button variant="primary" disabled={selected.length === 0} onClick={() => setShowPlanModal(true)}>
                 Create plan{selected.length ? ` (${selected.length})` : ''}
               </Button>
             }
           >
-            My resources
+            {scope === 'all' ? 'All AWS versions running in your resources'
+              : scope === 'cost' ? 'RDS Extended Support exposure'
+              : isBucket(scope) ? `${EXPOSURE_BUCKETS[scope]}: versions running in your resources`
+              : scope === 'supported' ? 'Supported AWS versions running in your resources'
+              : 'Deprecated AWS versions impacting your resources'}
           </Header>
         }
         filter={
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <TextFilter filteringText={filterText} filteringPlaceholder="Search versions, resources, regions..."
-              filteringAriaLabel="Filter resources"
-              onChange={({ detail }) => { setFilterText(detail.filteringText); updateParams({ q: detail.filteringText }); }} />
-            <Select selectedOption={SCOPE_OPTIONS.find((o) => o.value === scope) || SCOPE_OPTIONS[0]}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <Select selectedOption={FLAT_SCOPE_OPTIONS.find((o) => o.value === scope) || FLAT_SCOPE_OPTIONS[0]}
               onChange={({ detail }) => { setScope(detail.selectedOption.value!); updateParams({ status: detail.selectedOption.value! }); }}
               options={SCOPE_OPTIONS} selectedAriaLabel="Selected" />
-            <Select selectedOption={{ label: service === 'all' ? 'All services' : serviceLabel(service), value: service }}
-              onChange={({ detail }) => { setService(detail.selectedOption.value!); updateParams({ service: detail.selectedOption.value! }); }}
-              options={[{ label: 'All services', value: 'all' }, ...services.map((s) => ({ label: serviceLabel(s), value: s }))]}
-              selectedAriaLabel="Selected" />
-            {multiAccount && (
-              <Select selectedOption={{ label: account === 'all' ? 'All accounts' : accountLabel(account, accounts.find((a) => a.id === account)?.name), value: account }}
-                onChange={({ detail }) => { setAccount(detail.selectedOption.value!); updateParams({ account: detail.selectedOption.value! }); }}
-                options={[{ label: 'All accounts', value: 'all' }, ...accounts.map((a) => ({ label: accountLabel(a.id, a.name), value: a.id }))]}
-                selectedAriaLabel="Selected" />
-            )}
+            <div style={{ flex: '1 1 480px' }}>
+              <PropertyFilter
+                {...propertyFilterProps}
+                filteringOptions={filteringOptions}
+                onChange={(e) => { propertyFilterProps.onChange(e); updateParams(paramsFromQuery(e.detail)); }}
+                i18nStrings={FILTER_I18N}
+                countText={`${shown} match${shown === 1 ? '' : 'es'}`}
+                expandToViewport
+              />
+            </div>
           </div>
         }
         empty={
           <Box textAlign="center" padding="l" color="text-body-secondary">
-            <Box variant="strong">
-              {rows.length === 0 ? 'No resources scanned yet' : scope === 'concerns' ? 'Nothing needs attention' : 'No resources match these filters'}
-            </Box>
-            <Box variant="p">
+            <SpaceBetween size="xs">
+              <Box variant="strong">
+                {rows.length === 0 ? 'No resources scanned yet' : scope === 'concerns' && !hasTokens ? 'Nothing needs attention' : 'No resources match these filters'}
+              </Box>
+              <Box variant="p">
+                {rows.length === 0
+                  ? 'Choose Refresh on My exposure to scan your accounts.'
+                  : `Last scan ${relative(coverage?.last_scan.last_verified)}.${scope === 'concerns' && !hasTokens ? ' Supported and unmatched versions are under Everything found.' : ''}`}
+              </Box>
               {rows.length === 0
-                ? 'Click Refresh on the dashboard to scan this account.'
-                : `Last scan ${relative(coverage?.last_scan.last_verified)}. ${scope === 'concerns' ? 'Switch the scope to "Everything found" to see supported versions too.' : ''}`}
-            </Box>
+                ? <Button onClick={() => navigate('/dashboard')}>Go to My exposure</Button>
+                : scope === 'concerns' && !hasTokens
+                  ? <Button onClick={() => { setScope('all'); updateParams({ status: 'all' }); }}>Show everything found</Button>
+                  : <Button onClick={clearFilters}>Clear filters</Button>}
+            </SpaceBetween>
           </Box>
         }
         columnDefinitions={[
@@ -237,7 +355,7 @@ export default function MyResources() {
             ),
           },
           {
-            id: 'status', header: 'Status', cell: (r) => {
+            id: 'status', header: 'Status', sortingComparator: (a, b) => statusMeta(a.status).rank - statusMeta(b.status).rank, cell: (r) => {
               const m = statusMeta(r.status);
               const fact = factFor(r);
               return (
@@ -263,7 +381,9 @@ export default function MyResources() {
             },
           },
           {
-            id: 'deadline', header: 'Deadline', cell: (r) => {
+            id: 'deadline', header: 'Deadline',
+            sortingComparator: (a, b) => (getDeadline(a)?.daysLeft ?? Number.MAX_SAFE_INTEGER) - (getDeadline(b)?.daysLeft ?? Number.MAX_SAFE_INTEGER),
+            cell: (r) => {
               const d = getDeadline(r);
               return d ? (
                 <SpaceBetween size="xxxs">
@@ -333,15 +453,6 @@ export default function MyResources() {
           { id: 'verified', header: 'Seen', cell: (r) => <Box variant="small">{formatDate(r.last_verified)}</Box> },
         ]}
       />
-
-      {detailsRow && (
-        <ResourceDetails
-          row={detailsRow}
-          fact={factFor(detailsRow)}
-          plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)}
-          onDismiss={() => updateParams({ details: '' })}
-        />
-      )}
 
       <Modal
         visible={showPlanModal}

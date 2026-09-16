@@ -267,9 +267,19 @@ export interface RefreshSummary {
   inventory?: { items_saved?: number; stale_removed?: number; [key: string]: unknown };
 }
 
+export interface RefreshPhase {
+  label: string;
+  status: 'pending' | 'in-progress' | 'success' | 'warning' | 'error' | 'stopped';
+  done: number;
+  failed: number;
+  total: number | null;
+  running: string[];   // step names still in flight (capped)
+}
+
 export interface RefreshProgress {
   extract_done: number;
   scan_done: number;
+  phases?: RefreshPhase[];
 }
 
 export interface RefreshExecutionStatus {

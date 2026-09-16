@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@cloudscape-design/chat-components": "^1.0.67",
+    "@cloudscape-design/collection-hooks": "1.0.107",
     "@cloudscape-design/components": "^3.0.1109",
     "@cloudscape-design/design-tokens": "^3.0.62",
     "@cloudscape-design/global-styles": "^1.0.46",

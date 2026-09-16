@@ -4,9 +4,12 @@ import AppLayout from '@cloudscape-design/components/app-layout';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
 import SideNavigation from '@cloudscape-design/components/side-navigation';
 import ContentLayout from '@cloudscape-design/components/content-layout';
-import Grid from '@cloudscape-design/components/grid';
 import Box from '@cloudscape-design/components/box';
+import SplitPanel from '@cloudscape-design/components/split-panel';
+import Button from '@cloudscape-design/components/button';
 import AuthModal from './AuthModal';
+import { SplitPanelContext, SplitPanelContent } from './split-panel';
+import { HelpContext, HelpContent, helpFor } from './help';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
@@ -20,12 +23,21 @@ function AppContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  // Split panel content is set by the current page (see split-panel.tsx)
+  const [panel, setPanel] = useState<SplitPanelContent | null>(null);
+  // Help panel (AppLayout tools): content follows the route, opened by the Info links
+  const [toolsOpen, setToolsOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
     checkAuth();
   }, []);
+  // Leaving the page closes its panel
+  useEffect(() => { setPanel(null); }, [location.pathname]);
+  // Every page is a table or a dashboard: use the whole width everywhere
+  // (same width as the split panel), no per-page max content width.
+  const contentType = location.pathname === '/dashboard' ? 'dashboard' : 'table';
 
   const checkAuth = async () => {
     try {
@@ -149,20 +161,34 @@ function AppContent() {
             ]}
           />
         }
-        toolsHide={true}
-        disableContentPaddings
-        contentType="default"
+        toolsHide={!user || !helpFor(location.pathname)}
+        tools={<HelpContent pathname={location.pathname} />}
+        toolsOpen={toolsOpen}
+        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
+        ariaLabels={{ tools: 'Help panel', toolsToggle: 'Open help panel', toolsClose: 'Close help panel' }}
+        contentType={contentType}
+        maxContentWidth={Number.MAX_VALUE}
+        splitPanelOpen={panel !== null}
+        onSplitPanelToggle={({ detail }) => { if (!detail.open) panel?.onClose(); }}
+        splitPanel={panel ? (
+          <SplitPanel
+            header={panel.header}
+            closeBehavior="hide"
+            i18nStrings={{
+              preferencesTitle: 'Split panel preferences', preferencesPositionLabel: 'Position',
+              preferencesPositionDescription: 'Choose the default position for the split panel.',
+              preferencesPositionSide: 'Side', preferencesPositionBottom: 'Bottom',
+              preferencesConfirm: 'Confirm', preferencesCancel: 'Cancel',
+              closeButtonAriaLabel: 'Close panel', openButtonAriaLabel: 'Open panel',
+              resizeHandleAriaLabel: 'Resize split panel',
+            }}
+          >
+            {panel.content}
+          </SplitPanel>
+        ) : undefined}
         content={
-          <ContentLayout defaultPadding>
-            <Grid
-              gridDefinition={[
-                { colspan: { default: 12, xs: 0, s: 0, m: 1 } },
-                { colspan: { default: 12, xs: 12, s: 12, m: 10 } },
-                { colspan: { default: 12, xs: 0, s: 0, m: 1 } }
-              ]}
-            >
-              <div></div>
-              <div>
+          <SplitPanelContext.Provider value={setPanel}>
+          <HelpContext.Provider value={() => setToolsOpen(true)}>
                 {!user ? (
                   <Box textAlign="center" padding="xxl">
                     <Box variant="h1" padding={{ bottom: 's' }}>
@@ -171,20 +197,9 @@ function AppContent() {
                     <Box variant="p" padding={{ bottom: 'm' }} color="text-body-secondary">
                       Please sign in to access the admin interface
                     </Box>
-                    <button
-                      onClick={() => setShowAuthModal(true)}
-                      style={{
-                        padding: '10px 20px',
-                        fontSize: '16px',
-                        cursor: 'pointer',
-                        backgroundColor: '#0972d3',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px'
-                      }}
-                    >
-                      Sign In
-                    </button>
+                    <Button variant="primary" iconName="lock-private" onClick={() => setShowAuthModal(true)}>
+                      Sign in
+                    </Button>
                   </Box>
                 ) : (
                   <Routes>
@@ -199,10 +214,8 @@ function AppContent() {
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 )}
-              </div>
-              <div></div>
-            </Grid>
-          </ContentLayout>
+          </HelpContext.Provider>
+          </SplitPanelContext.Provider>
         }
       />
     </>

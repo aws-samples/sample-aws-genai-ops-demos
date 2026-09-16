@@ -114,15 +114,20 @@ def start_run(step: StepContext, spec: dict) -> dict:
     hub = account_discovery._caller_identity().get("account", "")
     resolved = resolve_targets(account_discovery.load_scan_targets(), hub, region)
     account_discovery.save_resolved_accounts(resolved)  # for the UI (Sources & coverage)
+    regions = spec["regions"] or resolved["regions"]
+    accounts = [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]]
     return {
         "run_id": str(uuid.uuid4()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "function_region": region,
         "services": services,
-        "regions": spec["regions"] or resolved["regions"],
-        "accounts": [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]],
+        "regions": regions,
+        "accounts": accounts,
         "targets_source": resolved["source"],
         "targets_errors": resolved["errors"],
+        # Expected work, so the UI can show determinate progress (#150 item 6)
+        "extract_total": len(services) if spec["mode"] in ("full", "extract") else 0,
+        "scan_total": len(scan_cells_for(spec, regions, accounts)) if spec["mode"] in ("full", "scan") else 0,
     }
 
 

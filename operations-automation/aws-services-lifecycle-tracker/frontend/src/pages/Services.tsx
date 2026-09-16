@@ -11,6 +11,7 @@ import Toggle from '@cloudscape-design/components/toggle';
 import Link from '@cloudscape-design/components/link';
 import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, getScanners, ServiceConfig, DashboardMetrics, ScanCoverage } from '../api';
 import ScanTargetsPanel from '../components/ScanTargetsPanel';
+import { InfoLink } from '../help';
 
 export default function Services() {
   const navigate = useNavigate();
@@ -342,6 +343,8 @@ export default function Services() {
         items={services}
         loading={loading}
         loadingText="Loading services..."
+        variant="full-page"
+        stickyHeader
         empty={
           <Box textAlign="center" color="inherit">
             <Box padding={{ bottom: 's' }} variant="p" color="inherit">
@@ -352,6 +355,7 @@ export default function Services() {
         header={
           <Header
             variant="h1"
+            info={<InfoLink />}
             counter={`(${services.length})`}
             description="Where the catalog comes from (AWS documentation pages per service) and which services have an account scanner. Toggle a service off to stop extracting it; the refresh icon updates one service's facts now."
           >

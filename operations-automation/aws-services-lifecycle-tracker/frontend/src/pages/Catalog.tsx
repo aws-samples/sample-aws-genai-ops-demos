@@ -3,25 +3,43 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Table from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Badge from '@cloudscape-design/components/badge';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import TextFilter from '@cloudscape-design/components/text-filter';
 import Select from '@cloudscape-design/components/select';
 import Pagination from '@cloudscape-design/components/pagination';
+import CollectionPreferences, { CollectionPreferencesProps } from '@cloudscape-design/components/collection-preferences';
+import { useCollection } from '@cloudscape-design/collection-hooks';
 import Toggle from '@cloudscape-design/components/toggle';
 import Link from '@cloudscape-design/components/link';
 import Alert from '@cloudscape-design/components/alert';
 import { getLifecycleData, DeprecationItem } from '../api';
 import { statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, resourcesByFact, STATUS_META } from '../lifecycle';
+import { InfoLink } from '../help';
+import GenAiLabel from '../components/GenAiLabel';
 
-const PAGE = 50;
+// Table preferences (page size, visible columns); kept per browser
+const PREFS_KEY = 'lifecycle-catalog-preferences';
+const DEFAULT_PREFS: CollectionPreferencesProps.Preferences = { pageSize: 50, contentDisplay: [
+  { id: 'service', visible: true }, { id: 'name', visible: true }, { id: 'status', visible: true }, { id: 'deadline', visible: true },
+  { id: 'dates', visible: true }, { id: 'mine', visible: true }, { id: 'source', visible: true },
+] };
+const loadPrefs = (): CollectionPreferencesProps.Preferences => {
+  try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch { return DEFAULT_PREFS; }
+};
 
+// Scope dropdown: two buckets first, then one entry per status in a group
 const SCOPE_OPTIONS = [
-  { label: 'Lifecycle concerns', value: 'concerns' },
-  { label: 'All facts', value: 'all' },
-  ...Object.entries(STATUS_META).filter(([k]) => k !== 'unknown').map(([value, m]) => ({ label: m.label, value })),
+  { label: 'Needs attention', value: 'concerns', description: 'End of life, deprecated, past standard support or ending within a year' },
+  { label: 'Everything', value: 'all', description: 'Including versions still supported' },
+  {
+    label: 'By status',
+    options: Object.entries(STATUS_META).filter(([k]) => k !== 'unknown').map(([value, m]) => ({ label: m.label, value })),
+  },
 ];
+const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.flatMap((o) => ('options' in o && o.options ? o.options : [o as { label: string; value: string }]));
 
 // Dates worth showing, in display order
 const DATE_LABELS: Array<[string, string]> = [
@@ -47,7 +65,7 @@ export default function Catalog() {
   const [scope, setScope] = useState(params.get('status') || 'concerns');
   const [service, setService] = useState(params.get('service') || 'all');
   const [onlyMine, setOnlyMine] = useState(params.get('mine') === '1');
-  const [page, setPage] = useState(1);
+  const [preferences, setPreferences] = useState<CollectionPreferencesProps.Preferences>(loadPrefs);
 
   useEffect(() => {
     (async () => {
@@ -66,20 +84,27 @@ export default function Catalog() {
   const mine = useMemo(() => resourcesByFact(inventory), [inventory]);
   const services = useMemo(() => [...new Set(facts.map((f) => f.service_name))].sort(), [facts]);
 
-  const filtered = useMemo(() => {
-    let out = [...facts];
+  // Scope / service / mine narrow the source; text search, sorting and paging
+  // are the collection hooks' job (one place, consistent counts, page resets).
+  const scoped = useMemo(() => {
+    let out = facts;
     if (scope === 'concerns') out = out.filter((f) => isConcern(f.status));
     else if (scope !== 'all') out = out.filter((f) => f.status === scope);
     if (service !== 'all') out = out.filter((f) => f.service_name === service);
     if (onlyMine) out = out.filter((f) => mine.has(`${f.service_name}|${f.item_id}`));
-    if (filterText) {
-      const q = filterText.toLowerCase();
-      out = out.filter((f) => `${f.service_name} ${serviceLabel(f.service_name)} ${f.item_id} ${JSON.stringify(f.service_specific)}`.toLowerCase().includes(q));
-    }
-    return out.sort(urgencySort);
-  }, [facts, scope, service, onlyMine, filterText, mine]);
+    return out;
+  }, [facts, scope, service, onlyMine, mine]);
 
-  useEffect(() => { setPage(1); }, [scope, service, onlyMine, filterText]);
+  const { items, filteredItemsCount, collectionProps, filterProps, paginationProps } = useCollection(scoped, {
+    filtering: {
+      defaultFilteringText: filterText,
+      filteringFunction: (f, text) =>
+        `${f.service_name} ${serviceLabel(f.service_name)} ${f.item_id} ${JSON.stringify(f.service_specific)}`.toLowerCase().includes(text.toLowerCase()),
+    },
+    sorting: { defaultState: { sortingColumn: { sortingComparator: urgencySort } } },
+    pagination: { pageSize: preferences.pageSize },
+  });
+  const filtered = filteredItemsCount ?? items.length;
 
   const updateParams = (next: Record<string, string>) => {
     const p = new URLSearchParams(params);
@@ -88,15 +113,16 @@ export default function Catalog() {
   };
 
   const inMyAccount = facts.filter((f) => mine.has(`${f.service_name}|${f.item_id}`)).length;
-  const pageItems = filtered.slice((page - 1) * PAGE, page * PAGE);
 
   return (
     <SpaceBetween size="l">
       {error && <Alert type="error" dismissible onDismiss={() => setError('')}>{error}</Alert>}
 
       <Table
-        items={pageItems}
+        {...collectionProps}
+        items={items}
         trackBy="item_id"
+        columnDisplay={preferences.contentDisplay}
         loading={loading}
         loadingText="Loading the catalog..."
         variant="full-page"
@@ -104,18 +130,24 @@ export default function Catalog() {
         header={
           <Header
             variant="h1"
-            counter={`(${filtered.length})`}
-            description={`Deprecation facts extracted from the AWS documentation: ${facts.length} across ${services.length} services, ${inMyAccount} of them matching something in your account.`}
+            info={<InfoLink />}
+            counter={filtered === facts.length ? `(${facts.length})` : `(${filtered} of ${facts.length})`}
+            description={
+              <SpaceBetween size="xxs">
+                <GenAiLabel text="Generated by AI from the AWS documentation, each row links to its source page" />
+                <span>{`${facts.length} version facts across ${services.length} services (${facts.filter((f) => isConcern(f.status)).length} need attention, ${facts.length - facts.filter((f) => isConcern(f.status)).length} still supported), ${inMyAccount} of them matching something in your accounts. The list shows the current scope and filters.`}</span>
+              </SpaceBetween>
+            }
           >
             Catalog
           </Header>
         }
         filter={
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <TextFilter filteringText={filterText} filteringPlaceholder="Search versions, runtimes, engines..."
-              filteringAriaLabel="Filter catalog"
-              onChange={({ detail }) => { setFilterText(detail.filteringText); updateParams({ q: detail.filteringText }); }} />
-            <Select selectedOption={SCOPE_OPTIONS.find((o) => o.value === scope) || SCOPE_OPTIONS[0]}
+            <TextFilter {...filterProps} filteringPlaceholder="Search versions, runtimes, engines"
+              filteringAriaLabel="Filter catalog" countText={`${filtered} match${filtered === 1 ? '' : 'es'}`}
+              onChange={(e) => { filterProps.onChange(e); setFilterText(e.detail.filteringText); updateParams({ q: e.detail.filteringText }); }} />
+            <Select selectedOption={FLAT_SCOPE_OPTIONS.find((o) => o.value === scope) || FLAT_SCOPE_OPTIONS[0]}
               onChange={({ detail }) => { setScope(detail.selectedOption.value!); updateParams({ status: detail.selectedOption.value! }); }}
               options={SCOPE_OPTIONS} selectedAriaLabel="Selected" />
             <Select selectedOption={{ label: service === 'all' ? 'All services' : serviceLabel(service), value: service }}
@@ -127,15 +159,39 @@ export default function Catalog() {
             </Toggle>
           </div>
         }
-        pagination={<Pagination currentPageIndex={page} pagesCount={Math.max(1, Math.ceil(filtered.length / PAGE))} onChange={({ detail }) => setPage(detail.currentPageIndex)} />}
+        pagination={<Pagination {...paginationProps} />}
+        preferences={
+          <CollectionPreferences
+            title="Preferences"
+            confirmLabel="Confirm"
+            cancelLabel="Cancel"
+            preferences={preferences}
+            onConfirm={({ detail }) => { setPreferences(detail); localStorage.setItem(PREFS_KEY, JSON.stringify(detail)); }}
+            pageSizePreference={{ title: 'Page size', options: [{ value: 25, label: '25 facts' }, { value: 50, label: '50 facts' }, { value: 100, label: '100 facts' }] }}
+            contentDisplayPreference={{ title: 'Columns', options: [
+              { id: 'service', label: 'Service', alwaysVisible: true }, { id: 'name', label: 'Version', alwaysVisible: true },
+              { id: 'status', label: 'Status' }, { id: 'deadline', label: 'Next deadline' }, { id: 'dates', label: 'Key dates' },
+              { id: 'mine', label: 'In my account' }, { id: 'source', label: 'Source' },
+            ] }}
+          />
+        }
         empty={
           <Box textAlign="center" padding="l" color="text-body-secondary">
-            <Box variant="strong">{facts.length === 0 ? 'The catalog is empty' : 'No facts match these filters'}</Box>
-            <Box variant="p">{facts.length === 0 ? 'Click Refresh on the dashboard to extract the deprecation facts.' : ''}</Box>
+            <SpaceBetween size="xs">
+              <Box variant="strong">{facts.length === 0 ? 'The catalog is empty' : 'No facts match these filters'}</Box>
+              <Box variant="p">{facts.length === 0 ? 'Choose Refresh on My exposure to extract the deprecation facts.' : 'Clear the search or widen the scope.'}</Box>
+              {facts.length === 0
+                ? <Button onClick={() => navigate('/dashboard')}>Go to My exposure</Button>
+                : <Button onClick={() => {
+                    filterProps.onChange({ detail: { filteringText: '' } } as any);
+                    setFilterText(''); setScope('all'); setService('all'); setOnlyMine(false);
+                    updateParams({ q: '', status: 'all', service: 'all', mine: '0' });
+                  }}>Clear filters</Button>}
+            </SpaceBetween>
           </Box>
         }
         columnDefinitions={[
-          { id: 'service', header: 'Service', cell: (f) => <Badge color="blue">{serviceLabel(f.service_name)}</Badge> },
+          { id: 'service', header: 'Service', cell: (f) => <Badge color="blue">{serviceLabel(f.service_name)}</Badge>, sortingField: 'service_name' },
           {
             id: 'name', header: 'Version', cell: (f) => (
               <SpaceBetween size="xxxs">
@@ -144,9 +200,10 @@ export default function Catalog() {
               </SpaceBetween>
             ),
           },
-          { id: 'status', header: 'Status', cell: (f) => <StatusIndicator type={statusMeta(f.status).indicator}>{statusMeta(f.status).label}</StatusIndicator> },
+          { id: 'status', header: 'Status', cell: (f) => <StatusIndicator type={statusMeta(f.status).indicator}>{statusMeta(f.status).label}</StatusIndicator>,
+            sortingComparator: (a, b) => statusMeta(a.status).rank - statusMeta(b.status).rank },
           {
-            id: 'deadline', header: 'Next deadline', cell: (f) => {
+            id: 'deadline', header: 'Next deadline', sortingComparator: urgencySort, cell: (f) => {
               const d = getDeadline(f);
               return d ? <SpaceBetween size="xxxs"><Box>{formatDate(d.date)}</Box><Box variant="small" color="text-body-secondary">{formatDaysLeft(d)}</Box></SpaceBetween> : <Box color="text-body-secondary">-</Box>;
             },
