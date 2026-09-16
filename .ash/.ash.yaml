@@ -36,6 +36,242 @@ global_settings:
     - path: "**/prowler-security-findings-agent/.ash/**"
       reason: "Demo-owned ASH config/outputs — the demo demonstrates ASH itself"
 
+  # detect-secrets false positives, audited individually (demo/test/config code:
+  # service-key string literals, test fixtures, env-var placeholders, resource-type
+  # names, doc placeholders, the public GitHub OIDC thumbprint, the #159 generated
+  # demo-password affix). None are real secrets. Line-level so a genuinely new secret
+  # in the same file still flags. Replaces the non-functional .secrets.baseline.
+  suppressions:
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cost-optimization/aws-genai-cost-optimization-mcp-server/tests/test_bedrock_detector.py"
+      line_start: 116
+      line_end: 116
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/infrastructure/cdk/lib/mcp_server_stack.py"
+      line_start: 53
+      line_end: 53
+      reason: "False positive: keyword match on demo/config code, not a secret"
+    - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
+      path: "observability/eks-investigation-devops-agent/cdk/lib/compute-stack.ts"
+      line_start: 140
+      line_end: 140
+      reason: "False positive: public GitHub OIDC root CA thumbprint, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/cdk/test/devops-agent-conditional.property.test.ts"
+      line_start: 90
+      line_end: 90
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/cdk/test/output-key-parity.property.test.ts"
+      line_start: 85
+      line_end: 85
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/cdk/test/output-key-parity.property.test.ts"
+      line_start: 86
+      line_end: 86
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/cdk/test/resource-type-parity.property.test.ts"
+      line_start: 145
+      line_end: 145
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/cdk/test/resource-type-parity.property.test.ts"
+      line_start: 146
+      line_end: 146
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/deploy-all.sh"
+      line_start: 262
+      line_end: 262
+      reason: "False positive: keyword match on demo/config code, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/scripts/configure-demo-user.ps1"
+      line_start: 10
+      line_end: 10
+      reason: "False positive: keyword match on demo/config code, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/services/merchant-gateway/src/auth/jwt-token-expiration.property.test.ts"
+      line_start: 28
+      line_end: 28
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/services/merchant-gateway/src/middleware/jwt-auth.property.test.ts"
+      line_start: 28
+      line_end: 28
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/services/payment-processor/src/main/resources/application.yml"
+      line_start: 8
+      line_end: 8
+      reason: "False positive: Spring env-var placeholder with default, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/docs/jira-integration.md"
+      line_start: 199
+      line_end: 199
+      reason: "False positive: documentation placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/scripts/setup-wizard.ts"
+      line_start: 1017
+      line_end: 1017
+      reason: "False positive: config key names, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/scripts/setup-wizard.ts"
+      line_start: 1019
+      line_end: 1019
+      reason: "False positive: config key names, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/test/health-event-analyzer.test.ts"
+      line_start: 23
+      line_end: 23
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/test/health-event-analyzer.test.ts"
+      line_start: 205
+      line_end: 205
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/test/secrets-cache.test.ts"
+      line_start: 98
+      line_end: 98
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/ai-legacy-system-browser-automation/README.md"
+      line_start: 137
+      line_end: 137
+      reason: "False positive: documentation placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 313
+      line_end: 313
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 317
+      line_end: 317
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 319
+      line_end: 319
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 322
+      line_end: 322
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 324
+      line_end: 324
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 326
+      line_end: 326
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 328
+      line_end: 328
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 330
+      line_end: 330
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 332
+      line_end: 332
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 335
+      line_end: 335
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      line_start: 536
+      line_end: 536
+      reason: "False positive: matches on service_key string literals, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_data_ownership.py"
+      line_start: 110
+      line_end: 110
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_data_ownership.py"
+      line_start: 132
+      line_end: 132
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_property_dynamo_keys.py"
+      line_start: 58
+      line_end: 58
+      reason: "False positive: alphabet test fixture string, not a secret"
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_property_dynamo_keys.py"
+      line_start: 67
+      line_end: 67
+      reason: "False positive: alphabet test fixture string, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "resilience/ai-load-test-generation-with-dlt/builder/tests/test_builder.py"
+      line_start: 370
+      line_end: 370
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "resilience/ai-load-test-generation-with-dlt/builder/tests/test_script_builders.py"
+      line_start: 237
+      line_end: 237
+      reason: "False positive: test fixture value, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/ai-iam-access-analyzer-assistant/README.md"
+      line_start: 272
+      line_end: 272
+      reason: "False positive: documentation placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/ai-iam-access-analyzer-assistant/deploy-all.ps1"
+      line_start: 150
+      line_end: 150
+      reason: "False positive: generated demo password affix (see #159), not a static secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/ai-iam-access-analyzer-assistant/src/tools/list_findings.py"
+      line_start: 68
+      line_end: 68
+      reason: "False positive: resource-type string AwsSecretsManagerSecret, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/prowler-security-findings-agent/cdk/lambda/devops-agent-trigger/index.py"
+      line_start: 132
+      line_end: 132
+      reason: "False positive: keyword match on demo/config code, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/prowler-security-findings-agent/cdk/lib/devops-agent-stack.ts"
+      line_start: 72
+      line_end: 72
+      reason: "False positive: literal PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/prowler-security-findings-agent/scripts/setup-devops-agent.ps1"
+      line_start: 97
+      line_end: 97
+      reason: "False positive: keyword match on demo/config code, not a secret"
+    # Illustrative example webhook URLs in documentation (they intentionally show the
+    # shape of a real Slack webhook so readers recognize it). Not secrets. The
+    # contributor-guide entry is the anti-pattern EXAMPLE in the placeholder convention
+    # itself; suppressing it keeps the doc that teaches the rule from tripping the rule.
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: ".kiro/steering/contributor-guide.md"
+      line_start: 490
+      line_end: 490
+      reason: "False positive: anti-pattern example in the placeholder convention doc, not a secret"
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: "observability/proactive-health-event-impact-analyzer/docs/slack-integration.md"
+      line_start: 127
+      line_end: 127
+      reason: "False positive: illustrative example webhook URL in docs, not a secret"
+
 scanners:
   # cdk-nag and cfn-nag evaluate SYNTHESIZED CloudFormation templates, not source.
   # In this repo-root source scan there is no `cdk synth` output, so they have no
