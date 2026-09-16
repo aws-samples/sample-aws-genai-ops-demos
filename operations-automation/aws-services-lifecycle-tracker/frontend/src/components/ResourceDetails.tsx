@@ -14,10 +14,11 @@ import TextFilter from '@cloudscape-design/components/text-filter';
 import Header from '@cloudscape-design/components/header';
 import type { DeprecationItem, ActionPlan } from '../api';
 import Popover from '@cloudscape-design/components/popover';
+import GenAiLabel from './GenAiLabel';
 import {
   statusMeta, getDeadline, formatDate, formatDaysLeft, serviceLabel, itemName,
   resourceCount, resourceDetails, resourceWord, healthFlagged, healthEventLabel, ResourceRef,
-  costExposure, estimateFormula, formatUsd, HOURS_PER_MONTH, ExtendedSupportEstimate,
+  costExposure, estimateFormula, formatUsd, HOURS_PER_MONTH, ExtendedSupportEstimate, costTimeline, formatMonth,
 } from '../lifecycle';
 
 // Why a resource has no Extended Support figure
@@ -44,15 +45,17 @@ function EstimateCell({ e }: { e: ExtendedSupportEstimate }) {
             <Box variant="small">Year 3 rate ${e.price_yr3}/{e.unit === 'ACU-hour' ? 'ACU-h' : 'vCPU-h'} → {formatUsd(e.monthly_yr3, 2)}/month from {e.year3_start || 'n/a'}.</Box>
             <Box variant="small">
               Billed from {e.extended_support_start || 'a date not yet in the catalog'}
-              {e.extended_support_end ? ` until ${e.extended_support_end}` : ''}. Next 12 months: {formatUsd(e.forecast_12m)}.
+              {e.extended_support_end ? ` until ${e.extended_support_end}` : ''}.
+              {e.monthly_yr1_2 ? ` Next 12 months: ${formatUsd(e.forecast_12m)} = ${Math.round(((e.forecast_12m ?? 0) / e.monthly_yr1_2) * 10) / 10} billable months.` : ''}
             </Box>
             <Box variant="small" color="text-body-secondary">
-              List price from the AWS Price List API for this region ({e.price_source === 'sku' ? 'exact SKU for this version' : `no SKU for ${e.engine_family} ${e.major_version} yet: ${e.engine_family} family rate used`}),
-              {' '}{HOURS_PER_MONTH} h/month (always on), no Reserved Instance or usage data. Surcharge on top of the normal instance price.
+              Rate: {e.price_source === 'sku' ? 'exact SKU for this version' : `no SKU for ${e.engine_family} ${e.major_version} yet, ${e.engine_family} family rate used`}.
             </Box>
           </SpaceBetween>
         }>
-        <Box variant="strong" color={e.in_extended_support ? 'text-status-error' : 'inherit'}>{formatUsd(e.monthly_yr1_2)}/mo</Box>
+        <Box variant="strong" color={e.in_extended_support ? 'text-status-error' : 'inherit'}>
+          {formatUsd(e.monthly_yr1_2)}/mo <Box variant="span" fontWeight="normal" color="text-status-info">· how?</Box>
+        </Box>
       </Popover>
       <Box variant="small" color="text-body-secondary">
         {e.in_extended_support ? 'billing now' : e.extended_support_start ? `from ${e.extended_support_start}` : 'start date unknown'}
@@ -101,6 +104,14 @@ export default function ResourceDetails({ row, fact, plan, multiAccount = false 
   const flagged = healthFlagged(row);
   const exposure = costExposure(row);
   const showCost = resources.some((r) => r.extended_support);
+  // Why $/month and the 12-month figure differ: billing starts at a date, so only
+  // part of the window bills. Months = forecast / monthly rate (approximate when
+  // the year 3 rate kicks in inside the window).
+  const timeline = costTimeline([row]);
+  const billableMonths = exposure && exposure.monthly > 0
+    ? Math.round((exposure.forecast_12m / exposure.monthly) * 10) / 10
+    : null;
+  const unpriced = resources.filter((r) => r.extended_support && !r.extended_support.eligible);
   const dates = fact
     ? Object.entries(fact.service_specific || {}).filter(([k, v]) => k.endsWith('_date') && v && v !== 'N/A')
     : [];
@@ -121,19 +132,42 @@ export default function ResourceDetails({ row, fact, plan, multiAccount = false 
           </Field>
           {exposure && exposure.resources_priced > 0 && (
             <Field label="Extended Support exposure">
-              <Box variant="strong">{formatUsd(exposure.monthly)}/month</Box>
-              <Box variant="small" color="text-body-secondary">
-                {formatUsd(exposure.forecast_12m)} over the next 12 months · {exposure.resources_priced} of {exposure.resources_total} priced
-                {exposure.in_extended_support ? ` · ${exposure.in_extended_support} billing now` : ''}
+              <Box variant="strong">
+                {formatUsd(exposure.monthly)}/month
+                <Box variant="span" fontWeight="normal">
+                  {timeline.now === timeline.priced ? ' billing now'
+                    : timeline.now ? ` (${formatUsd(timeline.monthlyNow)} billing now, the rest from ${formatMonth(timeline.nextStart) || 'a later date'})`
+                    : ` from ${formatMonth(timeline.nextStart) || 'a date not yet in the catalog'}`}
+                </Box>
               </Box>
+              <Box variant="small" color="text-body-secondary">
+                {formatUsd(exposure.forecast_12m)} over the next 12 months
+                {billableMonths !== null ? ` = ${billableMonths} billable month${billableMonths === 1 ? '' : 's'}` : ''}
+                {exposure.monthly_yr3 > exposure.monthly ? ` · year 3 rate ${formatUsd(exposure.monthly_yr3)}/month` : ''}
+                {' · '}{exposure.resources_priced} of {exposure.resources_total} resource{exposure.resources_total === 1 ? '' : 's'} priced
+              </Box>
+              {unpriced.length > 0 && (
+                <Box variant="small" color="text-body-secondary">
+                  Not priced: {unpriced.map((r) => `${r.name} (${(NO_ESTIMATE[r.extended_support?.reason || 'error'] || 'no estimate').toLowerCase()})`).join(', ')}
+                </Box>
+              )}
             </Field>
           )}
         </ColumnLayout>
+
+        {showCost && exposure && exposure.resources_priced > 0 && (
+          <Box variant="small" color="text-body-secondary">
+            Estimate: AWS list price for {row.region || 'this region'} from the Price List API{exposure.estimated ? ` (${exposure.estimated} at the engine family rate, no SKU for this version yet)` : ''},
+            {' '}{HOURS_PER_MONTH} h/month always on, Multi-AZ counts twice, Serverless v2 at max ACU, no Reserved Instances. Surcharge on top of the normal instance price,
+            {' '}computed at the scan of {formatDate(row.last_verified)}. Each figure in the table shows its own arithmetic.
+          </Box>
+        )}
 
         {fact ? (
           <Box>
             <Box variant="awsui-key-label">Matched catalog entry</Box>
             <SpaceBetween direction="horizontal" size="s">
+              <GenAiLabel />
               <Box>{itemName(fact)}</Box>
               {dates.map(([k, v]) => <Box key={k} variant="small">{k.replace(/_/g, ' ')}: {String(v)}</Box>)}
               {fact.source_url && <Link href={fact.source_url} external fontSize="body-s">AWS documentation</Link>}
