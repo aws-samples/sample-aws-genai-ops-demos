@@ -25,7 +25,8 @@ import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
   resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
 } from '../lifecycle';
-import ResourceDetails from '../components/ResourceDetails';
+import ResourceDetails, { resourceDetailsHeader } from '../components/ResourceDetails';
+import { useSplitPanel } from '../split-panel';
 
 // Scope dropdown: three buckets first, then one entry per status in a group
 const SCOPE_OPTIONS = [
@@ -191,11 +192,12 @@ export default function MyResources() {
     pagination: { pageSize: preferences.pageSize },
   });
 
-  const updateParams = (next: Record<string, string>) => {
-    const p = new URLSearchParams(params);
+  // Functional update: the panel's onClose may run long after this render
+  const updateParams = (next: Record<string, string>) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
     for (const [k, v] of Object.entries(next)) { if (v && v !== 'all' && v !== 'concerns') p.set(k, v); else p.delete(k); }
-    setParams(p, { replace: true });
-  };
+    return p;
+  }, { replace: true });
 
   const detailsRow = useMemo(() => (detailsId ? rows.find((r) => r.item_id === detailsId) || null : null), [rows, detailsId]);
   // Same arithmetic as the dashboard KPI, over the rows shown, so the two reconcile
@@ -203,6 +205,18 @@ export default function MyResources() {
   const shown = filteredItemsCount ?? scoped.length;
   const factFor = (r: DeprecationItem) =>
     r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
+
+  // The details of the ?details= row live in the AppLayout split panel
+  const setPanel = useSplitPanel();
+  useEffect(() => {
+    if (!detailsRow) { setPanel(null); return; }
+    setPanel({
+      header: resourceDetailsHeader(detailsRow),
+      content: <ResourceDetails row={detailsRow} fact={factFor(detailsRow)} plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)} multiAccount={multiAccount} />,
+      onClose: () => updateParams({ details: '' }),
+    });
+  }, [detailsRow, factById, planByItem, multiAccount]);
+  useEffect(() => () => setPanel(null), []);
 
   const handleAddToPlan = async () => {
     if (!form.owner.trim()) { flash('error', 'Owner is required'); return; }
@@ -417,16 +431,6 @@ export default function MyResources() {
           { id: 'verified', header: 'Seen', cell: (r) => <Box variant="small">{formatDate(r.last_verified)}</Box> },
         ]}
       />
-
-      {detailsRow && (
-        <ResourceDetails
-          row={detailsRow}
-          fact={factFor(detailsRow)}
-          plan={planByItem.get(`${detailsRow.service_name}|${detailsRow.item_id}`)}
-          multiAccount={multiAccount}
-          onDismiss={() => updateParams({ details: '' })}
-        />
-      )}
 
       <Modal
         visible={showPlanModal}

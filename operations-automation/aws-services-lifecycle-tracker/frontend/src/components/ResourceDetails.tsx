@@ -1,10 +1,9 @@
-// Details view for one inventory row: the only place the UI lists resources
-// (tables show counts only, see #141). Each resource shows its name, ARN and
-// a deep link to the AWS console page.
+// Details view for one inventory row, shown in the AppLayout split panel
+// (see split-panel.tsx): the only place the UI lists resources (tables show
+// counts only, see #141). Each resource shows its name, ARN and a deep link
+// to the AWS console page.
 import { useMemo, useState } from 'react';
-import Modal from '@cloudscape-design/components/modal';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
 import Link from '@cloudscape-design/components/link';
@@ -64,10 +63,9 @@ function EstimateCell({ e }: { e: ExtendedSupportEstimate }) {
 }
 
 interface Props {
-  row: DeprecationItem | null;
+  row: DeprecationItem;
   fact?: DeprecationItem;
   plan?: ActionPlan;
-  onDismiss: () => void;
   // More than one account in the inventory: console deep links then depend on
   // which account the browser is signed into, so the row's account is spelled out.
   multiAccount?: boolean;
@@ -80,20 +78,22 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </div>
 );
 
-export default function ResourceDetails({ row, fact, plan, onDismiss, multiAccount = false }: Props) {
+// Panel title for a row
+export const resourceDetailsHeader = (row: DeprecationItem) => `${serviceLabel(row.service_name)} · ${itemName(row)}`;
+
+export default function ResourceDetails({ row, fact, plan, multiAccount = false }: Props) {
   const [filter, setFilter] = useState('');
   // Console links (resource pages, AWS Health events) open in the account the
   // browser is signed into; Health events are only visible from their own
   // account. Until an Identity Center deep link exists (#145), say which one.
-  const linkAccount = multiAccount && row?.account_id ? `${row.account_name ? `${row.account_name} ` : ''}(${row.account_id})` : '';
+  const linkAccount = multiAccount && row.account_id ? `${row.account_name ? `${row.account_name} ` : ''}(${row.account_id})` : '';
   const linkHint = linkAccount ? `Opens in the console of account ${linkAccount}; sign in to that account first.` : undefined;
-  const resources = useMemo<ResourceRef[]>(() => (row ? resourceDetails(row) : []), [row]);
+  const resources = useMemo<ResourceRef[]>(() => resourceDetails(row), [row]);
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
     return q ? resources.filter((r) => `${r.name} ${r.arn || ''}`.toLowerCase().includes(q)) : resources;
   }, [resources, filter]);
 
-  if (!row) return null;
   const m = statusMeta(row.status);
   const d = getDeadline(row);
   const count = resourceCount(row);
@@ -106,26 +106,6 @@ export default function ResourceDetails({ row, fact, plan, onDismiss, multiAccou
     : [];
 
   return (
-    <Modal
-      visible
-      size="max"
-      onDismiss={onDismiss}
-      header={`${serviceLabel(row.service_name)} · ${itemName(row)}`}
-      footer={
-        <Box float="right">
-          <SpaceBetween direction="horizontal" size="xs">
-            <CopyToClipboard
-              variant="button"
-              copyButtonText={hasArns ? 'Copy ARNs' : 'Copy names'}
-              copySuccessText="Copied"
-              copyErrorText="Copy failed"
-              textToCopy={shown.map((r) => r.arn || r.name).join('\n')}
-            />
-            <Button variant="primary" onClick={onDismiss}>Close</Button>
-          </SpaceBetween>
-        </Box>
-      }
-    >
       <SpaceBetween size="l">
         <ColumnLayout columns={4} variant="text-grid">
           <Field label="Status"><StatusIndicator type={m.indicator}>{m.label}</StatusIndicator></Field>
@@ -177,6 +157,15 @@ export default function ResourceDetails({ row, fact, plan, onDismiss, multiAccou
                 resources.length < count ? `Showing the first ${resources.length}; the scan stores a capped list.` : '',
                 linkAccount ? `Console links open in account ${linkAccount}: sign in to that account first, AWS Health events are only visible there.` : '',
               ].filter(Boolean).join(' ') || undefined}
+              actions={
+                <CopyToClipboard
+                  variant="button"
+                  copyButtonText={hasArns ? 'Copy ARNs' : 'Copy names'}
+                  copySuccessText="Copied"
+                  copyErrorText="Copy failed"
+                  textToCopy={shown.map((r) => r.arn || r.name).join('\n')}
+                />
+              }
             >
               {resourceWord(count).replace(/^r/, 'R')}
             </Header>
@@ -261,6 +250,5 @@ export default function ResourceDetails({ row, fact, plan, onDismiss, multiAccou
           <Box variant="small" color="text-body-secondary">ARNs and console links appear after the next account scan.</Box>
         )}
       </SpaceBetween>
-    </Modal>
   );
 }
