@@ -12,16 +12,16 @@ $teams = @(
         teamId = @{S = "payments"}
         teamName = @{S = "Payments Team"}
         email = @{S = "payments-oncall@example.com"}
-        slackWebhookUrl = @{S = "https://hooks.slack.com/services/T00/B00/payments"}
+        slackWebhookUrl = @{S = "<SLACK_WEBHOOK_URL_PAYMENTS>"}
         slackChannel = @{S = "#payments-alerts"}
-        msTeamsWebhookUrl = @{S = "https://your-org.webhook.office.com/webhookb2/payments-channel"}
+        msTeamsWebhookUrl = @{S = "<MSTEAMS_WEBHOOK_URL_PAYMENTS>"}
         notifyOn = @{SS = @("CRITICAL", "HIGH", "MEDIUM")}
     },
     @{
         teamId = @{S = "data-team"}
         teamName = @{S = "Data & Analytics"}
         email = @{S = "data-team@example.com"}
-        slackWebhookUrl = @{S = "https://hooks.slack.com/services/T00/B00/data"}
+        slackWebhookUrl = @{S = "<SLACK_WEBHOOK_URL_DATA>"}
         slackChannel = @{S = "#data-alerts"}
         notifyOn = @{SS = @("CRITICAL", "HIGH")}
     },
@@ -29,18 +29,18 @@ $teams = @(
         teamId = @{S = "identity-team"}
         teamName = @{S = "Identity & Auth"}
         email = @{S = "identity-oncall@example.com"}
-        slackWebhookUrl = @{S = "https://hooks.slack.com/services/T00/B00/identity"}
+        slackWebhookUrl = @{S = "<SLACK_WEBHOOK_URL_IDENTITY>"}
         slackChannel = @{S = "#identity-alerts"}
-        msTeamsWebhookUrl = @{S = "https://your-org.webhook.office.com/webhookb2/identity-channel"}
+        msTeamsWebhookUrl = @{S = "<MSTEAMS_WEBHOOK_URL_IDENTITY>"}
         notifyOn = @{SS = @("CRITICAL", "HIGH", "MEDIUM")}
     },
     @{
         teamId = @{S = "platform"}
         teamName = @{S = "Platform Engineering"}
         email = @{S = "platform@example.com"}
-        slackWebhookUrl = @{S = "https://hooks.slack.com/services/T00/B00/platform"}
+        slackWebhookUrl = @{S = "<SLACK_WEBHOOK_URL_PLATFORM>"}
         slackChannel = @{S = "#platform-ops"}
-        msTeamsWebhookUrl = @{S = "https://your-org.webhook.office.com/webhookb2/platform-channel"}
+        msTeamsWebhookUrl = @{S = "<MSTEAMS_WEBHOOK_URL_PLATFORM>"}
         notifyOn = @{SS = @("CRITICAL", "HIGH", "MEDIUM", "LOW")}
     }
 )
