@@ -471,6 +471,36 @@ $configContent | Out-File -FilePath "frontend/config.js" -Encoding UTF8
 - No hardcoded API endpoints
 - Use Secrets Manager or environment variables for sensitive data
 
+#### Placeholder & example-secret convention
+
+When a demo needs to *show* where a secret, token, or webhook goes — in a README,
+config sample, seed script, or comment — the placeholder MUST NOT be shaped like a
+real credential. Secret scanners (detect-secrets, git-secrets) flag on the **value's
+shape** (a provider URL, a high-entropy string, a known token prefix), not on the
+surrounding words. A realistic-looking fake is therefore indistinguishable from a
+leak: it trips the scanner *and* trains readers to paste real secrets in that exact
+spot.
+
+Rules:
+
+- **Use an angle-bracket, UPPER_SNAKE_CASE token for the secret itself:**
+  `<SLACK_WEBHOOK_URL>`, `<API_TOKEN>`, `<DB_PASSWORD>`, `<GITHUB_TOKEN>`. Angle
+  brackets + uppercase carry no entropy and read unambiguously as "fill this in."
+- **Never embed a fake secret inside a real provider URL or real value shape.** Not
+  `https://hooks.slack.com/services/T00/B00/xxx`, not `xoxb-...`, not `sk-...`, not a
+  40-char hex/base64 blob. Those are exactly the patterns scanners hunt for. Write the
+  whole thing as the token instead: `slackWebhookUrl: "<SLACK_WEBHOOK_URL>"`.
+- **For env/config, prefer an environment-variable reference** over any literal:
+  `${SLACK_WEBHOOK_URL}` (shell) / `process.env.SLACK_WEBHOOK_URL` (code).
+- **Illustrative hostnames/emails** should use the RFC-2606 reserved domains
+  (`example.com`, `example.org`, `user@example.com`) — these are already
+  scanner-safe.
+
+If a genuine false positive still slips through (e.g. a test fixture that must contain
+a value-shaped string), record it in the repo-root `.secrets.baseline` **after
+auditing it** — do not silence it by disabling a detect-secrets plugin or excluding a
+path, which would blind the scanner to real secrets of that type going forward.
+
 ### Cross-Account Compatibility
 - Must work in any AWS account without modification
 - Must work in any AWS region (where services are available)
@@ -527,6 +557,8 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Commit account or organization ids in `cdk.json` (pass them with `-CdkContext` / `--cdk-context`)
 - Make multi-account the default, or require `cdk bootstrap` in member accounts
 - Put a tracking tag on Spoke/Org stacks
+- Write example secrets/webhooks in a real value shape (e.g. `hooks.slack.com/services/T00/B00/x`) — use an angle-bracket token like `<SLACK_WEBHOOK_URL>`
+- Silence a scanner false positive by disabling a detect-secrets plugin or excluding a path (blinds it to real secrets) — audit and add to `.secrets.baseline` instead
 
 ✅ **Do:**
 - Use shared utilities for region/account detection
@@ -540,3 +572,4 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Gate multi-account behind `-MultiAccount` / `--multi-account` and run `check-org-access` first
 - Keep hub and spoke permissions in one source file
 - Report per-account outcomes ("not checked" vs "nothing found")
+- Use angle-bracket `<UPPER_SNAKE>` tokens (or `${ENV_VAR}` refs) for example secrets, and `example.com` for illustrative hosts
