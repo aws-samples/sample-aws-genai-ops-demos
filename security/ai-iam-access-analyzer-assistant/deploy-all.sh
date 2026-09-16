@@ -168,7 +168,16 @@ DEMO_EMAIL="admin@example.com"
 # lower, digit, and symbol, so we guarantee one of each (the "Demo" prefix and "!9"
 # suffix) and add random alphanumeric entropy. Uses /dev/urandom + tr (POSIX, no
 # extra dependency) rather than openssl.
-DEMO_PASSWORD="Demo$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)!9"
+#
+# Read a FINITE chunk of /dev/urandom, THEN filter. Piping endless /dev/urandom
+# straight into "tr ... | head -c 12" lets head close the pipe after 12 bytes while
+# tr is still writing, so tr dies with SIGPIPE (exit 141); under "set -euo pipefail"
+# that 141 aborts the whole deploy right here -- before the aws cognito calls below,
+# so their "|| true" guards never get a chance to mask it. Bounding the source with
+# "head -c 256" lets tr reach EOF cleanly; only ~62/256 bytes survive the
+# alphanumeric filter, so 256 raw bytes yield ~62 chars on average -- far more than
+# the 12 that cut takes, so the segment is reliably a full 12 characters.
+DEMO_PASSWORD="Demo$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-12)!9"
 
 # Create user (ignore error if already exists)
 aws cognito-idp admin-create-user \
