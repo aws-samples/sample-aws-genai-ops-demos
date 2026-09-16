@@ -2,6 +2,24 @@ import { fetchAuthSession } from "aws-amplify/auth";
 
 const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT;
 
+/**
+ * Thrown when the synchronous /conversation call hits (or almost certainly
+ * hit) the API Gateway 29s integration limit.
+ */
+export class ApiTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+export interface PaginationContext {
+  tool: string;
+  next_token: string;
+  has_more: boolean;
+  last_input?: Record<string, unknown>;
+}
+
 interface ConversationResponse {
   response: string;
   usage?: {
@@ -12,6 +30,7 @@ interface ConversationResponse {
     tool: string;
     input_summary: string;
   }>;
+  pagination?: PaginationContext | null;
 }
 
 interface MessageHistory {
@@ -22,7 +41,8 @@ interface MessageHistory {
 export async function sendMessage(
   message: string,
   history: MessageHistory[],
-  mode: string = "guided"
+  mode: string = "guided",
+  pagination?: PaginationContext | null
 ): Promise<ConversationResponse> {
   const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
@@ -39,34 +59,25 @@ export async function sendMessage(
         "Content-Type": "application/json",
         Authorization: token,
       },
-      body: JSON.stringify({ message, history, mode }),
+      body: JSON.stringify({
+        message,
+        history,
+        mode,
+        ...(pagination ? { pagination } : {}),
+      }),
     });
   } catch {
-    // fetch() itself rejects (browser "Failed to fetch") on a network-level
-    // failure. The most common cause here is API Gateway hitting its hard 29s
-    // integration timeout on a heavy multi-tool turn and returning a 504 WITHOUT
-    // CORS headers — the browser can't read it, so it surfaces as a generic
-    // network/CORS error rather than a readable 504. Give actionable guidance
-    // instead of a bare "Failed to fetch", and steer away from blind retries
-    // (which just re-run the same slow path and fail the same way).
-    throw new Error(
-      "That request didn't finish in time — it likely ran past the API gateway's 29-second limit, " +
-        "which happens when one request chains several analysis steps (e.g. investigating a role runs " +
-        "finding details + blast radius + summarization together). Try narrowing it to a single step " +
-        "— for example \"show the finding details for ConsoleAdminAccess\" first, then ask for blast " +
-        "radius separately. If you were exporting or saving, say \"list my exports\" to check before retrying."
+    // A raw fetch rejection ("Failed to fetch") on this endpoint is almost
+    // always API Gateway's 29s integration timeout returning a 504 without
+    // CORS headers, which the browser cannot read.
+    throw new ApiTimeoutError(
+      "That request didn't finish in time — it likely ran past the API gateway's 29-second limit."
     );
   }
 
   if (!response.ok) {
-    // API Gateway enforces a hard 29-second integration timeout. On long
-    // multi-tool turns (e.g. an export that runs after other tool calls) the
-    // gateway returns 504/502 while the Lambda keeps running and may still
-    // finish its work — including writing an export to S3. Surface that clearly
-    // so users check their exports instead of blindly retrying and creating
-    // duplicate objects.
     if (response.status === 504 || response.status === 502) {
-      throw new Error(
+      throw new ApiTimeoutError(
         "The request took longer than the API gateway allows (29s), so the connection timed out. " +
           "The operation may have still completed on the server — if you were exporting or saving something, " +
           "say \"list my exports\" to check before retrying. For multi-step requests, try one step per message."

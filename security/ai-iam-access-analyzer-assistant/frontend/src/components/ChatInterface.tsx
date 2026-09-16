@@ -8,7 +8,11 @@ import Box from "@cloudscape-design/components/box";
 import Alert from "@cloudscape-design/components/alert";
 import MessageBubble from "./MessageBubble";
 import ErrorBoundary from "./ErrorBoundary";
-import { sendMessage } from "../services/api";
+import {
+  sendMessage,
+  ApiTimeoutError,
+  PaginationContext,
+} from "../services/api";
 import { Message } from "../types";
 
 const WELCOME_MESSAGE: Message = {
@@ -31,6 +35,11 @@ interface ActivityEntry {
 
 type AssistantMode = "guided" | "quick";
 
+const TIMEOUT_ADVICE =
+  "That request ran past the API gateway's 29-second limit before finishing. " +
+  "Break it into smaller steps (for example, `show my active findings`, then `generate an action plan` on its own), " +
+  "or ask for a narrower filter. Any export you were creating may still complete on the server — try `list my exports`.";
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [inputValue, setInputValue] = useState("");
@@ -39,6 +48,9 @@ export default function ChatInterface() {
   const [sessionActivity, setSessionActivity] = useState<ActivityEntry[]>([]);
   const [mode, setMode] = useState<AssistantMode>("guided");
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 });
+  // Use a ref so the current pagination cursor is read synchronously on the
+  // next send, without a re-render round trip.
+  const paginationRef = useRef<PaginationContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,7 +72,17 @@ export default function ChatInterface() {
         .filter((m) => m !== WELCOME_MESSAGE)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      const response = await sendMessage(messageToSend, history, mode);
+      const response = await sendMessage(
+        messageToSend,
+        history,
+        mode,
+        paginationRef.current
+      );
+
+      // Persist pagination cursor for deterministic follow-ups like "next 20".
+      // Clear it when the server did not return one so a later, unrelated turn
+      // doesn't accidentally continue paging the wrong list.
+      paginationRef.current = response.pagination ?? null;
 
       // Track session activity
       if (response.tools_used && response.tools_used.length > 0) {
@@ -87,7 +109,6 @@ export default function ChatInterface() {
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
-      // Track session token usage
       if (response.usage) {
         setSessionTokens((prev) => ({
           input: prev.input + (response.usage?.inputTokens || 0),
@@ -95,13 +116,14 @@ export default function ChatInterface() {
         }));
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      const isTimeout = err instanceof ApiTimeoutError;
+      const errorMsg = isTimeout ? TIMEOUT_ADVICE : err instanceof Error ? err.message : "Unknown error";
       setError(errorMsg);
-      const errorMessage: Message = {
+      const assistantMessage: Message = {
         role: "assistant",
-        content: `I encountered an error: ${errorMsg}\n\nPlease try again or rephrase your question.`,
+        content: isTimeout ? errorMsg : `I encountered an error: ${errorMsg}\n\nPlease try again or rephrase your question.`,
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, assistantMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -111,6 +133,7 @@ export default function ChatInterface() {
     setMessages([WELCOME_MESSAGE]);
     setSessionActivity([]);
     setError(null);
+    paginationRef.current = null;
   };
 
   return (
@@ -164,7 +187,6 @@ export default function ChatInterface() {
           </Alert>
         )}
 
-        {/* Session activity summary */}
         {sessionActivity.length > 0 && (
           <SessionActivityBar activities={sessionActivity} tokens={sessionTokens} />
         )}
@@ -226,7 +248,7 @@ export default function ChatInterface() {
             <Input
               value={inputValue}
               onChange={({ detail }) => setInputValue(detail.value)}
-              placeholder="Ask about IAM findings, blast radius, generate policies..."
+              placeholder="Ask about a role, finding, or policy…"
               disabled={isLoading}
             />
           </div>

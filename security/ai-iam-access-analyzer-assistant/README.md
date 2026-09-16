@@ -1,29 +1,34 @@
-# IAM Security Assistant
-
-Help teams identify and remediate overly-permissive IAM roles through natural language conversation, so they stop guessing which roles to fix and start acting on data-driven recommendations.
+# AI IAM Access Analyzer Assistant
+*Conversational least-privilege policy management powered by Amazon Bedrock*
 
 ## Overview
 
-As AWS accounts grow, IAM roles accumulate — created for projects long finished, granted broad permissions "just to get it working," or inherited from teams that moved on. Security Hub and IAM Access Analyzer flag these roles as findings, but translating findings into safe, tested policy changes still requires manual analysis: checking CloudTrail for actual usage, mapping dependencies, validating that a tighter policy won't break production.
+The AI IAM Access Analyzer Assistant provides a conversational interface for managing your AWS IAM security posture. Instead of navigating multiple console pages and writing JSON policies by hand, users ask natural language questions and receive actionable insights backed by IAM Access Analyzer findings, CloudTrail activity analysis, and policy validation.
 
-This assistant automates that analysis. It's a **read-only** conversational tool — it queries your security findings, analyzes role usage, generates recommended policies, and assesses blast radius, but **never modifies IAM roles, policies, or configurations**. Teams get expert-level analysis and ready-to-apply recommendations without risk of accidental changes.
+## What's New
 
-The core question it answers: "What should I fix first, and how do I fix it safely?"
+This release hardens the assistant for production use based on feedback from real deployments:
+
+- **Signed download links are stable for a full hour.** A dedicated presigner IAM role signs S3 URLs with a session token that stays valid for the URL's entire lifetime, so previously-issued download links no longer expire early with an `InvalidToken` error when the Lambda's own STS token rotates in the background.
+- **Common flows short-circuit deterministically.** Pagination (`next 10`, `page 3`), `generate an action plan`, `validate this policy` for a pasted JSON body, and the `generate an action plan and export it` compound now execute server-side in a single turn without a Bedrock round-trip. The model still handles novel or exploratory questions.
+- **`list_findings` no longer blocks on large accounts.** The first page returns as soon as the API replies; the total finding count is scanned lazily (or not at all, per configuration). Accounts with tens of thousands of findings no longer time out on the very first user prompt.
+- **Autonomous-agent scaffolding removed.** The standard build is now purely conversational; the experimental async-agent panel that shipped in an earlier variant has been retired to keep the codebase focused.
 
 ## At a Glance
 
-- **Time**: ~15 min deployment + immediate demo
-- **Difficulty**: Beginner
-- **Audience**: Security Engineers, Cloud Admins, TAMs/SAs demoing IAM remediation workflows
-- **Tech Stack**: React + Cloudscape, Amazon Bedrock Converse API (Claude Sonnet, toolConfig), Python 3.12, AWS CDK
-- **Estimated Cost**: ~$0.05-0.15 per session — see Cost Estimate in ARCHITECTURE.md
+- **Duration**: 15 minutes (deploy) + ongoing usage
+- **Difficulty**: Intermediate
+- **Target Audience**: Security engineers, cloud architects, DevOps teams
+- **Key Technologies**: Amazon Bedrock (Claude), IAM Access Analyzer, Security Hub, CloudTrail, Lambda, API Gateway, Cognito, CloudFront
+- **Estimated Cost**: $6-57/month depending on usage
 
 ## Business Value
 
-- **Speed**: Reduces IAM finding triage from 30+ min/role to under 2 minutes of conversation
-- **Safety**: Read-only analysis with blast radius checks — know what breaks before you touch anything
-- **Adoption**: Guided mode lowers the barrier for teams intimidated by IAM complexity
-- **Actionable**: Generates ready-to-apply policies, not just findings — export to S3 with one command
+- Reduces time to review IAM findings from hours to minutes
+- Generates least-privilege policies automatically from CloudTrail data
+- **Blast radius analysis** before any IAM change — shows exactly what would break
+- Validates policies against security best practices before deployment
+- Makes IAM security accessible to non-IAM-specialists through natural language
 
 ## What You Get
 
@@ -32,6 +37,15 @@ The core question it answers: "What should I fix first, and how do I fix it safe
 - Blast radius analysis to understand impact before modifying or deleting IAM resources
 - Policy validation against AWS best practices and IAM Access Analyzer
 - Exportable policy documents in JSON, CDK (Python/TypeScript), and CloudFormation formats
+
+### Exporting reports
+
+Every generated artifact — policies, action plans, role comparisons, blast-radius analyses — is exportable to the reports S3 bucket with a signed download link valid for 1 hour. Files stay in S3 permanently, so an expired link is never a lost report:
+
+- Ask `list my exports` to see everything that has been saved.
+- Ask `get me a new link for <filename>` to mint a fresh 1-hour download link for any file.
+
+The 1-hour lifetime is backed by a dedicated presigner IAM role the tool Lambdas assume specifically for URL signing; the URL remains valid for its full `X-Amz-Expires` window even if the Lambda's own STS credentials rotate underneath the request.
 
 ## How It Works
 
@@ -45,9 +59,7 @@ The core question it answers: "What should I fix first, and how do I fix it safe
 
 ## Interactive Demo
 
-Experience this demo in an interactive click-through walkthrough:
-
-▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/rf9tmdd93eq6)
+Coming soon.
 
 ## Prerequisites
 
@@ -107,10 +119,17 @@ User → CloudFront → S3 (React)
 | Cognito User Pool + Identity Pool | User authentication |
 | API Gateway (REST) | Request routing with Cognito authorizer |
 | Lambda (Conversation Handler) | Bedrock Converse orchestration |
-| Lambda (list_findings) | Query Security Hub for IAM findings |
-| Lambda (generate_policy) | Analyze CloudTrail and generate policies |
+| Lambda (list_findings) | Query Security Hub for IAM findings (paginated) |
+| Lambda (get_finding_details) | Fetch the full context of a single finding |
+| Lambda (generate_policy) | Analyze CloudTrail and generate least-privilege policies |
 | Lambda (check_dependencies) | Blast radius analysis — map IAM entity dependencies |
 | Lambda (validate_policy) | Validate policies via Access Analyzer |
+| Lambda (generate_action_plan) | Turn a batch of findings into a prioritized remediation plan |
+| Lambda (compare_roles) | Diff two IAM roles side-by-side |
+| Lambda (export_report) | Persist a generated artifact to S3 and mint a signed download link |
+| Lambda (list_exports) | List previously-exported artifacts and re-issue fresh download links |
+| IAM Role (ToolExecutionRole) | Shared execution role for all tool Lambdas (read-only IAM, Security Hub, CloudTrail, Access Analyzer) |
+| IAM Role (PresignerRole) | Assumed by tool Lambdas *only* to sign S3 download URLs. Read-only on the reports bucket, 1-hour session, so the URLs stay valid across Lambda credential rotation. |
 | S3 (Frontend Hosting) | React app static files |
 | S3 (Reports) | Generated policies and reports (optional — see note below) |
 | CloudFront | HTTPS distribution for frontend |
@@ -127,11 +146,28 @@ User → CloudFront → S3 (React)
 3. Ensure the tool Lambda execution role has `s3:PutObject` and `s3:GetObject` on that bucket
 4. Redeploy: `./deploy-all.sh`
 
+## Configuration
+
+Most tunables are set at CDK synth time in `infrastructure/cdk/stacks/tools_construct.py` (constructor arguments) and propagated to Lambdas as environment variables.
+
+### Pagination on large accounts — `FULL_TOTAL_SCAN`
+
+`list_findings` can either return a page of findings immediately (and let the total count settle later) or paginate through *every* finding on the first call to give an exact `total_matching` count. On an account with tens of thousands of findings the second mode makes even a "show me the first 10" request scale with the total count and can push the tool close to Lambda's 60-second timeout.
+
+The behavior is controlled by the `FULL_TOTAL_SCAN` environment variable on the tool Lambdas, wired from a `full_total_scan` argument on `ToolsConstruct`:
+
+| Value | Behavior | Response shape |
+|-------|----------|----------------|
+| `false` *(default in this stack)* | Return the first page immediately; if there are more findings, `total_matching` returns as `-1` (unknown) | Fast first paint on any account |
+| `true` | Paginate through every finding to compute the exact total on the first call | Exact `total_matching`, at the cost of first-page latency scaling with account size |
+
+To flip it on a smaller account where you always want an exact count, pass `full_total_scan=True` when instantiating `ToolsConstruct` (or set the env var directly on the tool Lambdas after deploy).
+
 ## Cost
 
 | Resource | Monthly (Low) | Monthly (Active) |
 |----------|---------------|------------------|
-| Lambda (5 functions) | $1-3 | $5-15 |
+| Lambda (10 functions) | $1-3 | $5-15 |
 | API Gateway | $1-2 | $3-5 |
 | CloudFront + S3 | $1.50 | $3-7 |
 | Cognito (< 50k MAU free) | $0 | $0 |
@@ -162,7 +198,7 @@ ai-iam-access-analyzer-assistant/
 │       │   ├── iam_analyzer_assistant_stack.py
 │       │   ├── auth_construct.py
 │       │   ├── api_construct.py
-│       │   ├── tools_construct.py
+│       │   ├── tools_construct.py     # Tool Lambdas + presigner role
 │       │   ├── storage_construct.py
 │       │   └── frontend_construct.py
 │       ├── requirements.txt
@@ -173,7 +209,12 @@ ai-iam-access-analyzer-assistant/
 │   │   ├── main.tsx
 │   │   ├── components/
 │   │   │   ├── ChatInterface.tsx
-│   │   │   └── MessageBubble.tsx
+│   │   │   ├── MessageBubble.tsx
+│   │   │   ├── PolicyViewer.tsx
+│   │   │   ├── FindingsTable.tsx
+│   │   │   ├── DependencyGraph.tsx
+│   │   │   ├── WelcomeModal.tsx
+│   │   │   └── ErrorBoundary.tsx
 │   │   ├── services/
 │   │   │   └── api.ts
 │   │   └── types/
@@ -182,17 +223,26 @@ ai-iam-access-analyzer-assistant/
 │   ├── vite.config.ts
 │   └── index.html
 ├── src/                             # Backend Lambda code
-│   ├── agent.py                     # Bedrock Converse orchestration
+│   ├── agent.py                     # Bedrock Converse orchestration + short-circuits
 │   ├── tools/
 │   │   ├── list_findings.py
 │   │   ├── get_finding_details.py
 │   │   ├── generate_policy.py
 │   │   ├── check_dependencies.py
-│   │   └── validate_policy.py
+│   │   ├── validate_policy.py
+│   │   ├── generate_action_plan.py
+│   │   ├── compare_roles.py
+│   │   ├── export_report.py
+│   │   └── list_exports.py
 │   └── requirements.txt
 ├── tests/                           # Local test harness
 │   ├── test_tools_local.py
-│   └── test_conversation_local.py
+│   ├── test_conversation_local.py
+│   ├── test_list_findings.py
+│   ├── test_pagination_shortcircuit.py
+│   ├── test_action_plan_shortcircuit.py
+│   ├── test_validate_and_export_shortcircuits.py
+│   └── test_export_report_clients.py
 └── .gitignore
 ```
 
@@ -218,7 +268,7 @@ You: Check dependencies for ConsoleAdminAccess
 Assistant: Dependency Analysis for ConsoleAdminAccess:
 
          Risk Level: LOW (Score: 0/100)
-         Quick Dependents: None
+         Direct Dependents: None
          Trust: arn:aws:iam::123456789012:root (with ExternalId condition)
          Policies Attached: None
 
@@ -434,7 +484,14 @@ aws cognito-idp admin-set-user-password \
 
 **Cause:** API Gateway has a 29-second timeout. Requests that require multiple sequential tool calls (e.g., query findings → process results → export to S3) can exceed this limit, especially in longer conversations.
 
-**Workaround:** Break multi-step requests into separate messages:
+**Update:** Several common compound requests are now handled server-side in a single turn without a Bedrock round-trip, so they no longer time out:
+
+- Pagination: `next 10`, `page 3`, `show more`
+- `generate an action plan`
+- `generate an action plan and export it`
+- `validate this policy` when the message contains a pasted policy JSON body
+
+**Workaround for other multi-step requests:** Break them into separate messages:
 
 1. First: "Show me my top findings"
 2. Then: "Export that to S3"
