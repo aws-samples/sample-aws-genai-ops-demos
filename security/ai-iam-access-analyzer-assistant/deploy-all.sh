@@ -163,7 +163,12 @@ echo " ✓ Frontend deployed."
 echo ""
 echo "Creating demo user..."
 DEMO_EMAIL="admin@example.com"
-DEMO_PASSWORD="IamAnalyzer2024!"
+# Generate a unique, strong password per deployment instead of shipping a hardcoded
+# credential in the repo. Cognito's default policy requires >=8 chars with upper,
+# lower, digit, and symbol, so we guarantee one of each (the "Demo" prefix and "!9"
+# suffix) and add random alphanumeric entropy. Uses /dev/urandom + tr (POSIX, no
+# extra dependency) rather than openssl.
+DEMO_PASSWORD="Demo$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)!9"
 
 # Create user (ignore error if already exists)
 aws cognito-idp admin-create-user \

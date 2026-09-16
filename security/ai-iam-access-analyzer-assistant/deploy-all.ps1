@@ -143,7 +143,11 @@ Write-Host " Frontend deployed." -ForegroundColor Green
 Write-Host ""
 Write-Host "Creating demo user..." -ForegroundColor Cyan
 $demoEmail = "admin@example.com"
-$demoPassword = "IamAnalyzer2024!"
+# Generate a unique, strong password per deployment instead of shipping a hardcoded
+# credential in the repo. Cognito's default policy requires >=8 chars with upper,
+# lower, digit, and symbol, so we guarantee one of each and add random entropy.
+$demoRandom = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
+$demoPassword = "Demo$demoRandom!9"
 
 # Create user (ignore error if already exists)
 try {
