@@ -36,7 +36,7 @@ const SCOPE_OPTIONS = [
   { label: 'Extended Support exposure', value: 'cost', description: 'RDS/Aurora versions billing or about to bill Extended Support' },
   { label: 'By status', options: Object.entries(STATUS_META).map(([value, m]) => ({ label: m.label, value })) },
 ];
-const FLAT_SCOPE_OPTIONS = SCOPE_OPTIONS.flatMap((o) => ('options' in o ? o.options : [o]));
+const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.flatMap((o) => ('options' in o && o.options ? o.options : [o as { label: string; value: string }]));
 
 // Table preferences (page size, visible columns); kept per browser
 const PREFS_KEY = 'lifecycle-resources-preferences';

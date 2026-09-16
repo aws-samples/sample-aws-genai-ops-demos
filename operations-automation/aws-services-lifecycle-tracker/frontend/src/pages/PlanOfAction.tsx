@@ -45,6 +45,10 @@ const PRIORITY_OPTIONS = [
 ];
 const PRIORITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATUS_RANK: Record<string, number> = { blocked: 0, in_progress: 1, not_started: 2, completed: 3 };
+const defaultOrder = (a: ActionPlan, b: ActionPlan): number =>
+  (STATUS_RANK[a.plan_status] ?? 9) - (STATUS_RANK[b.plan_status] ?? 9)
+  || (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9)
+  || (a.target_date || '9999').localeCompare(b.target_date || '9999');
 
 // Filter dropdowns: "all" first, then the values
 const withAll = (label: string, options: { label: string; value: string }[]) => [{ label, value: 'all' }, ...options];
@@ -255,10 +259,7 @@ export default function PlanOfAction() {
       filteringFunction: (p, text) => `${p.service_name} ${serviceLabel(p.service_name)} ${p.item_name} ${p.item_id} ${p.owner} ${p.notes || ''}`.toLowerCase().includes(text.toLowerCase()),
     },
     // default order: blocked and in progress first, then priority, then target date
-    sorting: { defaultState: { sortingColumn: { sortingComparator: (a: ActionPlan, b: ActionPlan) =>
-      (STATUS_RANK[a.plan_status] ?? 9) - (STATUS_RANK[b.plan_status] ?? 9)
-      || (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9)
-      || (a.target_date || '9999').localeCompare(b.target_date || '9999') } } } },
+    sorting: { defaultState: { sortingColumn: { sortingComparator: defaultOrder } } },
     pagination: { pageSize: preferences.pageSize },
     selection: { trackBy: 'plan_id' },
   });

@@ -38,7 +38,7 @@ const SCOPE_OPTIONS = [
     options: Object.entries(STATUS_META).filter(([k]) => k !== 'unknown').map(([value, m]) => ({ label: m.label, value })),
   },
 ];
-const FLAT_SCOPE_OPTIONS = SCOPE_OPTIONS.flatMap((o) => ('options' in o ? o.options : [o]));
+const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.flatMap((o) => ('options' in o && o.options ? o.options : [o as { label: string; value: string }]));
 
 // Dates worth showing, in display order
 const DATE_LABELS: Array<[string, string]> = [
