@@ -342,6 +342,8 @@ export default function Services() {
         items={services}
         loading={loading}
         loadingText="Loading services..."
+        variant="full-page"
+        stickyHeader
         empty={
           <Box textAlign="center" color="inherit">
             <Box padding={{ bottom: 's' }} variant="p" color="inherit">
