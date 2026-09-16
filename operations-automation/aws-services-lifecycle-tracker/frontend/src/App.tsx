@@ -6,6 +6,7 @@ import SideNavigation from '@cloudscape-design/components/side-navigation';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Box from '@cloudscape-design/components/box';
 import SplitPanel from '@cloudscape-design/components/split-panel';
+import Button from '@cloudscape-design/components/button';
 import AuthModal from './AuthModal';
 import { SplitPanelContext, SplitPanelContent } from './split-panel';
 import { getCurrentUser, signOut, AuthUser } from './auth';
@@ -188,20 +189,9 @@ function AppContent() {
                     <Box variant="p" padding={{ bottom: 'm' }} color="text-body-secondary">
                       Please sign in to access the admin interface
                     </Box>
-                    <button
-                      onClick={() => setShowAuthModal(true)}
-                      style={{
-                        padding: '10px 20px',
-                        fontSize: '16px',
-                        cursor: 'pointer',
-                        backgroundColor: '#0972d3',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px'
-                      }}
-                    >
-                      Sign In
-                    </button>
+                    <Button variant="primary" iconName="lock-private" onClick={() => setShowAuthModal(true)}>
+                      Sign in
+                    </Button>
                   </Box>
                 ) : (
                   <Routes>
