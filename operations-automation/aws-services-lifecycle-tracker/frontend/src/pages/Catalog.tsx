@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Table from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Badge from '@cloudscape-design/components/badge';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
@@ -168,8 +169,17 @@ export default function Catalog() {
         }
         empty={
           <Box textAlign="center" padding="l" color="text-body-secondary">
-            <Box variant="strong">{facts.length === 0 ? 'The catalog is empty' : 'No facts match these filters'}</Box>
-            <Box variant="p">{facts.length === 0 ? 'Choose Refresh on My exposure to extract the deprecation facts.' : 'Clear the search or widen the scope.'}</Box>
+            <SpaceBetween size="xs">
+              <Box variant="strong">{facts.length === 0 ? 'The catalog is empty' : 'No facts match these filters'}</Box>
+              <Box variant="p">{facts.length === 0 ? 'Choose Refresh on My exposure to extract the deprecation facts.' : 'Clear the search or widen the scope.'}</Box>
+              {facts.length === 0
+                ? <Button onClick={() => navigate('/dashboard')}>Go to My exposure</Button>
+                : <Button onClick={() => {
+                    filterProps.onChange({ detail: { filteringText: '' } } as any);
+                    setFilterText(''); setScope('all'); setService('all'); setOnlyMine(false);
+                    updateParams({ q: '', status: 'all', service: 'all', mine: '0' });
+                  }}>Clear filters</Button>}
+            </SpaceBetween>
           </Box>
         }
         columnDefinitions={[

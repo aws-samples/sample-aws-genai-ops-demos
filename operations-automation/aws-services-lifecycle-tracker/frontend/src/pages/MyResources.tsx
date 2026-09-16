@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Table, { TableProps } from '@cloudscape-design/components/table';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
@@ -105,6 +105,7 @@ const relative = (iso: string | null | undefined): string => {
 };
 
 export default function MyResources() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [rows, setRows] = useState<DeprecationItem[]>([]);
   const [facts, setFacts] = useState<DeprecationItem[]>([]);
@@ -203,6 +204,12 @@ export default function MyResources() {
   // Same arithmetic as the dashboard KPI, over the rows shown, so the two reconcile
   const costTotals = useMemo(() => (scope === 'cost' ? costTimeline([...allPageItems]) : null), [scope, allPageItems]);
   const shown = filteredItemsCount ?? scoped.length;
+  const hasTokens = propertyFilterProps.query.tokens.length > 0;
+  const clearFilters = () => {
+    propertyFilterProps.onChange({ detail: { tokens: [], operation: 'and' } } as any);
+    setScope('all');
+    updateParams({ q: '', service: '', region: '', account: '', status: 'all' });
+  };
   const factFor = (r: DeprecationItem) =>
     r.service_specific?.matched_lifecycle_item ? factById.get(`${r.service_name}|${r.service_specific.matched_lifecycle_item}`) : undefined;
 
@@ -312,14 +319,21 @@ export default function MyResources() {
         }
         empty={
           <Box textAlign="center" padding="l" color="text-body-secondary">
-            <Box variant="strong">
-              {rows.length === 0 ? 'No resources scanned yet' : scope === 'concerns' ? 'Nothing needs attention' : 'No resources match these filters'}
-            </Box>
-            <Box variant="p">
+            <SpaceBetween size="xs">
+              <Box variant="strong">
+                {rows.length === 0 ? 'No resources scanned yet' : scope === 'concerns' && !hasTokens ? 'Nothing needs attention' : 'No resources match these filters'}
+              </Box>
+              <Box variant="p">
+                {rows.length === 0
+                  ? 'Choose Refresh on My exposure to scan your accounts.'
+                  : `Last scan ${relative(coverage?.last_scan.last_verified)}.${scope === 'concerns' && !hasTokens ? ' Supported and unmatched versions are under Everything found.' : ''}`}
+              </Box>
               {rows.length === 0
-                ? 'Click Refresh on My exposure to scan your account(s).'
-                : `Last scan ${relative(coverage?.last_scan.last_verified)}. ${scope === 'concerns' ? 'Switch the scope to "Everything found" to see supported versions too.' : ''}`}
-            </Box>
+                ? <Button onClick={() => navigate('/dashboard')}>Go to My exposure</Button>
+                : scope === 'concerns' && !hasTokens
+                  ? <Button onClick={() => { setScope('all'); updateParams({ status: 'all' }); }}>Show everything found</Button>
+                  : <Button onClick={clearFilters}>Clear filters</Button>}
+            </SpaceBetween>
           </Box>
         }
         columnDefinitions={[
