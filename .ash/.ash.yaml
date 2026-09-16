@@ -257,6 +257,20 @@ global_settings:
       line_start: 97
       line_end: 97
       reason: "False positive: keyword match on demo/config code, not a secret"
+    # Illustrative example webhook URLs in documentation (they intentionally show the
+    # shape of a real Slack webhook so readers recognize it). Not secrets. The
+    # contributor-guide entry is the anti-pattern EXAMPLE in the placeholder convention
+    # itself; suppressing it keeps the doc that teaches the rule from tripping the rule.
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: ".kiro/steering/contributor-guide.md"
+      line_start: 490
+      line_end: 490
+      reason: "False positive: anti-pattern example in the placeholder convention doc, not a secret"
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: "observability/proactive-health-event-impact-analyzer/docs/slack-integration.md"
+      line_start: 127
+      line_end: 127
+      reason: "False positive: illustrative example webhook URL in docs, not a secret"
 
 scanners:
   # cdk-nag and cfn-nag evaluate SYNTHESIZED CloudFormation templates, not source.
