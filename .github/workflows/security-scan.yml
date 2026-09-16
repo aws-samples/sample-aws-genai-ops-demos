@@ -3,6 +3,9 @@ name: Security Scan (ASH)
 on:
   pull_request:
     branches: [main]
+  # Manual trigger so the workflow can be validated on a branch (real ubuntu-latest run)
+  # before it becomes a required check on other PRs.
+  workflow_dispatch: {}
 
 jobs:
   security-scan:
@@ -16,20 +19,51 @@ jobs:
       - name: Run ASH security scan
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          uvx git+https://github.com/awslabs/automated-security-helper.git@v3 \
-            --mode local \
-            --fail-on-findings false \
+          # ASH v3 uses subcommands: `ash scan ...` (v2's flat `--fail-on-findings false`
+          # value syntax is gone -- in v3 `false` parsed as a bogus COMMAND, which is why
+          # earlier runs died with `No such command 'false'` and exit 2, masked green by
+          # continue-on-error). Notes on the flags:
+          #   scan                          -> the v3 command (default, but explicit here)
+          #   --mode container              -> run scanners inside ASH's image, which bundles
+          #                                    the full toolset (cfn-nag, grype, syft,
+          #                                    git-secrets, checkov, bandit, semgrep, ...).
+          #                                    ubuntu-latest ships Docker. In `local` mode the
+          #                                    non-Python scanners are absent -> MISSING ->
+          #                                    silently green, which we do NOT want.
+          #   --fail-on-incomplete-scanners -> an incomplete scan is NOT a clean scan: exit 1
+          #                                    if any selected scanner is ERROR/MISSING,
+          #                                    instead of the default exit 0.
+          # We intentionally do NOT pass --fail-on-findings, so *findings* stay report-only.
+          # FIRST-ITERATION SAFETY: continue-on-error below keeps this from hard-blocking every
+          # open PR while we confirm it behaves on real ubuntu-latest runs. A follow-up PR will
+          # remove continue-on-error to make crashes / incomplete scans a true gate.
+          uvx git+https://github.com/awslabs/automated-security-helper.git@v3 scan \
+            --mode container \
+            --fail-on-incomplete-scanners \
+            --source-dir . \
             --output-dir .ash/output
         continue-on-error: true
 
       - name: Report findings
+        # Run even when the scan step failed, so a crash / incomplete scan still surfaces a
+        # diagnostic in the job summary instead of silently vanishing.
+        if: always()
         run: |
-          if [ -f .ash/output/reports/ash.summary.txt ]; then
-            echo "## ASH Security Scan Results" >> $GITHUB_STEP_SUMMARY
-            cat .ash/output/reports/ash.summary.txt >> $GITHUB_STEP_SUMMARY
+          echo "## ASH Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          # ASH v3 writes reports under <output-dir>/reports/. Prefer the markdown summary,
+          # fall back to the text one.
+          SUMMARY=""
+          for f in .ash/output/reports/ash.summary.md .ash/output/reports/ash.summary.txt; do
+            if [ -f "$f" ]; then SUMMARY="$f"; break; fi
+          done
+          if [ -n "$SUMMARY" ]; then
+            cat "$SUMMARY" >> $GITHUB_STEP_SUMMARY
           else
-            echo "## ASH Security Scan" >> $GITHUB_STEP_SUMMARY
-            echo "Scan completed — no summary file generated." >> $GITHUB_STEP_SUMMARY
+            # No summary means the scan did not complete normally (e.g. it errored before
+            # producing a report). Say so plainly rather than implying success, and point to
+            # the uploaded artifact / step logs.
+            echo "⚠️ No ASH summary report was produced — the scan likely did not complete." >> $GITHUB_STEP_SUMMARY
+            echo "See the failed 'Run ASH security scan' step logs and the uploaded 'ash-scan-results' artifact." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload scan results
