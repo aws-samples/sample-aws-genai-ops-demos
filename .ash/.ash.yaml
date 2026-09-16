@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+#
+# Repo-root ASH configuration for the Security Scan (ASH) GitHub workflow
+# (.github/workflows/security-scan.yml), which scans the whole repo with
+# `ash scan --mode container --source-dir .`.
+#
+# Purpose of this file: make the repo-wide scan COMPLETE cleanly so it can be a
+# true gate. Two adjustments, both explained inline:
+#   1. Disable the CDK/CloudFormation *template* scanners (cdk-nag, cfn-nag) for
+#      this source scan.
+#   2. Ignore build artifacts and demo-owned ASH content that are not this
+#      repo's source to validate.
+#
+# NOTE: this is NOT the same as security/prowler-security-findings-agent/.ash/.ash.yaml,
+# which is that DEMO's own content (the demo demonstrates ASH as a feature). This
+# file is repo-level config for our CI security scan.
+project_name: sample-aws-genai-ops-demos
+
+global_settings:
+  severity_threshold: MEDIUM
+  ignore_paths:
+    # Build artifacts / generated output — regenerated each build, not our source.
+    - path: "**/node_modules/**"
+      reason: "Transitive JS dependencies — covered via npm-audit + lockfile review"
+    - path: "**/cdk.out/**"
+      reason: "Generated CloudFormation from cdk synth — regenerated each deploy"
+    - path: "**/.venv/**"
+      reason: "Python virtualenvs created by demo deploy scripts"
+    - path: "**/dist/**"
+      reason: "Frontend build output — regenerated each deploy"
+    - path: "**/__pycache__/**"
+      reason: "Python bytecode caches"
+    # Demo-owned ASH content: the prowler demo ships its own .ash config/outputs to
+    # DEMONSTRATE ASH. Scanning another tool's demonstration content as if it were our
+    # infra is noise (and its config/outputs are not ours to validate).
+    - path: "**/prowler-security-findings-agent/.ash/**"
+      reason: "Demo-owned ASH config/outputs — the demo demonstrates ASH itself"
+
+scanners:
+  # cdk-nag and cfn-nag evaluate SYNTHESIZED CloudFormation templates, not source.
+  # In this repo-root source scan there is no `cdk synth` output, so they have no
+  # legitimate CDK template to evaluate — and cdk-nag ERRORs trying to parse
+  # unrelated multi-document Kubernetes / Spring / buildspec YAML
+  # (ComposerError: expected a single document), which marks the whole scan
+  # incomplete. Disable them here (SKIPPED, not ERROR) so the scan completes.
+  #
+  # Real IaC coverage is a separate follow-up: a synth stage that runs `cdk synth`
+  # and scans the resulting templates. See the tracking issue.
+  cdk-nag:
+    enabled: false
+  cfn-nag:
+    enabled: false
