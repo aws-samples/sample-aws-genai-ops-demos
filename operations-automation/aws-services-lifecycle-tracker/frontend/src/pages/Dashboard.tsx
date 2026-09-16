@@ -19,7 +19,7 @@ import {
   DeprecationItem, RefreshProgress, ScanCoverage,
 } from '../api';
 import {
-  statusMeta, isConcern, getDeadline, urgencyOf, formatDaysLeft, formatDate,
+  statusMeta, isConcern, getDeadline, formatDaysLeft, formatDate, exposureBucket, EXPOSURE_BUCKETS, distinctVersions,
   urgencySort, serviceLabel, itemName, resourceCount, resourceWord, costExposure, formatUsd, costTimeline, formatMonth,
 } from '../lifecycle';
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
@@ -31,8 +31,14 @@ import { InfoLink } from '../help';
 // re-attach to it after a page navigation or reload.
 const REFRESH_ARN_KEY = 'lifecycle-refresh-execution-arn';
 
+// KPI figure: resources behind the rows; sub-line: distinct versions (same version
+// in two accounts or regions counts once)
 const total = (rows: DeprecationItem[]) =>
   rows.reduce((n, r) => n + (Number(r.service_specific?.total_affected) || 0), 0);
+const versions = (rows: DeprecationItem[]) => {
+  const n = distinctVersions(rows);
+  return `${n} version${n === 1 ? '' : 's'}`;
+};
 
 const relative = (iso: string | null | undefined): string => {
   if (!iso) return 'never';
@@ -145,13 +151,11 @@ export default function Dashboard() {
   // ---- derived numbers (all from the inventory, i.e. MY resources) ----------
   const exposure = useMemo(() => {
     const concerns = inventory.filter((r) => isConcern(r.status));
+    // same buckets as the My resources horizon scopes, so each KPI links to what it counts
     const byUrgency = { past: [] as DeprecationItem[], soon: [] as DeprecationItem[], year: [] as DeprecationItem[], later: [] as DeprecationItem[] };
     for (const r of concerns) {
-      const u = urgencyOf(getDeadline(r));
-      if (r.status === 'end_of_life' || u === 'past') byUrgency.past.push(r);
-      else if (u === 'soon') byUrgency.soon.push(r);
-      else if (u === 'year' || u === 'none') byUrgency.year.push(r);
-      else byUrgency.later.push(r);
+      const b = exposureBucket(r);
+      if (b !== 'fine') byUrgency[b].push(r);
     }
     const fine = inventory.filter((r) => !isConcern(r.status));
     return { concerns, byUrgency, fine, all: inventory };
@@ -205,11 +209,12 @@ export default function Dashboard() {
   const money = useMemo(() => costTimeline(inventory), [inventory]);
   // Short line under the figure; the full breakdown sits in a popover on it
   const moneySub = useMemo(() => {
-    const short = money.now
-      ? `${money.now} billing now, ${money.within12} more within 12 months`
-      : money.within12
-        ? `${money.within12} of ${money.priced} start within 12 months`
-        : `nothing due within 12 months (${money.priced} priced)`;
+    // what comes next, in dollars, with the month it starts
+    const short = money.within12
+      ? `+${formatUsd(money.monthlyWithin12)}/month from ${formatMonth(money.nextStart)} · ${formatUsd(money.forecast12)} over 12 months`
+      : money.later
+        ? `next start ${formatMonth(money.nextStart)} (+${formatUsd(money.monthlyLater)}/month) · ${formatUsd(money.forecast12)} over 12 months`
+        : `nothing more coming · ${formatUsd(money.forecast12)} over 12 months`;
     const lines = [
       money.now ? `${money.now} billing now: ${formatUsd(money.monthlyNow)}/month` : '',
       money.within12 ? `${money.within12} start within 12 months: +${formatUsd(money.monthlyWithin12)}/month${money.nextStart ? `, first in ${formatMonth(money.nextStart)}` : ''}` : '',
@@ -277,11 +282,12 @@ export default function Dashboard() {
             columns={money.priced ? 5 : 4}
             ariaLabel="Exposure summary"
             items={[
-              kpi('Past end of life', total(exposure.byUrgency.past), `${exposure.byUrgency.past.length} version${exposure.byUrgency.past.length === 1 ? '' : 's'}, act now`, 'text-status-error', () => goResources('end_of_life')),
-              kpi('Ending in 90 days', total(exposure.byUrgency.soon), `${exposure.byUrgency.soon.length} version${exposure.byUrgency.soon.length === 1 ? '' : 's'}, plan the upgrade`, 'text-status-error', () => goResources()),
-              kpi('Ending in a year', total(exposure.byUrgency.year), `${exposure.byUrgency.year.length} version${exposure.byUrgency.year.length === 1 ? '' : 's'}, schedule it`, 'text-status-warning', () => goResources()),
-              kpi('Fine for now', total(exposure.fine), `${exposure.fine.length} version${exposure.fine.length === 1 ? '' : 's'} supported or unmatched`, 'text-status-success', () => goResources('supported')),
-              ...(money.priced > 0 ? [kpi('Extended Support, 12 months', formatUsd(money.forecast12), moneySub,
+              kpi(EXPOSURE_BUCKETS.past, total(exposure.byUrgency.past), `${versions(exposure.byUrgency.past)}, act now`, 'text-status-error', () => goResources('past')),
+              kpi(EXPOSURE_BUCKETS.soon, total(exposure.byUrgency.soon), `${versions(exposure.byUrgency.soon)}, plan the upgrade`, 'text-status-error', () => goResources('soon')),
+              kpi(EXPOSURE_BUCKETS.year, total(exposure.byUrgency.year), `${versions(exposure.byUrgency.year)}, schedule it`, 'text-status-warning', () => goResources('year')),
+              kpi(EXPOSURE_BUCKETS.fine, total(exposure.fine), `${versions(exposure.fine)} supported or unmatched`, 'text-status-success', () => goResources('fine')),
+              // headline = what Extended Support bills today; sub-line = what is coming
+              ...(money.priced > 0 ? [kpi('Extended Support now', `${formatUsd(money.monthlyNow)}/month`, moneySub,
                 money.now ? 'text-status-error' : money.within12 ? 'text-status-warning' : 'text-status-success', () => goResources('cost'))] : []),
             ]}
           />
@@ -362,7 +368,7 @@ export default function Dashboard() {
           },
           {
             id: 'services',
-            label: 'By service',
+            label: `By service (${byService.length})`,
             content: (
               <Table
                 variant="embedded"

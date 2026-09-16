@@ -1,6 +1,7 @@
 import Steps, { StepsProps } from '@cloudscape-design/components/steps';
 import ProgressBar from '@cloudscape-design/components/progress-bar';
 import Box from '@cloudscape-design/components/box';
+import Icon from '@cloudscape-design/components/icon';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
@@ -18,10 +19,12 @@ const STATUS_LABEL: Record<RefreshPhase['status'], string> = {
   pending: 'Pending', 'in-progress': 'In progress', success: 'Done', warning: 'Done with failures', error: 'Failed', stopped: 'Skipped',
 };
 
+// The phase where Amazon Bedrock reads the documentation pages (label set by the API)
+const isGenAi = (p: RefreshPhase) => p.label.startsWith('Update the catalog');
 const detailsFor = (p: RefreshPhase) => {
   if (p.status === 'in-progress' && p.total && p.total > 1) {
     const pct = Math.round(((p.done + p.failed) / p.total) * 100);
-    const info = `${p.done} of ${p.total} done${p.failed ? `, ${p.failed} failed` : ''}${p.running.length ? ` · running: ${p.running.join(', ')}` : ''}`;
+    const info = `${p.done} of ${p.total} done${p.failed ? `, ${p.failed} failed` : ''}${p.running.length ? ` · running: ${p.running.join(', ')}` : ''}${isGenAi(p) ? ' · Amazon Bedrock reads the documentation pages' : ''}`;
     return <ProgressBar value={pct} additionalInfo={info} ariaLabel={`${p.label}: ${info}`} />;
   }
   if (p.status === 'in-progress') return <Box variant="small">Running</Box>;
@@ -36,7 +39,8 @@ export default function RefreshSteps({ phases, running }: { phases: RefreshPhase
   const steps: StepsProps.Step[] = phases.map((p) => ({
     status: p.status === 'in-progress' ? (p.total && p.total > 1 ? 'in-progress' : 'loading') : p.status,
     statusIconAriaLabel: STATUS_LABEL[p.status],
-    header: p.label,
+    // The catalog phase is the generative AI one: sparkle icon (Cloudscape gen AI iconography)
+    header: isGenAi(p) ? <><Icon name="gen-ai" size="small" ariaLabel="Generative AI" /> {p.label}</> : p.label,
     details: detailsFor(p),
   }));
   const current = phases.find((p) => p.status === 'in-progress');

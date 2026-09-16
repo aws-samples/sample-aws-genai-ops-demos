@@ -3,6 +3,7 @@
 import { createContext, useContext, ReactNode } from 'react';
 import Box from '@cloudscape-design/components/box';
 import HelpPanel from '@cloudscape-design/components/help-panel';
+import Icon from '@cloudscape-design/components/icon';
 import Link from '@cloudscape-design/components/link';
 
 export const HelpContext = createContext<() => void>(() => {});
@@ -26,6 +27,21 @@ const Dl = ({ items }: { items: Array<[string, ReactNode]> }) => (
 
 const DOCS = 'https://github.com/aws-samples/sample-aws-genai-ops-demos/tree/main/operations-automation/aws-services-lifecycle-tracker';
 
+// Transparency block (Cloudscape generative AI principles: capabilities and
+// limits, user control, errors). Reused on every page that shows AI output.
+const GenAiNotice = () => (
+  <>
+    <h3><Icon name="gen-ai" size="small" /> Generative AI in this demo</h3>
+    <p>The catalog is the only generative AI output. During a refresh, Amazon Bedrock (Amazon Nova 2 Lite) reads the version tables of each AWS documentation page listed on Sources &amp; coverage and returns the version facts as structured data: version, dates, status. Nothing else is generated: the account scan, the matching, the Health cross-check and the cost estimate are plain code.</p>
+    <Dl items={[
+      ['What can go wrong', 'A date read from a badly formatted table, a version missed, a status inferred wrongly. Every fact keeps a link to its source page: verify before you act on it.'],
+      ['Your control', 'Disable a service on Sources & coverage to stop extracting it, or re-run one service there. The catalog has no effect on your AWS resources.'],
+      ['Errors', 'A page the model could not turn into facts counts as a failed extraction: see Success rate on Sources & coverage and the refresh steps on My exposure.'],
+      ['Your data', 'Only public documentation pages are sent to the model. Resource names, ARNs and account IDs never leave your account.'],
+    ]} />
+  </>
+);
+
 const HELP: Record<string, { header: string; content: ReactNode }> = {
   '/dashboard': {
     header: 'My exposure',
@@ -35,7 +51,7 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
         <h3>Refresh</h3>
         <p>One end-to-end run, executed server-side as a Lambda durable function; it continues if you leave the page.</p>
         <ol>
-          <li>Catalog: extracts the deprecation facts from the AWS documentation for every enabled service.</li>
+          <li>Catalog (generative AI, sparkle icon): Amazon Bedrock extracts the deprecation facts from the AWS documentation for every enabled service.</li>
           <li>Scan: lists resources in your accounts and regions with the account scanners (see Sources &amp; coverage) and matches each version against the catalog.</li>
           <li>Reconcile: updates your inventory, cross-checks open AWS Health notices and publishes a summary to SNS.</li>
         </ol>
@@ -44,8 +60,9 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
           ['Past end of life', 'Resources on a version whose end of support date has passed.'],
           ['Ending in 90 days / in a year', 'Resources with a deadline in that window.'],
           ['Fine for now', 'Resources on a supported version, or on a version the catalog does not know.'],
-          ['Extended Support, 12 months', 'What RDS and Aurora Extended Support would bill over the next 12 months at current size, always on. A list-price estimate, not a bill.'],
+          ['Extended Support now', 'What RDS and Aurora Extended Support bills today at current size, always on, and what is coming with its start month. A list-price estimate, not a bill.'],
         ]} />
+        <GenAiNotice />
       </>
     ),
   },
@@ -81,8 +98,7 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
           ['Everything', 'Including versions still supported.'],
           ['Only what I run', 'Restrict to versions found in your accounts.'],
         ]} />
-        <h3>Extraction</h3>
-        <p>Runs during Refresh on My exposure, or per service from Sources &amp; coverage. Amazon Bedrock reads the documentation page and emits structured facts; the source link on each row lets you verify them.</p>
+        <GenAiNotice />
       </>
     ),
   },
@@ -129,6 +145,7 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
         ]} />
         <h3>Extended Support pricing and AWS Health</h3>
         <p>The footer says whether the Price List API answered for this region and whether the AWS Health cross-check ran (it needs Business Support or higher in the scanned account).</p>
+        <GenAiNotice />
       </>
     ),
   },
