@@ -50,3 +50,20 @@ scanners:
     enabled: false
   cfn-nag:
     enabled: false
+
+  # Bandit: point at the repo-root bandit.yaml, which skips ONLY B101 (assert_used).
+  # B101 alone is ~1,065 of ~1,240 findings (86%) — LOW-severity `assert` hygiene, not a
+  # security issue — and it buries the actionable (>=MEDIUM) findings in the report. This
+  # affects report READABILITY only; the scan gates on incomplete scanners, not findings.
+  # Every other Bandit rule stays active. See bandit.yaml for the rationale.
+  bandit:
+    options:
+      config_file: bandit.yaml
+
+  # Checkov: skip the one demo's raw Kubernetes manifests. These CKV_K8S_* findings
+  # (28 of them, all under eks-investigation-devops-agent/k8s/) are on illustrative demo
+  # manifests, not deployed infrastructure. skip_path takes a regex matched against paths.
+  checkov:
+    options:
+      skip_path:
+        - ".*/eks-investigation-devops-agent/k8s/.*"
