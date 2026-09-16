@@ -92,6 +92,26 @@ export const urgencyOf = (deadline: Deadline | null): Urgency => {
   return 'later';
 };
 
+// Exposure buckets: the four "My exposure" KPIs and the matching My resources
+// scopes (?status=past|soon|year|fine) share this so a KPI links to exactly the
+// rows it counted. 'later' = a concern whose deadline is more than a year away.
+export type ExposureBucket = 'past' | 'soon' | 'year' | 'later' | 'fine';
+export const exposureBucket = (row: DeprecationItem): ExposureBucket => {
+  if (!isConcern(row.status)) return 'fine';
+  const u = urgencyOf(getDeadline(row));
+  if (row.status === 'end_of_life' || u === 'past') return 'past';
+  if (u === 'soon') return 'soon';
+  if (u === 'year' || u === 'none') return 'year';
+  return 'later';
+};
+export const EXPOSURE_BUCKETS: Record<ExposureBucket, string> = {
+  past: 'Past end of life', soon: 'Ending in 90 days', year: 'Ending in a year', later: 'Ending after a year', fine: 'Fine for now',
+};
+// Distinct versions (service + version identifier) behind a set of rows: the same
+// runtime in two accounts or regions is one version.
+export const distinctVersions = (rows: DeprecationItem[]): number =>
+  new Set(rows.map((r) => `${r.service_name}|${r.service_specific?.identifier || itemName(r)}`)).size;
+
 export const URGENCY_META: Record<Urgency, { label: string; indicator: IndicatorType }> = {
   past: { label: 'Passed', indicator: 'error' },
   soon: { label: '≤ 90 days', indicator: 'error' },

@@ -24,6 +24,7 @@ import { getLifecycleData, getActionPlans, createActionPlan, getScanners, Deprec
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
   resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
+  exposureBucket, EXPOSURE_BUCKETS, ExposureBucket,
 } from '../lifecycle';
 import ResourceDetails, { resourceDetailsHeader } from '../components/ResourceDetails';
 import { InfoLink } from '../help';
@@ -34,8 +35,11 @@ const SCOPE_OPTIONS = [
   { label: 'Needs attention', value: 'concerns', description: 'End of life, deprecated, past standard support or ending within a year' },
   { label: 'Everything found', value: 'all', description: 'Including supported and unmatched versions' },
   { label: 'Extended Support exposure', value: 'cost', description: 'RDS/Aurora versions billing or about to bill Extended Support' },
+  // the four My exposure KPIs
+  { label: 'By horizon', options: (['past', 'soon', 'year', 'later', 'fine'] as ExposureBucket[]).map((value) => ({ label: EXPOSURE_BUCKETS[value], value })) },
   { label: 'By status', options: Object.entries(STATUS_META).map(([value, m]) => ({ label: m.label, value })) },
 ];
+const isBucket = (v: string): v is ExposureBucket => v in EXPOSURE_BUCKETS;
 const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.flatMap((o) => ('options' in o && o.options ? o.options : [o as { label: string; value: string }]));
 
 // Table preferences (page size, visible columns); kept per browser
@@ -167,6 +171,7 @@ export default function MyResources() {
     let out = [...rows];
     if (scope === 'concerns') out = out.filter((r) => isConcern(r.status));
     else if (scope === 'cost') out = out.filter((r) => (costExposure(r)?.resources_priced ?? 0) > 0);
+    else if (isBucket(scope)) out = out.filter((r) => exposureBucket(r) === scope);
     else if (scope !== 'all') out = out.filter((r) => r.status === scope);
     out.sort(urgencySort);
     if (scope === 'cost') {
@@ -298,6 +303,7 @@ export default function MyResources() {
           >
             {scope === 'all' ? 'All AWS versions running in your resources'
               : scope === 'cost' ? 'RDS Extended Support exposure'
+              : isBucket(scope) ? `${EXPOSURE_BUCKETS[scope]}: versions running in your resources`
               : scope === 'supported' ? 'Supported AWS versions running in your resources'
               : 'Deprecated AWS versions impacting your resources'}
           </Header>
