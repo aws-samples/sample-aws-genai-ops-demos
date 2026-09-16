@@ -28,6 +28,7 @@ import {
   DeprecationItem
 } from '../api';
 import { isConcern, urgencySort, serviceLabel, itemName, statusMeta, resourceCount, resourceWord } from '../lifecycle';
+import { InfoLink } from '../help';
 
 const STATUS_OPTIONS = [
   { label: 'Not Started', value: 'not_started' },
@@ -290,6 +291,7 @@ export default function PlanOfAction() {
         header={
           <Header
             variant="h1"
+            info={<InfoLink />}
             counter={shown === plans.length ? `(${plans.length})` : `(${shown} of ${plans.length})`}
             description="Who is upgrading what, by when. Create plans here or from My resources; select a plan to edit or delete it."
             actions={

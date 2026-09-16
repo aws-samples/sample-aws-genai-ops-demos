@@ -24,6 +24,7 @@ import {
 } from '../lifecycle';
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 import RefreshSteps from '../components/RefreshSteps';
+import { InfoLink } from '../help';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -254,27 +255,11 @@ export default function Dashboard() {
           <Header
             variant="h1"
             description={`Resources in ${multiAccount ? 'your accounts' : 'this account'} running versions that AWS is retiring, matched against the deprecation facts published in the AWS documentation.`}
+            info={<InfoLink />}
             actions={
-              <SpaceBetween direction="horizontal" size="xxs">
-                <Button variant="primary" iconName="refresh" loading={refreshing} onClick={handleRefresh} disabled={refreshing}>
-                  {refreshing ? 'Refreshing' : 'Refresh'}
-                </Button>
-                <Popover dismissButton={false} position="bottom" size="medium" triggerType="text"
-                  content={
-                    <SpaceBetween size="xs">
-                      <Box variant="strong">One end-to-end run (Lambda durable function):</Box>
-                      <Box variant="small">1. Updates the catalog: deprecation facts from the AWS documentation for every enabled service.</Box>
-                      <Box variant="small">
-                        2. Scans this account with {coverage?.scanners.length ?? 0} scanners
-                        {coverage ? ` (${coverage.scanners.map((s) => s.label).join(', ')})` : ''} and matches what it finds against the catalog.
-                      </Box>
-                      <Box variant="small">3. Reconciles your inventory and publishes a summary to SNS.</Box>
-                      <Box variant="small" color="text-body-secondary">The run continues server-side if you navigate away.</Box>
-                    </SpaceBetween>
-                  }>
-                  <Box color="text-status-info" display="inline">ⓘ</Box>
-                </Popover>
-              </SpaceBetween>
+              <Button variant="primary" iconName="refresh" loading={refreshing} onClick={handleRefresh} disabled={refreshing}>
+                {refreshing ? 'Refreshing' : 'Refresh'}
+              </Button>
             }
           >
             My exposure

@@ -14,6 +14,7 @@ import Alert from '@cloudscape-design/components/alert';
 import Link from '@cloudscape-design/components/link';
 import { getLifecycleData, DeprecationItem } from '../api';
 import { statusMeta, serviceLabel, itemName, formatDate, isInventory, resourceCount, resourceWord, accountLabel, accountsIn } from '../lifecycle';
+import { InfoLink } from '../help';
 
 // Dates that mark a deadline (in the order they are listed per item)
 const MILESTONES: Array<[string, string]> = [
@@ -136,6 +137,7 @@ export default function Timeline() {
       header={
         <Header
           variant="h1"
+          info={<InfoLink />}
           counter={counter}
           description={lens === 'mine'
             ? 'Deadlines for the versions running in your accounts, soonest first; a version running in several accounts or regions is one entry. Dates that already passed are shown too - those resources are the ones in trouble today.'

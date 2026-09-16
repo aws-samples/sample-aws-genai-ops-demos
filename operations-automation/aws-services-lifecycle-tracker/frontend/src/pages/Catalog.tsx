@@ -17,6 +17,7 @@ import Link from '@cloudscape-design/components/link';
 import Alert from '@cloudscape-design/components/alert';
 import { getLifecycleData, DeprecationItem } from '../api';
 import { statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, resourcesByFact, STATUS_META } from '../lifecycle';
+import { InfoLink } from '../help';
 
 // Table preferences (page size, visible columns); kept per browser
 const PREFS_KEY = 'lifecycle-catalog-preferences';
@@ -128,6 +129,7 @@ export default function Catalog() {
         header={
           <Header
             variant="h1"
+            info={<InfoLink />}
             counter={filtered === facts.length ? `(${facts.length})` : `(${filtered} of ${facts.length})`}
             description={`Version facts extracted from the AWS documentation: ${facts.length} across ${services.length} services (${facts.filter((f) => isConcern(f.status)).length} need attention, ${facts.length - facts.filter((f) => isConcern(f.status)).length} still supported), ${inMyAccount} of them matching something in your accounts. The list shows the current scope and filters.`}
           >

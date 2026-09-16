@@ -9,6 +9,7 @@ import SplitPanel from '@cloudscape-design/components/split-panel';
 import Button from '@cloudscape-design/components/button';
 import AuthModal from './AuthModal';
 import { SplitPanelContext, SplitPanelContent } from './split-panel';
+import { HelpContext, HelpContent, helpFor } from './help';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
@@ -24,6 +25,8 @@ function AppContent() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   // Split panel content is set by the current page (see split-panel.tsx)
   const [panel, setPanel] = useState<SplitPanelContent | null>(null);
+  // Help panel (AppLayout tools): content follows the route, opened by the Info links
+  const [toolsOpen, setToolsOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -158,7 +161,11 @@ function AppContent() {
             ]}
           />
         }
-        toolsHide={true}
+        toolsHide={!user || !helpFor(location.pathname)}
+        tools={<HelpContent pathname={location.pathname} />}
+        toolsOpen={toolsOpen}
+        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
+        ariaLabels={{ tools: 'Help panel', toolsToggle: 'Open help panel', toolsClose: 'Close help panel' }}
         contentType={contentType}
         maxContentWidth={Number.MAX_VALUE}
         splitPanelOpen={panel !== null}
@@ -181,6 +188,7 @@ function AppContent() {
         ) : undefined}
         content={
           <SplitPanelContext.Provider value={setPanel}>
+          <HelpContext.Provider value={() => setToolsOpen(true)}>
                 {!user ? (
                   <Box textAlign="center" padding="xxl">
                     <Box variant="h1" padding={{ bottom: 's' }}>
@@ -206,6 +214,7 @@ function AppContent() {
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 )}
+          </HelpContext.Provider>
           </SplitPanelContext.Provider>
         }
       />

@@ -26,6 +26,7 @@ import {
   resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
 } from '../lifecycle';
 import ResourceDetails, { resourceDetailsHeader } from '../components/ResourceDetails';
+import { InfoLink } from '../help';
 import { useSplitPanel } from '../split-panel';
 
 // Scope dropdown: three buckets first, then one entry per status in a group
@@ -284,6 +285,7 @@ export default function MyResources() {
         header={
           <Header
             variant="h1"
+            info={<InfoLink />}
             counter={shown === scoped.length ? `(${shown})` : `(${shown} of ${scoped.length})`}
             description={costTotals
               ? `RDS/Aurora Extended Support: ${formatUsd(costTotals.forecast12)} over the next 12 months across ${costTotals.priced} priced resource${costTotals.priced === 1 ? '' : 's'}${costTotals.now ? `, ${costTotals.now} billing now (${formatUsd(costTotals.monthlyNow)}/mo)` : ''}${costTotals.within12 ? `, ${costTotals.within12} starting within 12 months (+${formatUsd(costTotals.monthlyWithin12)}/mo)` : ''}${costTotals.later ? `, ${costTotals.later} later` : ''}. Estimates assume always-on at current size.`
