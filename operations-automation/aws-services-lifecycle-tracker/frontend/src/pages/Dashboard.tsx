@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Container from '@cloudscape-design/components/container';
+import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
@@ -248,16 +249,11 @@ export default function Dashboard() {
   const goResources = (status?: string) => navigate(status ? `/resources?status=${status}` : '/resources');
 
   return (
-    <SpaceBetween size="l">
-      <Flashbar items={flashbarItems} stackItems />
-
-      {progress?.phases && <RefreshSteps phases={progress.phases} running={refreshing} />}
-
-      <Container
-        header={
+    <ContentLayout
+      header={
           <Header
             variant="h1"
-            description="Resources in this account running versions that AWS is retiring, matched against the deprecation facts published in the AWS documentation."
+            description={`Resources in ${multiAccount ? 'your accounts' : 'this account'} running versions that AWS is retiring, matched against the deprecation facts published in the AWS documentation.`}
             actions={
               <SpaceBetween direction="horizontal" size="xxs">
                 <Button variant="primary" iconName="refresh" loading={refreshing} onClick={handleRefresh} disabled={refreshing}>
@@ -283,8 +279,14 @@ export default function Dashboard() {
           >
             My exposure
           </Header>
-        }
-      >
+      }
+    >
+    <SpaceBetween size="l">
+      <Flashbar items={flashbarItems} stackItems />
+
+      {progress?.phases && <RefreshSteps phases={progress.phases} running={refreshing} />}
+
+      <Container header={<Header variant="h2">Summary</Header>}>
         <SpaceBetween size="l">
           <KeyValuePairs
             columns={money.priced ? 5 : 4}
@@ -424,5 +426,6 @@ export default function Dashboard() {
         ]}
       />
     </SpaceBetween>
+    </ContentLayout>
   );
 }
