@@ -64,8 +64,7 @@ export default function TagFilterModal({ visible, initial, onDismiss, onApply }:
     >
       <SpaceBetween size="m">
         <Box color="text-body-secondary">
-          Show only the resources carrying these tags, everywhere in the tracker. Each tag you add widens the scope: a resource is kept when it carries any of them.
-          A key without value means "tagged with this key"; {NOT_TAGGED} selects the resources without it.
+          Scope the whole tracker to the resources carrying your tags. A key without value means "tagged with this key"; {NOT_TAGGED} selects the resources without it.
         </Box>
         {error && <StatusIndicator type="error">{error}</StatusIndicator>}
         <Grid gridDefinition={[{ colspan: 5 }, { colspan: 5 }, { colspan: 2 }]}>
@@ -83,7 +82,8 @@ export default function TagFilterModal({ visible, initial, onDismiss, onApply }:
               onKeyDown={(e) => { if (e.detail.key === 'Enter') add(); }}
             />
           </FormField>
-          <FormField label={<span>Tag value <i>- optional</i></span>}>
+          <FormField label={<span>Tag value <i>- optional</i></span>}
+            constraintText={`Leave empty to match every resource that has this key. Choose ${NOT_TAGGED} to match the resources that don't have it.`}>
             <Autosuggest
               value={value}
               onChange={({ detail }) => setValue(detail.value)}
@@ -100,14 +100,21 @@ export default function TagFilterModal({ visible, initial, onDismiss, onApply }:
             <Button onClick={add} disabled={!key.trim()}>Add</Button>
           </FormField>
         </Grid>
-        <TokenGroup
-          items={filters.map((f) => ({ label: tokenText(f), dismissLabel: `Remove ${tokenText(f)}` }))}
-          onDismiss={({ detail }) => setFilters(filters.filter((_, i) => i !== detail.itemIndex))}
-          alignment="horizontal"
-        />
+        {filters.length > 0 && (
+          <FormField
+            label={filters.length > 1 ? 'Resources carrying any of these tags' : 'Resources carrying this tag'}
+            description={filters.length > 1 ? 'Each tag widens the scope: a resource is kept when it matches at least one of them.' : undefined}
+          >
+            <TokenGroup
+              items={filters.map((f) => ({ label: tokenText(f), dismissLabel: `Remove ${tokenText(f)}` }))}
+              onDismiss={({ detail }) => setFilters(filters.filter((_, i) => i !== detail.itemIndex))}
+              alignment="horizontal"
+            />
+          </FormField>
+        )}
         {preview && (
           <Box variant="small" color="text-body-secondary">
-            {preview.matched} of {preview.total} resources match ({preview.rowsMatched} of {preview.rowsTotal} versions).
+            Scope: {filters.map(tokenText).join(' or ')} → {preview.matched} of {preview.total} resources ({preview.rowsMatched} of {preview.rowsTotal} versions).
           </Box>
         )}
       </SpaceBetween>
