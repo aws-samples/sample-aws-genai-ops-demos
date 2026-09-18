@@ -172,11 +172,13 @@ def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scann
     Before writing, resources are cross-checked with AWS Health (#141) so each
     row knows which of its resources AWS has already flagged in a notice.
     """
+    tags = account_discovery.collect_resource_tags(items, scanned_scopes)  # user tags per resource (#164)
     health = account_discovery.cross_check_health(items, scanned_scopes)
     cost = account_discovery.estimate_cost_exposure(items)  # RDS/Aurora Extended Support (#142)
     result = account_discovery.save_to_dynamodb(
         items, run_id=run_id, scanned_services=sorted(set(scanned_keys)), scanned_scopes=scanned_scopes,
     )
+    result["tags"] = tags
     result["health"] = health
     result["cost_exposure"] = cost
     # Which accounts this run actually covered (for Sources & coverage, #144)

@@ -18,6 +18,9 @@ export const SCANNER_READ_ACTIONS: string[] = [
   'glue:GetJobs',
   'elasticbeanstalk:DescribeEnvironments',
   'ec2:DescribeInstances',
+  // User tags of every scanned resource (#164): one Resource Groups Tagging API
+  // pass per account and region, joined on the ARNs above.
+  'tag:GetResources',
 ];
 
 /** AWS Health cross-check (#141): open planned-lifecycle notices and the
