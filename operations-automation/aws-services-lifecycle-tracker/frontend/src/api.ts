@@ -8,6 +8,7 @@
 //   POST /refresh          -> start (or adopt) the durable refresh pipeline
 //   GET  /refresh/{arn}    -> pipeline execution status for polling / re-attach
 import { getIdToken } from './auth';
+import { scopeInventory, TagFilter, ScopeStats } from './tag-filter';
 
 const apiUrl: string = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '');
 // Types
@@ -130,6 +131,18 @@ export interface ScanCoverage {
   cost_exposure: CostExposureStatus | null;
   accounts: ResolvedAccounts | null;
   targets: ScanTargets;
+  // Outcome of the user-tag pass of the last scan (#164)
+  tags: TagsStatus | null;
+}
+
+export interface TagsStatus {
+  checked_at: string;
+  available: boolean;
+  reason: string | null;
+  resources: number;
+  tagged: number;
+  keys: Record<string, number>;   // key -> resources carrying it, ranked
+  by_account: Record<string, { available: boolean; reason: string | null; tagged_resources: number }>;
 }
 
 export const EMPTY_TARGETS: ScanTargets = { source: 'hub', accounts: [], ou_ids: [], exclude_accounts: [], regions: [] };
@@ -206,13 +219,28 @@ export const getDeprecations = async (filters?: {
   return result.items || [];
 };
 
+// Active tag filter (#164), set by the TagFilterProvider. Applied here, once,
+// so every page that loads the inventory is scoped without knowing about it.
+// `onScoped` reports the counts back for the indicator line.
+let activeTagFilter: TagFilter[] = [];
+let onScoped: ((stats: ScopeStats) => void) | null = null;
+export const setActiveTagFilter = (filters: TagFilter[], report: (stats: ScopeStats) => void) => {
+  activeTagFilter = filters; onScoped = report;
+};
+
 // The same rows split by origin: what AWS publishes vs what was found in the
-// account (issue #141). One call, two lenses.
-export const getLifecycleData = async (): Promise<{ facts: DeprecationItem[]; inventory: DeprecationItem[] }> => {
+// account (issue #141). One call, two lenses. The inventory lens is narrowed
+// to the active tag filter; `inventoryAll` is the unscoped one for the pages
+// that need the whole picture (suggestions, "By tag" view).
+export const getLifecycleData = async (): Promise<{ facts: DeprecationItem[]; inventory: DeprecationItem[]; inventoryAll: DeprecationItem[] }> => {
   const all = await getDeprecations();
+  const inventoryAll = all.filter((i) => i.item_id.startsWith('inventory#'));
+  const scoped = scopeInventory(inventoryAll, activeTagFilter);
+  onScoped?.(scoped.stats);
   return {
     facts: all.filter((i) => !i.item_id.startsWith('inventory#')),
-    inventory: all.filter((i) => i.item_id.startsWith('inventory#')),
+    inventory: scoped.rows,
+    inventoryAll,
   };
 };
 
@@ -225,6 +253,7 @@ export const getScanners = async (): Promise<ScanCoverage> => {
     cost_exposure: result.cost_exposure || null,
     accounts: result.accounts || null,
     targets: { ...EMPTY_TARGETS, ...(result.targets || {}) },
+    tags: result.tags || null,
   };
 };
 

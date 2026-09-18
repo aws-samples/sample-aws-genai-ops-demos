@@ -72,7 +72,7 @@ export default function Catalog() {
       try {
         const data = await getLifecycleData();
         setFacts(data.facts);
-        setInventory(data.inventory);
+        setInventory(data.inventoryAll);  // the catalog is about AWS, not about one team: never scoped by the tag filter
       } catch (err: any) {
         setError(`Failed to load the catalog: ${err.message}`);
       } finally {

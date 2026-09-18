@@ -244,7 +244,7 @@ def handle_api_action(action: str, payload: dict) -> dict:
     elif action == 'list_scanners':
         # Scanner coverage for the UI (issue #141): which config service keys
         # have an account scanner behind them, and the last completed scan.
-        from account_discovery import (SCANNER_SERVICE_KEYS, COST_STATUS_KEY, SCAN_ACCOUNTS_KEY,
+        from account_discovery import (SCANNER_SERVICE_KEYS, COST_STATUS_KEY, SCAN_ACCOUNTS_KEY, TAGS_STATUS_KEY,
                                        load_health_status, load_control_row, load_scan_targets)
         return {
             'scanners': [
@@ -259,6 +259,8 @@ def handle_api_action(action: str, payload: dict) -> dict:
             # Multi-account (#144): what the last run resolved and scanned, and what is configured
             'accounts': load_control_row(SCAN_ACCOUNTS_KEY),
             'targets': load_scan_targets(),
+            # Outcome of the user-tag pass of the last scan (#164)
+            'tags': load_control_row(TAGS_STATUS_KEY),
         }
 
     elif action == 'save_scan_targets':
