@@ -64,12 +64,12 @@ export default function TagFilterModal({ visible, initial, onDismiss, onApply }:
     >
       <SpaceBetween size="m">
         <Box color="text-body-secondary">
-          Show only the resources carrying these tags, everywhere in the tracker. Several values of one key match any of them; several keys must all match.
+          Show only the resources carrying these tags, everywhere in the tracker. Each tag you add widens the scope: a resource is kept when it carries any of them.
           A key without value means "tagged with this key"; {NOT_TAGGED} selects the resources without it.
         </Box>
         {error && <StatusIndicator type="error">{error}</StatusIndicator>}
         <Grid gridDefinition={[{ colspan: 5 }, { colspan: 5 }, { colspan: 2 }]}>
-          <FormField label="Tag key" description={rows ? `${keys.length} keys seen on ${total} resources` : undefined}>
+          <FormField label="Tag key" constraintText={rows ? `${keys.length} keys seen on ${total} resources` : undefined}>
             <Autosuggest
               value={key}
               onChange={({ detail }) => { setKey(detail.value); setValue(''); }}

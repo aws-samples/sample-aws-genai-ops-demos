@@ -189,7 +189,7 @@ function AppContent() {
           <Flashbar items={[{
             type: 'info',
             id: 'tag-filter',
-            content: `Filtered by tag ${tagFilter.filters.map(tokenText).join(' and ')}${tagFilter.stats
+            content: `Filtered by tag ${tagFilter.filters.map(tokenText).join(' or ')}${tagFilter.stats
               ? ` · ${tagFilter.stats.matched} of ${tagFilter.stats.total} resources` : ''}${TAG_FILTER_FREE_PAGES.includes(location.pathname) ? ' · this page is not affected' : ''}`,
             action: <Button onClick={() => tagFilter.setFilters([])}>Clear</Button>,
           }]} />

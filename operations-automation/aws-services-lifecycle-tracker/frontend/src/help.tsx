@@ -34,7 +34,7 @@ const TagFilterHelp = () => (
     <p>Organizations mark who owns what with resource tags such as BU or Team. The Tag filter in the top navigation scopes the whole tracker (My exposure, My resources, Timeline, Plan of Action) to the resources carrying the tags you choose, so a team lead sees only their share and can act on it. The filter is in the page address: send the link to hand someone their view.</p>
     <Dl items={[
       ['Tags', 'Read by the scan from every resource (Resource Groups Tagging API). Keys AWS sets itself (aws:...) are ignored; keys and values are suggested from what the scan saw.'],
-      ['Matching', 'Several values of one key match any of them; several keys must all match. A key alone means "tagged with this key"; (not tagged) selects the resources without it.'],
+      ['Matching', 'Each tag added widens the scope: a resource is kept when it carries any of them. A key alone means "tagged with this key"; (not tagged) selects the resources without it.'],
       ['Counts', 'Exact for the resources the scan stored (up to 500 per version, account and region); larger rows are approximate and say so.'],
       ['Not an access control', 'Anyone signed in can change or clear the filter. It is a view, not a permission.'],
     ]} />

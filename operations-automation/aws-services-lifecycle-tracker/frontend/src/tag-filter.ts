@@ -1,10 +1,14 @@
 // Tag filter (#164): scope the whole tracker to the resources carrying given
 // user tags (organizations mark ownership with tags such as BU or Team).
 //
-// Model = the Resource Groups Tagging API's TagFilter: { key, values[] }. Several
-// values of one key are OR, several keys are AND, a key without values means
-// "tagged with this key". The active filter is applied once, in the data layer
-// (getLifecycleData), so every page follows without knowing about it.
+// Model = the Resource Groups Tagging API's TagFilter shape: { key, values[] }.
+// Semantics differ from the API on purpose: every token widens the scope. A
+// resource is in scope when it matches ANY token (BU: LOB1 or Team: payments),
+// because a team's resources are often tagged one way on new stacks and
+// another way on old ones. Within a token, any listed value matches; a key
+// without values means "tagged with this key"; (not tagged) means "without it".
+// The active filter is applied once, in the data layer (getLifecycleData), so
+// every page follows without knowing about it.
 import type { DeprecationItem } from './api';
 
 export interface TagFilter { key: string; values: string[] }
@@ -59,7 +63,7 @@ const detailsOf = (row: DeprecationItem): any[] => {
 };
 
 export const matchesTags = (tags: Record<string, string> | undefined, filters: TagFilter[]): boolean =>
-  filters.every((f) => {
+  filters.length === 0 || filters.some((f) => {
     if (f.values.includes(NOT_TAGGED)) return !tags || !(f.key in tags);
     if (!tags || !(f.key in tags)) return false;
     return f.values.length === 0 || f.values.includes(tags[f.key]);
