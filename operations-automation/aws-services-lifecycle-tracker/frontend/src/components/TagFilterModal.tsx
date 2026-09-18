@@ -64,7 +64,7 @@ export default function TagFilterModal({ visible, initial, onDismiss, onApply }:
     >
       <SpaceBetween size="m">
         <Box color="text-body-secondary">
-          Scope the whole tracker to the resources carrying your tags. A key without value means "tagged with this key"; {NOT_TAGGED} selects the resources without it.
+          Show only the resources that carry at least one of the tags below, everywhere in the tracker.
         </Box>
         {error && <StatusIndicator type="error">{error}</StatusIndicator>}
         <Grid gridDefinition={[{ colspan: 5 }, { colspan: 5 }, { colspan: 2 }]}>
