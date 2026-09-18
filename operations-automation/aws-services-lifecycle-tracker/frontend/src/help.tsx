@@ -27,6 +27,20 @@ const Dl = ({ items }: { items: Array<[string, ReactNode]> }) => (
 
 const DOCS = 'https://github.com/aws-samples/sample-aws-genai-ops-demos/tree/main/operations-automation/aws-services-lifecycle-tracker';
 
+// Tag filter (#164): the global scope, explained where resources are shown
+const TagFilterHelp = () => (
+  <>
+    <h3>Tag filter</h3>
+    <p>Organizations mark who owns what with resource tags such as BU or Team. The Tag filter in the top navigation scopes the whole tracker (My exposure, My resources, Timeline, Plan of Action) to the resources carrying the tags you choose, so a team lead sees only their share and can act on it. The filter is in the page address: send the link to hand someone their view.</p>
+    <Dl items={[
+      ['Tags', 'Read by the scan from every resource (Resource Groups Tagging API). Keys AWS sets itself (aws:...) are ignored; keys and values are suggested from what the scan saw.'],
+      ['Matching', 'Several values of one key match any of them; several keys must all match. A key alone means "tagged with this key"; (not tagged) selects the resources without it.'],
+      ['Counts', 'Exact for the resources the scan stored (up to 500 per version, account and region); larger rows are approximate and say so.'],
+      ['Not an access control', 'Anyone signed in can change or clear the filter. It is a view, not a permission.'],
+    ]} />
+  </>
+);
+
 // Transparency block (Cloudscape generative AI principles: capabilities and
 // limits, user control, errors). Reused on every page that shows AI output.
 const GenAiNotice = () => (
@@ -62,6 +76,9 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
           ['Fine for now', 'Resources on a supported version, or on a version the catalog does not know.'],
           ['Extended Support now', 'What RDS and Aurora Extended Support bills today at current size, always on, and what is coming with its start month. A list-price estimate, not a bill.'],
         ]} />
+        <h3>By tag</h3>
+        <p>Resources grouped by the value of one tag key, the resources without the key first. Choosing a value sets the tag filter on it.</p>
+        <TagFilterHelp />
         <GenAiNotice />
       </>
     ),
@@ -84,6 +101,7 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
         <p>RDS and Aurora only. Price List rate for this region times vCPU (or ACU) hours, always on; Multi-AZ counts twice. Serverless v2 uses max ACU.</p>
         <h3>Console links</h3>
         <p>They open in the account your browser is signed into. With several accounts, sign in to the account shown on the row first; AWS Health events are visible only from their own account.</p>
+        <TagFilterHelp />
       </>
     ),
   },
