@@ -137,23 +137,53 @@ $demoEmail = "admin@example.com"
 $demoRandom = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 $demoPassword = "Demo$demoRandom!9"
 
-# Create user (ignore error if already exists)
-try {
-    aws cognito-idp admin-create-user `
-        --user-pool-id $userPoolId `
-        --username $demoEmail `
-        --user-attributes Name=email_verified,Value=true `
-        --message-action SUPPRESS `
-        --region $region 2>$null | Out-Null
-} catch { }
+# admin-create-user: allow re-runs on an existing user (UsernameExistsException),
+# but surface any other error rather than silently continuing to a
+# "Deployment Complete!" summary whose credentials the pool doesn't actually
+# accept. Native commands do not respect $ErrorActionPreference, so check
+# $LASTEXITCODE explicitly and inspect the merged stdout/stderr text.
+$createOutput = aws cognito-idp admin-create-user `
+    --user-pool-id $userPoolId `
+    --username $demoEmail `
+    --user-attributes Name=email_verified,Value=true `
+    --message-action SUPPRESS `
+    --region $region 2>&1
+$createStatus = $LASTEXITCODE
 
-# Set permanent password (bypasses force-change-password flow)
-aws cognito-idp admin-set-user-password `
+if ($createStatus -ne 0) {
+    if ($createOutput -match 'UsernameExistsException') {
+        Write-Host "   (demo user already exists — password will be rotated below)" -ForegroundColor Yellow
+    } else {
+        Write-Host ""
+        Write-Host " ✗ Failed to create demo user:" -ForegroundColor Red
+        Write-Host $createOutput -ForegroundColor Red
+        Write-Host ""
+        Write-Host "   The deployment finished but sign-in with the demo credentials" -ForegroundColor Red
+        Write-Host "   below will not work. Fix the error above and re-run this script," -ForegroundColor Red
+        Write-Host "   or create a user manually via the Cognito console for User Pool" -ForegroundColor Red
+        Write-Host "   $userPoolId." -ForegroundColor Red
+        exit 1
+    }
+}
+
+# admin-set-user-password: this is the step that guarantees the demo user can
+# sign in (bypasses the force-change-password flow the Amplify hosted UI
+# mishandles). Do NOT swallow failures — a silent failure here produces the
+# exact InvalidPasswordException symptom this script exists to avoid.
+$passwordOutput = aws cognito-idp admin-set-user-password `
     --user-pool-id $userPoolId `
     --username $demoEmail `
     --password $demoPassword `
     --permanent `
-    --region $region 2>$null | Out-Null
+    --region $region 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host " ✗ Failed to set demo user password. Sign-in will not work." -ForegroundColor Red
+    Write-Host $passwordOutput -ForegroundColor Red
+    Write-Host "   The user exists in the pool but has no usable permanent password." -ForegroundColor Red
+    exit 1
+}
+
 Write-Host " Demo user created." -ForegroundColor Green
 
 # Done
