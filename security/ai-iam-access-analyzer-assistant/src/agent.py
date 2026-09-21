@@ -540,6 +540,41 @@ def invoke_tool(tool_name: str, tool_input: dict) -> dict:
         return {"error": str(e)}
 
 
+def _aggregate_coverage(tool_results: list) -> list:
+    """Aggregate per-tool ``coverage`` arrays into a single response-level list.
+
+    #171 contract: every tool returns a ``coverage`` array with one entry
+    per AWS source it touched (``securityhub``, ``iam``, ``accessanalyzer``,
+    ``cloudtrail``, ``s3``), each with a state — ``checked`` | ``empty`` |
+    ``unavailable``. At the conversation level we want a single top-level
+    ``coverage`` array so the frontend (and eventually the ``Steps`` renderer
+    from #167 item 4) can show data-source status structurally instead of
+    forcing the model to summarize it in prose.
+
+    Dedupes by ``(source, state)`` so the aggregate stays compact while still
+    preserving cases where the SAME source was reported with DIFFERENT states
+    by different tools in the same turn (one tool succeeded, another failed
+    on the same service). The first entry for each ``(source, state)`` pair
+    wins for the ``detail`` string.
+
+    Returns an empty list when no tool emitted coverage (older tool builds).
+    """
+    seen = set()
+    aggregated = []
+    for result in tool_results:
+        if not isinstance(result, dict):
+            continue
+        for entry in result.get("coverage") or []:
+            if not isinstance(entry, dict):
+                continue
+            key = (entry.get("source"), entry.get("state"))
+            if key in seen:
+                continue
+            seen.add(key)
+            aggregated.append(entry)
+    return aggregated
+
+
 # Tools that support pagination via next_token/has_more and can be safely
 # short-circuited on deterministic follow-ups like "next 20".
 _PAGINATED_TOOLS = {"list_findings"}
@@ -712,6 +747,7 @@ def _shortcircuit_pagination(user_message: str, pagination_ctx: dict):
             "usage": {"inputTokens": 0, "outputTokens": 0},
             "tools_used": [{"tool": "list_findings", "input_summary": _summarize_input(tool_input)}],
             "pagination": None,
+            "coverage": _aggregate_coverage([result]),
         }
 
     findings = result.get("findings") if isinstance(result, dict) else None
@@ -732,6 +768,7 @@ def _shortcircuit_pagination(user_message: str, pagination_ctx: dict):
         "usage": {"inputTokens": 0, "outputTokens": 0},
         "tools_used": [{"tool": "list_findings", "input_summary": _summarize_input(tool_input)}],
         "pagination": new_pagination,
+        "coverage": _aggregate_coverage([result]),
     }
 
 
@@ -942,6 +979,7 @@ def _shortcircuit_validate_policy(user_message: str):
                 {"tool": "validate_policy", "input_summary": "policy_document supplied"}
             ],
             "pagination": None,
+            "coverage": _aggregate_coverage([result if isinstance(result, dict) else {}]),
         }
 
     return {
@@ -951,6 +989,7 @@ def _shortcircuit_validate_policy(user_message: str):
             {"tool": "validate_policy", "input_summary": "policy_document supplied"}
         ],
         "pagination": None,
+        "coverage": _aggregate_coverage([result if isinstance(result, dict) else {}]),
     }
 
 
@@ -982,6 +1021,7 @@ def _shortcircuit_action_plan_and_export(user_message: str):
                 {"tool": "generate_action_plan", "input_summary": _summarize_input(plan_input)}
             ],
             "pagination": None,
+            "coverage": _aggregate_coverage([plan_result]),
         }
 
     plan_text = _render_action_plan(plan_result if isinstance(plan_result, dict) else {})
@@ -1010,6 +1050,7 @@ def _shortcircuit_action_plan_and_export(user_message: str):
             "usage": {"inputTokens": 0, "outputTokens": 0},
             "tools_used": tools_used,
             "pagination": None,
+            "coverage": _aggregate_coverage([plan_result, export_result]),
         }
 
     filename = (
@@ -1040,6 +1081,7 @@ def _shortcircuit_action_plan_and_export(user_message: str):
         "usage": {"inputTokens": 0, "outputTokens": 0},
         "tools_used": tools_used,
         "pagination": None,
+        "coverage": _aggregate_coverage([plan_result, export_result]),
     }
 
 
@@ -1065,6 +1107,7 @@ def _shortcircuit_action_plan(user_message: str):
                 {"tool": "generate_action_plan", "input_summary": _summarize_input(tool_input)}
             ],
             "pagination": None,
+            "coverage": _aggregate_coverage([result]),
         }
 
     response_text = _render_action_plan(result if isinstance(result, dict) else {})
@@ -1075,6 +1118,7 @@ def _shortcircuit_action_plan(user_message: str):
             {"tool": "generate_action_plan", "input_summary": _summarize_input(tool_input)}
         ],
         "pagination": None,
+        "coverage": _aggregate_coverage([result if isinstance(result, dict) else {}]),
     }
 
 
@@ -1082,7 +1126,7 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
     """Run a conversation turn with Bedrock Converse API, handling tool use loops.
 
     Returns:
-        tuple: (response_dict, tool_calls_made_list, pagination_context_or_None)
+        tuple: (response_dict, tool_calls_made_list, pagination_context_or_None, coverage_list)
     """
     if model_id is None:
         model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
@@ -1092,6 +1136,9 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
 
     tool_calls_made = []
     pagination_context = None
+    # Raw tool result payloads across every round of this turn — used at the
+    # end to build the top-level `coverage` array (#171).
+    raw_tool_results: list = []
 
     response = bedrock_client.converse(
         modelId=model_id,
@@ -1126,6 +1173,7 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
 
                 logger.info(f"Invoking tool: {tool_name} with input: {json.dumps(tool_input)}")
                 result = invoke_tool(tool_name, tool_input)
+                raw_tool_results.append(result)
 
                 tool_calls_made.append({
                     "tool": tool_name,
@@ -1174,7 +1222,7 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
         if budget_hit:
             break
 
-    return response, tool_calls_made, pagination_context
+    return response, tool_calls_made, pagination_context, _aggregate_coverage(raw_tool_results)
 
 
 def _summarize_input(tool_input: dict) -> str:
@@ -1282,7 +1330,7 @@ def handler(event, context):
         system_prompt = _get_system_prompt(mode)
 
         # Run conversation with tool orchestration
-        response, tool_calls_made, new_pagination = converse_with_tools(
+        response, tool_calls_made, new_pagination, coverage = converse_with_tools(
             messages, system_prompt=system_prompt
         )
 
@@ -1302,6 +1350,7 @@ def handler(event, context):
                     "usage": response.get("usage", {}),
                     "tools_used": tool_calls_made,
                     "pagination": new_pagination,
+                    "coverage": coverage,
                 }
             ),
         }

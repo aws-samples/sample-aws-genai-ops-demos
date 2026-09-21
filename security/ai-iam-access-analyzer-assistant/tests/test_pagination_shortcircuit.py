@@ -123,7 +123,7 @@ class HandlerShortCircuitTest(unittest.TestCase):
             "usage": {"inputTokens": 3, "outputTokens": 4},
         }
         with patch.object(agent, "invoke_tool") as invoke, \
-                patch.object(agent, "converse_with_tools", return_value=(fake_response, [], None)) as converse:
+                patch.object(agent, "converse_with_tools", return_value=(fake_response, [], None, [])) as converse:
             agent.handler(self._handler_event("show critical findings", pagination), None)
 
         invoke.assert_not_called()
@@ -135,7 +135,7 @@ class HandlerShortCircuitTest(unittest.TestCase):
             "usage": {"inputTokens": 1, "outputTokens": 2},
         }
         with patch.object(agent, "invoke_tool") as invoke, \
-                patch.object(agent, "converse_with_tools", return_value=(fake_response, [], None)) as converse:
+                patch.object(agent, "converse_with_tools", return_value=(fake_response, [], None, [])) as converse:
             agent.handler(self._handler_event("next 20", None), None)
 
         invoke.assert_not_called()

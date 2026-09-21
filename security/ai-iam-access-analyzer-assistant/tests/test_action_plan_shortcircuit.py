@@ -110,7 +110,7 @@ class HandlerActionPlanShortCircuitTest(unittest.TestCase):
             "usage": {"inputTokens": 1, "outputTokens": 2},
         }
         with patch.object(agent, "invoke_tool") as invoke, \
-                patch.object(agent, "converse_with_tools", return_value=(fake_bedrock, [], None)) as converse:
+                patch.object(agent, "converse_with_tools", return_value=(fake_bedrock, [], None, [])) as converse:
             agent.handler(self._event("show my active findings"), None)
 
         invoke.assert_not_called()
