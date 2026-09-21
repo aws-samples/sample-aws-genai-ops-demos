@@ -26,6 +26,14 @@ PRESIGNER_ROLE_ARN = os.environ.get("PRESIGNER_ROLE_ARN", "")
 PRESIGN_TTL_SECONDS = 3600
 
 
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build an S3 coverage entry per the #171 contract."""
+    entry = {"source": "s3", "state": state, "detail": detail.format(region=_REGION)}
+    if count is not None:
+        entry["count"] = count
+    return entry
+
+
 class _SigningContext:
     """Split read + sign clients so bucket listing rides on the Lambda role
     and only presigning uses the assumed presigner role.
@@ -106,7 +114,13 @@ def handler(event, context=None):
         For "get_link": {filename, download_url, valid_for}
     """
     if not REPORTS_BUCKET:
-        return {"error": "S3 export not configured. Use the 'Save as .md' button for local downloads instead."}
+        return {
+            "error": "S3 export not configured. Use the 'Save as .md' button for local downloads instead.",
+            "coverage": [_coverage(
+                "unavailable",
+                "S3 not reachable in {region}: REPORTS_BUCKET env var not set",
+            )],
+        }
 
     action = event.get("action", "list")
     filename = event.get("filename", "")
@@ -123,7 +137,13 @@ def handler(event, context=None):
 
     except Exception as e:
         logger.error(f"Error in list_exports: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"S3 exports listing failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _list_files(s3_client, prefix: str, limit: int) -> dict:
@@ -144,6 +164,11 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
                 "files": [],
                 "total_count": 0,
                 "message": "No exported reports found. Generate a policy or action plan, then ask me to export it.",
+                "coverage": [_coverage(
+                    "empty",
+                    "S3 reports bucket in {region}: 0 objects",
+                    count=0,
+                )],
             }
 
         # Metadata ONLY — do NOT presign every file here. Presigned URLs are
@@ -173,16 +198,33 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
                 "File list only (no download URLs). To download a file, ask for a "
                 "link for a specific filename and a fresh download URL will be generated."
             ),
+            "coverage": [_coverage(
+                "checked",
+                "S3 reports bucket in {region}: ListObjectsV2",
+                count=len(files),
+            )],
         }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"S3 ListObjectsV2 failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _get_fresh_link(signing, filename: str) -> dict:
     """Generate a fresh presigned URL for a specific file."""
     if not filename:
-        return {"error": "filename is required for get_link action"}
+        return {
+            "error": "filename is required for get_link action",
+            "coverage": [_coverage(
+                "unavailable",
+                "S3 not reached in {region}: missing required 'filename' argument",
+            )],
+        }
 
     try:
         # Bucket listing rides on the Lambda role.
@@ -197,7 +239,14 @@ def _get_fresh_link(signing, filename: str) -> dict:
                 break
 
         if not target_key:
-            return {"error": f"File '{filename}' not found in exports bucket."}
+            return {
+                "error": f"File '{filename}' not found in exports bucket.",
+                "coverage": [_coverage(
+                    "empty",
+                    f"S3 reports bucket in {{region}}: no object matched '{filename}'",
+                    count=0,
+                )],
+            }
 
         # Presigned URL rides on the (stable) assumed presigner role.
         url = signing.sign_client.generate_presigned_url(
@@ -211,10 +260,21 @@ def _get_fresh_link(signing, filename: str) -> dict:
             "s3_path": f"s3://{REPORTS_BUCKET}/{target_key}",
             "download_url": url,
             "valid_for": _format_valid_for(signing.expires_in),
+            "coverage": [_coverage(
+                "checked",
+                "S3 reports bucket in {region}: matched key + GetObject presign",
+                count=1,
+            )],
         }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"S3 get-link failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _format_valid_for(seconds: int) -> str:
