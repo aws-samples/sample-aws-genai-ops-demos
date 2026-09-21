@@ -21,6 +21,16 @@ iam_client = boto3.client("iam")
 cloudtrail_client = boto3.client("cloudtrail")
 
 
+def _coverage_iam(state: str, detail: str) -> dict:
+    return {"source": "iam", "state": state, "detail": detail.format(region="global")}
+
+
+def _coverage_cloudtrail(state: str, detail: str) -> dict:
+    meta = getattr(cloudtrail_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    return {"source": "cloudtrail", "state": state, "detail": detail.format(region=region)}
+
+
 def handler(event, context=None):
     """Compare multiple IAM roles side-by-side.
 
@@ -68,17 +78,38 @@ def handler(event, context=None):
         # Generate summary recommendation
         recommendation = _generate_recommendation(comparisons, rankings)
 
+        # #171 coverage: the tool reached both IAM and CloudTrail (each role
+        # analysis touches both). Per-role failures (NoSuchEntity, etc.) live
+        # in each entry's `error` / `warnings`. Aggregate coverage tells the
+        # caller "we could read both sources," not "every individual call
+        # succeeded" — the finer grain lives in the per-role data.
         return {
             "comparison": comparisons,
             "rankings": rankings,
             "role_count": len(comparisons),
             "lookback_days": lookback_days,
             "recommendation": recommendation,
+            "coverage": [
+                _coverage_iam("checked", "IAM role metadata, {region}"),
+                _coverage_cloudtrail(
+                    "checked",
+                    f"{lookback_days}-day event history, per role in {{region}}",
+                ),
+            ],
         }
 
     except Exception as e:
         logger.error(f"Error comparing roles: {e}", exc_info=True)
-        return {"error": str(e)}
+        # We don't know which source failed at the top level; report both as
+        # unavailable so downstream renderers don't imply either succeeded.
+        detail = f"{type(e).__name__}: {e}"
+        return {
+            "error": str(e),
+            "coverage": [
+                _coverage_iam("unavailable", f"Role comparison failed ({{region}}): {detail}"),
+                _coverage_cloudtrail("unavailable", f"Role comparison failed ({{region}}): {detail}"),
+            ],
+        }
 
 
 def _analyze_role(role_name: str, lookback_days: int, compare_by: str) -> dict:
