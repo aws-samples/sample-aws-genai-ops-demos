@@ -12,6 +12,7 @@ Automatically track AWS service deprecations, find the resources in your account
 - **🎛️ Admin Interface**: React + Cloudscape UI behind Cognito; all calls go through an HTTP API with a JWT authorizer (the browser holds no AWS credentials)
 - **💸 Extended Support cost exposure**: for every RDS/Aurora resource, what the Extended Support surcharge will be (per month and over the next 12 months), with the calculation shown
 - **🩺 AWS Health cross-check**: each scan asks AWS Health which of *your* resources appear in an open planned-lifecycle notice, and marks them (paid Support plan required)
+- **🏷️ Tag filter**: scope the whole tracker to the resources carrying given tags (`BU: LOB1`), so a team lead sees only their share and a CTO sees who carries the exposure ("By tag", not tagged first)
 - **📦 No Docker, no container registry**: Python code is bundled locally with pip; deploys in a few minutes
 
 ## Interactive Demo
@@ -562,6 +563,18 @@ All inputs are live, nothing is hardcoded: unit prices come from the **AWS Price
 The result is on the dashboard (KPI "Extended Support, next 12 months"), on My resources (scope "Extended Support exposure", sortable "Cost exposure" column) and, resource by resource, in the details view, where the exact formula and dates are displayed.
 
 **Two dates, one row.** RDS/Aurora rows are grouped at the level Extended Support applies to (`mysql-8.4`, `postgres-14`, `aurora-mysql-3`), and the row's deadline is that major's end of standard support: the day the surcharge starts and, eventually, a major upgrade becomes mandatory. The exact minor running (`14.18`) has its own, earlier date, when RDS auto-upgrades it to a newer minor; that one is shown per resource in the details view ("Minor version" column), not as the deadline. Money is split by when it starts: "billing now", "starts within 12 months", "later", so a surcharge due in 2031 is never added to one due next spring. Deliberate simplifications: list prices, always-on (730 h/month), no Reserved Instance or actual-usage data; the point is to order remediation by money, not to replace the bill. Adapted from [rds-extended-support-cost-estimator](https://github.com/aws-samples/rds-extended-support-cost-estimator), whose formula is kept while its hardcoded dates and instance map are replaced by the sources above.
+
+### Tag filter: whose resources are these?
+
+The reason an organization ends up paying Extended Support or running retired runtimes is rarely ignorance: it is scattered ownership. A CTO sees the exposure but cannot upgrade another team's functions; the people who can are a team lead or a business unit, and in every organization that subset is identified by **resource tags** (`BU=LOB1`, `Team=payments`).
+
+Each scan therefore records the **user tags** of every resource it finds: one `tag:GetResources` pass per account and region (Resource Groups Tagging API, through the spoke role for member accounts), joined on the resource ARNs. Keys AWS sets itself (`aws:cloudformation:*`, `aws:autoscaling:*`, ...) are dropped; everything the customer created is kept, `Name` included. No configuration: the filter suggests keys ranked by how many resources carry them, and values ranked by count.
+
+**Tag filter** (top navigation) scopes the whole application, like the region selector in the AWS console: My exposure, My resources, Timeline and Plan of Action all show only the matching resources, with counts, deadlines and Extended Support money recomputed. Each tag added widens the scope (a resource is kept when it carries any of them, because a team's resources are often tagged `BU=LOB1` on new stacks and `Team=payments` on old ones); a key alone means "tagged with this key", `(not tagged)` selects the resources without it. The filter lives in the page address (`?tag=BU:LOB1`) and is remembered by the browser: a CTO sends a team lead the link and says "this is yours". A line under the top navigation always states what is filtered and how many resources match, so a partial view is never mistaken for the whole. The Catalog and Sources & coverage are not affected (they are about AWS and the scan, not about one team).
+
+For the CTO, **By tag** on My exposure lists the exposure per value of one tag key, the resources **without** the key first: that is the conversation to have. On My resources, tag keys are also filter properties (`Tag BU = LOB1` keeps the versions with at least one such resource), and the details view shows each resource's tags.
+
+Two honest limits. Counts under a filter are exact for the resource entries the scan stored (up to 500 per version, account and region; a larger row is trimmed to a 350 KB budget and says so), so a very large row is approximate. And the filter is a **view, not an access control**: anyone signed in can change or clear it. Enforcing "a team lead only sees LOB1" would be the next step (Cognito groups mapping to allowed tag values); it is deliberately not part of this demo.
 
 ### Cleanup
 

@@ -25,6 +25,9 @@ import {
 import { SupportTierCell, SupportTierHeader } from '../components/SupportTierCell';
 import RefreshSteps from '../components/RefreshSteps';
 import { InfoLink } from '../help';
+import Select from '@cloudscape-design/components/select';
+import { useTagFilter } from '../components/TagFilterProvider';
+import { tagKeys, exposureByTagValue, addFilter, NOT_TAGGED } from '../tag-filter';
 
 // sessionStorage key for the in-flight refresh execution ARN. The pipeline
 // runs server-side as a Lambda durable execution; this only lets the UI
@@ -198,6 +201,13 @@ export default function Dashboard() {
     return [...m.entries()].sort((a, b) => a[1].worst - b[1].worst || b[1].concerns - a[1].concerns || b[1].forecast - a[1].forecast);
   }, [inventory, coverage]);
   const multiAccount = byAccount.length > 1;
+
+  // By tag (#164): keys seen by the scan, exposure per value of the chosen key
+  const tagFilter = useTagFilter();
+  const keys = useMemo(() => tagKeys(inventory), [inventory]);
+  const [tagKeyChoice, setTagKey] = useState('');
+  const tagKey = tagKeyChoice || keys[0]?.key || '';
+  const byTag = useMemo(() => (tagKey ? exposureByTagValue(inventory, tagKey, isConcern) : []), [inventory, tagKey]);
 
   const lastFactsRefresh = useMemo(
     () => facts.reduce<string | null>((max, f) => (!max || f.last_verified > max ? f.last_verified : max), null),
@@ -409,6 +419,41 @@ export default function Dashboard() {
                   { id: 'support', header: <SupportTierHeader />, cell: ([k]) => <SupportTierCell status={coverage?.health?.by_account?.[k]} /> },
                   { id: 'money', header: 'Extended Support', cell: ([, v]) => v.forecast || v.monthly
                       ? <SpaceBetween size="xxxs"><Box variant="strong">{formatUsd(v.monthly)}/mo</Box><Box variant="small" color="text-body-secondary">{formatUsd(v.forecast)} next 12 mo</Box></SpaceBetween>
+                      : <Box color="text-body-secondary">-</Box> },
+                ]}
+              />
+            ),
+          }] : []),
+          // Who carries the exposure (#164): one line per value of a tag key, not tagged first
+          ...(keys.length ? [{
+            id: 'tags',
+            label: `By tag (${byTag.length})`,
+            content: (
+              <Table
+                variant="embedded"
+                items={byTag}
+                trackBy="value"
+                header={
+                  <Header variant="h3" description="Resources grouped by the value of one tag key; the resources without it come first. Choose a value to focus the tracker on it."
+                    actions={
+                      <Select selectedOption={{ label: tagKey, value: tagKey }} onChange={({ detail }) => setTagKey(detail.selectedOption.value!)}
+                        options={keys.map((k) => ({ label: k.key, value: k.key, description: `${k.resources} resource${k.resources === 1 ? '' : 's'}, ${k.distinct} value${k.distinct === 1 ? '' : 's'}` }))}
+                        selectedAriaLabel="Selected" ariaLabel="Tag key" />
+                    }>
+                    Tag key
+                  </Header>
+                }
+                columnDefinitions={[
+                  { id: 'value', header: tagKey, cell: (v) => v.value === NOT_TAGGED
+                      ? <Link onFollow={(e) => { e.preventDefault(); tagFilter.setFilters(addFilter(tagFilter.filters, tagKey, NOT_TAGGED)); }} href="#"><Box color="text-status-warning" display="inline">Not tagged</Box></Link>
+                      : <Link onFollow={(e) => { e.preventDefault(); tagFilter.setFilters(addFilter(tagFilter.filters, tagKey, v.value)); }} href="#">{v.value}</Link> },
+                  { id: 'resources', header: 'Resources', cell: (v) => v.resources },
+                  { id: 'versions', header: 'Versions in use', cell: (v) => v.versions },
+                  { id: 'attention', header: 'Need attention', cell: (v) => v.attention
+                      ? <StatusIndicator type="warning">{v.attention} of {v.resources}</StatusIndicator>
+                      : <StatusIndicator type="success">none</StatusIndicator> },
+                  { id: 'money', header: 'Extended Support', cell: (v) => v.forecast_12m || v.monthly
+                      ? <SpaceBetween size="xxxs"><Box variant="strong">{formatUsd(v.monthly)}/mo</Box><Box variant="small" color="text-body-secondary">{formatUsd(v.forecast_12m)} next 12 mo</Box></SpaceBetween>
                       : <Box color="text-body-secondary">-</Box> },
                 ]}
               />

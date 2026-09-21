@@ -74,6 +74,8 @@ def mocks():
          patch.object(lp.account_discovery, "session_for_account", return_value=None), \
          patch.object(lp.account_discovery, "save_to_dynamodb",
                       return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
+         patch.object(lp.account_discovery, "collect_resource_tags",
+                      return_value={"available": False, "reason": "test", "resources": 0, "tagged": 0, "keys": {}}), \
          patch.object(lp.account_discovery, "cross_check_health",
                       return_value={"available": False, "reason": "test", "events": 0, "flagged_resources": 0}), \
          patch.object(lp.account_discovery, "estimate_cost_exposure",

@@ -257,6 +257,8 @@ export interface ResourceRef {
   // support, which starts the Extended Support bill).
   minor_version?: string;
   minor_end_of_support?: string;
+  // User tags (keys not starting with aws:) recorded by the scan (#164); absent = not tagged
+  tags?: Record<string, string>;
 }
 
 // When the Extended Support money of a row (or a set of rows) actually starts.
@@ -331,6 +333,7 @@ export const resourceDetails = (row: DeprecationItem): ResourceRef[] => {
       extended_support: d.extended_support && typeof d.extended_support === 'object' ? (d.extended_support as ExtendedSupportEstimate) : undefined,
       minor_version: d.minor_version || undefined,
       minor_end_of_support: d.minor_end_of_support || undefined,
+      tags: d.tags && typeof d.tags === 'object' && Object.keys(d.tags).length ? (d.tags as Record<string, string>) : undefined,
     }));
   }
   const list = row.service_specific?.affected_resource_names;

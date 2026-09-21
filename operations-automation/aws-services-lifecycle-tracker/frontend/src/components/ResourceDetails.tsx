@@ -223,6 +223,12 @@ export default function ResourceDetails({ row, fact, plan, multiAccount = false 
                 ? <SpaceBetween size="xxxs"><Box>{r.minor_version}</Box><Box variant="small" color="text-body-secondary">auto-upgraded by RDS on {formatDate(r.minor_end_of_support)}</Box></SpaceBetween>
                 : <Box color="text-body-secondary">-</Box>,
             }] : []),
+            ...(resources.some((r) => r.tags) ? [{
+              id: 'tags', header: 'Tags', minWidth: 160,
+              cell: (r: ResourceRef) => r.tags
+                ? <Box variant="small">{Object.entries(r.tags).map(([k, v]) => `${k}: ${v}`).join(' · ')}</Box>
+                : <Box variant="small" color="text-body-secondary">not tagged</Box>,
+            }] : []),
             {
               id: 'arn', header: 'ARN', cell: (r) => r.arn
                 ? <CopyToClipboard variant="inline" textToCopy={r.arn} copyButtonAriaLabel={`Copy ARN of ${r.name}`} copySuccessText="Copied" copyErrorText="Copy failed" />

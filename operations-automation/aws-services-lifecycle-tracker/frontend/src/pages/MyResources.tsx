@@ -24,10 +24,11 @@ import { getLifecycleData, getActionPlans, createActionPlan, getScanners, Deprec
 import {
   statusMeta, isConcern, getDeadline, formatDate, formatDaysLeft, urgencySort, serviceLabel, itemName, STATUS_META,
   resourceCount, resourceWord, healthFlagged, costExposure, formatUsd, accountsIn, accountLabel, costTimeline, formatMonth,
-  exposureBucket, EXPOSURE_BUCKETS, ExposureBucket,
+  exposureBucket, EXPOSURE_BUCKETS, ExposureBucket, resourceDetails,
 } from '../lifecycle';
 import ResourceDetails, { resourceDetailsHeader } from '../components/ResourceDetails';
 import { InfoLink } from '../help';
+import { tagKeys, tagValues, matchesTags } from '../tag-filter';
 import { useSplitPanel } from '../split-panel';
 
 // Scope dropdown: three buckets first, then one entry per status in a group
@@ -74,9 +75,15 @@ const paramsFromQuery = (q: PropertyFilterQuery): Record<string, string> => {
 };
 const haystack = (r: DeprecationItem) =>
   `${r.service_name} ${serviceLabel(r.service_name)} ${itemName(r)} ${JSON.stringify(r.service_specific)} ${r.region || ''} ${r.account_id || ''} ${r.account_name || ''}`.toLowerCase();
+const TAG_PROP = 'tag:';  // property keys of the tag properties: "tag:BU"
 const matchToken = (r: DeprecationItem, t: PropertyFilterToken): boolean => {
   const v = String(t.value ?? '').toLowerCase();
   if (!t.propertyKey) return t.operator === '!:' ? !haystack(r).includes(v) : haystack(r).includes(v);
+  if (t.propertyKey.startsWith(TAG_PROP)) {
+    const key = t.propertyKey.slice(TAG_PROP.length);
+    const has = resourceDetails(r).some((d) => matchesTags(d.tags, [{ key, values: [String(t.value ?? '')] }]));
+    return t.operator === '!=' ? !has : has;
+  }
   const field = String((r as any)[t.propertyKey] ?? '').toLowerCase();
   return t.operator === '!=' ? field !== v : field === v;
 };
@@ -182,16 +189,22 @@ export default function MyResources() {
     return out;
   }, [rows, scope]);
 
+  // Tag keys seen by the scan become filter properties (#164): "BU = LOB1" keeps
+  // the versions with at least one resource carrying it (row-level, unlike the
+  // global tag filter in the top navigation which narrows the resources themselves)
+  const tagKeyInfos = useMemo(() => tagKeys(rows).slice(0, 8), [rows]);
   const filteringProperties: PropertyFilterProps.FilteringProperty[] = useMemo(() => [
     { key: 'service_name', propertyLabel: 'Service', groupValuesLabel: 'Services', operators: ['=', '!='] },
     { key: 'region', propertyLabel: 'Region', groupValuesLabel: 'Regions', operators: ['=', '!='] },
     ...(multiAccount ? [{ key: 'account_id', propertyLabel: 'Account', groupValuesLabel: 'Accounts', operators: ['=', '!='] } as PropertyFilterProps.FilteringProperty] : []),
-  ], [multiAccount]);
+    ...tagKeyInfos.map((k) => ({ key: `${TAG_PROP}${k.key}`, propertyLabel: `Tag ${k.key}`, groupValuesLabel: `${k.key} values`, operators: ['=', '!='], group: 'tags' } as PropertyFilterProps.FilteringProperty)),
+  ], [multiAccount, tagKeyInfos]);
   const filteringOptions: PropertyFilterProps.FilteringOption[] = useMemo(() => [
     ...services.map((s) => ({ propertyKey: 'service_name', value: s, label: serviceLabel(s) })),
     ...[...new Set(rows.map((r) => r.region).filter(Boolean))].sort().map((v) => ({ propertyKey: 'region', value: v! })),
     ...(multiAccount ? accounts.map((a) => ({ propertyKey: 'account_id', value: a.id, label: accountLabel(a.id, a.name) })) : []),
-  ], [rows, services, accounts, multiAccount]);
+    ...tagKeyInfos.flatMap((k) => tagValues(rows, k.key).map((v) => ({ propertyKey: `${TAG_PROP}${k.key}`, value: v.value, label: `${v.value} (${v.resources})` }))),
+  ], [rows, services, accounts, multiAccount, tagKeyInfos]);
 
   const { items, allPageItems, filteredItemsCount, collectionProps, propertyFilterProps, paginationProps } = useCollection(scoped, {
     propertyFiltering: { filteringProperties, defaultQuery: queryFromParams(params), filteringFunction: matchQuery },

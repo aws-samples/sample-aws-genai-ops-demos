@@ -7,6 +7,7 @@ personalized, relevant deprecation alerts based on what the customer
 is actually using.
 """
 import boto3
+import json
 import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -1008,10 +1009,12 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
             item["discovery_run_id"] = run_id
 
         # Upsert this run's inventory (put on an existing key replaces it).
-        # Cost figures are floats; DynamoDB only takes Decimal.
+        # Cost figures are floats; DynamoDB only takes Decimal. Oversized rows
+        # (tags + health + cost on hundreds of resources, #164) are trimmed
+        # rather than failing the whole batch.
         with table.batch_writer() as batch:
             for item in items:
-                batch.put_item(Item=_dynamo_safe(item))
+                batch.put_item(Item=_dynamo_safe(fit_row_to_budget(item)))
 
         # Reconcile per successfully-scanned service: query that service's
         # inventory rows and delete those not written by this run.
@@ -1267,6 +1270,129 @@ def discover_and_save(region: str = None, include_supported: bool = True, table_
 
 HEALTH_STATUS_KEY = "_health_match"  # control row in the backend-owned state table
 COST_STATUS_KEY = "_cost_exposure"   # outcome of the last Extended Support pricing pass (#142)
+TAGS_STATUS_KEY = "_resource_tags"   # outcome of the last user-tag pass (#164)
+
+
+# ---------------------------------------------------------------------------
+# Resource tags (#164): the user tags of every scanned resource, so the UI can
+# scope everything to "my team's resources" (organizations mark ownership with
+# tags such as BU or Team). One Resource Groups Tagging API pass per
+# (account, region), joined on the ARNs the scanners already record.
+# ---------------------------------------------------------------------------
+
+def _is_user_tag(key: str) -> bool:
+    """Keys AWS stamps itself (aws:cloudformation:stack-name, aws:autoscaling:groupName,
+    ...) are noise for ownership; customers cannot create 'aws:' keys."""
+    return bool(key) and not key.lower().startswith("aws:")
+
+
+def fetch_user_tags(region: str, session=None, client=None) -> Dict[str, Dict[str, str]]:
+    """{ARN: {key: value}} for every tagged resource in one account and region.
+
+    `client` is for tests; otherwise the client comes from `session` (spoke)
+    or the hub's own credentials. Raises on API errors: the caller decides
+    whether that is fatal (it is not: tags are best effort)."""
+    client = client or (session or boto3).client("resourcegroupstaggingapi", region_name=region)
+    out: Dict[str, Dict[str, str]] = {}
+    for page in client.get_paginator("get_resources").paginate(ResourcesPerPage=100):
+        for mapping in page.get("ResourceTagMappingList", []):
+            tags = {t["Key"]: t.get("Value", "") for t in mapping.get("Tags", []) if _is_user_tag(t.get("Key", ""))}
+            if tags:
+                out[mapping["ResourceARN"]] = tags
+    return out
+
+
+def apply_tags(items: List[Dict], tags_by_arn: Dict[str, Dict[str, str]]) -> Dict[str, int]:
+    """Stamp `tags` on each resource entry whose ARN is known, in place.
+
+    Entries without a match get no `tags` key (the UI reads that as not tagged).
+    Returns {"resources": n, "tagged": m, "keys": {key: resources carrying it}}."""
+    stats = {"resources": 0, "tagged": 0, "keys": {}}
+    for item in items:
+        for res in item.get("service_specific", {}).get("affected_resource_details", []):
+            stats["resources"] += 1
+            tags = tags_by_arn.get(res.get("arn") or "")
+            if tags:
+                res["tags"] = tags
+                stats["tagged"] += 1
+                for k in tags:
+                    stats["keys"][k] = stats["keys"].get(k, 0) + 1
+            else:
+                res.pop("tags", None)
+    return stats
+
+
+def collect_resource_tags(items: List[Dict], scanned_scopes: List[Dict] = None) -> Dict:
+    """Fetch and join user tags for every (account, region) the run scanned, in place.
+
+    Same contract as cross_check_health: never fails a scan; a region where the
+    Tagging API could not be called is reported, its resources simply stay
+    untagged. The outcome is stored in the state table for Sources & coverage."""
+    from datetime import datetime, timezone
+    hub = _caller_identity().get("account", "")
+    scopes = sorted({(sc.get("account_id") or hub, sc.get("region") or REGION) for sc in (scanned_scopes or [])}
+                    | {(item.get("account_id") or hub, item.get("region") or REGION) for item in items})
+    tags_by_arn: Dict[str, Dict[str, str]] = {}
+    reasons: List[str] = []
+    by_account: Dict[str, Dict] = {}
+    for account_id, region in scopes:
+        acct = by_account.setdefault(account_id, {"available": False, "reason": None, "tagged_resources": 0})
+        try:
+            found = fetch_user_tags(region, session=session_for_account(account_id, region))
+            tags_by_arn.update(found)
+            acct.update(available=True, tagged_resources=acct["tagged_resources"] + len(found))
+        except Exception as e:
+            reason = f"{account_id}/{region}: {type(e).__name__}: {str(e)[:120]}"
+            reasons.append(reason)
+            acct["reason"] = acct["reason"] or reason
+    stats = apply_tags(items, tags_by_arn)
+    status = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "available": any(a["available"] for a in by_account.values()),
+        "reason": "; ".join(reasons) or None,
+        "resources": stats["resources"],
+        "tagged": stats["tagged"],
+        # keys ranked by how many scanned resources carry them: the filter's suggestions
+        "keys": dict(sorted(stats["keys"].items(), key=lambda kv: (-kv[1], kv[0]))[:200]),
+        "by_account": by_account,
+    }
+    _save_control_row(TAGS_STATUS_KEY, status)
+    return status
+
+
+def load_tags_status() -> Optional[Dict]:
+    return load_control_row(TAGS_STATUS_KEY)
+
+
+# DynamoDB items are limited to 400 KB. Rows carry up to MAX_RESOURCE_NAMES
+# resource entries, each now with tags, health and cost blocks: a large row can
+# get close. Entries are dropped from the end (total_affected stays exact) until
+# the serialized row fits under this budget, and the row says so.
+ROW_BYTE_BUDGET = 350_000
+
+
+def _row_bytes(item: Dict) -> int:
+    return len(json.dumps(item, default=str).encode("utf-8"))
+
+
+def fit_row_to_budget(item: Dict, budget: int = ROW_BYTE_BUDGET) -> Dict:
+    """Trim affected_resource_details (and names) in place until the row fits."""
+    ss = item.get("service_specific")
+    if not isinstance(ss, dict):
+        return item
+    details = ss.get("affected_resource_details")
+    if not isinstance(details, list) or _row_bytes(item) <= budget:
+        return item
+    kept = len(details)
+    while kept > 0 and _row_bytes(item) > budget:
+        kept = kept // 2 if kept > 20 else kept - 1
+        ss["affected_resource_details"] = details[:kept]
+        names = ss.get("affected_resource_names")
+        if isinstance(names, list):
+            ss["affected_resource_names"] = names[:kept]
+    ss["details_truncated"] = True
+    ss["details_stored"] = kept
+    return item
 
 
 def estimate_cost_exposure(items: List[Dict]) -> Dict:

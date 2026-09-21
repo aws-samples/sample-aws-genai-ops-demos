@@ -10,6 +10,13 @@ import Button from '@cloudscape-design/components/button';
 import AuthModal from './AuthModal';
 import { SplitPanelContext, SplitPanelContent } from './split-panel';
 import { HelpContext, HelpContent, helpFor } from './help';
+import Flashbar from '@cloudscape-design/components/flashbar';
+import TagFilterProvider, { useTagFilter } from './components/TagFilterProvider';
+import TagFilterModal from './components/TagFilterModal';
+import { tokenText } from './tag-filter';
+
+// Pages about the catalog and the scan setup, not about your resources
+const TAG_FILTER_FREE_PAGES = ['/catalog', '/services'];
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
@@ -27,6 +34,9 @@ function AppContent() {
   const [panel, setPanel] = useState<SplitPanelContent | null>(null);
   // Help panel (AppLayout tools): content follows the route, opened by the Info links
   const [toolsOpen, setToolsOpen] = useState(false);
+  // Tag filter (#164): global scope, owned by TagFilterProvider
+  const tagFilter = useTagFilter();
+  const [showTagFilter, setShowTagFilter] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -100,6 +110,12 @@ function AppContent() {
         onDismiss={() => setShowAuthModal(false)}
         onSuccess={handleAuthSuccess}
       />
+      <TagFilterModal
+        visible={showTagFilter}
+        initial={tagFilter.filters}
+        onDismiss={() => setShowTagFilter(false)}
+        onApply={(f) => { tagFilter.setFilters(f); setShowTagFilter(false); }}
+      />
       <TopNavigation
         identity={{
           href: "#",
@@ -110,6 +126,14 @@ function AppContent() {
           }
         }}
         utilities={[
+          // Tag filter (#164): scopes the whole tracker, like the console region selector
+          ...(user ? [{
+            type: "button" as const,
+            text: tagFilter.filters.length ? `Tag filter: ${tagFilter.filters.map(tokenText).join(', ')}` : 'Tag filter',
+            iconName: 'filter' as const,
+            ariaLabel: 'Tag filter',
+            onClick: () => setShowTagFilter(true),
+          }] : []),
           {
             type: "button",
             text: user ? `${user.email}` : "Sign In",
@@ -161,6 +185,16 @@ function AppContent() {
             ]}
           />
         }
+        notifications={user && tagFilter.filters.length ? (
+          <Flashbar items={[{
+            type: 'info',
+            id: 'tag-filter',
+            content: `Filtered by tag ${tagFilter.filters.map(tokenText).join(' or ')}${tagFilter.stats
+              ? ` · ${tagFilter.stats.matched} of ${tagFilter.stats.total} resources` : ''}${TAG_FILTER_FREE_PAGES.includes(location.pathname) ? ' · this page is not affected' : ''}`,
+            action: <Button onClick={() => tagFilter.setFilters([])}>Clear</Button>,
+          }]} />
+        ) : undefined}
+        stickyNotifications
         toolsHide={!user || !helpFor(location.pathname)}
         tools={<HelpContent pathname={location.pathname} />}
         toolsOpen={toolsOpen}
@@ -202,7 +236,8 @@ function AppContent() {
                     </Button>
                   </Box>
                 ) : (
-                  <Routes>
+                  // keyed on the tag filter: a change re-mounts the page, which reloads already scoped
+                  <Routes key={tagFilter.version}>
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/services" element={<Services />} />
                     <Route path="/services/:serviceName" element={<ServiceDetail />} />
@@ -225,7 +260,9 @@ function AppContent() {
 function App() {
   return (
     <BrowserRouter>
-      <AppContent />
+      <TagFilterProvider>
+        <AppContent />
+      </TagFilterProvider>
     </BrowserRouter>
   );
 }

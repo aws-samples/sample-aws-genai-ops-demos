@@ -373,6 +373,15 @@ export default function Services() {
                 {' '}
               </>
             )}
+            {coverage.tags && (
+              <>
+                <strong>Resource tags:</strong>{' '}
+                {coverage.tags.available
+                  ? <>{coverage.tags.tagged} of {coverage.tags.resources} resources carry a user tag ({Object.keys(coverage.tags.keys).length} key{Object.keys(coverage.tags.keys).length === 1 ? '' : 's'}: {Object.keys(coverage.tags.keys).slice(0, 5).join(', ')}{Object.keys(coverage.tags.keys).length > 5 ? ', ...' : ''}).</>
+                  : <>{coverage.tags.reason || 'unavailable'}.</>}
+                {' '}
+              </>
+            )}
             <strong>AWS Health cross-check:</strong>{' '}
             {!coverage.health
               ? 'not run yet (happens during each account scan).'
