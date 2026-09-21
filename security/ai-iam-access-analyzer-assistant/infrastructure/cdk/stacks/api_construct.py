@@ -92,6 +92,23 @@ class ApiConstruct(Construct):
             memory_size=256,
         )
         # Read-only permissions — mirrors the deploy-time probe's ACL.
+        #
+        # resources=["*"] is required by the AWS IAM authorization model for
+        # every one of these five actions: they are account-scoped control-plane
+        # calls with no resource-level authorization support. Per the AWS
+        # service authorization reference:
+        #
+        #   * securityhub:DescribeHub, ListEnabledProductsForImport, GetFindings
+        #     — supported resources column is "-" (none).
+        #   * access-analyzer:ListAnalyzers — supported resources column is "-".
+        #   * cloudtrail:LookupEvents — supported resources column is "-".
+        #
+        # A caller cannot write, for example, "arn:aws:securityhub:...:hub/xyz"
+        # on DescribeHub — the policy would be rejected. The `*` here is the
+        # least privilege AWS actually allows for these calls, and cfn-nag's
+        # generic W11 warning does not apply to actions that inherently do not
+        # accept resource ARNs. See:
+        #   https://docs.aws.amazon.com/service-authorization/latest/reference/
         self.capabilities_fn.add_to_role_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,

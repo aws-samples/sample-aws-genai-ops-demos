@@ -14,16 +14,17 @@ the chat opens; the tools themselves still emit per-call coverage on
 every turn, so this probe is the header-level supplement to the per-turn
 signal — not a replacement.
 
-Output shape:
+Output shape (illustrative example — actual region is whatever the Lambda
+runs in, taken from ``AWS_REGION`` at cold start):
 
     {
-      "region": "us-east-1",
+      "region": "<region>",
       "coverage": [
         {"source": "securityhub", "state": "checked", "detail": "..."},
         {"source": "accessanalyzer", "state": "unavailable", "detail": "..."},
         {"source": "cloudtrail", "state": "checked", "detail": "..."}
       ],
-      "welcome_message": "In us-east-1 I can see external access findings ..."
+      "welcome_message": "In <region> I can see external access findings ..."
     }
 """
 
@@ -36,8 +37,20 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# The AWS_REGION env var is set automatically by the Lambda runtime. The
+# "us-east-1" literal is a defensive fallback ONLY for the offline/unit-test
+# path where AWS_REGION is not exported by the test runner; it must never
+# reach production because a Lambda always has AWS_REGION populated. Same
+# pattern as the sibling tools (see src/tools/export_report.py:24 and
+# src/tools/list_exports.py:22).
 _REGION = os.environ.get("AWS_REGION", "us-east-1")
 
+# Module-level boto3 clients so they persist across warm Lambda invocations
+# — client construction is the expensive part (loads service model, sets up
+# SigV4 signer), and re-using clients across invocations is the documented
+# Lambda cold-start optimization pattern. The clients pick up credentials
+# lazily from the execution role on first API call. The tests monkey-patch
+# these module-level references directly (see tests/test_capabilities.py).
 securityhub_client = boto3.client("securityhub")
 accessanalyzer_client = boto3.client("accessanalyzer")
 cloudtrail_client = boto3.client("cloudtrail")
