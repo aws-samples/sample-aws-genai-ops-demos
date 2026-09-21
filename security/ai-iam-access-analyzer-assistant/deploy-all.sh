@@ -88,19 +88,10 @@ check_bedrock_model_access "$REGION" || \
     echo " ⚠ Continuing deploy despite the model-access warning above — the assistant will"$'\n'"   return an access error at runtime until model access is enabled and propagated."
 echo ""
 
-# Step 1: Install CDK dependencies
-echo "[1/5] Installing CDK dependencies..."
-pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
-if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
-fi
-source .venv/bin/activate
-pip install -r requirements.txt --quiet
-popd > /dev/null
-echo " ✓ CDK dependencies installed."
+STACK_NAME="IamAnalyzerAssistantStack-$REGION"
 
-# Step 2: Build frontend
-echo "[2/5] Building React frontend..."
+# Step 1: Build frontend
+echo "[1/4] Building React frontend..."
 pushd "$SCRIPT_DIR/frontend" > /dev/null
 if [ ! -d "node_modules" ]; then
     npm install
@@ -109,27 +100,32 @@ npm run build
 popd > /dev/null
 echo " ✓ Frontend built."
 
-# Step 3: Deploy CDK stack
-echo "[3/5] Deploying CDK infrastructure..."
-pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
-source .venv/bin/activate
-export VIRTUAL_ENV="$SCRIPT_DIR/infrastructure/cdk/.venv"
-export PATH="$VIRTUAL_ENV/bin:$PATH"
+# Step 2: Deploy CDK stack via the shared script (installs CDK deps, bootstraps, deploys)
+echo "[2/4] Deploying CDK infrastructure..."
 export AWS_REGION="$REGION"
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
-npx cdk deploy "IamAnalyzerAssistantStack-$REGION" --require-approval never --outputs-file outputs.json
-popd > /dev/null
+"$SCRIPT_DIR/../../shared/scripts/deploy-cdk.sh" --cdk-directory "$SCRIPT_DIR/infrastructure/cdk" --stack-name "$STACK_NAME"
 echo " ✓ Infrastructure deployed."
 
-# Step 4: Get stack outputs and configure frontend
-echo "[4/5] Configuring frontend with stack outputs..."
-OUTPUTS_FILE="$SCRIPT_DIR/infrastructure/cdk/outputs.json"
+# Step 3: Get stack outputs and configure frontend
+echo "[3/4] Configuring frontend with stack outputs..."
+get_stack_output() {
+    aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" --no-cli-pager \
+        --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+}
 
-API_ENDPOINT=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".ApiEndpoint" "$OUTPUTS_FILE")
-USER_POOL_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".UserPoolId" "$OUTPUTS_FILE")
-USER_POOL_CLIENT_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".UserPoolClientId" "$OUTPUTS_FILE")
-IDENTITY_POOL_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".IdentityPoolId" "$OUTPUTS_FILE")
-WEBSITE_URL=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".WebsiteUrl" "$OUTPUTS_FILE")
+API_ENDPOINT=$(get_stack_output ApiEndpoint)
+USER_POOL_ID=$(get_stack_output UserPoolId)
+USER_POOL_CLIENT_ID=$(get_stack_output UserPoolClientId)
+IDENTITY_POOL_ID=$(get_stack_output IdentityPoolId)
+WEBSITE_URL=$(get_stack_output WebsiteUrl)
+FRONTEND_BUCKET=$(get_stack_output FrontendBucketName)
+DISTRIBUTION_ID=$(get_stack_output DistributionId)
+
+if [ -z "$USER_POOL_ID" ] || [ -z "$FRONTEND_BUCKET" ]; then
+    echo "ERROR: Failed to read outputs from stack $STACK_NAME"
+    exit 1
+fi
 
 # Generate frontend environment config
 cat > "$SCRIPT_DIR/frontend/.env.production.local" <<EOF
@@ -141,9 +137,8 @@ VITE_REGION=$REGION
 EOF
 echo " ✓ Frontend configured."
 
-# Step 5: Deploy frontend to S3 + invalidate CloudFront
-echo "[5/5] Uploading frontend to S3..."
-FRONTEND_BUCKET=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".FrontendBucketName" "$OUTPUTS_FILE")
+# Step 4: Deploy frontend to S3 + invalidate CloudFront
+echo "[4/4] Uploading frontend to S3..."
 
 # Rebuild with production env vars
 pushd "$SCRIPT_DIR/frontend" > /dev/null
@@ -152,8 +147,6 @@ aws s3 sync dist/ "s3://$FRONTEND_BUCKET" --delete --region "$REGION"
 popd > /dev/null
 
 # Invalidate CloudFront cache
-DISTRIBUTION_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".DistributionId" "$OUTPUTS_FILE")
-
 if [ -n "$DISTRIBUTION_ID" ] && [ "$DISTRIBUTION_ID" != "None" ]; then
     aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --region "$REGION" > /dev/null
 fi

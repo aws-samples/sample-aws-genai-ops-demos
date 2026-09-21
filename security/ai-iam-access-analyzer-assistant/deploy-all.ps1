@@ -52,26 +52,10 @@ Write-Host " Region: $region" -ForegroundColor Yellow
 Write-Host " Account: $accountId" -ForegroundColor Yellow
 Write-Host ""
 
-# Step 1: Install CDK dependencies
-Write-Host "[1/5] Installing CDK dependencies..." -ForegroundColor Cyan
-Push-Location "$PSScriptRoot\infrastructure\cdk"
-try {
-    if (-not (Test-Path ".venv")) {
-        python -m venv .venv
-    }
-    if ($IsWindows -or $env:OS -match "Windows") {
-        & ".venv\Scripts\Activate.ps1"
-    } else {
-        & ".venv/bin/Activate.ps1"
-    }
-    pip install -r requirements.txt --quiet
-} finally {
-    Pop-Location
-}
-Write-Host " CDK dependencies installed." -ForegroundColor Green
+$stackName = "IamAnalyzerAssistantStack-$region"
 
-# Step 2: Build frontend
-Write-Host "[2/5] Building React frontend..." -ForegroundColor Cyan
+# Step 1: Build frontend
+Write-Host "[1/4] Building React frontend..." -ForegroundColor Cyan
 Push-Location "$PSScriptRoot\frontend"
 try {
     if (-not (Test-Path "node_modules")) {
@@ -83,29 +67,36 @@ try {
 }
 Write-Host " Frontend built." -ForegroundColor Green
 
-# Step 3: Deploy CDK stack
-Write-Host "[3/5] Deploying CDK infrastructure..." -ForegroundColor Cyan
-Push-Location "$PSScriptRoot\infrastructure\cdk"
-try {
-    $env:AWS_REGION = $region
-    $env:CDK_DEFAULT_ACCOUNT = $accountId
-    npx cdk deploy "IamAnalyzerAssistantStack-$region" --require-approval never --outputs-file outputs.json
-} finally {
-    Pop-Location
+# Step 2: Deploy CDK stack via the shared script (installs CDK deps, bootstraps, deploys)
+Write-Host "[2/4] Deploying CDK infrastructure..." -ForegroundColor Cyan
+$env:AWS_REGION = $region
+$env:CDK_DEFAULT_ACCOUNT = $accountId
+& "$PSScriptRoot\..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "$PSScriptRoot\infrastructure\cdk" -StackName $stackName
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CDK deployment failed" -ForegroundColor Red
+    exit 1
 }
 Write-Host " Infrastructure deployed." -ForegroundColor Green
 
-# Step 4: Get stack outputs and configure frontend
-Write-Host "[4/5] Configuring frontend with stack outputs..." -ForegroundColor Cyan
-$outputsFile = "$PSScriptRoot\infrastructure\cdk\outputs.json"
-$outputs = Get-Content $outputsFile | ConvertFrom-Json
-$stackOutputs = $outputs."IamAnalyzerAssistantStack-$region"
+# Step 3: Get stack outputs and configure frontend
+Write-Host "[3/4] Configuring frontend with stack outputs..." -ForegroundColor Cyan
+function Get-StackOutput($key) {
+    aws cloudformation describe-stacks --stack-name $stackName --region $region --no-cli-pager `
+        --query "Stacks[0].Outputs[?OutputKey=='$key'].OutputValue" --output text
+}
 
-$apiEndpoint = $stackOutputs.ApiEndpoint
-$userPoolId = $stackOutputs.UserPoolId
-$userPoolClientId = $stackOutputs.UserPoolClientId
-$identityPoolId = $stackOutputs.IdentityPoolId
-$websiteUrl = $stackOutputs.WebsiteUrl
+$apiEndpoint = Get-StackOutput "ApiEndpoint"
+$userPoolId = Get-StackOutput "UserPoolId"
+$userPoolClientId = Get-StackOutput "UserPoolClientId"
+$identityPoolId = Get-StackOutput "IdentityPoolId"
+$websiteUrl = Get-StackOutput "WebsiteUrl"
+$frontendBucket = Get-StackOutput "FrontendBucketName"
+$distributionId = Get-StackOutput "DistributionId"
+
+if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($frontendBucket)) {
+    Write-Host "Failed to read outputs from stack $stackName" -ForegroundColor Red
+    exit 1
+}
 
 # Generate frontend environment config
 $envContent = @"
@@ -118,9 +109,8 @@ VITE_REGION=$region
 $envContent | Out-File -FilePath "$PSScriptRoot\frontend\.env.production.local" -Encoding UTF8
 Write-Host " Frontend configured." -ForegroundColor Green
 
-# Step 5: Deploy frontend to S3 + invalidate CloudFront
-Write-Host "[5/5] Uploading frontend to S3..." -ForegroundColor Cyan
-$frontendBucket = $stackOutputs.FrontendBucketName
+# Step 4: Deploy frontend to S3 + invalidate CloudFront
+Write-Host "[4/4] Uploading frontend to S3..." -ForegroundColor Cyan
 
 # Rebuild with production env vars
 Push-Location "$PSScriptRoot\frontend"
@@ -132,9 +122,7 @@ try {
 }
 
 # Invalidate CloudFront cache
-$distributionId = $stackOutputs.DistributionId
-
-if ($distributionId) {
+if (-not [string]::IsNullOrEmpty($distributionId) -and $distributionId -ne "None") {
     aws cloudfront create-invalidation --distribution-id $distributionId --paths "/*" --region $region | Out-Null
 }
 Write-Host " Frontend deployed." -ForegroundColor Green
