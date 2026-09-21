@@ -63,11 +63,13 @@ Coming soon.
 
 ## Prerequisites
 
-Before deploying, ensure the following are enabled in your AWS account:
+The stack deploys a read-only role and creates no security data of its own: the assistant reads what these services already hold **in the deployment region**. None of them is needed for the deployment to succeed, but without them the assistant has nothing to show, and the deploy script ends with a "Data sources" status telling you exactly what it will be able to see (see [Data sources status](#data-sources-status)).
 
-- **Security Hub** — enabled with IAM Access Analyzer integration
-- **IAM Access Analyzer** — at least one active analyzer
-- **CloudTrail** — logging enabled (for policy generation lookback)
+- **Security Hub CSPM** — enabled in the deployment region. The IAM Access Analyzer integration turns on automatically when both services are enabled; all findings are read through Security Hub.
+- **IAM Access Analyzer** — at least one active analyzer in the deployment region. The two kinds produce different findings, so pick by what you want the assistant to talk about:
+  - *External access* (`ACCOUNT` or `ORGANIZATION`, free): public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust policies.
+  - *Unused access* (`ACCOUNT_UNUSED_ACCESS` or `ORGANIZATION_UNUSED_ACCESS`, billed per IAM role and user analyzed): unused roles, unused permissions, unused access keys and passwords. Most of the suggested prompts ("show my findings", "compare my unused roles", "blast radius of my most critical unused role") rely on this one.
+- **CloudTrail** — nothing to configure. Policy generation reads the always-on 90-day management event history of the deployment region (`cloudtrail:LookupEvents`); a trail is not required.
 - **Amazon Bedrock** — model access enabled for Claude (Anthropic)
 - **AWS CLI** v2.31.13+
 - **Node.js** 20+
@@ -90,12 +92,12 @@ chmod +x deploy-all.sh
 ```
 
 The script will:
-1. Install CDK dependencies
-2. Build the React frontend
-3. Deploy CDK infrastructure (Lambda, API Gateway, Cognito, CloudFront, S3)
-4. Configure the frontend with stack outputs
-5. Upload the frontend to S3 and invalidate CloudFront
-6. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
+1. Build the React frontend
+2. Deploy the CDK stack through the shared `deploy-cdk` script (Lambda, API Gateway, Cognito, CloudFront, S3)
+3. Configure the frontend with stack outputs
+4. Upload the frontend to S3 and invalidate CloudFront
+5. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
+6. Print the [Data sources status](#data-sources-status): what the assistant will be able to see in this region.
 
 The final "Deployment Complete!" summary prints the CloudFront URL, the demo email, and the demo password — copy them from the terminal to sign in. Re-running the script rotates the demo user's password.
 
@@ -109,6 +111,29 @@ aws cognito-idp admin-set-user-password \
   --user-pool-id <UserPoolId> --username you@example.com \
   --password '<strong-password>' --permanent
 ```
+
+### Data sources status
+
+The deploy script ends with a status block describing what the assistant can see in the deployment region. It never blocks the deployment; each line is one of three states: `[+]` present, `[!]` missing (with the command that fixes it), `[?]` could not be checked with your credentials.
+
+```
+ Data sources in us-east-1
+   AWS Security Hub CSPM
+     [+] Service                        enabled in us-east-1 since 2021-09-03
+     [+] IAM Access Analyzer feed       on: IAM Access Analyzer findings are forwarded to Security Hub
+     [+] Findings from Access Analyzer  1 active in Security Hub
+   AWS IAM Access Analyzer
+     [+] External access analyzer       ConsoleAnalyzer-… (ACCOUNT)
+         Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust.
+     [!] Unused access analyzer         none in us-east-1: unused roles and permissions cannot appear (most suggested prompts need this)
+         aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration "unusedAccess={unusedAccessAge=90}" --region us-east-1
+         (billed per IAM role and user analyzed)
+   AWS CloudTrail
+     [+] Event history                  90-day management event history of us-east-1 (always on, no trail required)
+         Used by policy generation to see which API calls a role actually made.
+```
+
+In the example, the assistant will answer questions about the one cross-account finding but will report nothing for unused roles or permissions until an unused-access analyzer exists. New findings reach Security Hub within about 30 minutes of creating an analyzer.
 
 ## Architecture
 
@@ -522,18 +547,13 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*"
 
 ### No findings returned
 
-**Cause:** Security Hub or IAM Access Analyzer not enabled/integrated.
-**Fix:** Verify prerequisites:
+**Cause:** Security Hub CSPM not enabled in the deployment region, no active analyzer there, or an analyzer of the other kind (an external-access analyzer produces no unused-role findings, and vice versa).
+**Fix:** Re-run `deploy-all` and read the [Data sources status](#data-sources-status) block at the end; it names what is missing and prints the command that creates it. To check by hand in the deployment region:
 
 ```bash
-# Check Security Hub is enabled
 aws securityhub describe-hub
-
-# Check Access Analyzer exists
-aws accessanalyzer list-analyzers
-
-# Check for findings
-aws securityhub get-findings --filters '{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}]}' --max-items 1
+aws accessanalyzer list-analyzers --query "analyzers[?status=='ACTIVE'].[type,name]" --output table
+aws securityhub get-findings --filters '{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}]}' --max-results 1
 ```
 
 ### "Failed to fetch" or empty responses after extended session

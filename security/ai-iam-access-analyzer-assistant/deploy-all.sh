@@ -83,6 +83,135 @@ echo " Region: $REGION"
 echo " Account: $ACCOUNT_ID"
 echo ""
 
+# Report what the assistant will be able to see in this region. The stack deploys a
+# read-only role and creates none of these: it reads whatever Security Hub CSPM, IAM
+# Access Analyzer and CloudTrail already hold here. So the deployment cannot fail on
+# them, but the demo is empty without them, and an analyzer of the wrong kind looks
+# exactly like a clean account. Every line is one of three states: what is there,
+# what is missing, or what could not be checked (the operator's credentials, not the
+# Lambda role, run these calls). Never blocks; mirrors src/tools/list_findings.py.
+# Mirrors Show-DataSourceStatus in deploy-all.ps1.
+show_data_source_status() {
+    local region="$1"
+    local last_aws_error=""
+
+    # One block per AWS service: the service name as a header, then one line per check.
+    service() { printf '   %s\n' "$1"; }
+    line() {  # state label text
+        local mark
+        case "$1" in
+            ok)      mark="+" ;;
+            missing) mark="!" ;;
+            *)       mark="?" ;;
+        esac
+        printf '     [%s] %-30s %s\n' "$mark" "$2" "$3"
+    }
+    hint() { printf '         %s\n' "$1"; }
+    # Read-only AWS CLI call: prints stdout and returns 0, or sets last_aws_error and
+    # returns 1. Never aborts the script (set -e is disabled around the call).
+    aws_read() {
+        local out
+        set +e
+        out=$(aws "$@" --region "$region" --no-cli-pager 2>&1)
+        local rc=$?
+        set -e
+        if [ $rc -ne 0 ]; then
+            last_aws_error=$(printf '%s' "$out" | head -n 1)
+            return 1
+        fi
+        printf '%s' "$out"
+    }
+
+    echo " Data sources in ${region}"
+    echo "   The assistant only reads what these AWS services already hold in this region."
+    echo "   The deployment does not depend on them; this is what the assistant can see today."
+    echo ""
+
+    # --- AWS Security Hub CSPM: the only place the assistant reads findings from ---
+    service "AWS Security Hub CSPM"
+    local hub_enabled=false hub
+    if hub=$(aws_read securityhub describe-hub --query SubscribedAt --output text); then
+        hub_enabled=true
+        line ok "Service" "enabled in $region since ${hub:0:10}"
+    elif printf '%s' "$last_aws_error" | grep -qE 'InvalidAccessException|not subscribed'; then
+        line missing "Service" "not enabled in $region: the assistant cannot read any finding"
+        hint "Enable Security Hub CSPM in this region: https://console.aws.amazon.com/securityhub/"
+    else
+        line unknown "Service" "could not check ($last_aws_error)"
+    fi
+
+    # Access Analyzer -> Security Hub integration (auto-enabled, can be switched off)
+    local integration_on=false sub
+    if [ "$hub_enabled" = true ]; then
+        if sub=$(aws_read securityhub list-enabled-products-for-import \
+                --query "length(ProductSubscriptions[?contains(@, 'product-subscription/aws/access-analyzer')])" \
+                --output text); then
+            if [ "$sub" = "0" ]; then
+                line missing "IAM Access Analyzer feed" "switched off: IAM Access Analyzer findings do not reach Security Hub"
+                hint "Security Hub CSPM console > Integrations > IAM Access Analyzer > Accept findings"
+            else
+                integration_on=true
+                line ok "IAM Access Analyzer feed" "on: IAM Access Analyzer findings are forwarded to Security Hub"
+            fi
+        else
+            line unknown "IAM Access Analyzer feed" "could not check ($last_aws_error)"
+        fi
+    fi
+
+    # Findings the assistant can see right now: same filter as src/tools/list_findings.py.
+    local count
+    if [ "$hub_enabled" = true ] && [ "$integration_on" = true ]; then
+        local filters='{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],"WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]}'
+        if count=$(aws_read securityhub get-findings --filters "$filters" --max-results 100 \
+                --query "length(Findings)" --output text); then
+            if [ "$count" = "0" ]; then
+                line missing "Findings from Access Analyzer" "0 active in Security Hub: nothing to report, or the analyzer is new"
+                hint "New findings reach Security Hub within about 30 minutes of creating an analyzer."
+            elif [ "$count" -ge 100 ] 2>/dev/null; then
+                line ok "Findings from Access Analyzer" "100 or more active in Security Hub"
+            else
+                line ok "Findings from Access Analyzer" "$count active in Security Hub"
+            fi
+        else
+            line unknown "Findings from Access Analyzer" "could not check ($last_aws_error)"
+        fi
+    fi
+
+    # --- AWS IAM Access Analyzer: produces the findings. Two analyzer kinds, two finding families ---
+    service "AWS IAM Access Analyzer"
+    local analyzers external unused
+    if analyzers=$(aws_read accessanalyzer list-analyzers \
+            --query "analyzers[?status=='ACTIVE'].[type,name]" --output text); then
+        external=$(printf '%s\n' "$analyzers" | grep -v 'UNUSED_ACCESS' | head -n 1 || true)
+        unused=$(printf '%s\n' "$analyzers" | grep 'UNUSED_ACCESS' | head -n 1 || true)
+        # External access (ACCOUNT / ORGANIZATION): public and cross-account access findings
+        if [ -n "$external" ]; then
+            line ok "External access analyzer" "$(printf '%s' "$external" | cut -f2) ($(printf '%s' "$external" | cut -f1))"
+            hint "Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust."
+        else
+            line missing "External access analyzer" "none in $region: public and cross-account access findings cannot appear"
+            hint "aws accessanalyzer create-analyzer --analyzer-name external-access --type ACCOUNT --region $region   (free)"
+        fi
+        # Unused access (*_UNUSED_ACCESS): unused roles, permissions, access keys, passwords
+        if [ -n "$unused" ]; then
+            line ok "Unused access analyzer" "$(printf '%s' "$unused" | cut -f2) ($(printf '%s' "$unused" | cut -f1))"
+            hint "Reports unused IAM roles, permissions, access keys and passwords."
+        else
+            line missing "Unused access analyzer" "none in $region: unused roles and permissions cannot appear (most suggested prompts need this)"
+            hint "aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration \"unusedAccess={unusedAccessAge=90}\" --region $region"
+            hint "(billed per IAM role and user analyzed)"
+        fi
+    else
+        line unknown "Analyzers" "could not check ($last_aws_error)"
+    fi
+
+    # --- AWS CloudTrail: usage data for least-privilege policy generation ---
+    service "AWS CloudTrail"
+    line ok "Event history" "90-day management event history of $region (always on, no trail required)"
+    hint "Used by policy generation to see which API calls a role actually made."
+    echo ""
+}
+
 # Verify Bedrock model access up front (warns but continues)
 check_bedrock_model_access "$REGION" || \
     echo " ⚠ Continuing deploy despite the model-access warning above — the assistant will"$'\n'"   return an access error at runtime until model access is enabled and propagated."
@@ -226,6 +355,7 @@ echo "========================================"
 echo " Open the demo: $WEBSITE_URL"
 echo " Region: $REGION"
 echo ""
+show_data_source_status "$REGION"
 echo " Sign in with:"
 echo "   Email:    $DEMO_EMAIL"
 echo "   Password: $DEMO_PASSWORD"
