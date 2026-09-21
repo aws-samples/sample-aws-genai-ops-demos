@@ -172,21 +172,49 @@ DEMO_EMAIL="admin@example.com"
 # the 12 that cut takes, so the segment is reliably a full 12 characters.
 DEMO_PASSWORD="Demo$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-12)!9"
 
-# Create user (ignore error if already exists)
-aws cognito-idp admin-create-user \
-  --user-pool-id "$USER_POOL_ID" \
-  --username "$DEMO_EMAIL" \
-  --user-attributes Name=email_verified,Value=true \
-  --message-action SUPPRESS \
-  --region "$REGION" 2>/dev/null || true
+# admin-create-user: allow re-runs on an existing user (UsernameExistsException),
+# but surface any other error rather than silently continuing to a
+# "Deployment Complete!" summary whose credentials the pool doesn't actually
+# accept. Capture stderr into a variable while dropping stdout, then decide
+# based on both the exit status and the specific error class.
+CREATE_ERR="$(aws cognito-idp admin-create-user \
+    --user-pool-id "$USER_POOL_ID" \
+    --username "$DEMO_EMAIL" \
+    --user-attributes Name=email_verified,Value=true \
+    --message-action SUPPRESS \
+    --region "$REGION" 2>&1 1>/dev/null)" && CREATE_STATUS=0 || CREATE_STATUS=$?
 
-# Set permanent password (bypasses force-change-password flow)
-aws cognito-idp admin-set-user-password \
-  --user-pool-id "$USER_POOL_ID" \
-  --username "$DEMO_EMAIL" \
-  --password "$DEMO_PASSWORD" \
-  --permanent \
-  --region "$REGION" 2>/dev/null || true
+if [ "$CREATE_STATUS" -ne 0 ]; then
+    if printf '%s' "$CREATE_ERR" | grep -q 'UsernameExistsException'; then
+        echo "   (demo user already exists — password will be rotated below)"
+    else
+        echo ""
+        echo " ✗ Failed to create demo user:"
+        printf '%s\n' "$CREATE_ERR"
+        echo ""
+        echo "   The deployment finished but sign-in with the demo credentials"
+        echo "   below will not work. Fix the error above and re-run this script,"
+        echo "   or create a user manually via the Cognito console for User Pool"
+        echo "   $USER_POOL_ID."
+        exit 1
+    fi
+fi
+
+# admin-set-user-password: this is the step that guarantees the demo user can
+# sign in (bypasses the force-change-password flow the Amplify hosted UI
+# mishandles). Do NOT swallow failures — a silent failure here produces the
+# exact InvalidPasswordException symptom this script exists to avoid.
+if ! aws cognito-idp admin-set-user-password \
+    --user-pool-id "$USER_POOL_ID" \
+    --username "$DEMO_EMAIL" \
+    --password "$DEMO_PASSWORD" \
+    --permanent \
+    --region "$REGION"; then
+    echo ""
+    echo " ✗ Failed to set demo user password. Sign-in will not work."
+    echo "   The user exists in the pool but has no usable permanent password."
+    exit 1
+fi
 
 echo " ✓ Demo user created."
 
