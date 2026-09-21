@@ -177,9 +177,13 @@ To flip it on a smaller account where you always want an exact count, pass `full
 ## Cleanup
 
 ```bash
-cd infrastructure/cdk
-source .venv/bin/activate
-npx cdk destroy "IamAnalyzerAssistantStack-$(aws configure get region)"
+# Bash
+../../shared/scripts/deploy-cdk.sh --cdk-directory infrastructure/cdk --destroy --skip-bootstrap
+```
+
+```powershell
+# PowerShell
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "infrastructure\cdk" -DestroyStack -SkipBootstrap
 ```
 
 ## Project Structure
@@ -432,14 +436,11 @@ aws bedrock list-inference-profiles --query "inferenceProfileSummaries[?contains
 
 ### CDK "No module named 'aws_cdk'"
 
-**Cause:** CDK subprocess uses system Python instead of the venv.
-**Fix:** The `cdk.json` uses `.venv/bin/python3 app.py`. Ensure the venv exists:
+**Cause:** `cdk.json` synthesizes with `python3 app.py`; the CDK deps were installed into a different interpreter (or not at all).
+**Fix:** Install them into the Python that `python3` resolves to (the shared deploy script does this and verifies the import):
 
 ```bash
-cd infrastructure/cdk
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install -r infrastructure/cdk/requirements.txt
 ```
 
 ### CDK deploy fails on bootstrap (missing SSM parameter / stale bootstrap stack)
