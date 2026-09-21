@@ -117,15 +117,20 @@ aws cognito-idp admin-set-user-password \
 The deploy script ends with a status block describing what the assistant can see in the deployment region. It never blocks the deployment; each line is one of three states: `[+]` present, `[!]` missing (with the command that fixes it), `[?]` could not be checked with your credentials.
 
 ```
- Data sources in us-east-1:
-   [+] Security Hub CSPM      enabled (since 2021-09-03)
-   [+] Analyzer integration   Access Analyzer findings flow into Security Hub
-   [+] External access        ConsoleAnalyzer-… (ACCOUNT): public and cross-account findings
-   [!] Unused access          no analyzer: unused roles and permissions will not appear
-       aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration "unusedAccess={unusedAccessAge=90}" --region us-east-1
-       (billed per IAM role and user analyzed; external access analyzers are free)
-   [+] Findings visible now   1 active
-   [+] CloudTrail             90-day event history of this region (no trail required)
+ Data sources in us-east-1
+   AWS Security Hub CSPM
+     [+] Service                        enabled in us-east-1 since 2021-09-03
+     [+] IAM Access Analyzer feed       on: IAM Access Analyzer findings are forwarded to Security Hub
+     [+] Findings from Access Analyzer  1 active in Security Hub
+   AWS IAM Access Analyzer
+     [+] External access analyzer       ConsoleAnalyzer-… (ACCOUNT)
+         Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust.
+     [!] Unused access analyzer         none in us-east-1: unused roles and permissions cannot appear (most suggested prompts need this)
+         aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration "unusedAccess={unusedAccessAge=90}" --region us-east-1
+         (billed per IAM role and user analyzed)
+   AWS CloudTrail
+     [+] Event history                  90-day management event history of us-east-1 (always on, no trail required)
+         Used by policy generation to see which API calls a role actually made.
 ```
 
 In the example, the assistant will answer questions about the one cross-account finding but will report nothing for unused roles or permissions until an unused-access analyzer exists. New findings reach Security Hub within about 30 minutes of creating an analyzer.

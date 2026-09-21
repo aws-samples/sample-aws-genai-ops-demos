@@ -62,15 +62,17 @@ Write-Host ""
 function Show-DataSourceStatus {
     param([string]$Region)
 
+    # One block per AWS service: the service name as a header, then one line per check.
+    function Write-Service([string]$Name) { Write-Host "   $Name" -ForegroundColor White }
     function Write-Line([string]$State, [string]$Label, [string]$Text) {
         $mark, $color = switch ($State) {
             "ok"      { "+", "Green" }
             "missing" { "!", "Yellow" }
             default   { "?", "DarkGray" }
         }
-        Write-Host ("   [{0}] {1,-22} {2}" -f $mark, $Label, $Text) -ForegroundColor $color
+        Write-Host ("     [{0}] {1,-30} {2}" -f $mark, $Label, $Text) -ForegroundColor $color
     }
-    function Write-Hint([string]$Text) { Write-Host "       $Text" -ForegroundColor Gray }
+    function Write-Hint([string]$Text) { Write-Host "         $Text" -ForegroundColor Gray }
     # Run a read-only AWS CLI call; return stdout on success, $null on failure, with
     # the first error line in the script-scoped $lastAwsError for the "?" state.
     function Invoke-AwsRead([string[]]$CliArgs) {
@@ -89,70 +91,43 @@ function Show-DataSourceStatus {
         }
     }
 
-    Write-Host " Data sources in ${Region}:" -ForegroundColor Cyan
-    Write-Host "   The assistant reads what these services already hold in this region; the" -ForegroundColor Gray
-    Write-Host "   deployment never depends on them. This is what it will be able to see today." -ForegroundColor Gray
+    Write-Host " Data sources in ${Region}" -ForegroundColor Cyan
+    Write-Host "   The assistant only reads what these AWS services already hold in this region." -ForegroundColor Gray
+    Write-Host "   The deployment does not depend on them; this is what the assistant can see today." -ForegroundColor Gray
     Write-Host ""
 
-    # 1. Security Hub CSPM enabled in this region
+    # --- AWS Security Hub CSPM: the only place the assistant reads findings from ---
+    Write-Service "AWS Security Hub CSPM"
     $hubEnabled = $false
     $hub = Invoke-AwsRead @("securityhub", "describe-hub", "--query", "SubscribedAt", "--output", "text")
     if ($null -ne $hub) {
         $hubEnabled = $true
-        Write-Line "ok" "Security Hub CSPM" "enabled (since $($hub.Substring(0, 10)))"
+        Write-Line "ok" "Service" "enabled in $Region since $($hub.Substring(0, 10))"
     } elseif ($script:lastAwsError -match "InvalidAccessException|not subscribed") {
-        Write-Line "missing" "Security Hub CSPM" "not enabled: the assistant will see no findings at all"
-        Write-Hint "Enable it: https://console.aws.amazon.com/securityhub/ (Security Hub CSPM, this region)"
+        Write-Line "missing" "Service" "not enabled in ${Region}: the assistant cannot read any finding"
+        Write-Hint "Enable Security Hub CSPM in this region: https://console.aws.amazon.com/securityhub/"
     } else {
-        Write-Line "unknown" "Security Hub CSPM" "could not check ($($script:lastAwsError))"
+        Write-Line "unknown" "Service" "could not check ($($script:lastAwsError))"
     }
 
-    # 2. IAM Access Analyzer -> Security Hub integration (auto-enabled, can be disabled)
+    # Access Analyzer -> Security Hub integration (auto-enabled, can be switched off)
     $integrationOn = $false
     if ($hubEnabled) {
         $sub = Invoke-AwsRead @("securityhub", "list-enabled-products-for-import",
             "--query", "length(ProductSubscriptions[?contains(@, 'product-subscription/aws/access-analyzer')])",
             "--output", "text")
         if ($null -eq $sub) {
-            Write-Line "unknown" "Analyzer integration" "could not check ($($script:lastAwsError))"
+            Write-Line "unknown" "IAM Access Analyzer feed" "could not check ($($script:lastAwsError))"
         } elseif ($sub -eq "0") {
-            Write-Line "missing" "Analyzer integration" "Access Analyzer findings are not flowing into Security Hub"
+            Write-Line "missing" "IAM Access Analyzer feed" "switched off: IAM Access Analyzer findings do not reach Security Hub"
             Write-Hint "Security Hub CSPM console > Integrations > IAM Access Analyzer > Accept findings"
         } else {
             $integrationOn = $true
-            Write-Line "ok" "Analyzer integration" "Access Analyzer findings flow into Security Hub"
+            Write-Line "ok" "IAM Access Analyzer feed" "on: IAM Access Analyzer findings are forwarded to Security Hub"
         }
     }
 
-    # 3. Which analyzer kinds exist. External access (ACCOUNT/ORGANIZATION) yields
-    #    public and cross-account findings; unused access (*_UNUSED_ACCESS) yields
-    #    unused roles and permissions, which most of the suggested prompts rely on.
-    $analyzers = Invoke-AwsRead @("accessanalyzer", "list-analyzers",
-        "--query", "analyzers[?status=='ACTIVE'].[type,name]", "--output", "text")
-    if ($null -eq $analyzers) {
-        Write-Line "unknown" "Access Analyzer" "could not check ($($script:lastAwsError))"
-    } else {
-        $rows = @($analyzers -split "`n" | Where-Object { $_ } | ForEach-Object {
-            $t, $n = $_ -split "`t", 2; [pscustomobject]@{ Type = $t; Name = $n } })
-        $external = @($rows | Where-Object { $_.Type -notlike "*UNUSED_ACCESS" })
-        $unused   = @($rows | Where-Object { $_.Type -like "*UNUSED_ACCESS" })
-
-        if ($external.Count -gt 0) {
-            Write-Line "ok" "External access" "$($external[0].Name) ($($external[0].Type)): public and cross-account findings"
-        } else {
-            Write-Line "missing" "External access" "no analyzer: public and cross-account findings will not appear"
-            Write-Hint "aws accessanalyzer create-analyzer --analyzer-name external-access --type ACCOUNT --region $Region"
-        }
-        if ($unused.Count -gt 0) {
-            Write-Line "ok" "Unused access" "$($unused[0].Name) ($($unused[0].Type)): unused roles and permissions"
-        } else {
-            Write-Line "missing" "Unused access" "no analyzer: unused roles and permissions will not appear"
-            Write-Hint "aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration ""unusedAccess={unusedAccessAge=90}"" --region $Region"
-            Write-Hint "(billed per IAM role and user analyzed; external access analyzers are free)"
-        }
-    }
-
-    # 4. Findings the assistant can see right now: same filter as list_findings.py.
+    # Findings the assistant can see right now: same filter as src/tools/list_findings.py.
     if ($hubEnabled -and $integrationOn) {
         $filterFile = Join-Path ([IO.Path]::GetTempPath()) "iam-assistant-findings-filter-$PID.json"
         try {
@@ -165,19 +140,51 @@ function Show-DataSourceStatus {
             Remove-Item $filterFile -Force -ErrorAction SilentlyContinue
         }
         if ($null -eq $count) {
-            Write-Line "unknown" "Findings visible now" "could not check ($($script:lastAwsError))"
+            Write-Line "unknown" "Findings from Access Analyzer" "could not check ($($script:lastAwsError))"
         } elseif ($count -eq "0") {
-            Write-Line "missing" "Findings visible now" "0 active. Either nothing to report, or the analyzer is new"
-            Write-Hint "New findings reach Security Hub within about 30 minutes of analyzer creation."
+            Write-Line "missing" "Findings from Access Analyzer" "0 active in Security Hub: nothing to report, or the analyzer is new"
+            Write-Hint "New findings reach Security Hub within about 30 minutes of creating an analyzer."
         } else {
             $shown = if ([int]$count -ge 100) { "100 or more" } else { $count }
-            Write-Line "ok" "Findings visible now" "$shown active"
+            Write-Line "ok" "Findings from Access Analyzer" "$shown active in Security Hub"
         }
     }
 
-    # 5. CloudTrail: nothing to configure. Policy generation reads the always-on
-    #    90-day management event history of this region via cloudtrail:LookupEvents.
-    Write-Line "ok" "CloudTrail" "90-day event history of this region (no trail required)"
+    # --- AWS IAM Access Analyzer: produces the findings. Two analyzer kinds, two finding families ---
+    Write-Service "AWS IAM Access Analyzer"
+    $analyzers = Invoke-AwsRead @("accessanalyzer", "list-analyzers",
+        "--query", "analyzers[?status=='ACTIVE'].[type,name]", "--output", "text")
+    if ($null -eq $analyzers) {
+        Write-Line "unknown" "Analyzers" "could not check ($($script:lastAwsError))"
+    } else {
+        $rows = @($analyzers -split "`n" | Where-Object { $_ } | ForEach-Object {
+            $t, $n = $_ -split "`t", 2; [pscustomobject]@{ Type = $t; Name = $n } })
+        $external = @($rows | Where-Object { $_.Type -notlike "*UNUSED_ACCESS" })
+        $unused   = @($rows | Where-Object { $_.Type -like "*UNUSED_ACCESS" })
+
+        # External access (ACCOUNT / ORGANIZATION): public and cross-account access findings
+        if ($external.Count -gt 0) {
+            Write-Line "ok" "External access analyzer" "$($external[0].Name) ($($external[0].Type))"
+            Write-Hint "Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust."
+        } else {
+            Write-Line "missing" "External access analyzer" "none in ${Region}: public and cross-account access findings cannot appear"
+            Write-Hint "aws accessanalyzer create-analyzer --analyzer-name external-access --type ACCOUNT --region $Region   (free)"
+        }
+        # Unused access (*_UNUSED_ACCESS): unused roles, permissions, access keys, passwords
+        if ($unused.Count -gt 0) {
+            Write-Line "ok" "Unused access analyzer" "$($unused[0].Name) ($($unused[0].Type))"
+            Write-Hint "Reports unused IAM roles, permissions, access keys and passwords."
+        } else {
+            Write-Line "missing" "Unused access analyzer" "none in ${Region}: unused roles and permissions cannot appear (most suggested prompts need this)"
+            Write-Hint "aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration ""unusedAccess={unusedAccessAge=90}"" --region $Region"
+            Write-Hint "(billed per IAM role and user analyzed)"
+        }
+    }
+
+    # --- AWS CloudTrail: usage data for least-privilege policy generation ---
+    Write-Service "AWS CloudTrail"
+    Write-Line "ok" "Event history" "90-day management event history of $Region (always on, no trail required)"
+    Write-Hint "Used by policy generation to see which API calls a role actually made."
     Write-Host ""
 }
 
