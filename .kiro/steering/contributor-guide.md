@@ -405,6 +405,20 @@ import { getRegion, getAccountId } from '../../../../shared/utils/aws-utils';
 source ../../shared/scripts/check-prerequisites.sh agentcore 2.31.13
 ```
 
+**Shared CDK deployment** (always, one call per stack). Never call `cdk deploy`, `cdk bootstrap` or `cdk destroy` directly from a demo script:
+```powershell
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "infrastructure/cdk" -StackName "MyStack-$region"
+if ($LASTEXITCODE -ne 0) { exit 1 }
+```
+
+```bash
+../../shared/scripts/deploy-cdk.sh --cdk-directory "infrastructure/cdk" --stack-name "MyStack-$region"
+```
+
+The shared script owns dependency install, the `import aws_cdk` check, `PYTHONPATH` for `shared/`, bootstrap, `--no-cli-pager`, `--context` forwarding and exit codes. Reimplementing any of that in a demo is how platform bugs ship: the IAM assistant (#165) hardcoded `.venv/bin/python3 app.py` in `cdk.json` and never deployed on Windows, where a venv has `Scripts\python.exe` and no `bin/`. Subsequent stacks use `-SkipBootstrap` / `--skip-bootstrap`; teardown is `-DestroyStack` / `--destroy`.
+
+**`cdk.json` `app` is platform-neutral**: `python3 app.py` (Python) or `npx ts-node --prefer-ts-exts bin/app.ts` (TypeScript). Never a virtualenv path, never a `.venv` the demo creates itself; the shared script installs the CDK deps into the interpreter that `python3` resolves to. Read stack outputs back with `aws cloudformation describe-stacks --query "Stacks[0].Outputs[?OutputKey=='Key'].OutputValue" --output text` (no `--outputs-file`, no `jq`).
+
 **Deployment output** — every script MUST end with a user-friendly summary:
 ```powershell
 Write-Host "========================================" -ForegroundColor Green
@@ -548,6 +562,8 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Put solution tracking in stack classes (use app files)
 - Mix IaC tools (CDK only)
 - Commit `cdk.out*` directories
+- Call `cdk deploy` / `cdk bootstrap` / `cdk destroy` directly from a demo script (use `shared/scripts/deploy-cdk`)
+- Create a demo-local `.venv` for CDK, or point `cdk.json` `app` at a virtualenv interpreter
 - Duplicate region detection logic
 - Add `-SkipSetup` to `deploy-all` scripts
 - End deployment scripts silently without showing outputs
@@ -567,6 +583,7 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Place tracking in CDK app files only
 - Gitignore all CDK output directories
 - Use shared prerequisites scripts
+- Deploy every stack through `shared/scripts/deploy-cdk.ps1` / `.sh` and check its exit code
 - End scripts with user-friendly deployment summary
 - Test on Windows before submitting
 - Gate multi-account behind `-MultiAccount` / `--multi-account` and run `check-org-access` first

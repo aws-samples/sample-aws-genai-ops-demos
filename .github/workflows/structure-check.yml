@@ -81,6 +81,31 @@ jobs:
               else
                 echo "✅ Bash script exists"
               fi
+
+              # Demo scripts must deploy through shared/scripts/deploy-cdk, never call cdk
+              # directly. Direct calls bypass the shared dep install / import check / bootstrap /
+              # exit-code handling and are how platform-specific deploy bugs ship (see #165).
+              # Command lines only: comments, echo/Write-Host hints and throw messages are ignored.
+              # NEW demos (no README on main) fail; EXISTING offenders warn until migrated.
+              DIRECT_CDK=""
+              for SCRIPT in "$DEMO"/*.ps1 "$DEMO"/*.sh "$DEMO"/scripts/*.ps1 "$DEMO"/scripts/*.sh; do
+                [ -f "$SCRIPT" ] || continue
+                if grep -vE '^\s*(#|echo\b|Write-Host\b|throw\b)' "$SCRIPT" \
+                   | grep -qE '(^|[[:space:];(&|])(npx\s+(-y\s+)?)?cdk\s+(deploy|bootstrap|destroy)\b'; then
+                  DIRECT_CDK="$DIRECT_CDK $SCRIPT"
+                fi
+              done
+              if [ -n "$DIRECT_CDK" ]; then
+                if [ -z "$(git ls-tree --name-only origin/main "$DEMO/README.md")" ]; then
+                  echo "❌ New demo calls cdk directly; deploy through shared/scripts/deploy-cdk.{ps1,sh} instead:"
+                  EXIT_CODE=1
+                else
+                  echo "⚠️  Calls cdk directly instead of shared/scripts/deploy-cdk.{ps1,sh} (pre-existing; migrate when touching these scripts):"
+                fi
+                for S in $DIRECT_CDK; do echo "   $S"; done
+              else
+                echo "✅ CDK deployment goes through the shared script"
+              fi
             fi
 
             # Check CDK infrastructure exists (required unless .no-deploy)
@@ -91,6 +116,20 @@ jobs:
                 EXIT_CODE=1
               else
                 echo "✅ CDK directory exists: $CDK_DIR"
+                # cdk.json "app" must be platform-neutral (python3 app.py / npx ts-node ...).
+                # A virtualenv path only exists on POSIX: a Windows venv has Scripts\python.exe
+                # and no bin/, so synth fails there before anything is deployed.
+                VENV_APP=$(grep -lE '"app"\s*:\s*"[^"]*(\.venv|/bin/python|Scripts[/\\]python)' "$CDK_DIR"/cdk.json 2>/dev/null || true)
+                if [ -n "$VENV_APP" ]; then
+                  if [ -z "$(git ls-tree --name-only origin/main "$DEMO/README.md")" ]; then
+                    echo "❌ $CDK_DIR/cdk.json \"app\" points at a virtualenv interpreter; use \"python3 app.py\" (shared deploy-cdk installs the deps)"
+                    EXIT_CODE=1
+                  else
+                    echo "⚠️  $CDK_DIR/cdk.json \"app\" points at a virtualenv interpreter (pre-existing; switch to \"python3 app.py\" when touching this demo)"
+                  fi
+                else
+                  echo "✅ cdk.json app command is platform-neutral"
+                fi
               fi
             fi
 
