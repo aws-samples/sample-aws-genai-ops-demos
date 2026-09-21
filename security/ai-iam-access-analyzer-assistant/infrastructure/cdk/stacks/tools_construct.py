@@ -20,6 +20,7 @@ class ToolsConstruct(Construct):
         scope: Construct,
         construct_id: str,
         reports_bucket: s3.IBucket,
+        full_total_scan: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -73,6 +74,35 @@ class ToolsConstruct(Construct):
         # S3 write for generated reports
         reports_bucket.grant_read_write(tool_role)
 
+        # Dedicated presigner role. Lambda's runtime STS session tokens rotate
+        # underneath us, and S3 rejects a presigned URL with InvalidToken once
+        # the underlying token rotates — even if the URL's own X-Amz-Expires
+        # hasn't been reached yet. To offer download links longer than a few
+        # minutes we sign with the credentials of a role we assume ourselves,
+        # whose returned session token is stable for its full DurationSeconds.
+        presigner_role = iam.Role(
+            self,
+            "PresignerRole",
+            assumed_by=iam.ArnPrincipal(tool_role.role_arn),
+            description=(
+                "Assumed by IAM Analyzer tool Lambdas to mint presigned S3 "
+                "download URLs whose lifetime does not depend on Lambda's "
+                "rolling runtime STS token."
+            ),
+            max_session_duration=Duration.hours(1),
+        )
+        reports_bucket.grant_read(presigner_role)
+
+        tool_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sts:AssumeRole"],
+                resources=[presigner_role.role_arn],
+            )
+        )
+
+        self.presigner_role = presigner_role
+
         # Path to Lambda source code
         tools_path = str(
             Path(__file__).resolve().parent.parent.parent.parent / "src"
@@ -86,6 +116,8 @@ class ToolsConstruct(Construct):
             "role": tool_role,
             "environment": {
                 "REPORTS_BUCKET": reports_bucket.bucket_name,
+                "FULL_TOTAL_SCAN": str(full_total_scan).lower(),
+                "PRESIGNER_ROLE_ARN": presigner_role.role_arn,
             },
         }
 
@@ -107,9 +139,7 @@ class ToolsConstruct(Construct):
             memory_size=1024,
             runtime=lambda_.Runtime.PYTHON_3_12,
             role=tool_role,
-            environment={
-                "REPORTS_BUCKET": reports_bucket.bucket_name,
-            },
+            environment={"REPORTS_BUCKET": reports_bucket.bucket_name},
         )
 
         self.check_dependencies_fn = lambda_.Function(

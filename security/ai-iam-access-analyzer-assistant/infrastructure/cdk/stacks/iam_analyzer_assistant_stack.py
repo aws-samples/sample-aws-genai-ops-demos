@@ -30,6 +30,7 @@ class IamAnalyzerAssistantStack(Stack):
             self,
             "Tools",
             reports_bucket=storage.reports_bucket,
+            full_total_scan=False,
         )
 
         # API Gateway + Conversation Lambda (Bedrock orchestration)
