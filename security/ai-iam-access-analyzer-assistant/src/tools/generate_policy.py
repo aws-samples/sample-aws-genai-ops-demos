@@ -60,6 +60,34 @@ def handler(event, context=None):
         # Step 2: Query CloudTrail for actual usage
         usage_data = _analyze_cloudtrail_usage(role_name, role_info["arn"], lookback_days)
 
+        # Safety fence: if the CloudTrail query failed (permission denied,
+        # throttling, service outage, network error, etc.), refuse to propose
+        # a policy. `_analyze_cloudtrail_usage` returns an empty `used_actions`
+        # accumulator on failure, and if we proceeded we would recommend
+        # stripping 100% of the role's permissions — a "least-privilege" answer
+        # driven by absence of data, not observed non-use. That is the single
+        # most dangerous silent-failure in this demo. Fix per #171 phase A:
+        # separate "CloudTrail query failed" from "zero events".
+        cloudtrail_coverage = next(
+            (c for c in usage_data.get("coverage", []) if c.get("source") == "cloudtrail"),
+            None,
+        )
+        if cloudtrail_coverage and cloudtrail_coverage.get("state") == "unavailable":
+            return {
+                "error": (
+                    "Could not read CloudTrail usage for this role — "
+                    f"{cloudtrail_coverage.get('detail', 'unknown error')}. "
+                    "Refusing to propose a least-privilege policy without usage data: "
+                    "the resulting recommendation would remove permissions the role "
+                    "actually needs. Fix CloudTrail access (verify the tool role has "
+                    "cloudtrail:LookupEvents in this region and that CloudTrail is "
+                    "logging management events) and re-run."
+                ),
+                "role_name": role_name,
+                "role_arn": role_info.get("arn"),
+                "coverage": usage_data.get("coverage", []),
+            }
+
         # Step 3: Build least-privilege policy with resource scoping
         proposed_policy = _build_least_privilege_policy(
             usage_data["used_actions"],
@@ -122,6 +150,7 @@ def handler(event, context=None):
                 "attack_surface_reduction": f"{reduction_pct}% of permissions removed",
                 "risk_level": "HIGH" if reduction_pct > 70 else "MEDIUM" if reduction_pct > 40 else "LOW",
             },
+            "coverage": usage_data.get("coverage", []),
         }
 
         # Add warnings
@@ -233,7 +262,26 @@ def _extract_actions_from_document(document: dict) -> set:
 
 
 def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int) -> dict:
-    """Query CloudTrail for actual API usage by the role."""
+    """Query CloudTrail for actual API usage by the role.
+
+    Returns a dict with the observed usage plus a `coverage` entry describing
+    what the CloudTrail call actually did — one of three states:
+
+      * ``checked``       — the call succeeded and returned ``event_count > 0``
+      * ``empty``         — the call succeeded but returned zero events (the
+                            honest "role has not called AWS in ``lookback_days``"
+                            case that the caller can act on)
+      * ``unavailable``   — the call raised (``AccessDenied``, throttling,
+                            service outage, IAM misconfiguration, transient
+                            network error, etc.). ``used_actions`` will be
+                            empty, but the caller MUST NOT interpret that as
+                            "role has no usage" — the caller has no idea what
+                            usage the role has.
+
+    The caller inspects ``coverage`` to decide whether it is safe to propose a
+    least-privilege policy. See #171 for the wider `coverage` contract this
+    entry participates in.
+    """
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
 
@@ -243,6 +291,10 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
     event_count = 0
     truncated = False
     last_event_time = None
+
+    coverage_detail = f"{lookback_days}-day event history, role {role_name}"
+    coverage_state = "checked"
+    coverage_error: str | None = None
 
     try:
         paginator = cloudtrail_client.get_paginator("lookup_events")
@@ -290,7 +342,23 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
                 break
 
     except Exception as e:
+        # Do NOT let the caller mistake this for "role made no API calls".
+        # The used_actions accumulator is empty because the call failed, not
+        # because the role is unused. The caller must inspect `coverage` and
+        # refuse to propose a policy when state == "unavailable".
         logger.warning(f"CloudTrail query error: {e}")
+        coverage_state = "unavailable"
+        coverage_error = f"{type(e).__name__}: {e}"
+
+    if coverage_state == "checked" and event_count == 0:
+        coverage_state = "empty"
+
+    coverage_entry = {
+        "source": "cloudtrail",
+        "state": coverage_state,
+        "count": event_count,
+        "detail": coverage_detail if coverage_error is None else coverage_error,
+    }
 
     return {
         "used_actions": dict(used_actions),
@@ -301,6 +369,7 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
         "last_event_time": str(last_event_time) if last_event_time else None,
         "window_start": start_time.isoformat(),
         "window_end": end_time.isoformat(),
+        "coverage": [coverage_entry],
     }
 
 
