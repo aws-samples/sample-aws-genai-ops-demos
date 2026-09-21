@@ -76,6 +76,36 @@ class ApiConstruct(Construct):
         for fn in tools_functions.values():
             fn.grant_invoke(self.conversation_fn)
 
+        # Session-start capability probe (#171 phase C). Runs the same
+        # read-only checks deploy-all.sh runs at deploy time (#170) but from
+        # inside the Lambda, so the frontend can render a "Data sources"
+        # status line and an honest welcome message the moment the chat
+        # opens. The endpoint is CHEAP: 3–5 AWS calls, sub-second in
+        # aggregate, called ONCE per chat open.
+        self.capabilities_fn = lambda_.Function(
+            self,
+            "CapabilitiesProbe",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="capabilities.handler",
+            code=lambda_.Code.from_asset(src_path),
+            timeout=Duration.seconds(15),
+            memory_size=256,
+        )
+        # Read-only permissions — mirrors the deploy-time probe's ACL.
+        self.capabilities_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "securityhub:DescribeHub",
+                    "securityhub:ListEnabledProductsForImport",
+                    "securityhub:GetFindings",
+                    "access-analyzer:ListAnalyzers",
+                    "cloudtrail:LookupEvents",
+                ],
+                resources=["*"],
+            )
+        )
+
         # API Gateway
         api = apigw.RestApi(
             self,
@@ -130,6 +160,15 @@ class ApiConstruct(Construct):
         conversations_resource.add_method(
             "GET",
             apigw.LambdaIntegration(self.conversation_fn),
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+        )
+
+        # GET /capabilities — session-start probe (#171 phase C).
+        capabilities_resource = api.root.add_resource("capabilities")
+        capabilities_resource.add_method(
+            "GET",
+            apigw.LambdaIntegration(self.capabilities_fn),
             authorizer=authorizer,
             authorization_type=apigw.AuthorizationType.COGNITO,
         )

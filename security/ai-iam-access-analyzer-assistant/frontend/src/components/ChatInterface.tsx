@@ -10,23 +10,35 @@ import MessageBubble from "./MessageBubble";
 import ErrorBoundary from "./ErrorBoundary";
 import {
   sendMessage,
+  getCapabilities,
   ApiTimeoutError,
   PaginationContext,
 } from "../services/api";
-import { Message } from "../types";
+import { Capabilities, CoverageEntry, Message } from "../types";
 
-const WELCOME_MESSAGE: Message = {
-  role: "assistant",
-  content:
-    "Hello! I'm your **IAM Security Assistant**. I help you understand and fix your IAM roles and policies — unused roles, overly-permissive permissions, and cross-account access risks.\n\n" +
-    "**Three capabilities that work independently or together:**\n\n" +
-    "- **Analyze** — surface unused roles, excessive permissions, cross-account risks\n" +
-    "- **Generate** — create least-privilege policies from actual usage\n" +
-    "- **Protect** — validate changes, assess blast radius before you act\n\n" +
-    "Click a suggestion below to get started, or ask anything in your own words.\n\n" +
-    "*Tip: Anything I generate can be saved to S3 — just say \"export that\".*\n\n" +
-    "🔒 **Read-only** — this assistant analyzes and recommends but never modifies your IAM roles, policies, or configurations.",
-};
+const GREETING_BODY =
+  "Hello! I'm your **IAM Security Assistant**. I help you understand and fix your IAM roles and policies — unused roles, overly-permissive permissions, and cross-account access risks.\n\n" +
+  "**Three capabilities that work independently or together:**\n\n" +
+  "- **Analyze** — surface unused roles, excessive permissions, cross-account risks\n" +
+  "- **Generate** — create least-privilege policies from actual usage\n" +
+  "- **Protect** — validate changes, assess blast radius before you act\n\n" +
+  "Click a suggestion below to get started, or ask anything in your own words.\n\n" +
+  "*Tip: Anything I generate can be saved to S3 — just say \"export that\".*\n\n" +
+  "🔒 **Read-only** — this assistant analyzes and recommends but never modifies your IAM roles, policies, or configurations.";
+
+/**
+ * Compose the welcome bubble from the greeting plus the session-start
+ * capability probe (#171 phase C). When the probe has resolved, the
+ * server-composed data-source honesty statement leads the bubble so the
+ * user reads what CAN and what CANNOT be seen in this account/region
+ * BEFORE the generic feature list.
+ */
+function buildWelcomeMessage(capabilities: Capabilities | null): Message {
+  const content = capabilities?.welcome_message
+    ? `${capabilities.welcome_message}\n\n---\n\n${GREETING_BODY}`
+    : GREETING_BODY;
+  return { role: "assistant", content };
+}
 
 interface ActivityEntry {
   tool: string;
@@ -41,7 +53,8 @@ const TIMEOUT_ADVICE =
   "or ask for a narrower filter. Any export you were creating may still complete on the server — try `list my exports`.";
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [messages, setMessages] = useState<Message[]>([buildWelcomeMessage(null)]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +70,32 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Session-start capability probe (#171 phase C). Best-effort: a failure
+  // must NOT block the chat, so if the probe fails we leave capabilities
+  // null and the welcome bubble falls back to the generic greeting.
+  useEffect(() => {
+    let cancelled = false;
+    getCapabilities()
+      .then((caps) => {
+        if (cancelled) return;
+        setCapabilities(caps);
+        // Rebuild the welcome bubble in place, but only if the user hasn't
+        // typed anything yet (still on the greeting-only state).
+        setMessages((prev) =>
+          prev.length === 1 && prev[0].role === "assistant"
+            ? [buildWelcomeMessage(caps)]
+            : prev
+        );
+      })
+      .catch((err) => {
+        // Non-fatal — log and move on.
+        console.warn("capability probe failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSend = async (overrideMessage?: string) => {
     const messageToSend = overrideMessage || inputValue;
     if (!messageToSend.trim() || isLoading) return;
@@ -68,8 +107,11 @@ export default function ChatInterface() {
     setError(null);
 
     try {
+      // The welcome bubble is always messages[0] and belongs to the UI, not
+      // the conversation. Sending it to the backend as prior assistant turn
+      // would leak the greeting into the model's context every turn.
       const history = messages
-        .filter((m) => m !== WELCOME_MESSAGE)
+        .slice(1)
         .map((m) => ({ role: m.role, content: m.content }));
 
       const response = await sendMessage(
@@ -130,7 +172,7 @@ export default function ChatInterface() {
   };
 
   const handleClear = () => {
-    setMessages([WELCOME_MESSAGE]);
+    setMessages([buildWelcomeMessage(capabilities)]);
     setSessionActivity([]);
     setError(null);
     paginationRef.current = null;
@@ -185,6 +227,10 @@ export default function ChatInterface() {
           <Alert type="error" dismissible onDismiss={() => setError(null)}>
             {error}
           </Alert>
+        )}
+
+        {capabilities && (
+          <DataSourcesStatus capabilities={capabilities} />
         )}
 
         {sessionActivity.length > 0 && (
@@ -344,6 +390,100 @@ function SessionActivityBar({ activities, tokens }: { activities: ActivityEntry[
           <>Tokens: {(tokens.input + tokens.output).toLocaleString()} | Cost: {costDisplay}</>
         )}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Compact "Data sources" pill row rendered above the message history.
+ *
+ * One pill per AWS source (Security Hub, Access Analyzer, CloudTrail).
+ * A source is "checked" (green ✓) if any coverage entry for it succeeded,
+ * even when a peer entry failed — for example, when the external-access
+ * analyzer is active but the unused-access one is missing, the Access
+ * Analyzer pill shows a warning (⚠) rather than a full failure (⛔), and
+ * the detail lists both entries so the user can see exactly which
+ * sub-check was missing.
+ */
+function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
+  const bySource = new Map<string, CoverageEntry[]>();
+  for (const entry of capabilities.coverage) {
+    const existing = bySource.get(entry.source);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      bySource.set(entry.source, [entry]);
+    }
+  }
+
+  const pretty: Record<string, string> = {
+    securityhub: "Security Hub",
+    accessanalyzer: "Access Analyzer",
+    cloudtrail: "CloudTrail",
+  };
+
+  const pills = Array.from(bySource.entries()).map(([source, entries]) => {
+    const hasChecked = entries.some((e) => e.state === "checked");
+    const hasUnavailable = entries.some((e) => e.state === "unavailable");
+    let icon = "✓";
+    let color = "var(--color-text-status-success, #037f0c)";
+    let bg = "var(--color-background-status-success, #f2fcf3)";
+    let border = "var(--color-border-status-success, #d1e7d3)";
+    if (hasChecked && hasUnavailable) {
+      icon = "⚠";
+      color = "var(--color-text-status-warning, #855900)";
+      bg = "var(--color-background-status-warning, #fff8ec)";
+      border = "var(--color-border-status-warning, #f0d69b)";
+    } else if (!hasChecked && hasUnavailable) {
+      icon = "⛔";
+      color = "var(--color-text-status-error, #d13212)";
+      bg = "var(--color-background-status-error, #fdf3f1)";
+      border = "var(--color-border-status-error, #f2c9c1)";
+    }
+    const tooltip = entries.map((e) => `• ${e.detail}`).join("\n");
+    return (
+      <span
+        key={source}
+        title={tooltip}
+        style={{
+          padding: "4px 10px",
+          borderRadius: "12px",
+          border: `1px solid ${border}`,
+          backgroundColor: bg,
+          color,
+          fontSize: "12px",
+          fontWeight: 500,
+          cursor: "help",
+        }}
+      >
+        {icon} {pretty[source] || source}
+      </span>
+    );
+  });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "8px",
+        padding: "8px 12px",
+        backgroundColor: "var(--color-background-container-content)",
+        borderRadius: "8px",
+        border: "1px solid var(--color-border-divider-default)",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "12px",
+          fontWeight: 600,
+          color: "var(--color-text-body-secondary)",
+        }}
+      >
+        Data sources ({capabilities.region}):
+      </span>
+      {pills}
     </div>
   );
 }
