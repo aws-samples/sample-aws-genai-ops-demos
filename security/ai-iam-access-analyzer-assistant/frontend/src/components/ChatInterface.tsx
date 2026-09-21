@@ -6,6 +6,8 @@ import Input from "@cloudscape-design/components/input";
 import Button from "@cloudscape-design/components/button";
 import Box from "@cloudscape-design/components/box";
 import Alert from "@cloudscape-design/components/alert";
+import Popover from "@cloudscape-design/components/popover";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import MessageBubble from "./MessageBubble";
 import ErrorBoundary from "./ErrorBoundary";
 import {
@@ -395,15 +397,22 @@ function SessionActivityBar({ activities, tokens }: { activities: ActivityEntry[
 }
 
 /**
- * Compact "Data sources" pill row rendered above the message history.
+ * Compact "Data sources" row rendered above the message history.
  *
- * One pill per AWS source (Security Hub, Access Analyzer, CloudTrail).
- * A source is "checked" (green ✓) if any coverage entry for it succeeded,
- * even when a peer entry failed — for example, when the external-access
- * analyzer is active but the unused-access one is missing, the Access
- * Analyzer pill shows a warning (⚠) rather than a full failure (⛔), and
- * the detail lists both entries so the user can see exactly which
- * sub-check was missing.
+ * One entry per AWS source (Security Hub, Access Analyzer, CloudTrail),
+ * rendered as a Cloudscape `StatusIndicator` — `success` when every coverage
+ * entry for the source succeeded, `warning` when some succeeded and some
+ * failed (typical: external-access analyzer active but unused-access one
+ * missing), `error` when all failed. Each indicator is wrapped in a
+ * Cloudscape `Popover` that surfaces the per-entry detail on click, giving
+ * keyboard-accessible and screen-reader-friendly disclosure of what each
+ * sub-check actually observed.
+ *
+ * The surrounding row uses inline flex styles for now; a fuller Cloudscape
+ * refactor of ChatInterface's hand-rolled wrappers is tracked in #167.
+ * This component only takes on the semantic status primitives — which are
+ * the pieces Ben's #167 "Writing" section (glyph-in-copy) explicitly calls
+ * out — and leaves the rest of the layout for that rework.
  */
 function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
   const bySource = new Map<string, CoverageEntry[]>();
@@ -422,42 +431,34 @@ function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
     cloudtrail: "CloudTrail",
   };
 
-  const pills = Array.from(bySource.entries()).map(([source, entries]) => {
+  const items = Array.from(bySource.entries()).map(([source, entries]) => {
     const hasChecked = entries.some((e) => e.state === "checked");
     const hasUnavailable = entries.some((e) => e.state === "unavailable");
-    let icon = "✓";
-    let color = "var(--color-text-status-success, #037f0c)";
-    let bg = "var(--color-background-status-success, #f2fcf3)";
-    let border = "var(--color-border-status-success, #d1e7d3)";
+    let type: "success" | "warning" | "error" = "success";
     if (hasChecked && hasUnavailable) {
-      icon = "⚠";
-      color = "var(--color-text-status-warning, #855900)";
-      bg = "var(--color-background-status-warning, #fff8ec)";
-      border = "var(--color-border-status-warning, #f0d69b)";
+      type = "warning";
     } else if (!hasChecked && hasUnavailable) {
-      icon = "⛔";
-      color = "var(--color-text-status-error, #d13212)";
-      bg = "var(--color-background-status-error, #fdf3f1)";
-      border = "var(--color-border-status-error, #f2c9c1)";
+      type = "error";
     }
-    const tooltip = entries.map((e) => `• ${e.detail}`).join("\n");
     return (
-      <span
+      <Popover
         key={source}
-        title={tooltip}
-        style={{
-          padding: "4px 10px",
-          borderRadius: "12px",
-          border: `1px solid ${border}`,
-          backgroundColor: bg,
-          color,
-          fontSize: "12px",
-          fontWeight: 500,
-          cursor: "help",
-        }}
+        size="medium"
+        triggerType="text"
+        dismissButton={false}
+        header={pretty[source] || source}
+        content={
+          <ul style={{ margin: 0, paddingInlineStart: "1.25em" }}>
+            {entries.map((e, i) => (
+              <li key={i}>{e.detail}</li>
+            ))}
+          </ul>
+        }
       >
-        {icon} {pretty[source] || source}
-      </span>
+        <StatusIndicator type={type}>
+          {pretty[source] || source}
+        </StatusIndicator>
+      </Popover>
     );
   });
 
@@ -467,23 +468,17 @@ function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
         display: "flex",
         flexWrap: "wrap",
         alignItems: "center",
-        gap: "8px",
+        gap: "12px",
         padding: "8px 12px",
         backgroundColor: "var(--color-background-container-content)",
         borderRadius: "8px",
         border: "1px solid var(--color-border-divider-default)",
       }}
     >
-      <span
-        style={{
-          fontSize: "12px",
-          fontWeight: 600,
-          color: "var(--color-text-body-secondary)",
-        }}
-      >
-        Data sources ({capabilities.region}):
-      </span>
-      {pills}
+      <Box variant="small" fontWeight="bold" color="text-body-secondary">
+        Data sources ({capabilities.region})
+      </Box>
+      {items}
     </div>
   );
 }
