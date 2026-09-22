@@ -629,6 +629,40 @@ _VALIDATE_INTENT = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Deterministic "audit my access keys" prompts. The triage_access_keys tool
+# (#175) walks every IAM user in the account plus a per-user policy graph
+# and can easily approach the 29s API Gateway ceiling on any fleet larger
+# than a handful of users. It ALSO returns structured JSON that the
+# frontend's AccessKeysTable component renders — but only if the response
+# includes the payload as a fenced code block. Bedrock synthesis will not
+# reliably emit that block, so this short-circuit both avoids the timeout
+# and guarantees the frontend receives the machine-readable payload.
+_TRIAGE_ACCESS_KEYS_INTENT = re.compile(
+    r"\b("
+    # Direct audit/triage/inventory intent on IAM access keys. The filler-
+    # word group is * so "show me my access keys" and "list all my access
+    # keys" match without adding a specific rule for each combination.
+    r"(?:audit|triage|review|inventory|check|list|show|find)\s+"
+    r"(?:(?:me|my|the|all)\s+)*"
+    r"(?:iam\s+)?access\s+keys?\b"
+    r"|"
+    # "which of my access keys are stale/risky/old/etc". Requires a follow-up
+    # modifier so this pattern doesn't fire on "which keys unlock my account".
+    r"which\s+(?:of\s+my\s+)?(?:iam\s+)?(?:access\s+)?keys?\s+are\s+"
+    r"(?:stale|risky|old|unused|active|admin|broad|over[-\s]?permissioned)"
+    r"|"
+    # Compact intent nouns — "iam key hygiene", "access key audit", etc.
+    r"(?:iam\s+)?(?:access\s+)?key\s+(?:hygiene|audit|triage|posture)"
+    r"|"
+    # "stale iam keys", "unrotated access keys", "long-lived keys".
+    r"(?:stale|unrotated|unused|long[-\s]?lived)\s+(?:iam\s+)?(?:access\s+)?keys?"
+    r"|"
+    # "over-permissioned users" — a common phrasing that maps to this audit.
+    r"over[-\s]?permissioned\s+(?:iam\s+)?users?"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Compact regex for deterministic pagination intents. Matches:
 #   "next", "more", "continue", "keep going"
 #   "next 20", "show 20 more", "show me another 25"
@@ -1120,6 +1154,165 @@ def _shortcircuit_action_plan(user_message: str):
     }
 
 
+def _render_triage_access_keys(result: dict) -> str:
+    """Render a triage_access_keys tool result as markdown that BOTH reads
+    well in a plain client AND carries the raw JSON payload as a fenced
+    ```json block so the frontend's AccessKeysTable component can render it.
+
+    The prose piece encodes the ACCESS KEY TRIAGE prompt rules directly
+    (cautious language, root first, deactivate → monitor → delete, quote the
+    suggested_remediation verbatim) because this path skips Bedrock — those
+    rules would otherwise be lost.
+    """
+    if not isinstance(result, dict):
+        return "The access-key triage tool returned no data."
+
+    coverage = result.get("coverage") or []
+    caveat = result.get("usage_lag_caveat") or ""
+
+    # Coverage-unavailable — no partial data (Req 5.2). Do NOT emit a fenced
+    # JSON block; there is nothing for the table to render, and the frontend
+    # will suppress AccessKeysTable when it sees coverage.state == unavailable
+    # for the `iam` source anyway. The prose alone carries the message.
+    iam_unavailable = [
+        c for c in coverage
+        if c.get("source") == "iam" and c.get("state") == "unavailable"
+    ]
+    if iam_unavailable:
+        details = "; ".join(
+            c.get("detail") or "IAM unavailable" for c in iam_unavailable
+        )
+        return (
+            "I couldn't inventory IAM access keys in this account or region "
+            f"— IAM was unavailable: {details}. Fix the permission or the "
+            "service condition and re-run."
+        )
+
+    keys = result.get("keys") or []
+    summary = result.get("summary") or {}
+
+    if not keys:
+        return (
+            "No IAM users in this account have access keys. That is the "
+            "recommended posture — long-term access keys are the top "
+            "breach vector, and every workload can be run off a short-lived "
+            "credential path instead (IAM Identity Center, IAM roles, OIDC)."
+        )
+
+    total_keys = summary.get("total_keys", len(keys))
+    users_with_keys = summary.get("users_with_keys", 0)
+
+    lines: list = []
+    lines.append(
+        f"Reviewed {total_keys} access key{'s' if total_keys != 1 else ''} "
+        f"across {users_with_keys} user{'s' if users_with_keys != 1 else ''} "
+        f"with access keys in this account."
+    )
+
+    bits: list = []
+    for cls in ("Critical", "High", "Cleanup", "Rotation"):
+        count = summary.get(cls, 0) or 0
+        if count:
+            bits.append(f"{count} {cls}")
+    if bits:
+        lines.append("Priority mix: " + " · ".join(bits) + ".")
+
+    # Root row surfaces first regardless of other flags (Req 4.4 / ACCESS KEY
+    # TRIAGE prompt rule). Named in prose too so a plain-text client without
+    # AccessKeysTable still sees the top signal.
+    root_row = next((k for k in keys if k.get("is_root")), None)
+    if root_row:
+        lines.append(
+            "**Root user has an access key** — this is always Critical. "
+            "Suggested remediation: `Remove_Root_Access_Keys` (the root "
+            "user should have no long-term keys)."
+        )
+    else:
+        top = keys[0]
+        lines.append(
+            f"Top priority: `{top.get('user','?')}` "
+            f"({top.get('priority_class','?')}) — suggested remediation "
+            f"`{top.get('suggested_remediation','?')}`."
+        )
+
+    # Deactivate → monitor → delete framing, per the ACCESS KEY TRIAGE
+    # prompt rules the model would otherwise apply.
+    lines.append(
+        "For any in-use key, consider **deactivate → monitor a full "
+        "business cycle → delete**, not a bare delete."
+    )
+    if caveat:
+        lines.append(f"_{caveat}_")
+
+    # Fenced JSON payload the frontend routes to AccessKeysTable. The
+    # `_type` marker makes tryParseAccessKeysReport's detection unambiguous
+    # even if the natural shape ever changes.
+    payload = {"_type": "access_keys_report", **result}
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(payload, indent=2, default=str))
+    lines.append("```")
+
+    # Any non-fatal coverage warnings (e.g. per-user policy-walk failures)
+    # get a short prose note so operators see partial-data conditions
+    # without hunting through the JSON.
+    partial: list = []
+    for c in coverage:
+        if c.get("state") == "unavailable" and c.get("source") != "iam":
+            partial.append(
+                f"{c.get('source')}: {c.get('detail') or 'unavailable'}"
+            )
+    if partial:
+        lines.append(
+            "\n⚠️ Partial data — " + "; ".join(partial) + "."
+        )
+
+    return "\n\n".join(lines)
+
+
+def _shortcircuit_triage_access_keys(user_message: str):
+    """If the user is asking for an access-key audit, invoke the tool
+    directly and return an assistant-ready envelope with both a prose intro
+    and the raw JSON payload in a fenced ```json block. Skips both Bedrock
+    round trips so the turn cannot hit the API Gateway 29s ceiling on
+    accounts with a fleet of IAM users, and guarantees the frontend receives
+    the machine-readable payload for the AccessKeysTable component.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+        return None
+
+    # Default parameters — include_inactive defaults to True inside the tool;
+    # user_filter / exclude_user_substr are left blank for a full inventory.
+    tool_input: dict = {}
+    result = invoke_tool("triage_access_keys", tool_input)
+    if isinstance(result, dict) and "error" in result:
+        return {
+            "response": (
+                "I couldn't run the access-key triage: "
+                f"{result['error']}. You can retry or narrow the scope."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [
+                {"tool": "triage_access_keys", "input_summary": _summarize_input(tool_input)}
+            ],
+            "pagination": None,
+        }
+
+    response_text = _render_triage_access_keys(
+        result if isinstance(result, dict) else {}
+    )
+    return {
+        "response": response_text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": [
+            {"tool": "triage_access_keys", "input_summary": _summarize_input(tool_input)}
+        ],
+        "pagination": None,
+    }
+
+
 def converse_with_tools(messages: list, model_id: str = None, system_prompt: str = None) -> tuple:
     """Run a conversation turn with Bedrock Converse API, handling tool use loops.
 
@@ -1300,6 +1493,20 @@ def handler(event, context):
         # AND pastes the policy JSON, run validate_policy directly so the
         # answer is grounded in the tool output and doesn't depend on Bedrock.
         shortcircuit = _shortcircuit_validate_policy(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic access-key triage: the tool walks every IAM user +
+        # policy graph and would easily approach the API Gateway 29s ceiling
+        # if chained with a Bedrock synthesis round. This path also emits
+        # the tool payload as a fenced JSON block so the frontend's
+        # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
+        # include the block.
+        shortcircuit = _shortcircuit_triage_access_keys(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
