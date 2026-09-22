@@ -4,7 +4,8 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import PolicyViewer from "./PolicyViewer";
 import FindingsTable from "./FindingsTable";
 import DependencyGraph from "./DependencyGraph";
-import { Message, Finding, DependencyResult } from "../types";
+import AccessKeysTable from "./AccessKeysTable";
+import { Message, Finding, DependencyResult, AccessKeysReport } from "../types";
 
 interface MessageBubbleProps {
   message: Message;
@@ -64,6 +65,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
               case "dependencies":
                 return (
                   <DependencyGraph key={index} data={section.data} />
+                );
+              case "accessKeys":
+                return (
+                  <AccessKeysTable key={index} report={section.report} />
                 );
               case "text":
               default:
@@ -130,7 +135,17 @@ interface DependenciesSection {
   data: DependencyResult;
 }
 
-type MessageSection = TextSection | PolicySection | FindingsSection | DependenciesSection;
+interface AccessKeysSection {
+  type: "accessKeys";
+  report: AccessKeysReport;
+}
+
+type MessageSection =
+  | TextSection
+  | PolicySection
+  | FindingsSection
+  | DependenciesSection
+  | AccessKeysSection;
 
 function parseAssistantMessage(content: string): MessageSection[] {
   const sections: MessageSection[] = [];
@@ -155,19 +170,28 @@ function parseAssistantMessage(content: string): MessageSection[] {
       // A lone URL fenced as a code block (e.g. a presigned download link the
       // model wrapped in ```) should be a clickable link, not a monospace box.
       sections.push({ type: "text", content: codeContent });
-    } else if (isPolicyDocument(codeContent)) {
-      sections.push({
-        type: "policy",
-        content: codeContent,
-        title: "IAM Policy",
-      });
     } else {
-      // Generic code block — still render as policy viewer (syntax highlighted)
-      sections.push({
-        type: "policy",
-        content: codeContent,
-        title: "Code",
-      });
+      // Access-keys detection runs BEFORE isPolicyDocument — a raw triage
+      // payload {keys, summary, coverage, usage_lag_caveat} has no
+      // Version/Statement, but a paranoid future refactor of the tool
+      // response shape could otherwise trip the policy branch.
+      const accessKeys = tryParseAccessKeysReport(codeContent);
+      if (accessKeys) {
+        sections.push({ type: "accessKeys", report: accessKeys });
+      } else if (isPolicyDocument(codeContent)) {
+        sections.push({
+          type: "policy",
+          content: codeContent,
+          title: "IAM Policy",
+        });
+      } else {
+        // Generic code block — render as policy viewer (syntax highlighted).
+        sections.push({
+          type: "policy",
+          content: codeContent,
+          title: "Code",
+        });
+      }
     }
 
     lastIndex = match.index + match[0].length;
@@ -205,6 +229,37 @@ function isPolicyDocument(content: string): boolean {
       content.includes("iam.PolicyStatement(")
     );
   }
+}
+
+// tryParseAccessKeysReport recognizes the triage_access_keys tool response
+// payload (#175) as a fenced JSON block. Accepts either an explicit marker
+// (_type === "access_keys_report") for future-proofing, or the natural shape
+// of the payload — keys[] + summary + coverage[] + usage_lag_caveat.
+// Returns null when the content is not a triage payload so the caller falls
+// through to the isPolicyDocument branch. Deliberately strict on the shape:
+// a nearby-shaped policy JSON must NOT be misclassified as an access-keys
+// report.
+function tryParseAccessKeysReport(content: string): AccessKeysReport | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (obj._type === "access_keys_report") {
+    return obj as unknown as AccessKeysReport;
+  }
+  const looksLikeReport =
+    Array.isArray(obj.keys) &&
+    obj.summary !== undefined &&
+    typeof obj.summary === "object" &&
+    Array.isArray(obj.coverage) &&
+    typeof obj.usage_lag_caveat === "string";
+  return looksLikeReport ? (obj as unknown as AccessKeysReport) : null;
 }
 
 function DownloadButton({ content }: { content: string }) {
