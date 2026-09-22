@@ -37,7 +37,15 @@ class ToolsConstruct(Construct):
             ],
         )
 
-        # Read-only permissions for security services
+        # Read-only permissions for security services.
+        #
+        # resources=["*"] is required by the AWS IAM authorization model for
+        # every action in this statement: the IAM Read family and the sibling
+        # security-service control-plane calls do not support resource-level
+        # authorization per the AWS service authorization reference
+        # (https://docs.aws.amazon.com/service-authorization/latest/reference/).
+        # A policy that names a specific role/user/policy ARN would be
+        # rejected. The `*` here is the least privilege AWS actually allows.
         tool_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -66,6 +74,18 @@ class ToolsConstruct(Construct):
                     "iam:ListUsers",
                     "iam:GetUser",
                     "iam:ListAttachedUserPolicies",
+                    # IAM read-only (access-key triage — #175). Purely
+                    # read; no *AccessKey* write action is granted. Root
+                    # keys are detected via iam:GetAccountSummary.
+                    "iam:ListAccessKeys",
+                    "iam:GetAccessKeyLastUsed",
+                    "iam:GetAccountSummary",
+                    "iam:ListUserPolicies",
+                    "iam:GetUserPolicy",
+                    "iam:ListGroupsForUser",
+                    "iam:ListAttachedGroupPolicies",
+                    "iam:ListGroupPolicies",
+                    "iam:GetGroupPolicy",
                 ],
                 resources=["*"],
             )
@@ -210,6 +230,24 @@ class ToolsConstruct(Construct):
             **common_props,
         )
 
+        # Access-key triage (#175). Iterates every IAM user with keys and
+        # resolves the effective policy per user; give it more time and
+        # memory than the default so a fleet of ~200 users with policy
+        # walks completes well under the API Gateway 29s ceiling.
+        self.triage_access_keys_fn = lambda_.Function(
+            self,
+            "TriageAccessKeys",
+            handler="tools.triage_access_keys.handler",
+            code=lambda_.Code.from_asset(tools_path),
+            timeout=Duration.seconds(120),
+            memory_size=512,
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            role=tool_role,
+            environment={
+                "REPORTS_BUCKET": reports_bucket.bucket_name,
+            },
+        )
+
         # Expose as dict for the API construct
         self.functions = {
             "list_findings": self.list_findings_fn,
@@ -221,4 +259,5 @@ class ToolsConstruct(Construct):
             "generate_action_plan": self.generate_action_plan_fn,
             "compare_roles": self.compare_roles_fn,
             "list_exports": self.list_exports_fn,
+            "triage_access_keys": self.triage_access_keys_fn,
         }

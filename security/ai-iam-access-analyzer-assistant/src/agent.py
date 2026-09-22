@@ -26,6 +26,7 @@ TOOL_FUNCTIONS = {
     "generate_action_plan": os.environ.get("GENERATE_ACTION_PLAN_FN"),
     "compare_roles": os.environ.get("COMPARE_ROLES_FN"),
     "list_exports": os.environ.get("LIST_EXPORTS_FN"),
+    "triage_access_keys": os.environ.get("TRIAGE_ACCESS_KEYS_FN"),
 }
 
 SYSTEM_PROMPT = """You are an expert IAM security analyst assistant. You help users understand and improve their AWS IAM security posture by:
@@ -95,6 +96,9 @@ TOOL SELECTION (do NOT answer from reasoning alone):
   break, you MUST call check_dependencies. Do NOT infer the graph.
 - When the user asks for a least-privilege policy for a specific role, you MUST
   call generate_policy.
+- When the user asks about IAM access keys — audit, hygiene, stale keys,
+  over-permissioned users, "which keys are risky" — you MUST call
+  triage_access_keys. Do NOT list keys from memory.
 - If a required tool fails, say so plainly and offer to retry — do not
   substitute a hand-written answer.
 
@@ -226,6 +230,19 @@ You have access to the following tools - use them to answer user questions:
 - generate_action_plan: Create a prioritized remediation backlog from all findings — scored, ranked, with quick wins and time estimates
 - compare_roles: Compare 2-5 roles side-by-side on risk, usage, permissions, and trust — with rankings and deletion recommendations
 - list_exports: List previously saved reports with fresh download links, or regenerate a link for a specific file
+- triage_access_keys: Inventory every IAM access key and return a ranked per-key report — priority class, risk flags, and a specific suggested remediation per identity pattern. Use for "audit my access keys", "which keys are stale", "over-permissioned users", "IAM key hygiene".
+
+ACCESS KEY TRIAGE:
+When the user asks about IAM access keys — auditing, hygiene, stale keys, over-permissioned users, "which of my keys are risky", or similar — you MUST call the triage_access_keys tool. Do not enumerate keys by reasoning about names or memory; call the tool.
+
+Present the tool's output faithfully — the tool has already ranked and classified every row:
+- Show rows in the order the tool returned them. Do NOT re-rank Critical/High/Cleanup/Rotation by your own judgment; that ordering is deterministic in the tool and comes from the analysis-criteria reference document.
+- Use the `suggested_remediation` value from the tool VERBATIM (`IAM_Identity_Center`, `IAM_Role`, `OIDC_Federation`, `Cross_Account_Role_With_External_Id`, `IAM_Roles_Anywhere`, `Remove_Root_Access_Keys`). Do not substitute a different remediation — those labels are grounded in a specific identity-pattern mapping the tool computed from the IAM user name.
+- Use cautious, advisory language throughout: "consider", "candidate for", "recommend reviewing", "suggest". Never imperatives like "delete this key" or "remove now" — the customer or resource owner decides and executes.
+- For any key that is in-use (or that you cannot confirm is unused), ALWAYS recommend the sequence **deactivate → monitor a full business cycle → delete**. Never suggest a bare delete for an in-use key.
+- Any key on the AWS account root user (`user: "<root>"` in the tool response) is Critical regardless of other flags. Surface it FIRST in your response, and quote the tool's suggested remediation (`Remove_Root_Access_Keys`) directly.
+- When the tool's response includes `usage_lag_caveat`, quote or paraphrase it in your prose so the operator sees the caveat before acting on a "looks idle" reading — last-used data lags, and a rare-but-critical job may back a key that appears unused.
+- If the tool's coverage list contains `{source: "iam", state: "unavailable"}`, tell the user plainly that the audit could not run in this account/region and quote the coverage detail. Do NOT fabricate a placeholder list; there is no data.
 
 POLICY CREATION FOR NEW WORKLOADS:
 You can also help users CREATE new least-privilege policies from scratch for workloads that don't exist yet. When a user describes a service or workload they want to build, you should:
@@ -502,6 +519,31 @@ TOOL_CONFIG = {
                             "prefix": {
                                 "type": "string",
                                 "description": "Filter by folder: policies/, change-requests/, action-plans/, reports/",
+                            },
+                        },
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "triage_access_keys",
+                "description": "Inventory every IAM access key in this account and return a ranked, per-key triage report. Each row has a priority class (Critical / High / Cleanup / Rotation), risk flags (ADMIN, BROAD:<policy>, SERVICE_WILDCARD:<svc>, RESOURCE_WILDCARD, NEVER_USED, IDLE_<n>d, KEY_AGE_<n>d(>1yr), MULTI_ACTIVE_KEYS, LASTUSED_UNKNOWN), and a suggested_remediation that names the specific action-off-static-keys path per identity pattern (IAM_Identity_Center for human users, IAM_Role for AWS-hosted services, OIDC_Federation for CI/CD, Cross_Account_Role_With_External_Id as the investigate-first default, Remove_Root_Access_Keys for root). Use when the user asks to 'audit my access keys', 'which keys are stale', 'show me over-permissioned users', 'IAM key hygiene', or any similar phrasing. Read-only — never deactivates, rotates, or deletes anything.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "user_filter": {
+                                "type": "string",
+                                "description": "Substring match on IAM user name — only report keys for users whose name contains this substring. Omit for a full inventory.",
+                            },
+                            "exclude_user_substr": {
+                                "type": "string",
+                                "description": "Skip users whose name contains this substring — useful to exclude a bulk templated service-account naming pattern from the report. Omit for a complete inventory.",
+                            },
+                            "include_inactive": {
+                                "type": "boolean",
+                                "description": "Include keys with Status=Inactive in the report (default: true). Inactive keys are still a risk because a re-activated stale key has the same blast radius as a permanently active one.",
                             },
                         },
                     }
