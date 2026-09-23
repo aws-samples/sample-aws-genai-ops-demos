@@ -3,13 +3,6 @@
 **Source of truth for `src/tools/triage_access_keys.py`.** If the Python code
 and this document disagree, the discrepancy is a bug in one of the two.
 
-**Attribution.** These criteria are ported from the Amazon-internal
-`IamKeyAuditSkill` (`skills/iam-key-audit/references/analysis-criteria.md`) —
-same risk-flag taxonomy, same prioritization ladder, same remediation mapping.
-The port adapts the wording for boto3 + a single-account Lambda deployment
-(instead of the internal K2/Dante MCP + AWS Organizations sweep), but keeps
-the semantics identical so the two artifacts are diff-able.
-
 ---
 
 ## What the collector emits

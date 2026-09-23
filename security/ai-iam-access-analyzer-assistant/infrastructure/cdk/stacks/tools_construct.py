@@ -130,7 +130,7 @@ class ToolsConstruct(Construct):
 
         # Common Lambda props
         common_props = {
-            "runtime": lambda_.Runtime.PYTHON_3_12,
+            "runtime": lambda_.Runtime.PYTHON_3_14,
             "timeout": Duration.seconds(60),
             "memory_size": 512,
             "role": tool_role,
@@ -157,7 +157,7 @@ class ToolsConstruct(Construct):
             code=lambda_.Code.from_asset(tools_path),
             timeout=Duration.seconds(120),
             memory_size=1024,
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             role=tool_role,
             environment={"REPORTS_BUCKET": reports_bucket.bucket_name},
         )
@@ -201,7 +201,7 @@ class ToolsConstruct(Construct):
             code=lambda_.Code.from_asset(tools_path),
             timeout=Duration.seconds(90),
             memory_size=512,
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             role=tool_role,
             environment={
                 "REPORTS_BUCKET": reports_bucket.bucket_name,
@@ -215,7 +215,7 @@ class ToolsConstruct(Construct):
             code=lambda_.Code.from_asset(tools_path),
             timeout=Duration.seconds(90),
             memory_size=512,
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             role=tool_role,
             environment={
                 "REPORTS_BUCKET": reports_bucket.bucket_name,
@@ -241,7 +241,7 @@ class ToolsConstruct(Construct):
             code=lambda_.Code.from_asset(tools_path),
             timeout=Duration.seconds(120),
             memory_size=512,
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             role=tool_role,
             environment={
                 "REPORTS_BUCKET": reports_bucket.bucket_name,

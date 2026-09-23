@@ -36,7 +36,7 @@ class ApiConstruct(Construct):
         self.conversation_fn = lambda_.Function(
             self,
             "ConversationHandler",
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             handler="agent.handler",
             code=lambda_.Code.from_asset(src_path),
             timeout=Duration.seconds(120),
