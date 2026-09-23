@@ -36,7 +36,7 @@ class ApiConstruct(Construct):
         self.conversation_fn = lambda_.Function(
             self,
             "ConversationHandler",
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             handler="agent.handler",
             code=lambda_.Code.from_asset(src_path),
             timeout=Duration.seconds(120),
@@ -53,6 +53,7 @@ class ApiConstruct(Construct):
                 "GENERATE_ACTION_PLAN_FN": tools_functions["generate_action_plan"].function_name,
                 "COMPARE_ROLES_FN": tools_functions["compare_roles"].function_name,
                 "LIST_EXPORTS_FN": tools_functions["list_exports"].function_name,
+                "TRIAGE_ACCESS_KEYS_FN": tools_functions["triage_access_keys"].function_name,
             },
         )
 

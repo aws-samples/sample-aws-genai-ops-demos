@@ -136,3 +136,45 @@ export interface ValidationResult {
     verdict: string;
   };
 }
+
+// Access-key triage (#175). Shape mirrors the Python tool response from
+// src/tools/triage_access_keys.py exactly — snake_case fields, plain string
+// enums, inline-nested objects, in keeping with the other tool payload types
+// above.
+export interface AccessKeyRow {
+  account_id: string;
+  user: string;
+  is_root: boolean;
+  key_id: string;
+  status: string; // "Active" | "Inactive"
+  created: string;
+  key_age_days: number | null;
+  last_used: string; // ISO timestamp, "NEVER", or "UNKNOWN"
+  last_used_service: string;
+  actions: string;
+  policies: string;
+  resource_scope: string; // "WILDCARD" | "SCOPED" | "MIXED" | "NONE"
+  has_condition: boolean;
+  risk_flags: string[];
+  priority_class: string; // "Critical" | "High" | "Cleanup" | "Rotation"
+  suggested_remediation: string;
+}
+
+export interface AccessKeysReport {
+  keys: AccessKeyRow[];
+  summary: {
+    Critical?: number;
+    High?: number;
+    Cleanup?: number;
+    Rotation?: number;
+    total_keys: number;
+    users_with_keys: number;
+  };
+  coverage: Array<{
+    source: string;
+    state: string; // "checked" | "empty" | "unavailable"
+    detail?: string;
+    count?: number;
+  }>;
+  usage_lag_caveat: string;
+}
