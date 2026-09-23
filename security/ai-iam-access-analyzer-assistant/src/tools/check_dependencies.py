@@ -17,6 +17,23 @@ logger.setLevel(logging.INFO)
 iam_client = boto3.client("iam")
 
 
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build an IAM coverage entry per the #171 contract.
+
+    IAM is a global service, so we report region as "global" rather than
+    the boto3 client's endpoint region (which is informational only for
+    IAM).
+    """
+    entry = {
+        "source": "iam",
+        "state": state,
+        "detail": detail.format(region="global"),
+    }
+    if count is not None:
+        entry["count"] = count
+    return entry
+
+
 def handler(event, context=None):
     """Map dependencies for an IAM entity.
 
@@ -76,11 +93,26 @@ def handler(event, context=None):
         # Calculate risk score
         result["risk_score"] = _calculate_risk_score(result)
 
+        # #171 coverage: IAM was reached and the entity's dependencies were
+        # enumerated. Per-call warnings (e.g. NoSuchEntity on a specific
+        # policy) live in `result["warnings"]` — that's a finer grain than
+        # source-level coverage.
+        result["coverage"] = [_coverage(
+            "checked",
+            "IAM entity dependencies, {region}",
+        )]
+
         return result
 
     except Exception as e:
         logger.error(f"Error checking dependencies: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"IAM query failed ({{region}}): {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _get_entity_type(arn: str) -> str:

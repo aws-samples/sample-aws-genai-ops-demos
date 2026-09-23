@@ -15,6 +15,17 @@ logger.setLevel(logging.INFO)
 access_analyzer_client = boto3.client("accessanalyzer")
 
 
+def _coverage(state: str, detail: str) -> dict:
+    """Build an Access Analyzer coverage entry per the #171 contract."""
+    meta = getattr(access_analyzer_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    return {
+        "source": "accessanalyzer",
+        "state": state,
+        "detail": detail.format(region=region),
+    }
+
+
 def handler(event, context=None):
     """Validate an IAM policy document.
 
@@ -71,10 +82,21 @@ def handler(event, context=None):
         },
     }
 
+    # #171 coverage: track whether we actually reached Access Analyzer. A
+    # ValidationException from AA is "checked" — the API did its job and told
+    # us the policy is bad. Any other exception (throttling, service outage,
+    # AccessDenied) is "unavailable" — we could not check.
+    #
+    # Helpers set aa_reachable[0]=False on non-ValidationException failures
+    # so the outer handler emits an accurate coverage state alongside the
+    # existing per-finding "system" warning.
+    aa_reachable = [True]
+
     try:
         # IAM Access Analyzer ValidatePolicy API
         if validation_type in ("syntax", "all"):
-            _run_access_analyzer_validation(policy_document, policy_type, results)
+            if not _run_access_analyzer_validation(policy_document, policy_type, results):
+                aa_reachable[0] = False
 
         # Security pattern analysis
         if validation_type in ("access_level", "least_privilege", "all"):
@@ -86,9 +108,12 @@ def handler(event, context=None):
 
         # CheckAccessNotGranted — verify specific actions are blocked
         if check_actions:
-            results["access_not_granted_check"] = _check_access_not_granted(
+            ang_result = _check_access_not_granted(
                 policy_document, check_actions, policy_type
             )
+            if not ang_result.pop("_aa_reachable", True):
+                aa_reachable[0] = False
+            results["access_not_granted_check"] = ang_result
 
         # Build summary
         errors = sum(1 for f in results["findings"] if f.get("type") == "ERROR")
@@ -110,15 +135,32 @@ def handler(event, context=None):
             ),
         }
 
+        results["coverage"] = [_coverage(
+            "checked" if aa_reachable[0] else "unavailable",
+            "IAM Access Analyzer ValidatePolicy, {region}",
+        )]
+
         return results
 
     except Exception as e:
         logger.error(f"Error validating policy: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"Policy validation failed ({{region}}): {type(e).__name__}: {e}",
+            )],
+        }
 
 
-def _run_access_analyzer_validation(policy_document: str, policy_type: str, results: dict):
-    """Use IAM Access Analyzer ValidatePolicy API."""
+def _run_access_analyzer_validation(policy_document: str, policy_type: str, results: dict) -> bool:
+    """Use IAM Access Analyzer ValidatePolicy API.
+
+    Returns True if AA was reachable, False if we hit a non-validation error
+    (outage, throttling, permission). ValidationException still counts as
+    reachable — the API returned a verdict; the verdict was 'your policy is
+    malformed'.
+    """
     try:
         response = access_analyzer_client.validate_policy(
             policyDocument=policy_document,
@@ -151,6 +193,8 @@ def _run_access_analyzer_validation(policy_document: str, policy_type: str, resu
             "source": "IAM Access Analyzer",
         })
         results["is_valid"] = False
+        # AA reachable — it did its job and rejected our policy.
+        return True
     except Exception as e:
         results["findings"].append({
             "type": "WARNING",
@@ -158,6 +202,9 @@ def _run_access_analyzer_validation(policy_document: str, policy_type: str, resu
             "message": f"Could not run Access Analyzer validation: {e}",
             "source": "system",
         })
+        return False
+
+    return True
 
 
 def _check_access_not_granted(policy_document: str, actions: list, policy_type: str) -> dict:
@@ -180,6 +227,7 @@ def _check_access_not_granted(policy_document: str, actions: list, policy_type: 
                 "passed": True,
                 "message": f"Confirmed: policy does NOT grant these actions: {actions}",
                 "violations": [],
+                "_aa_reachable": True,
             }
         else:
             # Extract which actions are granted
@@ -195,19 +243,24 @@ def _check_access_not_granted(policy_document: str, actions: list, policy_type: 
                 "passed": False,
                 "message": f"VIOLATION: Policy grants one or more of these actions: {actions}",
                 "violations": violations,
+                "_aa_reachable": True,
             }
 
     except access_analyzer_client.exceptions.ValidationException as e:
+        # AA reachable — it rejected our input.
         return {
             "passed": None,
             "message": f"Could not validate (invalid input): {e}",
             "violations": [],
+            "_aa_reachable": True,
         }
     except Exception as e:
+        # AA outage / throttle / permission — result is unknown.
         return {
             "passed": None,
             "message": f"CheckAccessNotGranted unavailable: {e}",
             "violations": [],
+            "_aa_reachable": False,
         }
 
 
