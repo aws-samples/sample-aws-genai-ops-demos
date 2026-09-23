@@ -8,6 +8,13 @@
 
 When AWS Health publishes an event — scheduled maintenance, operational issues, or service degradation — this sample solution automatically triggers an AI-powered investigation using AWS DevOps Agent. The agent analyzes your application topology to determine blast radius, identifies affected teams from resource tags, and routes notifications through team-specific channels (email, Slack, MS Teams).
 
+
+## Learn More
+
+- **Interactive demo:** [Watch the guided walkthrough on Storylane](https://amazon.storylane.io/share/aogsgwacfvtb)
+- **Blog post:** [Use AWS DevOps Agent to triage and route AWS Health event impact](https://aws.amazon.com/blogs/mt/use-aws-devops-agent-to-triage-and-route-aws-health-event-impact/)
+
+
 ## At a Glance
 
 | | |
