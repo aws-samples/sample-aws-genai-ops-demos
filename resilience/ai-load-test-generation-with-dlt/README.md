@@ -51,6 +51,12 @@ private-VPC egress mode when you need it.
   `AWSServiceRoleForBedrockAgentCoreNetwork` (in `BedrockAgentCoreFullAccess`).
 - *(Optional)* An existing **DLT** deployment if you want to register/run tests.
 
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/cbiqhf60wrw1)
+
 ---
 
 ## Deploy
