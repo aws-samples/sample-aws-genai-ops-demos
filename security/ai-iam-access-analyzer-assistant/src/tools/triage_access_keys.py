@@ -5,12 +5,9 @@ ranked, per-key report — which keys are admin-privileged, which are stale,
 which are over-permissioned, which are unrotated, and (most usefully) what
 specific remediation applies to each based on the identity's usage pattern.
 
-The risk-flag taxonomy, prioritization ladder, and identity-pattern
-remediation mapping are ported from the Amazon-internal ``IamKeyAuditSkill``
-(``skills/iam-key-audit/references/analysis-criteria.md``). Same logic,
-different data source: boto3 in a scoped Lambda instead of the K2/Dante MCP.
 The reference document at ``src/tools/references/access_key_analysis_criteria.md``
-is the source of truth for the definitions — if the code and doc drift, one
+is the source of truth for the risk-flag taxonomy, prioritization ladder,
+and identity-pattern remediation mapping — if the code and doc drift, one
 is a bug.
 
 The model presents this tool's output; it does NOT re-rank or substitute a
@@ -42,8 +39,8 @@ iam_client = boto3.client("iam")
 ADMIN_POLICIES = frozenset({"AdministratorAccess"})
 
 # AWS-managed broad-scope policies. Presence of any of these in the resolved
-# managed-policy set adds a BROAD:<policy> flag. Ported verbatim from
-# IamKeyAuditSkill.
+# managed-policy set adds a BROAD:<policy> flag. See
+# ``src/tools/references/access_key_analysis_criteria.md`` for definitions.
 BROAD_MANAGED = frozenset({
     "AmazonBedrockFullAccess",
     "AmazonS3FullAccess",
