@@ -22,6 +22,11 @@ logger.setLevel(logging.INFO)
 # with credentials from a dedicated presigner role we assume ourselves; those
 # credentials are stable for their full DurationSeconds.
 _REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+
+def _coverage(state: str, detail: str) -> dict:
+    """Build an S3 coverage entry per the #171 contract."""
+    return {"source": "s3", "state": state, "detail": detail.format(region=_REGION)}
 _S3_CONFIG = Config(signature_version="s3v4")
 REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
 PRESIGNER_ROLE_ARN = os.environ.get("PRESIGNER_ROLE_ARN", "")
@@ -149,14 +154,26 @@ def handler(event, context=None):
     """
     content = event.get("content")
     if not content:
-        return {"error": "content is required"}
+        return {
+            "error": "content is required",
+            "coverage": [_coverage(
+                "unavailable",
+                "S3 not reached in {region}: missing required 'content' argument",
+            )],
+        }
 
     # Limit content size to prevent timeout issues
     if len(content) > 50000:
         content = content[:50000] + "\n\n[... truncated for size ...]"
 
     if not REPORTS_BUCKET:
-        return {"error": "REPORTS_BUCKET environment variable not configured"}
+        return {
+            "error": "REPORTS_BUCKET environment variable not configured",
+            "coverage": [_coverage(
+                "unavailable",
+                "S3 not reachable in {region}: REPORTS_BUCKET env var not set",
+            )],
+        }
 
     content_type = event.get("content_type", "report")
     role_name = event.get("role_name", "")
@@ -233,11 +250,22 @@ def handler(event, context=None):
             "valid_for": _format_valid_for(signing.expires_in),
             "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "note": "File stored permanently. Say 'list my exports' or 'get a new link for [filename]' anytime to retrieve it.",
+            "coverage": [_coverage(
+                "checked",
+                f"S3 reports bucket in {{region}}: PutObject + GetObject presign",
+            )],
         }
 
     except Exception as e:
         logger.error(f"Error exporting to S3: {e}", exc_info=True)
-        return {"error": str(e), "success": False}
+        return {
+            "error": str(e),
+            "success": False,
+            "coverage": [_coverage(
+                "unavailable",
+                f"S3 export failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _format_valid_for(seconds: int) -> str:
