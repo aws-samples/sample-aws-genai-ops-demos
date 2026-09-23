@@ -7,6 +7,35 @@ export interface Message {
   };
 }
 
+/**
+ * One row of the session-start capability probe (#171 phase C).
+ *
+ * The assistant renders one pill per entry in the "Data sources" status
+ * line so the user can see — before typing anything — which AWS sources
+ * were reachable in this account/region and which were not.
+ */
+export interface CoverageEntry {
+  source: "securityhub" | "accessanalyzer" | "cloudtrail" | string;
+  state: "checked" | "unavailable";
+  detail: string;
+}
+
+/**
+ * Response body of ``GET /capabilities``. Called once when the chat opens.
+ *
+ * - ``region``: the region the Lambda ran in (surface it so a wrong-region
+ *   deploy is obvious to the user).
+ * - ``coverage``: structural per-source status used for the pill row.
+ * - ``welcome_message``: server-composed prose describing what CAN and
+ *   what CANNOT be seen — prepended to the greeting bubble so the user
+ *   reads the honesty statement before the feature list.
+ */
+export interface Capabilities {
+  region: string;
+  coverage: CoverageEntry[];
+  welcome_message: string;
+}
+
 export interface Finding {
   id: string;
   title: string;

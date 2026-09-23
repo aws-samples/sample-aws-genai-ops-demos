@@ -6,27 +6,41 @@ import Input from "@cloudscape-design/components/input";
 import Button from "@cloudscape-design/components/button";
 import Box from "@cloudscape-design/components/box";
 import Alert from "@cloudscape-design/components/alert";
+import Popover from "@cloudscape-design/components/popover";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import MessageBubble from "./MessageBubble";
 import ErrorBoundary from "./ErrorBoundary";
 import {
   sendMessage,
+  getCapabilities,
   ApiTimeoutError,
   PaginationContext,
 } from "../services/api";
-import { Message } from "../types";
+import { Capabilities, CoverageEntry, Message } from "../types";
 
-const WELCOME_MESSAGE: Message = {
-  role: "assistant",
-  content:
-    "Hello! I'm your **IAM Security Assistant**. I help you understand and fix your IAM roles and policies — unused roles, overly-permissive permissions, and cross-account access risks.\n\n" +
-    "**Three capabilities that work independently or together:**\n\n" +
-    "- **Analyze** — surface unused roles, excessive permissions, cross-account risks\n" +
-    "- **Generate** — create least-privilege policies from actual usage\n" +
-    "- **Protect** — validate changes, assess blast radius before you act\n\n" +
-    "Click a suggestion below to get started, or ask anything in your own words.\n\n" +
-    "*Tip: Anything I generate can be saved to S3 — just say \"export that\".*\n\n" +
-    "🔒 **Read-only** — this assistant analyzes and recommends but never modifies your IAM roles, policies, or configurations.",
-};
+const GREETING_BODY =
+  "Hello! I'm your **IAM Security Assistant**. I help you understand and fix your IAM roles and policies — unused roles, overly-permissive permissions, and cross-account access risks.\n\n" +
+  "**Three capabilities that work independently or together:**\n\n" +
+  "- **Analyze** — surface unused roles, excessive permissions, cross-account risks\n" +
+  "- **Generate** — create least-privilege policies from actual usage\n" +
+  "- **Protect** — validate changes, assess blast radius before you act\n\n" +
+  "Click a suggestion below to get started, or ask anything in your own words.\n\n" +
+  "*Tip: Anything I generate can be saved to S3 — just say \"export that\".*\n\n" +
+  "🔒 **Read-only** — this assistant analyzes and recommends but never modifies your IAM roles, policies, or configurations.";
+
+/**
+ * Compose the welcome bubble from the greeting plus the session-start
+ * capability probe (#171 phase C). When the probe has resolved, the
+ * server-composed data-source honesty statement leads the bubble so the
+ * user reads what CAN and what CANNOT be seen in this account/region
+ * BEFORE the generic feature list.
+ */
+function buildWelcomeMessage(capabilities: Capabilities | null): Message {
+  const content = capabilities?.welcome_message
+    ? `${capabilities.welcome_message}\n\n---\n\n${GREETING_BODY}`
+    : GREETING_BODY;
+  return { role: "assistant", content };
+}
 
 interface ActivityEntry {
   tool: string;
@@ -41,7 +55,8 @@ const TIMEOUT_ADVICE =
   "or ask for a narrower filter. Any export you were creating may still complete on the server — try `list my exports`.";
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [messages, setMessages] = useState<Message[]>([buildWelcomeMessage(null)]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +72,32 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Session-start capability probe (#171 phase C). Best-effort: a failure
+  // must NOT block the chat, so if the probe fails we leave capabilities
+  // null and the welcome bubble falls back to the generic greeting.
+  useEffect(() => {
+    let cancelled = false;
+    getCapabilities()
+      .then((caps) => {
+        if (cancelled) return;
+        setCapabilities(caps);
+        // Rebuild the welcome bubble in place, but only if the user hasn't
+        // typed anything yet (still on the greeting-only state).
+        setMessages((prev) =>
+          prev.length === 1 && prev[0].role === "assistant"
+            ? [buildWelcomeMessage(caps)]
+            : prev
+        );
+      })
+      .catch((err) => {
+        // Non-fatal — log and move on.
+        console.warn("capability probe failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSend = async (overrideMessage?: string) => {
     const messageToSend = overrideMessage || inputValue;
     if (!messageToSend.trim() || isLoading) return;
@@ -68,8 +109,11 @@ export default function ChatInterface() {
     setError(null);
 
     try {
+      // The welcome bubble is always messages[0] and belongs to the UI, not
+      // the conversation. Sending it to the backend as prior assistant turn
+      // would leak the greeting into the model's context every turn.
       const history = messages
-        .filter((m) => m !== WELCOME_MESSAGE)
+        .slice(1)
         .map((m) => ({ role: m.role, content: m.content }));
 
       const response = await sendMessage(
@@ -130,7 +174,7 @@ export default function ChatInterface() {
   };
 
   const handleClear = () => {
-    setMessages([WELCOME_MESSAGE]);
+    setMessages([buildWelcomeMessage(capabilities)]);
     setSessionActivity([]);
     setError(null);
     paginationRef.current = null;
@@ -185,6 +229,10 @@ export default function ChatInterface() {
           <Alert type="error" dismissible onDismiss={() => setError(null)}>
             {error}
           </Alert>
+        )}
+
+        {capabilities && (
+          <DataSourcesStatus capabilities={capabilities} />
         )}
 
         {sessionActivity.length > 0 && (
@@ -344,6 +392,93 @@ function SessionActivityBar({ activities, tokens }: { activities: ActivityEntry[
           <>Tokens: {(tokens.input + tokens.output).toLocaleString()} | Cost: {costDisplay}</>
         )}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Compact "Data sources" row rendered above the message history.
+ *
+ * One entry per AWS source (Security Hub, Access Analyzer, CloudTrail),
+ * rendered as a Cloudscape `StatusIndicator` — `success` when every coverage
+ * entry for the source succeeded, `warning` when some succeeded and some
+ * failed (typical: external-access analyzer active but unused-access one
+ * missing), `error` when all failed. Each indicator is wrapped in a
+ * Cloudscape `Popover` that surfaces the per-entry detail on click, giving
+ * keyboard-accessible and screen-reader-friendly disclosure of what each
+ * sub-check actually observed.
+ *
+ * The surrounding row uses inline flex styles for now; a fuller Cloudscape
+ * refactor of ChatInterface's hand-rolled wrappers is tracked in #167.
+ * This component only takes on the semantic status primitives — which are
+ * the pieces Ben's #167 "Writing" section (glyph-in-copy) explicitly calls
+ * out — and leaves the rest of the layout for that rework.
+ */
+function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
+  const bySource = new Map<string, CoverageEntry[]>();
+  for (const entry of capabilities.coverage) {
+    const existing = bySource.get(entry.source);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      bySource.set(entry.source, [entry]);
+    }
+  }
+
+  const pretty: Record<string, string> = {
+    securityhub: "Security Hub",
+    accessanalyzer: "Access Analyzer",
+    cloudtrail: "CloudTrail",
+  };
+
+  const items = Array.from(bySource.entries()).map(([source, entries]) => {
+    const hasChecked = entries.some((e) => e.state === "checked");
+    const hasUnavailable = entries.some((e) => e.state === "unavailable");
+    let type: "success" | "warning" | "error" = "success";
+    if (hasChecked && hasUnavailable) {
+      type = "warning";
+    } else if (!hasChecked && hasUnavailable) {
+      type = "error";
+    }
+    return (
+      <Popover
+        key={source}
+        size="medium"
+        triggerType="text"
+        dismissButton={false}
+        header={pretty[source] || source}
+        content={
+          <ul style={{ margin: 0, paddingInlineStart: "1.25em" }}>
+            {entries.map((e, i) => (
+              <li key={i}>{e.detail}</li>
+            ))}
+          </ul>
+        }
+      >
+        <StatusIndicator type={type}>
+          {pretty[source] || source}
+        </StatusIndicator>
+      </Popover>
+    );
+  });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "12px",
+        padding: "8px 12px",
+        backgroundColor: "var(--color-background-container-content)",
+        borderRadius: "8px",
+        border: "1px solid var(--color-border-divider-default)",
+      }}
+    >
+      <Box variant="small" fontWeight="bold" color="text-body-secondary">
+        Data sources ({capabilities.region})
+      </Box>
+      {items}
     </div>
   );
 }
