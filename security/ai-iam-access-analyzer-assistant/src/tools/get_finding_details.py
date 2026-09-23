@@ -17,6 +17,20 @@ securityhub_client = boto3.client("securityhub")
 iam_client = boto3.client("iam")
 
 
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build a per-source coverage entry per the #171 contract."""
+    meta = getattr(securityhub_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    entry = {
+        "source": "securityhub",
+        "state": state,
+        "detail": detail.format(region=region),
+    }
+    if count is not None:
+        entry["count"] = count
+    return entry
+
+
 def handler(event, context=None):
     """Get detailed information about a specific finding.
 
@@ -69,7 +83,17 @@ def handler(event, context=None):
 
         if finding is None:
             hint = role_name or finding_id
-            return {"error": f"No active finding found matching '{hint}'. Try the exact role name from the findings list."}
+            # #171: this is a legitimate "empty" observation — Security Hub was
+            # queried successfully and returned no match. Distinct from
+            # "unavailable" (raised above) which means we could not check.
+            return {
+                "error": f"No active finding found matching '{hint}'. Try the exact role name from the findings list.",
+                "coverage": [_coverage(
+                    "empty",
+                    "IAM Access Analyzer findings via Security Hub, {region}",
+                    count=0,
+                )],
+            }
 
         resources = finding.get("Resources", [{}])
         primary_resource = resources[0] if resources else {}
@@ -119,13 +143,36 @@ def handler(event, context=None):
         # Generate remediation steps
         result["remediation_steps"] = _generate_remediation_steps(finding, result.get("resource_details", {}))
 
+        # #171 coverage: Security Hub was checked and returned the finding.
+        result["coverage"] = [_coverage(
+            "checked",
+            "IAM Access Analyzer finding via Security Hub, {region}",
+            count=1,
+        )]
+
         return result
 
-    except securityhub_client.exceptions.InvalidAccessException:
-        return {"error": "Security Hub is not enabled or access denied."}
+    except securityhub_client.exceptions.InvalidAccessException as e:
+        return {
+            "error": (
+                "Security Hub is not enabled or access denied — cannot look "
+                "up finding details. Enable Security Hub in this region and "
+                "grant the tool role securityhub:GetFindings."
+            ),
+            "coverage": [_coverage(
+                "unavailable",
+                "Security Hub not enabled or access denied in {region}",
+            )],
+        }
     except Exception as e:
         logger.error(f"Error getting finding details: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "coverage": [_coverage(
+                "unavailable",
+                f"Security Hub query failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _looks_like_finding_id(value: str) -> bool:
@@ -141,31 +188,34 @@ def _resolve_finding_by_resource_name(name: str):
     Security Hub's ResourceId filter does NOT support CONTAINS (only EQUALS/PREFIX),
     so we fetch the Access Analyzer findings with the same filter list_findings uses
     (which is known to work) and match the role name in Python against the resource
-    ARN and the finding Id. One API call, no dependency on server-side CONTAINS."""
+    ARN and the finding Id. One API call, no dependency on server-side CONTAINS.
+
+    Exceptions from the Security Hub call are intentionally NOT caught here — they
+    propagate to the outer handler so a missing Security Hub or an ``AccessDenied``
+    on ``securityhub:GetFindings`` cannot masquerade as "no matching finding".
+    Silent swallow of Security Hub failures at this level was one of the
+    behavioural bugs #171 fixes.
+    """
     name = (name or "").strip()
     if not name:
         return None
-    try:
-        response = securityhub_client.get_findings(
-            Filters={
-                "ProductName": [{"Value": "IAM Access Analyzer", "Comparison": "EQUALS"}],
-                "RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}],
-            },
-            MaxResults=50,
-            SortCriteria=[{"Field": "SeverityNormalized", "SortOrder": "desc"}],
-        )
-        lname = name.lower()
-        for finding in response.get("Findings", []):
-            resources = finding.get("Resources", [{}])
-            resource_id = (resources[0].get("Id", "") if resources else "").lower()
-            finding_id = (finding.get("Id", "") or "").lower()
-            title = (finding.get("Title", "") or "").lower()
-            if lname in resource_id or lname in finding_id or lname in title:
-                return finding
-        return None
-    except Exception as e:
-        logger.warning(f"Could not resolve finding by resource name '{name}': {e}")
-        return None
+    response = securityhub_client.get_findings(
+        Filters={
+            "ProductName": [{"Value": "IAM Access Analyzer", "Comparison": "EQUALS"}],
+            "RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}],
+        },
+        MaxResults=50,
+        SortCriteria=[{"Field": "SeverityNormalized", "SortOrder": "desc"}],
+    )
+    lname = name.lower()
+    for finding in response.get("Findings", []):
+        resources = finding.get("Resources", [{}])
+        resource_id = (resources[0].get("Id", "") if resources else "").lower()
+        finding_id = (finding.get("Id", "") or "").lower()
+        title = (finding.get("Title", "") or "").lower()
+        if lname in resource_id or lname in finding_id or lname in title:
+            return finding
+    return None
 
 
 def _get_resource_details(resource: dict) -> dict:

@@ -18,6 +18,30 @@ logger.setLevel(logging.INFO)
 securityhub_client = boto3.client("securityhub")
 
 
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build a per-source coverage entry per the #171 contract.
+
+    Three states:
+      * ``checked``     — call succeeded and returned data
+      * ``empty``       — call succeeded, returned nothing (honest "no
+                          findings" case the caller can act on)
+      * ``unavailable`` — call failed. The caller must NOT interpret an empty
+                          data set on this path as "nothing found".
+    """
+    # Defensive: some tests inject a fake client without a boto3-style .meta
+    # attribute. Don't let coverage emission blow up on the happy path.
+    meta = getattr(securityhub_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    entry = {
+        "source": "securityhub",
+        "state": state,
+        "detail": detail.format(region=region),
+    }
+    if count is not None:
+        entry["count"] = count
+    return entry
+
+
 def handler(event, context=None):
     """Query Security Hub for IAM Access Analyzer findings.
 
@@ -167,6 +191,16 @@ def handler(event, context=None):
         else:
             total_matching = len(findings)
 
+        # Coverage per #171: 'checked' when we got data, 'empty' when the
+        # call succeeded but returned zero findings. The caller can tell the
+        # difference between "no findings" and "we couldn't check".
+        coverage_state = "checked" if findings else "empty"
+        coverage_entry = _coverage(
+            coverage_state,
+            "IAM Access Analyzer findings via Security Hub, {region}",
+            count=len(findings),
+        )
+
         result = {
             "findings": findings,
             "returned_count": len(findings),   # items in THIS page
@@ -179,6 +213,7 @@ def handler(event, context=None):
                 "status": status,
                 "search_text": search_text,
             },
+            "coverage": [coverage_entry],
         }
 
         # Include pagination token if more results exist
@@ -197,6 +232,10 @@ def handler(event, context=None):
             "Please enable Security Hub with IAM Access Analyzer integration.",
             "findings": [],
             "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                "Security Hub not enabled or access denied in {region}",
+            )],
         }
     except securityhub_client.exceptions.InvalidInputException as e:
         logger.error(f"Invalid filter input: {e}")
@@ -204,10 +243,22 @@ def handler(event, context=None):
             "error": f"Invalid filter parameters: {e}",
             "findings": [],
             "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                f"Security Hub in {{region}} rejected the filters: {e}",
+            )],
         }
     except Exception as e:
         logger.error(f"Error querying Security Hub: {e}", exc_info=True)
-        return {"error": str(e), "findings": [], "total_count": 0}
+        return {
+            "error": str(e),
+            "findings": [],
+            "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                f"Security Hub query failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
 
 
 def _count_all_matching(filters: dict, max_pages: int = 40) -> int:
