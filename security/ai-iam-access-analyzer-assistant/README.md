@@ -7,12 +7,14 @@ The AI IAM Access Analyzer Assistant provides a conversational interface for man
 
 ## What's New
 
-This release hardens the assistant for production use based on feedback from real deployments:
+Recent hardening improvements observed in real deployments:
 
-- **Signed download links are stable for a full hour.** A dedicated presigner IAM role signs S3 URLs with a session token that stays valid for the URL's entire lifetime, so previously-issued download links no longer expire early with an `InvalidToken` error when the Lambda's own STS token rotates in the background.
-- **Common flows short-circuit deterministically.** Pagination (`next 10`, `page 3`), `generate an action plan`, `validate this policy` for a pasted JSON body, and the `generate an action plan and export it` compound now execute server-side in a single turn without a Bedrock round-trip. The model still handles novel or exploratory questions.
+- **IAM access-key triage.** A new tool inventories every IAM access key in the account and returns a prioritized action list with a specific replacement path per identity — SSO federation for humans, IAM roles for services, OIDC federation for CI/CD, or root-key removal. Each row links to the AWS documentation page for the recommended migration pattern.
+- **Downloads no longer depend on STS token lifetime.** Exports and re-issued download links now go through a Cognito-authenticated API Gateway proxy with a prefix allowlist and path-traversal defense. This replaces the previous S3 presigned-URL design, which could issue links with less remaining life than the URL's `ExpiresIn` when the Lambda's own STS token rotated. The legacy `PresignerRole` remains in the CDK stack for one release cycle marked deprecated, and can be removed on the next revision.
+- **More flows short-circuit deterministically.** Pagination (`next 10`, `page 3`), `generate an action plan`, `validate this policy` for a pasted JSON body, `audit my access keys`, `explain what the audit does` (and similar educational questions), and the `generate an action plan and export it` compound all execute server-side in a single turn — no Bedrock round-trip and no risk of hitting the API Gateway 29-second ceiling. The model still handles novel or exploratory questions.
+- **Coverage contract across every tool.** Every tool surfaces whether each data source (Security Hub, IAM, Access Analyzer, CloudTrail, S3) was checked, empty, or unavailable. The model names unavailable sources in prose rather than describing the posture as "clean" when it could not actually see all the data.
+- **Cloudscape chat surface with dark mode.** The chat UI moved from a hand-rolled implementation to Cloudscape's generative-AI chat pattern (ChatBubble, Avatar, PromptInput, SupportPromptGroup). Model output is rendered through `react-markdown` with `rehype-sanitize` — replacing the earlier regex + `dangerouslySetInnerHTML` path, which was an XSS surface. Full dark-mode support including a bridge for the `@cloudscape-design/chat-components` token layer.
 - **`list_findings` no longer blocks on large accounts.** The first page returns as soon as the API replies; the total finding count is scanned lazily (or not at all, per configuration). Accounts with tens of thousands of findings no longer time out on the very first user prompt.
-- **Autonomous-agent scaffolding removed.** The standard build is now purely conversational; the experimental async-agent panel that shipped in an earlier variant has been retired to keep the codebase focused.
 
 ## At a Glance
 
@@ -40,12 +42,12 @@ This release hardens the assistant for production use based on feedback from rea
 
 ### Exporting reports
 
-Every generated artifact — policies, action plans, role comparisons, blast-radius analyses — is exportable to the reports S3 bucket with a signed download link valid for 1 hour. Files stay in S3 permanently, so an expired link is never a lost report:
+Every generated artifact — policies, action plans, role comparisons, blast-radius analyses — is exportable to the reports S3 bucket. Downloads are served through a Cognito-authenticated API Gateway route, so a link stays usable for the current signed-in session. Files stay in S3 permanently, so an expired session never means a lost report:
 
 - Ask `list my exports` to see everything that has been saved.
-- Ask `get me a new link for <filename>` to mint a fresh 1-hour download link for any file.
+- Ask `get me a new link for <filename>` to mint a fresh download link for any file.
 
-The 1-hour lifetime is backed by a dedicated presigner IAM role the tool Lambdas assume specifically for URL signing; the URL remains valid for its full `X-Amz-Expires` window even if the Lambda's own STS credentials rotate underneath the request.
+The download route (`GET /downloads/{proxy+}`) is protected by the same Cognito authorizer as the rest of the API. A dedicated Lambda serves objects from the reports bucket with a prefix allowlist and path-traversal defense. Direct S3 access is not exposed.
 
 ## How It Works
 
@@ -63,13 +65,11 @@ Coming soon.
 
 ## Prerequisites
 
-The stack deploys a read-only role and creates no security data of its own: the assistant reads what these services already hold **in the deployment region**. None of them is needed for the deployment to succeed, but without them the assistant has nothing to show, and the deploy script ends with a "Data sources" status telling you exactly what it will be able to see (see [Data sources status](#data-sources-status)).
+Before deploying, ensure the following are enabled in your AWS account:
 
-- **Security Hub CSPM** — enabled in the deployment region. The IAM Access Analyzer integration turns on automatically when both services are enabled; all findings are read through Security Hub.
-- **IAM Access Analyzer** — at least one active analyzer in the deployment region. The two kinds produce different findings, so pick by what you want the assistant to talk about:
-  - *External access* (`ACCOUNT` or `ORGANIZATION`, free): public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust policies.
-  - *Unused access* (`ACCOUNT_UNUSED_ACCESS` or `ORGANIZATION_UNUSED_ACCESS`, billed per IAM role and user analyzed): unused roles, unused permissions, unused access keys and passwords. Most of the suggested prompts ("show my findings", "compare my unused roles", "blast radius of my most critical unused role") rely on this one.
-- **CloudTrail** — nothing to configure. Policy generation reads the always-on 90-day management event history of the deployment region (`cloudtrail:LookupEvents`); a trail is not required.
+- **Security Hub** — enabled with IAM Access Analyzer integration
+- **IAM Access Analyzer** — at least one active analyzer
+- **CloudTrail** — logging enabled (for policy generation lookback)
 - **Amazon Bedrock** — model access enabled for Claude (Anthropic)
 - **AWS CLI** v2.31.13+
 - **Node.js** 20+
@@ -92,48 +92,13 @@ chmod +x deploy-all.sh
 ```
 
 The script will:
-1. Build the React frontend
-2. Deploy the CDK stack through the shared `deploy-cdk` script (Lambda, API Gateway, Cognito, CloudFront, S3)
-3. Configure the frontend with stack outputs
-4. Upload the frontend to S3 and invalidate CloudFront
-5. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
-6. Print the [Data sources status](#data-sources-status): what the assistant will be able to see in this region.
+1. Install CDK dependencies
+2. Build the React frontend
+3. Deploy CDK infrastructure (Lambda, API Gateway, Cognito, CloudFront, S3)
+4. Configure the frontend with stack outputs
+5. Upload the frontend to S3 and invalidate CloudFront
 
-The final "Deployment Complete!" summary prints the CloudFront URL, the demo email, and the demo password — copy them from the terminal to sign in. Re-running the script rotates the demo user's password.
-
-If a demo-user step fails, the script exits with a clear error rather than pretending the demo user was created; the CloudFormation deploy itself is already complete at that point and does not need to be re-run. To create additional users (teammates, service accounts, etc.), use the Cognito console against the printed User Pool ID, or the CLI equivalents:
-
-```bash
-aws cognito-idp admin-create-user \
-  --user-pool-id <UserPoolId> --username you@example.com \
-  --user-attributes Name=email_verified,Value=true --message-action SUPPRESS
-aws cognito-idp admin-set-user-password \
-  --user-pool-id <UserPoolId> --username you@example.com \
-  --password '<strong-password>' --permanent
-```
-
-### Data sources status
-
-The deploy script ends with a status block describing what the assistant can see in the deployment region. It never blocks the deployment; each line is one of three states: `[+]` present, `[!]` missing (with the command that fixes it), `[?]` could not be checked with your credentials.
-
-```
- Data sources in us-east-1
-   AWS Security Hub CSPM
-     [+] Service                        enabled in us-east-1 since 2021-09-03
-     [+] IAM Access Analyzer feed       on: IAM Access Analyzer findings are forwarded to Security Hub
-     [+] Findings from Access Analyzer  1 active in Security Hub
-   AWS IAM Access Analyzer
-     [+] External access analyzer       ConsoleAnalyzer-… (ACCOUNT)
-         Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust.
-     [!] Unused access analyzer         none in us-east-1: unused roles and permissions cannot appear (most suggested prompts need this)
-         aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration "unusedAccess={unusedAccessAge=90}" --region us-east-1
-         (billed per IAM role and user analyzed)
-   AWS CloudTrail
-     [+] Event history                  90-day management event history of us-east-1 (always on, no trail required)
-         Used by policy generation to see which API calls a role actually made.
-```
-
-In the example, the assistant will answer questions about the one cross-account finding but will report nothing for unused roles or permissions until an unused-access analyzer exists. New findings reach Security Hub within about 30 minutes of creating an analyzer.
+After deployment, create a user in the Cognito User Pool and navigate to the CloudFront URL.
 
 ## Architecture
 
@@ -163,10 +128,11 @@ User → CloudFront → S3 (React)
 | Lambda (validate_policy) | Validate policies via Access Analyzer |
 | Lambda (generate_action_plan) | Turn a batch of findings into a prioritized remediation plan |
 | Lambda (compare_roles) | Diff two IAM roles side-by-side |
-| Lambda (export_report) | Persist a generated artifact to S3 and mint a signed download link |
-| Lambda (list_exports) | List previously-exported artifacts and re-issue fresh download links |
+| Lambda (export_report) | Persist a generated artifact to S3 and return a Cognito-authenticated download URL |
+| Lambda (list_exports) | List previously-exported artifacts and issue fresh download URLs |
+| Lambda (download) | Cognito-authenticated proxy that serves objects from the reports bucket with a prefix allowlist and path-traversal defense |
 | IAM Role (ToolExecutionRole) | Shared execution role for all tool Lambdas (read-only IAM, Security Hub, CloudTrail, Access Analyzer) |
-| IAM Role (PresignerRole) | Assumed by tool Lambdas *only* to sign S3 download URLs. Read-only on the reports bucket, 1-hour session, so the URLs stay valid across Lambda credential rotation. |
+| IAM Role (PresignerRole) | Deprecated. Retained in the CDK stack for one release cycle for backwards compatibility; no code path assumes this role anymore. |
 | S3 (Frontend Hosting) | React app static files |
 | S3 (Reports) | Generated policies and reports (optional — see note below) |
 | CloudFront | HTTPS distribution for frontend |
@@ -214,13 +180,9 @@ To flip it on a smaller account where you always want an exact count, pass `full
 ## Cleanup
 
 ```bash
-# Bash
-../../shared/scripts/deploy-cdk.sh --cdk-directory infrastructure/cdk --destroy --skip-bootstrap
-```
-
-```powershell
-# PowerShell
-& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "infrastructure\cdk" -DestroyStack -SkipBootstrap
+cd infrastructure/cdk
+source .venv/bin/activate
+npx cdk destroy "IamAnalyzerAssistantStack-$(aws configure get region)"
 ```
 
 ## Project Structure
@@ -239,7 +201,7 @@ ai-iam-access-analyzer-assistant/
 │       │   ├── iam_analyzer_assistant_stack.py
 │       │   ├── auth_construct.py
 │       │   ├── api_construct.py
-│       │   ├── tools_construct.py     # Tool Lambdas + presigner role
+│       │   ├── tools_construct.py     # Tool Lambdas + shared execution role
 │       │   ├── storage_construct.py
 │       │   └── frontend_construct.py
 │       ├── requirements.txt
@@ -331,9 +293,9 @@ Assistant: Policy Analysis for ApolloRole:
 
 ## Customization
 
-### Identity & Authentication (Production Use)
+### Identity & Authentication (Hardened Deployments)
 
-The default deployment creates a standalone Cognito User Pool with a demo user — suitable for evaluation and demos. For production use, integrate with your existing identity provider:
+The default deployment creates a standalone Cognito User Pool with a demo user — suitable for evaluation and demos. For hardened deployments, integrate with your existing identity provider:
 
 **Option 1: Cognito + SAML Federation (Okta, Azure AD, Ping)**
 
@@ -473,11 +435,14 @@ aws bedrock list-inference-profiles --query "inferenceProfileSummaries[?contains
 
 ### CDK "No module named 'aws_cdk'"
 
-**Cause:** `cdk.json` synthesizes with `python3 app.py`; the CDK deps were installed into a different interpreter (or not at all).
-**Fix:** Install them into the Python that `python3` resolves to (the shared deploy script does this and verifies the import):
+**Cause:** CDK subprocess uses system Python instead of the venv.
+**Fix:** The `cdk.json` uses `.venv/bin/python3 app.py`. Ensure the venv exists:
 
 ```bash
-python3 -m pip install -r infrastructure/cdk/requirements.txt
+cd infrastructure/cdk
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ### CDK deploy fails on bootstrap (missing SSM parameter / stale bootstrap stack)
@@ -547,13 +512,18 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*"
 
 ### No findings returned
 
-**Cause:** Security Hub CSPM not enabled in the deployment region, no active analyzer there, or an analyzer of the other kind (an external-access analyzer produces no unused-role findings, and vice versa).
-**Fix:** Re-run `deploy-all` and read the [Data sources status](#data-sources-status) block at the end; it names what is missing and prints the command that creates it. To check by hand in the deployment region:
+**Cause:** Security Hub or IAM Access Analyzer not enabled/integrated.
+**Fix:** Verify prerequisites:
 
 ```bash
+# Check Security Hub is enabled
 aws securityhub describe-hub
-aws accessanalyzer list-analyzers --query "analyzers[?status=='ACTIVE'].[type,name]" --output table
-aws securityhub get-findings --filters '{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}]}' --max-results 1
+
+# Check Access Analyzer exists
+aws accessanalyzer list-analyzers
+
+# Check for findings
+aws securityhub get-findings --filters '{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}]}' --max-items 1
 ```
 
 ### "Failed to fetch" or empty responses after extended session
@@ -611,6 +581,8 @@ If adopting this tool beyond demo/evaluation, consider the following:
 We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
 
 ## Security
+
+Evaluating whether to deploy this assistant in your environment? See the [**Security FAQ**](./SECURITY-FAQ.md) — twelve questions covering the AWS API surface, IAM permissions, data flow, encryption, authentication, and offboarding, with citations to the specific source files a security review would inspect.
 
 See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
 
