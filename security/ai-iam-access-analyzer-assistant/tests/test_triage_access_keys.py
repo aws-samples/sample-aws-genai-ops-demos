@@ -1,10 +1,11 @@
 """Offline unit tests for the triage_access_keys tool (#175).
 
 Pins the risk-flag taxonomy, prioritization ladder, remediation mapping,
-and coverage-contract behavior ported from IamKeyAuditSkill. The tests
-use a fake IAM client that records every call and returns pre-canned
-responses, so we cover both the happy path and every failure branch
-without an AWS account.
+and coverage-contract behavior defined in
+``src/tools/references/access_key_analysis_criteria.md``. The tests use a
+fake IAM client that records every call and returns pre-canned responses,
+so we cover both the happy path and every failure branch without an AWS
+account.
 """
 
 import json
