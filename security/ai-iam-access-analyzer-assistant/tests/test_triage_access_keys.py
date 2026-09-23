@@ -512,15 +512,15 @@ class EffectivePolicyWalkTest(_TriageTestBase):
 
 
 class RemediationMappingTest(unittest.TestCase):
-    def test_email_maps_to_iam_identity_center(self):
+    def test_email_maps_to_sso_federation(self):
         self.assertEqual(
-            "IAM_Identity_Center",
+            "SSO_Federation",
             triage._suggested_remediation("alice@example.com"),
         )
 
-    def test_dotted_name_maps_to_iam_identity_center(self):
+    def test_dotted_name_maps_to_sso_federation(self):
         self.assertEqual(
-            "IAM_Identity_Center",
+            "SSO_Federation",
             triage._suggested_remediation("alice.smith"),
         )
 
@@ -552,6 +552,37 @@ class RemediationMappingTest(unittest.TestCase):
             "Remove_Root_Access_Keys",
             triage._suggested_remediation("alice", is_root=True),
         )
+
+
+# --- Remediation doc URLs ---------------------------------------------------
+
+
+class RemediationUrlTest(unittest.TestCase):
+    """Pins the _REMEDIATION_DOCS mapping and the emit-URL contract:
+    every canonical remediation label maps to a real AWS docs URL, and
+    an unknown label yields an empty string rather than a fabricated URL.
+    """
+
+    def test_every_canonical_label_has_a_url(self):
+        for label in (
+            "SSO_Federation",
+            "IAM_Role",
+            "OIDC_Federation",
+            "IAM_Roles_Anywhere",
+            "Cross_Account_Role_With_External_Id",
+            "Remove_Root_Access_Keys",
+        ):
+            url = triage._remediation_url(label)
+            self.assertTrue(
+                url.startswith("https://docs.aws.amazon.com/"),
+                f"{label} → {url!r} is not an AWS docs URL",
+            )
+
+    def test_unknown_label_returns_empty_string(self):
+        # Frontend and the model both branch on empty vs. non-empty. Never
+        # fabricate a URL for a label the tool doesn't recognize.
+        self.assertEqual("", triage._remediation_url("Nope_Not_A_Label"))
+        self.assertEqual("", triage._remediation_url(""))
 
 
 if __name__ == "__main__":

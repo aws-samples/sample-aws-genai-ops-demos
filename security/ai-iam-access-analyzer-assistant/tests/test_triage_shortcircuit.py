@@ -41,7 +41,7 @@ def _sample_triage_result(**overrides):
                 "has_condition": False,
                 "risk_flags": ["ADMIN", "NEVER_USED", "KEY_AGE_630d(>1yr)"],
                 "priority_class": "Critical",
-                "suggested_remediation": "IAM_Identity_Center",
+                "suggested_remediation": "SSO_Federation",
             },
             {
                 "account_id": "111111111111",
@@ -235,7 +235,7 @@ class HandlerShortCircuitTest(unittest.TestCase):
         event = self._event("what is blast radius")
         with patch.object(agent, "invoke_tool") as invoke, \
                 patch.object(agent, "converse_with_tools",
-                             return_value=(fake_response, [], None)) as converse:
+                             return_value=(fake_response, [], None, [])) as converse:
             agent.handler(event, None)
 
         invoke.assert_not_called()
@@ -335,6 +335,214 @@ class RenderingTest(unittest.TestCase):
         # But partial-data warning surfaces in prose.
         self.assertIn("Partial data", rendered)
         self.assertIn("iam-policy-resolution", rendered)
+
+
+class RemediationLinkTest(unittest.TestCase):
+    """Pins the prose renderer's link contract: when a row supplies a
+    suggested_remediation_url, the top-priority line renders the label as
+    a markdown link ``[`Label`](url)``; when the URL is missing, it falls
+    back to plain backticks. Same contract for the root-row branch.
+    """
+
+    def test_top_priority_row_renders_remediation_as_markdown_link(self):
+        result = _sample_triage_result()
+        # Force a known top row with a real URL.
+        result["keys"][0]["suggested_remediation"] = "SSO_Federation"
+        result["keys"][0]["suggested_remediation_url"] = (
+            "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html"
+        )
+        rendered = agent._render_triage_access_keys(result)
+        self.assertIn(
+            "[`SSO_Federation`](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html)",
+            rendered,
+        )
+
+    def test_top_priority_falls_back_to_plain_backticks_when_url_empty(self):
+        result = _sample_triage_result()
+        result["keys"][0]["suggested_remediation"] = "Mystery_Label"
+        result["keys"][0]["suggested_remediation_url"] = ""
+        rendered = agent._render_triage_access_keys(result)
+        self.assertIn("`Mystery_Label`", rendered)
+        self.assertNotIn("](", rendered)  # no markdown link syntax at all
+
+    def test_root_row_renders_remediation_as_markdown_link(self):
+        result = _sample_triage_result()
+        result["keys"].insert(0, {
+            "account_id": "111111111111",
+            "user": "<root>",
+            "is_root": True,
+            "key_id": "(root)",
+            "status": "Active",
+            "created": "",
+            "key_age_days": None,
+            "last_used": "UNKNOWN",
+            "last_used_service": "",
+            "actions": "(root user — full account control)",
+            "policies": "(root)",
+            "resource_scope": "WILDCARD",
+            "has_condition": False,
+            "risk_flags": ["ADMIN"],
+            "priority_class": "Critical",
+            "suggested_remediation": "Remove_Root_Access_Keys",
+            "suggested_remediation_url": (
+                "https://docs.aws.amazon.com/accounts/latest/reference/root-user-access-key.html"
+            ),
+        })
+        result["summary"]["Critical"] = 2
+        result["summary"]["total_keys"] = 3
+        rendered = agent._render_triage_access_keys(result)
+        self.assertIn(
+            "[`Remove_Root_Access_Keys`](https://docs.aws.amazon.com/accounts/latest/reference/root-user-access-key.html)",
+            rendered,
+        )
+
+
+# --- Educational intent short-circuit -----------------------------------------
+
+
+class TriageEducationalIntentTest(unittest.TestCase):
+    """Pins the _TRIAGE_EDUCATIONAL_INTENT regex — the second-order deterministic
+    dispatch that catches "explain / describe / worst case" phrasings around
+    access-key auditing so they don't fall through to Bedrock and blow past the
+    API Gateway 29s ceiling."""
+
+    def test_matches_explain_phrasings(self):
+        # The exact prompt that surfaced the bug in production plus close
+        # variants.
+        for msg in (
+            "Can you explain on what you would do exactly regarding Audit keys, "
+            "worst case scenarios regarding them, what you could propose to fix etc.?",
+            "explain what the access-key audit does",
+            "describe the triage capability",
+            "walk me through the access key audit",
+            "tell me about key hygiene",
+            "help me understand what audit access keys does",
+        ):
+            self.assertIsNotNone(
+                agent._TRIAGE_EDUCATIONAL_INTENT.search(msg),
+                msg=f"expected MATCH: {msg!r}",
+            )
+
+    def test_matches_hypothetical_phrasings(self):
+        for msg in (
+            "what would you do about my access keys",
+            "how would you audit access keys",
+            "how would you approach key hygiene here",
+        ):
+            self.assertIsNotNone(
+                agent._TRIAGE_EDUCATIONAL_INTENT.search(msg),
+                msg=f"expected MATCH: {msg!r}",
+            )
+
+    def test_matches_worst_case_phrasings(self):
+        for msg in (
+            "worst-case scenario for access keys",
+            "worst case with an admin access key",
+            "worst-case audit findings",
+        ):
+            self.assertIsNotNone(
+                agent._TRIAGE_EDUCATIONAL_INTENT.search(msg),
+                msg=f"expected MATCH: {msg!r}",
+            )
+
+    def test_rejects_direct_inventory_prompts(self):
+        # Inventory prompts must NOT match the educational regex; they
+        # belong to _TRIAGE_ACCESS_KEYS_INTENT.
+        for msg in (
+            "audit my access keys",
+            "audit my iam access keys",
+            "which of my keys are stale",
+            "show me my access keys",
+            "list all my access keys",
+            "iam key hygiene",
+            "stale access keys",
+        ):
+            self.assertIsNone(
+                agent._TRIAGE_EDUCATIONAL_INTENT.search(msg),
+                msg=f"expected NO educational match: {msg!r}",
+            )
+
+    def test_rejects_unrelated_prompts(self):
+        for msg in (
+            "explain what a role is",
+            "describe the finding",
+            "what would you recommend for this policy",
+            "walk me through blast radius",
+            "hello",
+            "",
+        ):
+            self.assertIsNone(
+                agent._TRIAGE_EDUCATIONAL_INTENT.search(msg),
+                msg=f"expected NO educational match: {msg!r}",
+            )
+
+
+class TriageEducationalHandlerTest(unittest.TestCase):
+    """End-to-end: user asks an educational question about the audit → handler
+    returns the canned envelope, does NOT invoke the tool, does NOT reach
+    Bedrock. Guards against timeout regression on the class of prompt that
+    surfaced the bug in production."""
+
+    def _event(self, message):
+        return {
+            "httpMethod": "POST",
+            "body": json.dumps(
+                {
+                    "message": message,
+                    "history": [],
+                    "mode": "guided",
+                }
+            ),
+        }
+
+    def test_educational_prompt_bypasses_both_tool_and_bedrock(self):
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._event(
+                    "Can you explain on what you would do exactly regarding "
+                    "Audit keys, worst case scenarios regarding them, what "
+                    "you could propose to fix etc.?"
+                ),
+                None,
+            )
+
+        invoke.assert_not_called()
+        converse.assert_not_called()
+
+        body = json.loads(response["body"])
+        self.assertIn("Audit access keys", body["response"])
+        self.assertIn("Root user has access keys", body["response"])
+        self.assertIn("Want me to audit my IAM access keys", body["response"])
+        # tools_used is empty — no tool ran on this turn.
+        self.assertEqual([], body["tools_used"])
+
+    def test_educational_beats_inventory_on_mixed_intent(self):
+        # A prompt that mentions BOTH "explain" and "audit my keys" prefers
+        # the educational path so the customer gets an overview + CTA
+        # rather than silently running the tool. Documented ordering.
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._event("explain the audit and then audit my access keys"),
+                None,
+            )
+        invoke.assert_not_called()
+        converse.assert_not_called()
+        body = json.loads(response["body"])
+        self.assertIn("Audit access keys", body["response"])
+
+    def test_inventory_prompt_still_reaches_tool_shortcircuit(self):
+        # Regression guard: the plain inventory prompt does NOT get caught
+        # by the educational regex — it goes to the tool short-circuit,
+        # invokes the tool, and returns the fenced JSON payload.
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._event("audit my access keys"), None)
+        invoke.assert_called_once()
+        converse.assert_not_called()
+        body = json.loads(response["body"])
+        self.assertIn("```json", body["response"])
 
 
 if __name__ == "__main__":

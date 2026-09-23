@@ -116,15 +116,17 @@ class ActionPlanAndExportShortCircuitTest(unittest.TestCase):
         }
 
     def test_calls_plan_then_export_no_bedrock(self):
+        # export_report now returns download_url pointing at the Cognito-
+        # authed /downloads/ API GW route — no valid_for TTL field.
         export_result = {
             "success": True,
-            "s3_path": "s3://bucket/reports/action_plan_2026.md",
+            "s3_path": "s3://bucket/action-plans/action_plan_2026.md",
             "filename": "action_plan_2026.md",
-            "download_url": "https://example.com/download",
-            "valid_for": "1 hour",
+            "download_url": (
+                "https://api.example.com/prod/downloads/action-plans/"
+                "action_plan_2026.md"
+            ),
         }
-        # Ensure the response uses whatever "valid_for" the tool reports.
-        expected_valid_for = "1 hour"
         results = iter([self._plan_result(), export_result])
 
         def fake_invoke(tool_name, _):
@@ -147,7 +149,12 @@ class ActionPlanAndExportShortCircuitTest(unittest.TestCase):
         self.assertEqual(body["tools_used"][1]["tool"], "export_report")
         self.assertIn("Download here", body["response"])
         self.assertIn("action_plan_2026.md", body["response"])
-        self.assertIn(expected_valid_for, body["response"])
+        # The response no longer promises a fixed TTL — it says the link
+        # works while the customer is signed in. This is important because
+        # the underlying URL is a Cognito-authed API GW route, not a
+        # time-limited presigned URL.
+        self.assertIn("signed in", body["response"])
+        self.assertNotIn("1 hour", body["response"])
         # The standalone "Say `export that`" invitation must not appear in the
         # compound response — we already exported, so it's contradictory.
         self.assertNotIn("Say `export that`", body["response"])

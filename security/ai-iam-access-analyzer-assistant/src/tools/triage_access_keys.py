@@ -371,7 +371,7 @@ def _suggested_remediation(user_name: str, is_root: bool = False) -> str:
     if is_root:
         return "Remove_Root_Access_Keys"
     if _HUMAN_PATTERN.search(user_name):
-        return "IAM_Identity_Center"
+        return "SSO_Federation"
     if _CICD_PATTERN.search(user_name):
         return "OIDC_Federation"
     if _SERVICE_PATTERN.search(user_name):
@@ -380,6 +380,33 @@ def _suggested_remediation(user_name: str, is_root: bool = False) -> str:
     # investigation before adoption — the response text calls this out so
     # the operator does not treat the default as a settled recommendation.
     return "Cross_Account_Role_With_External_Id"
+
+
+# Canonical AWS documentation URL per remediation label. Emitted as
+# ``suggested_remediation_url`` on every row so the frontend table and
+# the model's prose can both render each recommendation as a clickable
+# link into the right docs page — no more "here's what to do but you're
+# on your own to find out how."
+_REMEDIATION_DOCS = {
+    # SSO_Federation is the recommended path for human identities — we
+    # link to the AWS "Identity providers and federation" landing page
+    # because it covers the three mechanisms a customer might pick
+    # (SAML 2.0 with an external IdP like Okta / Entra ID, OIDC, or IAM
+    # Identity Center) instead of pointing at just one AWS product.
+    "SSO_Federation": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html",
+    "IAM_Role": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles.html",
+    "OIDC_Federation": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_oidc.html",
+    "IAM_Roles_Anywhere": "https://docs.aws.amazon.com/rolesanywhere/latest/userguide/introduction.html",
+    "Cross_Account_Role_With_External_Id": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html",
+    "Remove_Root_Access_Keys": "https://docs.aws.amazon.com/accounts/latest/reference/root-user-access-key.html",
+}
+
+
+def _remediation_url(label: str) -> str:
+    """Return the canonical AWS docs URL for a remediation label, or empty
+    string if the label is unrecognized. Never fabricate URLs — an unknown
+    label yields an empty string and the frontend renders plain text."""
+    return _REMEDIATION_DOCS.get(label, "")
 
 
 # --- Small helpers ----------------------------------------------------------
@@ -489,6 +516,7 @@ def handler(event, context=None):
             "risk_flags": ["ADMIN"],
             "priority_class": "Critical",
             "suggested_remediation": "Remove_Root_Access_Keys",
+            "suggested_remediation_url": _remediation_url("Remove_Root_Access_Keys"),
         })
 
     # ---- User + key inventory ---------------------------------------------
@@ -645,6 +673,7 @@ def handler(event, context=None):
                 "risk_flags": flags,
                 "priority_class": priority,
                 "suggested_remediation": remediation,
+                "suggested_remediation_url": _remediation_url(remediation),
             })
 
     # ---- Sort: priority, then age descending ------------------------------

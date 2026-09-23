@@ -4,6 +4,7 @@ from pathlib import Path
 
 from aws_cdk import (
     Duration,
+    Fn,
     aws_apigateway as apigw,
     aws_cognito as cognito,
     aws_lambda as lambda_,
@@ -86,7 +87,7 @@ class ApiConstruct(Construct):
         self.capabilities_fn = lambda_.Function(
             self,
             "CapabilitiesProbe",
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             handler="capabilities.handler",
             code=lambda_.Code.from_asset(src_path),
             timeout=Duration.seconds(15),
@@ -191,4 +192,76 @@ class ApiConstruct(Construct):
             authorization_type=apigw.AuthorizationType.COGNITO,
         )
 
+        # ------------------------------------------------------------------
+        # Download endpoint. Cognito-authed proxy download for artifacts in
+        # the reports bucket. Replaces the S3 presigned URLs that broke on
+        # role-chained STS session tokens with boto3 >= 1.42.97 (S3
+        # returned InvalidToken on well-formed URLs; verified via
+        # head_object probes that the underlying creds were valid).
+        #
+        # The frontend intercepts clicks on `/downloads/` links and fetches
+        # with the current Cognito Bearer token — direct browser navigation
+        # to a Cognito-authed URL doesn't work (browsers can't attach auth
+        # headers on navigation), so the fetch-and-blob pattern is the
+        # standard authenticated-download design here.
+        # ------------------------------------------------------------------
+        self.download_fn = lambda_.Function(
+            self,
+            "DownloadHandler",
+            runtime=lambda_.Runtime.PYTHON_3_14,
+            handler="download.handler",
+            code=lambda_.Code.from_asset(src_path),
+            timeout=Duration.seconds(30),
+            memory_size=512,
+            environment={
+                "REPORTS_BUCKET": reports_bucket.bucket_name,
+            },
+        )
+        # Read-only bucket access — GetObject / HeadObject. No List (key
+        # known upfront), no Write, no AssumeRole. Prefix allowlist and
+        # path-traversal guards are enforced in code, not IAM, so a
+        # future prefix change doesn't require a stack update.
+        reports_bucket.grant_read(self.download_fn)
+
+        # GET /downloads/{proxy+} — Cognito-authed proxy path.
+        downloads_resource = api.root.add_resource("downloads")
+        download_proxy = downloads_resource.add_resource("{proxy+}")
+        download_proxy.add_method(
+            "GET",
+            apigw.LambdaIntegration(self.download_fn),
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+        )
+
         self.api_endpoint = api.url
+
+        # Thread the API endpoint into export_report and list_exports so
+        # they can generate `download_url` values pointing at /downloads/.
+        #
+        # CIRCULAR DEPENDENCY NOTE: `api.url` resolves to a token that
+        # depends on the API GW Deployment/Stage. The Deployment depends
+        # on every Method, and the Methods depend on the Lambda
+        # integrations (ConversationHandler, DownloadHandler, ...). The
+        # ConversationHandler's role has `grant_invoke` on these two
+        # tool Lambdas, so making these tool Lambdas depend on `api.url`
+        # closes a cycle:
+        #
+        #   ExportReport → api.url → Stage → Deployment → Methods
+        #     → ConversationHandler → ConvHandler role policy
+        #     → grant_invoke on ExportReport → ExportReport
+        #
+        # Constructing the URL from `api.rest_api_id` (a token that
+        # depends ONLY on the RestApi resource itself, not on the
+        # deployment tree) breaks the cycle. `${AWS::Region}` is a
+        # CloudFormation intrinsic resolved at deploy time. Stage name is
+        # hardcoded to "prod" — the CDK default that this stack uses. A
+        # customer who overrides the stage name would need to update
+        # this literal too.
+        api_endpoint_for_tools = Fn.sub(
+            "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/",
+            {"ApiId": api.rest_api_id},
+        )
+        for tool_name in ("export_report", "list_exports"):
+            tool_fn = tools_functions.get(tool_name)
+            if tool_fn is not None:
+                tool_fn.add_environment("API_ENDPOINT", api_endpoint_for_tools)
