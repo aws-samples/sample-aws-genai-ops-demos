@@ -539,6 +539,45 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 
 ---
 
+## Writing (user-facing copy)
+
+Applies to any string a user sees: welcome bubbles, chat prompts, button labels, input placeholders, empty-state messages, error messages, tooltips, in-app help, and README examples that quote UI copy. Backing sources: the [Cloudscape writing guidelines](https://cloudscape.design/foundation/content-and-design/using-plain-language/) and the [AWS Style Guide](https://docs.aws.amazon.com/style-guide/latest/welcome/welcome.html).
+
+### Do
+
+- **Use sentence case** for headings, labels, and buttons. `Analyze findings`, not `Analyze Findings`.
+- **Use imperative voice on prompts and buttons.** `Choose a suggestion`, `Ask a question`, `Save changes`.
+- **Refer to the AI as a "generative AI assistant"** and to its outputs as "responses" (not "answers", not "AI", not "the model").
+- **Use Cloudscape `Icon`, `StatusIndicator`, `Badge`, or `Alert`** for anything that conveys state or emphasis. These are localized, themed, and accessible by default.
+- **Describe location structurally, not directionally.** `In the suggestions row`, not `below`. `On the toolbar`, not `above`.
+
+### Don't
+
+- **No exclamation marks.** `Deployment complete`, not `Deployment complete!`. `Your IAM posture is clean` reads confident enough without the mark; on a false-clean state (see #171) it reads as misleading enthusiasm.
+- **No "click".** It's device-dependent — assistive tech, mobile, keyboard-only users. Use `choose`, `select`, or the imperative form of the action (`Save`, `Delete`, `Open`).
+- **No directional words in copy.** `above`, `below`, `left`, `right`, `here` all break for screen-reader users and for anyone whose layout differs (responsive breakpoints, RTL locales). Refer to the element by name (`the Data sources row`) or by role (`the toolbar`).
+- **No "please".** It's on the AWS Style Guide do-not-use list — it reads as apologetic, adds no information, and often signals a message that could just say what's needed. `Try again` beats `Please try again`. `Sign in to continue` beats `Please sign in to continue`.
+- **No terminal punctuation on placeholders.** Input placeholders are prompts, not sentences. `Ask a question`, not `Ask a question.` or `Ask a question…`.
+- **No emoji or glyphs in copy.** `✓`, `⚠`, `⛔`, `🔒`, `🎉`, `👉` — all of them. Use a Cloudscape component that carries the same meaning (`<StatusIndicator type="success|warning|error|info">`, `<Icon name="lock-private" />`, `<Alert type="info">`). These are announced correctly by screen readers; glyphs are either announced as their Unicode name or skipped entirely.
+- **No "we"/"our"/"us" for the product.** The assistant is a tool, not a team. Say what happens, not who does it. `Findings are saved to S3`, not `We save your findings to S3`.
+
+### Terminology quick reference
+
+| Prefer | Avoid |
+|--------|-------|
+| generative AI assistant | AI, chatbot, the model, the bot |
+| response | answer, reply |
+| sign in / sign out | login / logout / log in |
+| choose / select | click, tap, press |
+| Data sources row | the row below / the pill row above |
+
+### When you're not sure
+
+- The Cloudscape docs have a searchable component library — if you're writing a status label, a badge, a form control, a callout, there is almost certainly a Cloudscape component that carries the right accessibility and localization semantics. Prefer it over a hand-rolled `<div style={{…}}>` with plain text.
+- Read the string out loud. If it sounds like something a customer would want to skip (`Please note that…`), delete the throat-clearing. If it sounds like something that needs a `!` to be a valid sentence, the sentence needs a rewrite.
+
+---
+
 ## Anti-Patterns
 
 ❌ **Don't:**
@@ -559,6 +598,8 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Put a tracking tag on Spoke/Org stacks
 - Write example secrets/webhooks in a real value shape (e.g. `hooks.slack.com/services/T00/B00/x`) — use an angle-bracket token like `<SLACK_WEBHOOK_URL>`
 - Silence a scanner false positive by disabling a detect-secrets plugin or excluding a path (blinds it to real secrets) — audit and add to `.secrets.baseline` instead
+- Write user-facing copy with exclamation marks, "click", directional words ("below"/"above"), or "please" — all on the AWS Style Guide do-not-use list (see Writing section)
+- Put emoji or Unicode glyphs (✓, ⚠, ⛔, 🔒, 🎉) in UI copy — use a Cloudscape `StatusIndicator` / `Icon` / `Alert` instead
 
 ✅ **Do:**
 - Use shared utilities for region/account detection
@@ -573,3 +614,4 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Keep hub and spoke permissions in one source file
 - Report per-account outcomes ("not checked" vs "nothing found")
 - Use angle-bracket `<UPPER_SNAKE>` tokens (or `${ENV_VAR}` refs) for example secrets, and `example.com` for illustrative hosts
+- Write imperative, no-terminal-punctuation prompts (`Ask a question`, `Choose a suggestion`) and use Cloudscape `StatusIndicator` / `Icon` / `Alert` for status and emphasis
