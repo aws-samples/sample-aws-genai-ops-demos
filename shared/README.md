@@ -13,7 +13,14 @@ shared/
 │   ├── check-org-access.ps1            # Multi-account (hub-and-spoke) prerequisites (PowerShell)
 │   ├── check-org-access.sh             # Multi-account (hub-and-spoke) prerequisites (Bash)
 │   ├── deploy-cdk.ps1                  # CDK deployment automation (PowerShell)
-│   └── deploy-cdk.sh                   # CDK deployment automation (Bash)
+│   ├── deploy-cdk.sh                   # CDK deployment automation (Bash)
+│   ├── deploy-skill.ps1                # Agent Tools skill / custom agent packager (PowerShell)
+│   ├── deploy-skill.sh                 # Agent Tools skill / custom agent packager (Bash)
+│   ├── deploy-mcp.ps1                  # Agent Tools MCP server runner (PowerShell)
+│   └── deploy-mcp.sh                   # Agent Tools MCP server runner (Bash)
+├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
+│   ├── README.md                       # How demos reference skills and MCP servers; manifest schema
+│   └── manifests/                      # Local mcp-server.yaml overrides, until servers ship their own
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
@@ -299,6 +306,34 @@ Automates CDK bootstrap, dependency installation, and deployment:
 - Ensures CDK bootstrap is up to date
 - Sets `PYTHONPATH` for Python projects to enable clean imports
 - Handles deployment with proper error checking
+
+### Agent Tools: Skills and MCP Servers
+
+For demos that use a capability from the public [Agent Tools repository](https://github.com/aws/tools-for-devops-agent)
+(skills, custom agents and MCP servers for AWS DevOps Agent). The capability stays in that
+repository; the demo fetches it at deploy time and never copies it — one artefact, one home.
+
+**PowerShell**:
+```powershell
+& "..\..\shared\scripts\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
+& "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
+    -Parameters @{ AllowedAccounts = "111111111111" } `
+    -Manifest "..\..\shared\agent-tools\manifests\aws-vpc-dns-diagnostics-mcp.yaml"
+```
+
+**Bash**:
+```bash
+../../shared/scripts/deploy-skill.sh --skill eks-upgrade-readiness --ref main
+../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
+    --param AllowedAccounts=111111111111 \
+    --manifest ../../shared/agent-tools/manifests/aws-vpc-dns-diagnostics-mcp.yaml
+```
+
+`deploy-skill` fetches one skill at a ref and builds the upload zip per the Agent Tools
+upload rules. `deploy-mcp` fetches one MCP server at a ref, deploys it from its
+`mcp-server.yaml` manifest, reads the endpoint from the declared stack output and prints
+the DevOps Agent registration step; `-Destroy` / `--destroy` tears it down. Full usage,
+exports and the manifest schema: [shared/agent-tools/README.md](agent-tools/README.md).
 
 ## Best Practices
 

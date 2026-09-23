@@ -1,0 +1,55 @@
+# MCP Server Integration Contract v1 - pilot manifest
+#
+# Describes mcp/aws-vpc-dns-diagnostics-mcp from the Agent Tools repository
+# (aws/tools-for-devops-agent) exactly as it is TODAY, so the shared runner
+# (shared/scripts/deploy-mcp.*) can deploy it without reading its README.
+#
+# This is a LOCAL OVERRIDE held here only until the server ships its own
+# mcp-server.yaml upstream; it never overrides an upstream manifest when one exists.
+# Values below were verified against the server's template.yaml and README.
+
+schemaVersion: 1
+name: aws-vpc-dns-diagnostics-mcp
+kind: self-hosted
+pattern: lambda-http
+iac: sam
+
+deploy:
+  workdir: .
+  setup:
+    - ["sam", "build"]
+  command: ["sam", "deploy", "--stack-name", "aws-vpc-dns-diagnostics-mcp", "--resolve-s3", "--capabilities", "CAPABILITY_IAM", "--no-confirm-changeset", "--no-fail-on-empty-changeset", "--parameter-overrides", "AllowedAccounts=${AllowedAccounts}"]
+  parameters:
+    - name: AllowedAccounts
+      required: true
+      description: 12-digit AWS account IDs the probe/simulate tools may inspect (no default, no wildcard)
+  stacks: [aws-vpc-dns-diagnostics-mcp]
+  auxiliaryStacks:
+    - template: scoped-roles.yaml
+      scope: per-target-account
+
+endpoint:
+  output: MCPEndpointUrl          # legacy name and shape, described truthfully
+  stack: aws-vpc-dns-diagnostics-mcp
+  includesMcpPath: false          # Function URL root - consumer appends /mcp exactly
+  transport: streamable-http
+  session: stateful
+
+auth:
+  method: sigv4
+  signingService: lambda          # Function URL, not API Gateway
+  callerActions: ["lambda:InvokeFunctionUrl", "lambda:InvokeFunctionWithResponseStream"]
+
+registration:
+  mode: cli
+  tools:
+    readOnly: ["dns_probe_*", "dns_simulate_*", "list_sops", "get_sop"]
+    mutating: []
+
+smokeTest: ["uv", "run", "pytest", "tests/", "-q"]
+
+teardown:
+  command: ["sam", "delete", "--stack-name", "aws-vpc-dns-diagnostics-mcp", "--no-prompts"]
+  residuals:
+    - "scoped-roles.yaml stack in every allowed target account"
+    - "DevOps Agent capability-provider registration (deregister after removing Agent Space associations)"
