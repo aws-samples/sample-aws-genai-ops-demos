@@ -67,19 +67,19 @@ USAGE_LAG_CAVEAT = (
 # because names like ``my-lambda-deployer-ci`` should map to OIDC
 # federation, not IAM_Role.
 _HUMAN_PATTERN = re.compile(
-    r"(@)"                          # email
-    r"|(^[a-z]+\.[a-z]+$)"          # first.last
-    r"|(^[a-z]+_[a-z]+$)",          # first_last
+    r"(@)"                                # email
+    r"|(\b[a-z]+\.[a-z]+\b)"              # first.last as a segment anywhere
+    r"|(?<![a-z])[a-z]+_[a-z]+(?![a-z])", # first_last as a segment anywhere
     re.IGNORECASE,
 )
 _CICD_PATTERN = re.compile(
     r"(-ci-|-cicd-|-deployer-|-github-actions-|-gitlab-|-jenkins-"
-    r"|^ci-|^cicd-|-ci$|-cicd$|-deployer$|-github-actions$|-gitlab$|-jenkins$)",
+    r"|\bci-|\bcicd-|-ci\b|-cicd\b|-deployer\b|-github-actions\b|-gitlab\b|-jenkins\b)",
     re.IGNORECASE,
 )
 _SERVICE_PATTERN = re.compile(
-    r"(^svc-|^service-|-lambda-|-eks-|-ecs-|-ec2-"
-    r"|-runner$|-worker$|-agent$|-lambda$|-eks$|-ecs$|-ec2$)",
+    r"(\bsvc-|\bservice-|-lambda-|-eks-|-ecs-|-ec2-"
+    r"|-runner\b|-worker\b|-agent\b|-lambda\b|-eks\b|-ecs\b|-ec2\b)",
     re.IGNORECASE,
 )
 

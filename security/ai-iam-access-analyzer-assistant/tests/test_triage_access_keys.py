@@ -553,6 +553,47 @@ class RemediationMappingTest(unittest.TestCase):
             triage._suggested_remediation("alice", is_root=True),
         )
 
+    # ----- Prefix / suffix tolerance -----
+    # Real customer naming often adds environment or ownership prefixes
+    # (e.g. `prod-`, `team-alpha-`, `test-`). The classifier must match
+    # the identity signal wherever it appears, not just at start of name.
+
+    def test_prefixed_dotted_name_still_maps_to_sso_federation(self):
+        for name in (
+            "triage-test-alice.admin",   # fixture prefix
+            "prod-bob.developer",        # env prefix
+            "team-alpha-jane.doe",       # ownership prefix
+        ):
+            self.assertEqual(
+                "SSO_Federation",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to SSO_Federation",
+            )
+
+    def test_prefixed_service_name_still_maps_to_iam_role(self):
+        for name in (
+            "triage-test-svc-loader",
+            "prod-svc-data-loader",
+            "team-alpha-service-runner",
+        ):
+            self.assertEqual(
+                "IAM_Role",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to IAM_Role",
+            )
+
+    def test_prefixed_cicd_name_still_maps_to_oidc(self):
+        for name in (
+            "triage-test-bedrock-ci-worker",
+            "prod-github-actions-deployer",
+            "team-jenkins-runner",
+        ):
+            self.assertEqual(
+                "OIDC_Federation",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to OIDC_Federation",
+            )
+
 
 # --- Remediation doc URLs ---------------------------------------------------
 
