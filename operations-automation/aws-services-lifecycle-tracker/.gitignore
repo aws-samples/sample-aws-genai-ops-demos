@@ -33,3 +33,12 @@ build/
 
 # CDK synth-time staging of backend + shared/utils (pipeline-stack.ts)
 cdk/.backend-stage/
+
+# Terraform: deploy-time staging, zips, state and generated files
+terraform/.backend-stage/
+terraform/build/
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup

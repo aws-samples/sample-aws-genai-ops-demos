@@ -4,7 +4,8 @@
 //  - the hub pipeline role (scans the hub account itself)
 //  - the spoke role LifecycleTrackerScanRole (assumed by the hub in every
 //    member account, deployed by SpokeStack / the StackSet)
-// Adding a scanner means adding its List/Describe calls here, nowhere else.
+// Adding a scanner means adding its List/Describe calls here, plus the
+// Terraform copy in ../../terraform/pipeline.tf (scanner_read_actions).
 
 /** Read-only calls made by backend/account_discovery.py scanners. */
 export const SCANNER_READ_ACTIONS: string[] = [
