@@ -16,6 +16,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Button from "@cloudscape-design/components/button";
+import Link from "@cloudscape-design/components/link";
 import type { AccessKeyRow, AccessKeysReport } from "../types";
 
 interface AccessKeysTableProps {
@@ -214,11 +215,28 @@ export default function AccessKeysTable({ report, title }: AccessKeysTableProps)
             {
               id: "remediation",
               header: "Suggested remediation",
-              cell: (item) => (
-                <Box variant="small">
-                  {formatRemediation(item.suggested_remediation)}
-                </Box>
-              ),
+              cell: (item) => {
+                const label = formatRemediation(item.suggested_remediation);
+                // Render as an external link into AWS docs when the tool
+                // supplied a URL. Falls back to plain text for unrecognized
+                // remediation labels — the tool intentionally returns an
+                // empty string for unknown labels rather than fabricating
+                // a URL.
+                if (item.suggested_remediation_url) {
+                  return (
+                    <Box variant="small">
+                      <Link
+                        href={item.suggested_remediation_url}
+                        external
+                        externalIconAriaLabel="Opens AWS documentation in a new tab"
+                      >
+                        {label}
+                      </Link>
+                    </Box>
+                  );
+                }
+                return <Box variant="small">{label}</Box>;
+              },
               width: 240,
             },
           ]}
@@ -472,8 +490,8 @@ function formatRemediation(value: string): string {
   // requires the model to quote the raw label, but the table itself can
   // spell them out for readability.
   switch (value) {
-    case "IAM_Identity_Center":
-      return "Migrate to IAM Identity Center";
+    case "SSO_Federation":
+      return "Federate via your SSO provider";
     case "IAM_Role":
       return "Replace with an IAM role";
     case "OIDC_Federation":

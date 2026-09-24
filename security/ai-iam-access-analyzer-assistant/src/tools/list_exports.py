@@ -1,29 +1,30 @@
 """Tool: List exported reports and generate fresh download links.
 
-Lists all previously exported artifacts from the reports S3 bucket,
-with the ability to generate fresh presigned URLs for any file.
+Lists artifacts previously saved to the reports bucket, and returns a
+Cognito-authed download URL for a specific file on request.
+
+Downloads are served by the ``GET /downloads/{proxy+}`` API Gateway
+route (see ``src/download.py``). This tool returns URLs pointing at that
+route — NOT S3 presigned URLs. Presigned URLs were dropped after boto3
+1.42.97 began producing role-chained STS-signed URLs that S3 rejected
+as ``InvalidToken``; head_object with the same creds worked, so the URL
+itself was the fault. The API GW proxy sidesteps that class entirely.
 """
 
-import json
 import logging
 import os
-from datetime import datetime, timezone
 
 import boto3
-from botocore.config import Config
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# See src/tools/export_report.py for the rationale: sign with a dedicated
-# presigner role we assume ourselves so download URLs are reliable for their
-# full X-Amz-Expires, and fall back to short-lived Lambda credentials only if
-# the presigner role isn't wired in.
 _REGION = os.environ.get("AWS_REGION", "us-east-1")
-_S3_CONFIG = Config(signature_version="s3v4")
 REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
-PRESIGNER_ROLE_ARN = os.environ.get("PRESIGNER_ROLE_ARN", "")
-PRESIGN_TTL_SECONDS = 3600
+# API Gateway invoke URL, injected by ApiConstruct via add_environment
+# after both this Lambda and the API are created. Empty means the CDK
+# wiring hasn't been applied.
+API_ENDPOINT = os.environ.get("API_ENDPOINT", "")
 
 
 def _coverage(state: str, detail: str, count: int | None = None) -> dict:
@@ -34,68 +35,8 @@ def _coverage(state: str, detail: str, count: int | None = None) -> dict:
     return entry
 
 
-class _SigningContext:
-    """Split read + sign clients so bucket listing rides on the Lambda role
-    and only presigning uses the assumed presigner role.
-    """
-
-    def __init__(self, read_client, sign_client, expires_in: int, source: str):
-        self.read_client = read_client
-        self.sign_client = sign_client
-        self.expires_in = expires_in
-        self.source = source
-
-
-def _build_lambda_role_s3():
-    session = boto3.session.Session(region_name=_REGION)
-    frozen = session.get_credentials().get_frozen_credentials()
-    return session.client(
-        "s3",
-        region_name=_REGION,
-        config=_S3_CONFIG,
-        aws_access_key_id=frozen.access_key,
-        aws_secret_access_key=frozen.secret_key,
-        aws_session_token=frozen.token,
-    )
-
-
-def _build_signing_context() -> "_SigningContext":
-    read_client = _build_lambda_role_s3()
-
-    if PRESIGNER_ROLE_ARN:
-        try:
-            sts = boto3.client("sts", region_name=_REGION)
-            creds = sts.assume_role(
-                RoleArn=PRESIGNER_ROLE_ARN,
-                RoleSessionName="list-exports-presigner",
-                DurationSeconds=PRESIGN_TTL_SECONDS,
-            )["Credentials"]
-            sign_client = boto3.client(
-                "s3",
-                region_name=_REGION,
-                config=_S3_CONFIG,
-                aws_access_key_id=creds["AccessKeyId"],
-                aws_secret_access_key=creds["SecretAccessKey"],
-                aws_session_token=creds["SessionToken"],
-            )
-            return _SigningContext(
-                read_client, sign_client, PRESIGN_TTL_SECONDS, "assumed_role"
-            )
-        except Exception as assume_err:
-            logger.warning(
-                "assume_role for presigner failed; falling back to Lambda role "
-                "credentials for signing (with a short URL expiry): %s",
-                assume_err,
-            )
-
-    return _SigningContext(read_client, read_client, 300, "lambda_role")
-
-
-def _build_s3_client():
-    """Backwards-compatible helper; returns a Lambda-role S3 client suitable
-    for reads. New code should call _build_signing_context().
-    """
-    return _build_lambda_role_s3()
+# Module-level S3 client for warm-invocation reuse.
+s3_client = boto3.client("s3")
 
 
 def handler(event, context=None):
@@ -103,15 +44,14 @@ def handler(event, context=None):
 
     Args:
         event: {
-            action: str - "list" (default) or "get_link"
-            filename: str - specific filename to generate a link for (required for get_link)
-            prefix: str - S3 prefix to filter by (optional, e.g. "policies/", "change-requests/")
-            limit: int - max files to return (default: 20)
+            action: "list" (default) or "get_link"
+            filename: str  — required for get_link
+            prefix: str    — optional S3 prefix filter (e.g. "policies/")
+            limit: int     — max files to return (default 20, max 50)
         }
 
-    Returns:
-        For "list": {files: [{filename, folder, size, last_modified, download_url}], total_count}
-        For "get_link": {filename, download_url, valid_for}
+    Returns (list):    {files: [...], total_count, bucket, note, coverage}
+    Returns (get_link):{filename, s3_path, download_url, coverage}
     """
     if not REPORTS_BUCKET:
         return {
@@ -127,14 +67,12 @@ def handler(event, context=None):
     prefix = event.get("prefix", "")
     limit = min(event.get("limit", 20), 50)
 
-    try:
-        signing = _build_signing_context()
-        logger.info("list_exports signing method=%s action=%s", signing.source, action)
-        if action == "get_link":
-            return _get_fresh_link(signing, filename)
-        else:
-            return _list_files(signing.read_client, prefix, limit)
+    logger.info("list_exports action=%s prefix=%r limit=%d", action, prefix, limit)
 
+    try:
+        if action == "get_link":
+            return _get_fresh_link(filename)
+        return _list_files(prefix, limit)
     except Exception as e:
         logger.error(f"Error in list_exports: {e}", exc_info=True)
         return {
@@ -146,13 +84,12 @@ def handler(event, context=None):
         }
 
 
-def _list_files(s3_client, prefix: str, limit: int) -> dict:
-    """List all exported files in the bucket."""
+def _list_files(prefix: str, limit: int) -> dict:
+    """List exported files. Metadata only — no URLs. Customers ask for a
+    fresh link on any specific file via the get_link action.
+    """
     try:
-        params = {
-            "Bucket": REPORTS_BUCKET,
-            "MaxKeys": limit,
-        }
+        params = {"Bucket": REPORTS_BUCKET, "MaxKeys": limit}
         if prefix:
             params["Prefix"] = prefix
 
@@ -163,7 +100,10 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
             return {
                 "files": [],
                 "total_count": 0,
-                "message": "No exported reports found. Generate a policy or action plan, then ask me to export it.",
+                "message": (
+                    "No exported reports found. Generate a policy or action "
+                    "plan, then ask me to export it."
+                ),
                 "coverage": [_coverage(
                     "empty",
                     "S3 reports bucket in {region}: 0 objects",
@@ -171,17 +111,12 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
                 )],
             }
 
-        # Metadata ONLY — do NOT presign every file here. Presigned URLs are
-        # ~1500 chars each; returning 15-20 of them produces a huge response that
-        # gets truncated mid-URL by the model's output limit, breaking the links.
-        # Download URLs are generated one at a time via the get_link action.
         files = []
         for obj in sorted(contents, key=lambda x: x["LastModified"], reverse=True):
             key = obj["Key"]
             parts = key.split("/")
             folder = parts[0] if len(parts) > 1 else ""
             fname = parts[-1]
-
             files.append({
                 "filename": fname,
                 "folder": folder,
@@ -195,8 +130,8 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
             "total_count": len(files),
             "bucket": REPORTS_BUCKET,
             "note": (
-                "File list only (no download URLs). To download a file, ask for a "
-                "link for a specific filename and a fresh download URL will be generated."
+                "File list only (no download URLs). To download a file, ask "
+                "for a link for a specific filename."
             ),
             "coverage": [_coverage(
                 "checked",
@@ -204,7 +139,6 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
                 count=len(files),
             )],
         }
-
     except Exception as e:
         return {
             "error": str(e),
@@ -215,8 +149,12 @@ def _list_files(s3_client, prefix: str, limit: int) -> dict:
         }
 
 
-def _get_fresh_link(signing, filename: str) -> dict:
-    """Generate a fresh presigned URL for a specific file."""
+def _get_fresh_link(filename: str) -> dict:
+    """Resolve `filename` to its S3 key and return a Cognito-authed
+    download URL. If the CDK wiring for API_ENDPOINT isn't in place,
+    return a clear error so a customer sees actionable text rather than
+    a broken link.
+    """
     if not filename:
         return {
             "error": "filename is required for get_link action",
@@ -227,11 +165,13 @@ def _get_fresh_link(signing, filename: str) -> dict:
         }
 
     try:
-        # Bucket listing rides on the Lambda role.
         target_key = None
-        paginator = signing.read_client.get_paginator("list_objects_v2")
+        paginator = s3_client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=REPORTS_BUCKET):
             for obj in page.get("Contents", []):
+                # Match by suffix or substring — the user usually pastes
+                # just the basename ("policy-ApolloRole-...json"), not the
+                # full "policies/policy-ApolloRole-...json" key.
                 if obj["Key"].endswith(filename) or filename in obj["Key"]:
                     target_key = obj["Key"]
                     break
@@ -248,25 +188,18 @@ def _get_fresh_link(signing, filename: str) -> dict:
                 )],
             }
 
-        # Presigned URL rides on the (stable) assumed presigner role.
-        url = signing.sign_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": REPORTS_BUCKET, "Key": target_key},
-            ExpiresIn=signing.expires_in,
-        )
+        download_url = _build_download_url(target_key)
 
         return {
             "filename": filename,
             "s3_path": f"s3://{REPORTS_BUCKET}/{target_key}",
-            "download_url": url,
-            "valid_for": _format_valid_for(signing.expires_in),
+            "download_url": download_url,
             "coverage": [_coverage(
                 "checked",
-                "S3 reports bucket in {region}: matched key + GetObject presign",
+                "S3 reports bucket in {region}: matched key",
                 count=1,
             )],
         }
-
     except Exception as e:
         return {
             "error": str(e),
@@ -277,11 +210,12 @@ def _get_fresh_link(signing, filename: str) -> dict:
         }
 
 
-def _format_valid_for(seconds: int) -> str:
-    if seconds >= 3600 and seconds % 3600 == 0:
-        hours = seconds // 3600
-        return f"{hours} hour" + ("s" if hours != 1 else "")
-    if seconds >= 60:
-        minutes = seconds // 60
-        return f"{minutes} minutes"
-    return f"{seconds} seconds"
+def _build_download_url(s3_key: str) -> str:
+    """Construct a Cognito-authed download URL. Same helper as
+    export_report._build_download_url — the two tools are the only
+    callers of the /downloads/ route.
+    """
+    if not API_ENDPOINT:
+        return ""
+    endpoint = API_ENDPOINT if API_ENDPOINT.endswith("/") else API_ENDPOINT + "/"
+    return f"{endpoint}downloads/{s3_key}"

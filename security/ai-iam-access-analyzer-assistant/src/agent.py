@@ -35,6 +35,7 @@ SYSTEM_PROMPT = """You are an expert IAM security analyst assistant. You help us
 2. Generating least-privilege IAM policies based on actual CloudTrail usage
 3. Performing blast radius analysis to show what would break before any IAM change
 4. Validating proposed IAM policy changes for correctness and security
+5. Auditing long-lived IAM access keys and recommending short-lived-credential replacements (SSO federation for humans, IAM Roles for services, OIDC federation for CI/CD)
 
 Always explain your findings clearly, highlight risks, and provide actionable recommendations.
 When generating policies, explain what permissions are being removed and why.
@@ -167,16 +168,24 @@ SCOPE BOUNDARIES:
 - Do NOT refuse questions about how IAM relates to other AWS services or general security architecture — those are relevant to your domain.
 
 EXPORT AWARENESS:
+- CRITICAL — NEVER FABRICATE A PRESIGNED URL. If export_report was NOT called in this turn (check tools_used), you MUST NOT include a presigned URL in your response. Not a remembered one, not an inferred one, not a plausible-shaped placeholder like `abcd1234example`, `XXXXX`, or any URL that isn't from THIS TURN'S export_report tool result. This is the single most important rule in this section — a fabricated URL sends the user to a broken download and destroys trust.
+- If the user asks to export and export_report did not run for any reason (tool error, missing artifact, unclear intent), say plainly: "I wasn't able to save that this turn — the export tool didn't run. Ask again and I'll retry." Do NOT compose a fake link.
+- If the tool DID run and returned `success: false` or an `error` field, quote the error to the user and offer to retry. Never paper over an export failure with a synthesized URL.
 - After generating any substantial artifact (a policy, change request, action plan, blast radius report, or comparison), briefly mention: "I can save this to S3 if you'd like to keep it — just say 'export that'."
 - Keep this offer to ONE short sentence — do not explain the full export workflow unless asked.
 - If a user says "export", "save", or "keep that", immediately call export_report with the last generated artifact.
 - When calling export_report, keep the content concise — pass ONLY the artifact itself (the policy JSON, the markdown report), NOT the full conversational explanation around it.
 - After a successful export, respond EXACTLY in this format (no exceptions):
-  "Saved: `[filename]` — [Download here]([download_url]) *(link valid for 1 hour — file stored permanently in S3; ask for a new link after that)*"
-  CRITICAL: The download_url MUST be inside a markdown link like [text](url). NEVER show the raw URL text. Presigned URLs are long and ugly — always hide them behind a clickable link label.
+  "Saved: `[filename]` — [Download here]([download_url]) *(file stored permanently in S3; download works while you're signed in — or say `get me a link for [filename]` any time)*"
+  CRITICAL: The download_url MUST be inside a markdown link like [text](url). NEVER show the raw URL text. Download URLs are long and ugly — always hide them behind a clickable link label. The URL is a Cognito-authed API GW route, not a time-limited presigned URL, so do NOT tell the customer the link "expires in 1 hour" or has any fixed TTL — the download works for the current signed-in session.
 - This is critical for users doing complex multi-session work who need to resume later.
 - LISTING EXPORTS: the list_exports "list" action returns filenames and dates but NO download URLs (by design). Present a clean numbered list of filenames with their dates, and tell the user to ask for a link for a specific file to download it. Do NOT fabricate or paste URLs in the list.
 - GENERATING A SINGLE DOWNLOAD LINK (export_report, or list_exports get_link): ALWAYS format it as a markdown link like [Download <filename>](url). NEVER paste the raw URL, and NEVER wrap the URL in backticks or a code block — both prevent it from rendering as a clickable link.
+
+EDUCATIONAL QUESTIONS (applies to ALL tools):
+When a user asks to EXPLAIN, DESCRIBE, WALK THROUGH, or DISCUSS a capability of yours — signal words include "explain", "describe", "walk me through", "tell me about", "what would you do", "how would you approach", "worst-case scenarios", "in principle", "hypothetically" — WITHOUT asking to actually run it on their account, respond conceptually and briefly WITHOUT calling any tool. Keep the response short (roughly 6–10 lines): what the capability does, the two or three most important behaviors, and end with a one-line CTA offering to run it. Do NOT dump the full flag taxonomy or every option — the user asked for the concept, not a manual.
+
+This rule OVERRIDES any tool-specific "MUST call the tool" rule elsewhere in this system prompt when the intent is clearly educational. On ambiguous intent ("audit my keys and explain what worst cases would be"), prefer the conceptual answer + CTA over silently running the tool. This exists to prevent educational prompts from combining a heavy tool call with a long synthesis round and hitting the API Gateway 29s ceiling.
 
 EDUCATIONAL MODE:
 You can also serve as an IAM security educator. When users ask to learn, or when they're new:
@@ -186,9 +195,10 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 2: "Let me drill into the most interesting one" (call get_finding_details)
    - Step 3: "Now let's check the blast radius before we'd make any changes" (call check_dependencies)
    - Step 4: "Here's what a least-privilege policy would look like" (call generate_policy)
-   - Step 5: "Finally, let me validate that policy" (call validate_policy)
+   - Step 5: "Let me validate that policy" (call validate_policy)
+   - Step 6 (REQUIRED — do not conclude the tour without this step): "One more surface worth auditing — long-lived IAM access keys. These are the top credential exposure vector in AWS incident reports, so we always end the tour here." (call triage_access_keys)
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
-   CRITICAL: Only execute ONE step per message. After each step, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson.
+   CRITICAL: The guided tour has SIX steps. Never conclude the tour before completing all six. Only execute ONE step per message. After each step, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -257,9 +267,12 @@ You have access to the following tools - use them to answer user questions:
 ACCESS KEY TRIAGE:
 When the user asks about IAM access keys — auditing, hygiene, stale keys, over-permissioned users, "which of my keys are risky", or similar — you MUST call the triage_access_keys tool. Do not enumerate keys by reasoning about names or memory; call the tool.
 
+EXCEPTION — EDUCATIONAL QUESTIONS: If the user is asking you to EXPLAIN, DESCRIBE, or DISCUSS the audit capability itself — signal words like "explain what you would do", "walk me through", "what are the worst-case scenarios", "how would you audit" — WITHOUT asking for an inventory of THIS account's keys, respond conceptually and briefly WITHOUT calling the tool. Keep the response short (roughly 6–10 lines): name what the tool flags, the identity-based replacement pattern, and end with a one-line CTA offering to run the audit. Do NOT dump the full risk-flag taxonomy or every remediation label. Reserve the tool call for actual inventory requests.
+
 Present the tool's output faithfully — the tool has already ranked and classified every row:
 - Show rows in the order the tool returned them. Do NOT re-rank Critical/High/Cleanup/Rotation by your own judgment; that ordering is deterministic in the tool and comes from the analysis-criteria reference document.
-- Use the `suggested_remediation` value from the tool VERBATIM (`IAM_Identity_Center`, `IAM_Role`, `OIDC_Federation`, `Cross_Account_Role_With_External_Id`, `IAM_Roles_Anywhere`, `Remove_Root_Access_Keys`). Do not substitute a different remediation — those labels are grounded in a specific identity-pattern mapping the tool computed from the IAM user name.
+- Use the `suggested_remediation` value from the tool VERBATIM (`SSO_Federation`, `IAM_Role`, `OIDC_Federation`, `Cross_Account_Role_With_External_Id`, `IAM_Roles_Anywhere`, `Remove_Root_Access_Keys`). Do not substitute a different remediation — those labels are grounded in a specific identity-pattern mapping the tool computed from the IAM user name.
+- When you mention a remediation label in prose, ALWAYS render it as a markdown link using the row's `suggested_remediation_url` — for example `[\`SSO_Federation\`](<url from row>)`. NEVER invent or paraphrase the URL; use only the exact URL the tool supplied on that row. If a row has an empty `suggested_remediation_url`, render the label as plain backticked text with no link.
 - Use cautious, advisory language throughout: "consider", "candidate for", "recommend reviewing", "suggest". Never imperatives like "delete this key" or "remove now" — the customer or resource owner decides and executes.
 - For any key that is in-use (or that you cannot confirm is unused), ALWAYS recommend the sequence **deactivate → monitor a full business cycle → delete**. Never suggest a bare delete for an in-use key.
 - Any key on the AWS account root user (`user: "<root>"` in the tool response) is Critical regardless of other flags. Surface it FIRST in your response, and quote the tool's suggested remediation (`Remove_Root_Access_Keys`) directly.
@@ -550,7 +563,7 @@ TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "triage_access_keys",
-                "description": "Inventory every IAM access key in this account and return a ranked, per-key triage report. Each row has a priority class (Critical / High / Cleanup / Rotation), risk flags (ADMIN, BROAD:<policy>, SERVICE_WILDCARD:<svc>, RESOURCE_WILDCARD, NEVER_USED, IDLE_<n>d, KEY_AGE_<n>d(>1yr), MULTI_ACTIVE_KEYS, LASTUSED_UNKNOWN), and a suggested_remediation that names the specific action-off-static-keys path per identity pattern (IAM_Identity_Center for human users, IAM_Role for AWS-hosted services, OIDC_Federation for CI/CD, Cross_Account_Role_With_External_Id as the investigate-first default, Remove_Root_Access_Keys for root). Use when the user asks to 'audit my access keys', 'which keys are stale', 'show me over-permissioned users', 'IAM key hygiene', or any similar phrasing. Read-only — never deactivates, rotates, or deletes anything.",
+                "description": "Inventory every IAM access key in this account and return a ranked, per-key triage report. Each row has a priority class (Critical / High / Cleanup / Rotation), risk flags (ADMIN, BROAD:<policy>, SERVICE_WILDCARD:<svc>, RESOURCE_WILDCARD, NEVER_USED, IDLE_<n>d, KEY_AGE_<n>d(>1yr), MULTI_ACTIVE_KEYS, LASTUSED_UNKNOWN), and a suggested_remediation that names the specific action-off-static-keys path per identity pattern (SSO_Federation for human users, IAM_Role for AWS-hosted services, OIDC_Federation for CI/CD, Cross_Account_Role_With_External_Id as the investigate-first default, Remove_Root_Access_Keys for root). Use when the user asks to 'audit my access keys', 'which keys are stale', 'show me over-permissioned users', 'IAM key hygiene', or any similar phrasing. Read-only — never deactivates, rotates, or deletes anything.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -719,6 +732,82 @@ _TRIAGE_ACCESS_KEYS_INTENT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+# Deterministic EDUCATIONAL intent for the access-key audit — "explain what
+# the audit does", "walk me through it", "what would you do", "worst-case
+# scenarios". A customer asking this pattern wants to understand the
+# capability BEFORE running it; the model would otherwise call
+# triage_access_keys anyway (per the ACCESS KEY TRIAGE prompt rule) and
+# then blow past the API Gateway 29s ceiling generating a long educational
+# synthesis. Matched BEFORE the inventory short-circuit so mixed intents
+# ("explain the audit and run it") prefer the explanation + CTA.
+_TRIAGE_EDUCATIONAL_INTENT = re.compile(
+    r"\b("
+    # "explain / describe / walk me through / tell me about" with an
+    # access-key or audit noun within ~80 chars.
+    r"(?:explain|describe|discuss|elaborate|walk\s+me\s+through|"
+    r"tell\s+me\s+about|help\s+me\s+understand)\b[^\n]{0,80}?"
+    r"(?:audit|triage|(?:access[-\s]+)?keys?|key\s+hygiene)"
+    r"|"
+    # Hypothetical / conceptual "what would you / how would you"
+    r"(?:what|how)\s+would\s+you\s+[^\n]{0,80}?"
+    r"(?:audit|triage|(?:access[-\s]+)?keys?|key\s+hygiene)"
+    r"|"
+    # "worst case scenarios" near audit/access-key language
+    r"worst[-\s]?case[^\n]{0,80}?"
+    r"(?:audit|triage|(?:access[-\s]+)?keys?|key\s+hygiene)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _shortcircuit_triage_educational(user_message: str):
+    """Return a canned educational envelope when the user is asking to
+    understand the audit capability (not to inventory their account).
+
+    Skips both Bedrock rounds AND the tool call. The response ends with a
+    CTA that maps directly to the inventory short-circuit's regex, so the
+    customer's natural next message ("yes, audit my access keys") lands on
+    the deterministic inventory path.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _TRIAGE_EDUCATIONAL_INTENT.search(user_message):
+        return None
+
+    response_text = (
+        "The **Audit access keys** capability inventories every IAM user's "
+        "access keys in this account and returns a prioritized action list "
+        "— worst first — with a specific replacement path per identity.\n\n"
+        "**What I flag:**\n"
+        "- **Root user has access keys** — always Critical, non-negotiable.\n"
+        "- **Admin-privileged keys** — attached to `AdministratorAccess` or "
+        "an inline `Action: *`.\n"
+        "- **Broad-scope keys** — `AmazonS3FullAccess`, `PowerUserAccess`, "
+        "`IAMFullAccess`, and similar AWS-managed policies.\n"
+        "- **Service wildcards** — inline `bedrock:*`, `s3:*`, etc.\n"
+        "- **Stale, unrotated, or multiple-active keys** on the same "
+        "user.\n\n"
+        "**Recommended replacement per identity pattern:**\n"
+        "- **Human users** (dotted names, emails) → federate via your "
+        "SSO provider (SAML with your existing IdP, OIDC, or IAM "
+        "Identity Center).\n"
+        "- **CI/CD service users** → OIDC federation "
+        "(GitHub Actions, IAM Roles Anywhere).\n"
+        "- **Service users** → assume a short-lived IAM role.\n"
+        "- **Root** → remove the keys entirely — root shouldn't hold "
+        "long-lived credentials at all.\n"
+        "- **Anything else** → cross-account role with an external ID "
+        "(investigate before adopting).\n\n"
+        "**Safety framing:** for any in-use key, always **deactivate → "
+        "monitor a full business cycle → delete**, never a bare delete.\n\n"
+        "Want me to audit my IAM access keys on this account now?"
+    )
+    return {
+        "response": response_text,
+        "tools_used": [],
+    }
+
 
 # Compact regex for deterministic pagination intents. Matches:
 #   "next", "more", "continue", "keep going"
@@ -1156,17 +1245,17 @@ def _shortcircuit_action_plan_and_export(user_message: str):
         or (export_result or {}).get("s3_key")
         or "action_plan.md"
     )
-    url = (
-        (export_result or {}).get("download_url")
-        or (export_result or {}).get("presigned_url")
-        or ""
-    )
-    valid_for = (export_result or {}).get("valid_for") or "1 hour"
+    url = (export_result or {}).get("download_url") or ""
     if url:
+        # download_url now points at the Cognito-authed /downloads/ API
+        # GW route (see src/download.py). The frontend fetches it with
+        # the current session's Bearer token, so the link works for as
+        # long as the customer is signed in — not a fixed TTL. Callers
+        # can also ask "list my exports" or "get me a link for X" later.
         export_line = (
             f"\n\n---\nSaved: `{filename}` — [Download here]({url}) "
-            f"*(link valid for {valid_for} — file stored permanently in S3; "
-            f"say `get me a new link for {filename}` after that).*"
+            f"*(file stored permanently in S3; download works while you're "
+            f"signed in — or say `get me a link for {filename}` any time).*"
         )
     else:
         export_line = (
@@ -1220,6 +1309,21 @@ def _shortcircuit_action_plan(user_message: str):
     }
 
 
+def _remediation_markdown_label(row: dict) -> str:
+    """Format a row's suggested_remediation as a markdown fragment. When the
+    tool supplied a suggested_remediation_url, render as
+    ``[`Label`](url)`` so the assistant response links directly into AWS
+    docs. Otherwise fall back to the plain ``\`Label\``` form. The label
+    itself stays quoted verbatim (backticks preserved) per the ACCESS KEY
+    TRIAGE prompt rule — the model must not paraphrase it.
+    """
+    label = row.get("suggested_remediation") or "?"
+    url = row.get("suggested_remediation_url") or ""
+    if url:
+        return f"[`{label}`]({url})"
+    return f"`{label}`"
+
+
 def _render_triage_access_keys(result: dict) -> str:
     """Render a triage_access_keys tool result as markdown that BOTH reads
     well in a plain client AND carries the raw JSON payload as a fenced
@@ -1262,7 +1366,7 @@ def _render_triage_access_keys(result: dict) -> str:
             "No IAM users in this account have access keys. That is the "
             "recommended posture — long-term access keys are the top "
             "breach vector, and every workload can be run off a short-lived "
-            "credential path instead (IAM Identity Center, IAM roles, OIDC)."
+            "credential path instead (SSO federation, IAM roles, OIDC)."
         )
 
     total_keys = summary.get("total_keys", len(keys))
@@ -1288,17 +1392,19 @@ def _render_triage_access_keys(result: dict) -> str:
     # AccessKeysTable still sees the top signal.
     root_row = next((k for k in keys if k.get("is_root")), None)
     if root_row:
+        remediation = _remediation_markdown_label(root_row)
         lines.append(
-            "**Root user has an access key** — this is always Critical. "
-            "Suggested remediation: `Remove_Root_Access_Keys` (the root "
-            "user should have no long-term keys)."
+            f"**Root user has an access key** — this is always Critical. "
+            f"Suggested remediation: {remediation} (the root user should "
+            f"have no long-term keys)."
         )
     else:
         top = keys[0]
+        remediation = _remediation_markdown_label(top)
         lines.append(
             f"Top priority: `{top.get('user','?')}` "
             f"({top.get('priority_class','?')}) — suggested remediation "
-            f"`{top.get('suggested_remediation','?')}`."
+            f"{remediation}."
         )
 
     # Deactivate → monitor → delete framing, per the ACCESS KEY TRIAGE
@@ -1375,6 +1481,188 @@ def _shortcircuit_triage_access_keys(user_message: str):
         "tools_used": [
             {"tool": "triage_access_keys", "input_summary": _summarize_input(tool_input)}
         ],
+        "pagination": None,
+    }
+
+
+# Deterministic "export that" / "save it" follow-ups. Without this
+# short-circuit, some prior-turn contexts (notably a preceding
+# generate_policy) make the model synthesize a plausible-looking presigned
+# URL from pattern memory INSTEAD of invoking export_report — tools_used
+# comes back empty and the "download" is a hallucination (Quick's Bug 1).
+# Detecting the intent server-side and running the tool ourselves
+# guarantees the tool actually runs and the URL is real.
+_EXPORT_FOLLOWUP_INTENT = re.compile(
+    r"^\s*"
+    r"(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+|go\s+ahead\s+(?:and\s+)?)?"
+    r"(?:export|save|store|keep|persist|download|upload)"
+    r"(?:\s+(?:that|this|it|the|these))?"
+    r"(?:\s+(?:policy|plan|report|analysis|comparison|change[-\s]?request"
+    r"|artifact|blast[-\s]?radius|action\s+plan|findings?|result))?"
+    r"(?:\s+(?:to\s+s3|to\s+file|please|for\s+me))?"
+    r"\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _last_assistant_artifact(history: list) -> str:
+    """Return the most recent non-empty assistant message content that looks
+    exportable — or an empty string if none qualifies.
+
+    Exportable means: non-empty text, does NOT start with "Saved:" (that's
+    a prior export's own confirmation message — exporting it would recurse),
+    and is at least 100 characters. Below that threshold we assume the
+    assistant was still gathering context.
+    """
+    if not isinstance(history, list):
+        return ""
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            continue
+        stripped = content.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("Saved:"):
+            continue
+        if len(stripped) < 100:
+            continue
+        return stripped
+    return ""
+
+
+def _infer_export_content_type(artifact: str) -> tuple:
+    """Heuristically classify an artifact as (content_type, format).
+
+    Priority: policy JSON (most specific) > action_plan > blast_radius >
+    comparison > change_request > report. Format follows the shape of the
+    payload — JSON gets json, markdown gets md, else txt.
+    """
+    if not artifact:
+        return "report", "md"
+    lower = artifact.lower()
+
+    # Extract a fenced code block if present — that's the artifact itself,
+    # not the model's framing around it.
+    fenced = re.search(r"```(?:json)?\s*\n?(\{[\s\S]*?\})\s*```", artifact)
+    if fenced:
+        payload = fenced.group(1)
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict) and (
+                "Statement" in parsed or "Version" in parsed
+            ):
+                return "policy", "json"
+        except (TypeError, ValueError):
+            pass
+
+    if "action plan" in lower or "priority score" in lower or "quick wins" in lower:
+        return "action_plan", "md"
+    if "blast radius" in lower or "impact radius" in lower or "risk_score" in lower:
+        return "blast_radius", "md"
+    if "comparison" in lower or "compare" in lower and ("most risky" in lower or "safest to delete" in lower):
+        return "comparison", "md"
+    if "change request" in lower or "rollback plan" in lower:
+        return "change_request", "md"
+    return "report", "md"
+
+
+def _extract_artifact_body(artifact: str) -> str:
+    """Extract the pure artifact from a message that may contain both the
+    assistant's framing AND a fenced code block. If a fenced JSON policy
+    exists, return just that. Otherwise return the whole message trimmed.
+
+    This matches the EXPORT AWARENESS prompt rule that says "pass ONLY the
+    artifact itself" — the tool's put_object stores whatever we pass.
+    """
+    if not artifact:
+        return artifact
+    # Prefer a fenced JSON block if present.
+    fenced_json = re.search(
+        r"```(?:json)?\s*\n?(\{[\s\S]*?\})\s*```", artifact
+    )
+    if fenced_json:
+        payload = fenced_json.group(1)
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict) and (
+                "Statement" in parsed or "Version" in parsed
+            ):
+                return json.dumps(parsed, indent=2)
+        except (TypeError, ValueError):
+            pass
+    return artifact.strip()
+
+
+def _shortcircuit_export_followup(user_message: str, history: list):
+    """When the user says "export that" (or a synonym) as a plain follow-up,
+    invoke export_report directly on the most recent assistant artifact.
+    Prevents the model from fabricating a plausible-looking presigned URL
+    when it fails to call the tool.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _EXPORT_FOLLOWUP_INTENT.match(user_message):
+        return None
+
+    artifact = _last_assistant_artifact(history)
+    if not artifact:
+        # Nothing to export yet — let Bedrock handle the conversation so
+        # the model can ask for clarification.
+        return None
+
+    content_type, file_format = _infer_export_content_type(artifact)
+    content_body = _extract_artifact_body(artifact)
+
+    tool_input = {
+        "content": content_body,
+        "content_type": content_type,
+        "format": file_format,
+    }
+    result = invoke_tool("export_report", tool_input)
+    tools_used = [{
+        "tool": "export_report",
+        "input_summary": f"content_type: {content_type}, format: {file_format}",
+    }]
+
+    if isinstance(result, dict) and "error" in result:
+        return {
+            "response": (
+                "I couldn't save that — the export tool returned: "
+                f"{result['error']}. Please try again; if the problem "
+                "repeats, ask an administrator to check the "
+                "ExportReport Lambda logs."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+        }
+
+    filename = (result or {}).get("filename") or "export.md"
+    url = (result or {}).get("download_url") or ""
+
+    if url:
+        # download_url points at the Cognito-authed /downloads/ API GW
+        # route (see src/download.py). Session-lifetime, not a fixed TTL.
+        text = (
+            f"Saved: `{filename}` — [Download here]({url}) "
+            f"*(file stored permanently in S3; download works while you're "
+            f"signed in — or say `get me a link for {filename}` any time).*"
+        )
+    else:
+        text = (
+            f"Saved to S3 as `{filename}`. "
+            f"Say `get me a link for {filename}` to download it."
+        )
+
+    return {
+        "response": text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
         "pagination": None,
     }
 
@@ -1570,6 +1858,21 @@ def handler(event, context):
                 "body": json.dumps(shortcircuit),
             }
 
+        # Educational-intent short-circuit — "explain the audit", "worst
+        # case scenarios", "what would you do about access keys". Answered
+        # with a deterministic capability blurb; no tool call, no Bedrock
+        # round. Runs BEFORE the inventory short-circuit so mixed intents
+        # ("explain and run it") prefer the explanation + CTA. The CTA
+        # ("audit my IAM access keys") maps to the inventory short-circuit
+        # so the customer's natural follow-up lands on the tool path.
+        shortcircuit = _shortcircuit_triage_educational(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
         # Deterministic access-key triage: the tool walks every IAM user +
         # policy graph and would easily approach the API Gateway 29s ceiling
         # if chained with a Bedrock synthesis round. This path also emits
@@ -1577,6 +1880,19 @@ def handler(event, context):
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
         shortcircuit = _shortcircuit_triage_access_keys(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic "export that" follow-up: invoke export_report on the
+        # most recent assistant artifact instead of letting the model fabricate
+        # a presigned URL (Bug 1 in Quick's post-#175 handoff). Runs AFTER
+        # the other short-circuits so that a message that both generates AND
+        # exports (compound intent) is already handled upstream.
+        shortcircuit = _shortcircuit_export_followup(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,

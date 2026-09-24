@@ -5,6 +5,39 @@ export interface Message {
     inputTokens?: number;
     outputTokens?: number;
   };
+  /**
+   * Tools the backend called to construct this assistant message. Rendered
+   * as a Cloudscape ExpandableSection + Steps ("Thinking pattern") in
+   * `MessageBubble.tsx` per #167 Req 5.
+   */
+  toolsUsed?: Array<{ tool: string; input_summary?: string }>;
+  /**
+   * Wall-clock duration of the /conversation request that produced this
+   * assistant message, in whole seconds. Used as the header text of the
+   * Thinking ExpandableSection ("Thought for Ns"). Absent when the
+   * request completed instantly or the client couldn't measure it.
+   */
+  durationSeconds?: number;
+  /**
+   * Local (client-only, this-session-only) record of the user's helpful /
+   * not-helpful vote on this response. Server-side telemetry for these
+   * votes is deferred — see the spec's DD-4. Only applies to assistant
+   * messages.
+   */
+  feedback?: "helpful" | "not-helpful";
+  /**
+   * When set to "error", the message is rendered as an inline Cloudscape
+   * `<Alert type="error">` inside the transcript at the position of the
+   * failed turn, instead of as a ChatBubble. Used for API errors,
+   * timeouts, and other request failures per #167 Req 7.
+   */
+  kind?: "error";
+  /**
+   * For error messages: the user prompt that triggered the failing
+   * request. Passed back through the Try again action so the message
+   * can be re-sent without the user re-typing it.
+   */
+  retryPrompt?: string;
 }
 
 /**
@@ -158,6 +191,11 @@ export interface AccessKeyRow {
   risk_flags: string[];
   priority_class: string; // "Critical" | "High" | "Cleanup" | "Rotation"
   suggested_remediation: string;
+  // Canonical AWS docs URL for the remediation, emitted by the Python tool
+  // via `_REMEDIATION_DOCS`. Empty string when the tool can't map the label
+  // (unknown remediation), in which case the frontend renders plain text
+  // instead of a link. Never construct URLs client-side.
+  suggested_remediation_url?: string;
 }
 
 export interface AccessKeysReport {

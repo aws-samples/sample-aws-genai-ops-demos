@@ -69,7 +69,7 @@ nothing matches:
 
 | Pattern | Suggested_Remediation |
 |---|---|
-| Human user (contains `@`, dotted first-name.last-name, etc.) | `IAM_Identity_Center` — federated, temporary credentials; scope permission sets, never admin |
+| Human user (contains `@`, dotted first-name.last-name, etc.) | `SSO_Federation` — federate via the customer's SSO provider (SAML, OIDC, or IAM Identity Center); temporary credentials; scope permission sets, never admin |
 | AWS-hosted service (`svc-`, `service-`, `-lambda-`, `-eks-`, `-ecs-`, `-ec2-`, `-runner`, `-worker`, `-agent`) | `IAM_Role` — IRSA / Pod Identity / instance / task / execution role |
 | CI/CD (`-ci-`, `-cicd-`, `-deployer-`, `-github-actions-`, `-gitlab-`, `-jenkins-`) | `OIDC_Federation` — OIDC federation with the CI/CD provider |
 | External SaaS / cross-cloud connector — anything else that does not match above | `Cross_Account_Role_With_External_Id` — a safe default that requires investigation; the third party assumes the role with an external ID |
