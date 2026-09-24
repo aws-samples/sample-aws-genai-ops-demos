@@ -50,6 +50,12 @@ variable "providers_poll_interval" {
   default     = 60
 }
 
+variable "enable_deployment_metrics" {
+  description = "Create a zero-cost CloudFormation marker stack so this deployment is counted in AWS solution adoption metrics (see tracking.tf). Set to false to opt out."
+  type        = bool
+  default     = true
+}
+
 # -- DevOps Agent registration (optional) -------------------------------------
 # Leave agent_space_arn empty to skip registration (runtime-only deploy).
 
@@ -59,8 +65,8 @@ variable "agent_space_arn" {
     Example: arn:aws:aidevops:eu-west-1:123456789012:agentspace/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     Leave empty to skip DevOps Agent registration.
   EOT
-  type    = string
-  default = ""
+  type        = string
+  default     = ""
 
   validation {
     condition = (

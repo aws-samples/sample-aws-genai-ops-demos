@@ -23,6 +23,10 @@ account_id = "123456789012"
 # Seconds between provider registry refreshes from S3 (default: 60).
 # providers_poll_interval = 60
 
+# Solution adoption metrics: a zero-cost CloudFormation marker stack carrying
+# the repository tracking code (default: true). Set to false to opt out.
+# enable_deployment_metrics = true
+
 # -- DevOps Agent registration ------------------------------------------------
 # Paste your Agent Space ARN to register the MCP server automatically.
 # Open the DevOps Agent console and from your space click Actions > Copy ARN.
