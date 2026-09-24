@@ -74,7 +74,7 @@ Facts and inventory live in separate tables: the public deprecation data is neve
 
 ### Prerequisites
 - **AWS CLI v2.33.22 or later** ([Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)) - durable function APIs need this version. Check with `aws --version`
-- **Node.js 22+** and **AWS CDK CLI** (`npm install -g aws-cdk`, check with `cdk --version`)
+- **Node.js 22+** and **AWS CDK CLI** (`npm install -g aws-cdk`, check with `cdk --version`) — or **Terraform 1.5+** for the Terraform path (Node.js still needed for the frontend build)
 - **Python 3.11+** with `pip` - used to bundle the Lambda code locally (no Docker needed)
 - **AWS credentials** with permissions for CloudFormation, Lambda, API Gateway, DynamoDB, Cognito, EventBridge Scheduler, SNS, SQS, CloudFront, S3 and IAM
 - **Amazon Bedrock** model access for Amazon Nova in your region
@@ -86,18 +86,33 @@ Lambda durable functions and Amazon Nova must be available in your target region
 
 ### One-Command Deploy
 
-**Windows (PowerShell):**
+Two IaC options — CDK (default) or Terraform. Both produce the same result.
+
+**CDK — Windows (PowerShell):**
 ```powershell
 .\deploy-all.ps1
 ```
 
-**macOS/Linux (Bash):**
+**CDK — macOS/Linux (Bash):**
 ```bash
 chmod +x deploy-all.sh scripts/build-frontend.sh
 ./deploy-all.sh
 ```
 
-**Time:** ~5 minutes. The scripts deploy Data → Auth → Pipeline → Api, build the frontend with the API URL and Cognito IDs, then deploy Frontend, and finish with the website URL, the pipeline alias ARN and the SNS topic.
+**Terraform — Windows (PowerShell):**
+```powershell
+.\deploy-all-terraform.ps1
+```
+
+**Terraform — macOS/Linux (Bash):**
+```bash
+chmod +x deploy-all-terraform.sh scripts/build-frontend.sh
+./deploy-all-terraform.sh
+```
+
+**Time:** ~5 minutes. The CDK scripts deploy Data → Auth → Pipeline → Api, build the frontend with the API URL and Cognito IDs, then deploy Frontend. The Terraform scripts stage the Lambda code, run one `terraform apply` for the same resources (`terraform/`), then build and upload the frontend. Both finish with the website URL, the pipeline alias ARN and the SNS topic.
+
+Terraform path specifics: needs [Terraform 1.5+](https://developer.hashicorp.com/terraform/install) instead of Node.js + CDK CLI (Node.js is still needed for the frontend build); state is local (`terraform/terraform.tfstate`); the same resource names are used, so the two paths cannot be deployed side by side in one account and region, and the IAM role `aws-services-lifecycle-pipeline-role` is account-wide (a CDK deployment in *another* region of the same account blocks it too: set `pipeline_role_name` in `terraform/terraform.tfvars`); multi-account mode (below) is CDK-only.
 
 By default the tracker scans **the account and region you deploy into**. Nothing else is needed for a single account.
 
@@ -189,6 +204,8 @@ Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeli
 | **AWSServicesLifecycleTrackerSpoke-{region}** *(multi-account, per spoke account)* | Read-only scan role | IAM role `LifecycleTrackerScanRole` trusting the hub pipeline role; no bootstrap needed | None |
 | **AWSServicesLifecycleTrackerOrg-{region}** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying CloudFormation StackSet whose template is the Spoke stack | Organizations trusted access |
 
+The Terraform path (`terraform/`) deploys the first five rows as one root module, one `.tf` file per stack (`data.tf`, `auth.tf`, `pipeline.tf`, `api.tf`, `frontend.tf`), with the same resource names. The service config populator is one Python file shared by both paths (`scripts/service_config_populator.py`: CDK inlines it into a custom resource, Terraform runs it through `aws_lambda_invocation`). Spoke and Org stacks are not ported: they are a CloudFormation StackSet by design.
+
 ## Project Structure
 
 ```
@@ -219,6 +236,16 @@ project-root/
 │   │   └── frontend-stack.ts       # CloudFront + S3
 │   └── test/                       # CDK assertions (jest)
 │
+├── terraform/                      # Terraform alternative to cdk/ (single-account)
+│   ├── main.tf                     # Providers, locals
+│   ├── data.tf                     # DynamoDB tables + service config populator
+│   ├── auth.tf                     # Cognito User Pool
+│   ├── pipeline.tf                 # Durable pipeline + API Lambda + schedules
+│   ├── api.tf                      # HTTP API + JWT authorizer
+│   ├── frontend.tf                 # CloudFront + S3
+│   ├── variables.tf / outputs.tf
+│   └── terraform.tfvars.example
+│
 ├── frontend/                       # React admin interface (Cloudscape Design System)
 │   └── src/
 │       ├── api.ts                  # fetch() to the HTTP API with the Cognito ID token
@@ -227,10 +254,11 @@ project-root/
 │
 ├── scripts/
 │   ├── service_configs.json        # 🔧 KEY FILE: service definitions
-│   ├── populate_service_configs.py # Loads service configs into DynamoDB at deploy time
+│   ├── service_config_populator.py # Deploy-time Lambda seeding the configs into DynamoDB (CDK + Terraform)
 │   └── build-frontend.{ps1,sh}     # Frontend build with API URL / Cognito injection
 │
-├── deploy-all.{ps1,sh}             # Complete deployment
+├── deploy-all.{ps1,sh}             # Complete deployment (CDK)
+├── deploy-all-terraform.{ps1,sh}   # Complete deployment (Terraform)
 ├── ARCHITECTURE.md                 # Design notes
 └── README.md
 ```
@@ -519,6 +547,8 @@ cd cdk && npx cdk deploy AWSServicesLifecycleTrackerFrontend-<region>
 
 Updating the Python code is just `cdk deploy` of the Pipeline stack: CDK re-bundles `backend/`, publishes a new function version and moves the `live` alias. Executions started on the previous version finish on that version.
 
+**Terraform:** re-running `./deploy-all-terraform.sh` does the same (re-stages `backend/`, `terraform apply` publishes a new version when the zip hash changes and moves the alias, then rebuilds and re-uploads the frontend). For a manual run, stage the code first as the script does (step 1: copy `backend/*.py`, `backend/requirements.txt` and `shared/utils/aws_utils.py` into `terraform/.backend-stage/`, then `pip install --platform manylinux2014_aarch64 --only-binary=:all: --python-version 3.14 --implementation cp --target terraform/.backend-stage -r backend/requirements.txt`), write `terraform/terraform.tfvars` from `terraform.tfvars.example`, then `terraform init && terraform apply` in `terraform/`. Build and upload the frontend afterwards with the `api_url`, `user_pool_id`, `user_pool_client_id` and `website_bucket` outputs.
+
 ### Optional: a test fleet of databases to scan
 
 A fresh account has nothing on a deprecated version, so the scan phase finds nothing. `scripts/create_test_databases.py` creates 12 small RDS-family databases on engine versions whose standard support ends within the next year (plus a few current ones as controls), so a Refresh shows real matches:
@@ -586,12 +616,22 @@ npx cdk destroy AWSServicesLifecycleTrackerFrontend-<region> AWSServicesLifecycl
 
 Deleting the pipeline function waits for RUNNING executions to finish (stop them first with `aws lambda stop-durable-execution` if you are in a hurry). DynamoDB tables are removed with the Data stack.
 
+**Terraform:**
+
+```bash
+cd terraform
+terraform destroy -auto-approve
+```
+
+Removes everything the Terraform path created, including the DynamoDB tables and their data and the (emptied) website bucket.
+
 ### Troubleshooting
 
 | Symptom | Cause / fix |
 |---------|-------------|
 | `Durable execution requires qualified function identifier` | Invoke the `live` alias (the `PipelineFunctionAliasArn` output), never the bare function name |
 | Pipeline bundling fails during `cdk deploy` | `python`/`python3` with `pip` must be on PATH (3.11+). If pip is unavailable CDK falls back to Docker bundling |
+| Terraform: `EntityAlreadyExists: Role with name aws-services-lifecycle-pipeline-role` | IAM is global: the CDK path is deployed in another region of this account. Add `pipeline_role_name = "<other-name>"` to `terraform/terraform.tfvars` and re-run |
 | Refresh summary lists failed services | Open the execution history: `extract-<service>` shows the error (docs page changed, Bedrock access, ...). The rest of the run is unaffected |
 | `failed_cells` in the scan summary | Scanner had no permission or the service isn't available in that region; inventory for that scope is left untouched |
 | Sources & coverage says the AWS Health cross-check is unavailable | The Health API needs a Business/Enterprise Support plan (`SubscriptionRequiredException`); the scan itself is unaffected |

@@ -1,0 +1,30 @@
+# =============================================================================
+# terraform.tfvars.example - AWS Services Lifecycle Tracker
+# =============================================================================
+# deploy-all-terraform.{ps1,sh} writes terraform.tfvars for you. For a manual
+# run, copy this file to terraform.tfvars and fill in your values, then stage
+# the Lambda code into .backend-stage/ first (see the deploy script, step 1).
+
+# -- Required -----------------------------------------------------------------
+
+# Region to deploy into. Lambda durable functions and Amazon Nova must be
+# available there.
+region = "us-east-1"
+
+# -- Optional -----------------------------------------------------------------
+
+# Where the deploy script staged backend/*.py + wheels (default: .backend-stage).
+# backend_stage_dir = ".backend-stage"
+
+# Service definitions seeded into the config table.
+# service_configs_path = "../scripts/service_configs.json"
+
+# CloudWatch log retention in days for both Lambda functions (default: 30).
+# log_retention_days = 30
+
+# Hub pipeline role name. IAM is global: override only if the default name is
+# already taken in this account (e.g. a CDK deployment in another region).
+# pipeline_role_name = "aws-services-lifecycle-pipeline-role"
+
+# Multi-account only: sts:ExternalId presented when assuming spoke roles.
+# spoke_external_id = ""

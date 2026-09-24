@@ -234,136 +234,14 @@ export class DataStack extends cdk.Stack {
     const configPath = path.join(__dirname, '../../scripts/service_configs.json');
     const serviceConfigs = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
-    // Lambda function to populate configurations
+    // Lambda function to populate configurations. The code is shared with the
+    // Terraform path (terraform/data.tf): one populator, two IaC front doors.
+    const populatorPath = path.join(__dirname, '../../scripts/service_config_populator.py');
     const populatorFunction = new lambda.Function(this, 'ServiceConfigPopulator', {
       runtime: lambda.Runtime.PYTHON_3_14,
       handler: 'index.handler',
       timeout: cdk.Duration.minutes(5),
-      code: lambda.Code.fromInline(`
-import json
-import boto3
-import os
-from decimal import Decimal
-
-# Runtime/state fields are OWNED BY THE BACKEND (Lambda runtime) and must never be written by the
-# deploy-time populator (issue #116): a full-item put_item here used to wipe
-# extraction history on every deploy, making services show as "Never extracted".
-RUNTIME_FIELDS = {
-    'extraction_count',
-    'last_extraction',
-    'success_rate',
-    'last_refresh_origin',
-    'last_extraction_duration',
-}
-
-# Fields seeded only when absent, so user changes (e.g. disabling a service in
-# the UI) survive redeploys.
-SEED_ONLY_FIELDS = {'enabled'}
-
-def handler(event, context):
-    """Seed/refresh static service configuration WITHOUT touching runtime state.
-
-    Static, repo-owned fields (documentation_urls, extraction_focus, ...) are
-    updated on every deploy so config changes propagate. Backend-owned runtime
-    fields are never written. update_item upserts, so new services are created.
-    """
-
-    request_type = event['RequestType']
-    
-    # Only populate on Create and Update
-    if request_type == 'Delete':
-        return {
-            'PhysicalResourceId': 'ServiceConfigPopulator',
-            'Data': {'Message': 'Delete operation - no action needed'}
-        }
-    
-    try:
-        # Get service configurations from event
-        services_config = json.loads(event['ResourceProperties']['ServiceConfigs'])
-        
-        # Get table name from environment variable or resource properties
-        table_name = os.environ.get('CONFIG_TABLE_NAME') or event['ResourceProperties'].get('TableName')
-        print(f"Using table: {table_name}")
-        
-        dynamodb = boto3.resource('dynamodb')
-        config_table = dynamodb.Table(table_name)
-        
-        print(f"Populating {len(services_config)} service configurations...")
-        
-        for service_name, config in services_config.items():
-            update_parts = []
-            remove_parts = []
-            expr_names = {}
-            expr_values = {}
-            # Evict runtime-state attributes that older deployments wrote into
-            # config rows. They now live in the service-extraction-state table
-            # (issue #116) and stale copies here would be a second, silently
-            # diverging source of truth. REMOVE on an absent attribute is a
-            # no-op, so this is safe on every deploy.
-            for stale_field in sorted(RUNTIME_FIELDS):
-                name_ph = f'#r{len(expr_names)}'
-                expr_names[name_ph] = stale_field
-                remove_parts.append(name_ph)
-            for key, value in config.items():
-                if key == 'service_name' or key in RUNTIME_FIELDS:
-                    continue
-                # Placeholders are mandatory: field names like 'name' are
-                # DynamoDB reserved words.
-                name_ph = f'#f{len(expr_names)}'
-                value_ph = f':v{len(expr_values)}'
-                expr_names[name_ph] = key
-                expr_values[value_ph] = value
-                if key in SEED_ONLY_FIELDS:
-                    update_parts.append(f'{name_ph} = if_not_exists({name_ph}, {value_ph})')
-                else:
-                    update_parts.append(f'{name_ph} = {value_ph}')
-            
-            if not update_parts:
-                continue
-            
-            update_expression = 'SET ' + ', '.join(update_parts)
-            if remove_parts:
-                update_expression += ' REMOVE ' + ', '.join(remove_parts)
-            
-            config_table.update_item(
-                Key={'service_name': service_name},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=expr_names,
-                ExpressionAttributeValues=expr_values,
-            )
-            print(f"✅ {config.get('name', service_name)}: Configuration saved (runtime state preserved)")
-        
-        # Reconcile: the JSON is the single source of truth for WHICH services
-        # exist (issue #140). A service removed from service_configs.json must
-        # disappear from the table too, otherwise it keeps being extracted.
-        # Only the config table is touched; facts/inventory rows are the
-        # backend's and are left for the next refresh / manual cleanup.
-        removed = 0
-        scan_kwargs = {'ProjectionExpression': 'service_name'}
-        while True:
-            page = config_table.scan(**scan_kwargs)
-            for row in page.get('Items', []):
-                if row['service_name'] not in services_config:
-                    config_table.delete_item(Key={'service_name': row['service_name']})
-                    removed += 1
-                    print(f"🗑️  {row['service_name']}: removed (no longer in service_configs.json)")
-            if 'LastEvaluatedKey' not in page:
-                break
-            scan_kwargs['ExclusiveStartKey'] = page['LastEvaluatedKey']
-        
-        return {
-            'PhysicalResourceId': 'ServiceConfigPopulator',
-            'Data': {
-                'Message': f'Populated {len(services_config)} service configurations, removed {removed}',
-                'ServiceCount': len(services_config),
-                'RemovedCount': removed
-            }
-        }
-        
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        raise
-`),
+      code: lambda.Code.fromInline(fs.readFileSync(populatorPath, 'utf-8')),
       environment: {
         CONFIG_TABLE_NAME: this.configTable.tableName,
       },
