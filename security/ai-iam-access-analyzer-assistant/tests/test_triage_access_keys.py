@@ -687,5 +687,54 @@ class RemediationStepsTest(unittest.TestCase):
         self.assertNotIn("mutation", again)
 
 
+class AccountIdResolutionTest(unittest.TestCase):
+    """Pins _account_id resolution: env var wins over STS; STS is only
+    called as a fallback; result is cached across calls; STS failure
+    yields an empty string without raising."""
+
+    def setUp(self):
+        # Reset cache and env for each test.
+        triage._CACHED_ACCOUNT_ID = ""
+        self._saved_env = os.environ.pop("AWS_ACCOUNT_ID", None)
+
+    def tearDown(self):
+        triage._CACHED_ACCOUNT_ID = ""
+        if self._saved_env is not None:
+            os.environ["AWS_ACCOUNT_ID"] = self._saved_env
+        else:
+            os.environ.pop("AWS_ACCOUNT_ID", None)
+
+    def test_env_var_wins_when_set(self):
+        os.environ["AWS_ACCOUNT_ID"] = "111122223333"
+        self.assertEqual("111122223333", triage._account_id())
+
+    def test_falls_back_to_sts_when_no_env(self):
+        from unittest.mock import patch, MagicMock
+        fake_sts = MagicMock()
+        fake_sts.get_caller_identity.return_value = {"Account": "555566667777"}
+        with patch.object(triage.boto3, "client", return_value=fake_sts):
+            self.assertEqual("555566667777", triage._account_id())
+            fake_sts.get_caller_identity.assert_called_once()
+
+    def test_result_is_cached(self):
+        from unittest.mock import patch, MagicMock
+        fake_sts = MagicMock()
+        fake_sts.get_caller_identity.return_value = {"Account": "555566667777"}
+        with patch.object(triage.boto3, "client", return_value=fake_sts):
+            triage._account_id()
+            triage._account_id()
+            triage._account_id()
+            # Only called once — subsequent invocations hit the cache.
+            fake_sts.get_caller_identity.assert_called_once()
+
+    def test_sts_failure_returns_empty_string(self):
+        from unittest.mock import patch
+        with patch.object(
+            triage.boto3, "client", side_effect=Exception("network down")
+        ):
+            # Must not raise; must return empty string.
+            self.assertEqual("", triage._account_id())
+
+
 if __name__ == "__main__":
     unittest.main()

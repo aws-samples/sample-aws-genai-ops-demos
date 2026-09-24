@@ -816,15 +816,35 @@ def handler(event, context=None):
 def _account_id() -> str:
     """Return the current AWS account id, cached across warm invocations.
 
-    Uses ``iam:ListUsers`` implicitly (the tool's caller already has that
-    permission) — we cache the id from the first call. Falls back to
-    ``AWS_ACCOUNT_ID`` env or an empty string so tests do not need STS mocks.
+    Resolution order:
+      1. Cached value from a previous call in this Lambda container.
+      2. ``AWS_ACCOUNT_ID`` env var — used by tests to avoid STS mocks
+         and by any deployment that wants to pin the value explicitly.
+      3. ``sts:GetCallerIdentity`` — no IAM permission required (every
+         principal can call it) and returns the account this Lambda is
+         running in. Fast; result is cached for the container lifetime.
+
+    Returns an empty string only if STS itself fails (unusual — typically
+    a network / VPC misconfiguration). Callers must tolerate that.
     """
     global _CACHED_ACCOUNT_ID
     if _CACHED_ACCOUNT_ID:
         return _CACHED_ACCOUNT_ID
+
     import os
-    _CACHED_ACCOUNT_ID = os.environ.get("AWS_ACCOUNT_ID", "")
+    env_value = os.environ.get("AWS_ACCOUNT_ID", "")
+    if env_value:
+        _CACHED_ACCOUNT_ID = env_value
+        return _CACHED_ACCOUNT_ID
+
+    try:
+        _CACHED_ACCOUNT_ID = (
+            boto3.client("sts").get_caller_identity().get("Account", "")
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sts:GetCallerIdentity failed for account resolution: %s", e)
+        _CACHED_ACCOUNT_ID = ""
+
     return _CACHED_ACCOUNT_ID
 
 
