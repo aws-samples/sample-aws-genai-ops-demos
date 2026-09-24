@@ -321,7 +321,12 @@ function KeyIdCell({ keyId }: { keyId: string }) {
       <Button
         iconName="copy"
         variant="inline-icon"
-        ariaLabel={`Copy ${keyId}`}
+        // aria-label mirrors the visible truncation (`AKIA…XXXX`) rather
+        // than the full key ID. On fixture data this is cosmetic, but on
+        // real data the full AKIA in the accessibility tree is a needless
+        // exposure — screen readers can announce the truncated form; a
+        // user who needs the whole string clicks the button.
+        ariaLabel={`Copy ${short}`}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(keyId);
