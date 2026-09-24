@@ -402,11 +402,89 @@ _REMEDIATION_DOCS = {
 }
 
 
+# Curated migration-step lists per remediation label. Emitted as
+# ``suggested_remediation_steps`` on every row so the frontend can render
+# an actionable walk-through alongside the docs link. Never invent AWS
+# CLI commands (they age out) — steps describe WHAT to do, docs page
+# covers HOW. Every migration ends with the same safety pattern:
+# deactivate → monitor → delete, never a bare delete of an in-use key.
+_REMEDIATION_STEPS = {
+    "SSO_Federation": [
+        "Confirm your identity provider — AWS IAM Identity Center, or an external IdP (Okta, Entra ID, Ping, Google Workspace) federated via SAML 2.0 or OIDC.",
+        "If not already enabled, activate IAM Identity Center in your organization's management account and connect your IdP as an identity source.",
+        "Ensure this user has a matching principal in the IdP — verify email or username maps to a real employee.",
+        "Create a Permission Set in Identity Center granting the same effective permissions this user needs (use the Effective policy above as the source of truth).",
+        "Assign the federated principal to the Permission Set for this AWS account.",
+        "Have the user sign in to the AWS access portal and confirm they can reach what they need.",
+        "Deactivate this user's access key and monitor for 2 to 4 weeks — one full business cycle.",
+        "After confirming no breakage, delete the deactivated key and remove the IAM user.",
+    ],
+    "IAM_Role": [
+        "Locate the workload that uses this key — check for hardcoded credentials in EC2 launch templates, ECS task definitions, Lambda environment variables, EKS pod specs, or app config files.",
+        "Create an IAM role with a trust policy scoped to the specific AWS service that will assume it (ec2.amazonaws.com, lambda.amazonaws.com, ecs-tasks.amazonaws.com, or pods.eks.amazonaws.com for EKS Pod Identity).",
+        "Attach the same effective policies this user has today to the new role (see the Effective policy above).",
+        "Attach the role to the runtime via the appropriate mechanism — instance profile (EC2), task role (ECS), execution role (Lambda), Pod Identity Association (EKS), or IRSA for older EKS setups.",
+        "Update the workload to remove the hardcoded credentials — the AWS SDK's default credential chain picks up the role automatically.",
+        "Deploy the update to a non-production environment first and verify.",
+        "Deactivate this user's access key and monitor for at least one business cycle.",
+        "After confirming stability, delete the deactivated key and remove the IAM user.",
+    ],
+    "OIDC_Federation": [
+        "Identify your CI/CD provider — GitHub Actions, GitLab, CircleCI, Bitbucket Pipelines, Jenkins, Azure DevOps. Each publishes its own OIDC issuer.",
+        "Register the provider's OIDC issuer as an Identity Provider in IAM (one-time setup per issuer per account).",
+        "Create an IAM role with a trust policy that scopes to the specific repo, branch, environment, or workflow — never trust the entire provider.",
+        "Attach the same effective policies this user has today (see the Effective policy above), tightening resource scope where feasible.",
+        "Update the CI/CD pipeline to request an OIDC token and exchange it for AWS credentials — most providers publish a first-class action (e.g. aws-actions/configure-aws-credentials for GitHub Actions).",
+        "Test with a low-risk pipeline job before rolling out to production workflows.",
+        "Deactivate this user's access key and monitor for a full CI/CD cycle including weekend / release-freeze windows.",
+        "After confirming stability, delete the deactivated key and remove the IAM user.",
+    ],
+    "IAM_Roles_Anywhere": [
+        "Provision an X.509 certificate for this workload from your existing PKI, or set up AWS Private CA if you don't have one.",
+        "Register the certificate authority as a Trust Anchor in IAM Roles Anywhere.",
+        "Create an IAM role with a trust policy that scopes to the specific certificate subject (CN, OU, or Serial Number).",
+        "Attach the same effective policies this user has today to the new role.",
+        "Create a Roles Anywhere Profile that maps the trust anchor plus the IAM role.",
+        "Install the AWS Signing Helper on the workload and configure it with the certificate, trust anchor ARN, and profile ARN.",
+        "Update the workload to use the credential helper — the AWS SDK picks up short-lived credentials automatically.",
+        "Deactivate this user's access key, monitor for a business cycle, then delete the key and the IAM user.",
+    ],
+    "Cross_Account_Role_With_External_Id": [
+        "First — investigate who this identity actually belongs to. This remediation is a safe placeholder, not a settled recommendation. If the user is a human, service, or CI/CD system, one of the other four remediations is more appropriate.",
+        "If it is genuinely a third-party (SaaS provider, monitoring vendor, cloud broker), obtain their AWS account ID and an external ID they will present when assuming the role — most vendors document this.",
+        "Create an IAM role with a trust policy scoped to their AWS account ID AND requiring the exact sts:ExternalId condition — this prevents the confused-deputy attack.",
+        "Attach the minimum policies the third-party actually needs — the Effective policy above shows what they have today. Only grant what is documented as required by the vendor.",
+        "Share the role ARN and external ID with the third party through their onboarding UI.",
+        "Confirm they can successfully assume the role and reach the resources they need to.",
+        "Deactivate this user's access key and monitor — third-party integrations can have long polling intervals, so give it a full week.",
+        "Delete the deactivated key and remove the IAM user.",
+    ],
+    "Remove_Root_Access_Keys": [
+        "Confirm no automation depends on the root access key. Root should have no programmatic use case in a healthy account; if anything is using this key, move it to an IAM role or federated identity FIRST.",
+        "Sign in to the AWS Management Console as root and verify MFA is enabled — hardware security key preferred, TOTP acceptable.",
+        "In the console, navigate to Security Credentials for the root user and deactivate every access key.",
+        "Monitor for 24-48 hours — any workload silently depending on root keys will start failing.",
+        "If nothing breaks, delete the deactivated keys.",
+        "Set up an alert on Root API activity via CloudTrail so future root usage is visible.",
+        "From this point forward, use IAM Identity Center or a break-glass admin role for human access; the root user is for account-level actions only (billing, root-only APIs, account closure).",
+    ],
+}
+
+
 def _remediation_url(label: str) -> str:
     """Return the canonical AWS docs URL for a remediation label, or empty
     string if the label is unrecognized. Never fabricate URLs — an unknown
     label yields an empty string and the frontend renders plain text."""
     return _REMEDIATION_DOCS.get(label, "")
+
+
+def _remediation_steps(label: str) -> list:
+    """Return the ordered migration-step list for a remediation label, or an
+    empty list if the label is unrecognized. Frontend renders the list as a
+    numbered walk-through in the expanded row detail; empty list falls back
+    to the docs-link-only rendering. Never generate steps client-side —
+    they are curated here as the single source of truth."""
+    return list(_REMEDIATION_STEPS.get(label, []))
 
 
 # --- Small helpers ----------------------------------------------------------
@@ -517,6 +595,7 @@ def handler(event, context=None):
             "priority_class": "Critical",
             "suggested_remediation": "Remove_Root_Access_Keys",
             "suggested_remediation_url": _remediation_url("Remove_Root_Access_Keys"),
+            "suggested_remediation_steps": _remediation_steps("Remove_Root_Access_Keys"),
         })
 
     # ---- User + key inventory ---------------------------------------------
@@ -674,6 +753,7 @@ def handler(event, context=None):
                 "priority_class": priority,
                 "suggested_remediation": remediation,
                 "suggested_remediation_url": _remediation_url(remediation),
+                "suggested_remediation_steps": _remediation_steps(remediation),
             })
 
     # ---- Sort: priority, then age descending ------------------------------

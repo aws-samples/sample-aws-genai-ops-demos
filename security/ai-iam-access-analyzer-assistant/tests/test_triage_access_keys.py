@@ -626,5 +626,66 @@ class RemediationUrlTest(unittest.TestCase):
         self.assertEqual("", triage._remediation_url(""))
 
 
+# --- Migration step lists ---------------------------------------------------
+
+
+class RemediationStepsTest(unittest.TestCase):
+    """Pins the _REMEDIATION_STEPS mapping — every canonical remediation
+    label has a non-empty ordered walk-through, and unknown labels yield
+    an empty list rather than a fabricated one."""
+
+    def test_every_canonical_label_has_steps(self):
+        for label in (
+            "SSO_Federation",
+            "IAM_Role",
+            "OIDC_Federation",
+            "IAM_Roles_Anywhere",
+            "Cross_Account_Role_With_External_Id",
+            "Remove_Root_Access_Keys",
+        ):
+            steps = triage._remediation_steps(label)
+            self.assertIsInstance(steps, list, msg=f"{label} must return a list")
+            self.assertGreaterEqual(
+                len(steps), 5,
+                msg=f"{label} has too few steps ({len(steps)}) — expected 5+",
+            )
+            # Every step is a non-empty string.
+            for i, step in enumerate(steps):
+                self.assertIsInstance(step, str, msg=f"{label} step {i} not a string")
+                self.assertGreater(len(step), 0, msg=f"{label} step {i} is empty")
+
+    def test_every_label_ends_with_deactivate_monitor_delete_pattern(self):
+        # Every migration must end in the safety-first three-step pattern,
+        # except Remove_Root_Access_Keys which handles it slightly
+        # differently (keys are deactivated first, then monitored, then
+        # deleted, but the pattern is present).
+        for label in (
+            "SSO_Federation",
+            "IAM_Role",
+            "OIDC_Federation",
+            "IAM_Roles_Anywhere",
+            "Cross_Account_Role_With_External_Id",
+        ):
+            steps = triage._remediation_steps(label)
+            joined = " ".join(steps).lower()
+            self.assertIn("deactivate", joined, msg=f"{label} missing 'deactivate'")
+            self.assertIn("monitor", joined, msg=f"{label} missing 'monitor'")
+            self.assertIn("delete", joined, msg=f"{label} missing 'delete'")
+
+    def test_unknown_label_returns_empty_list(self):
+        # Frontend omits the Migration steps section on empty. Never
+        # fabricate a step list for an unrecognized label.
+        self.assertEqual([], triage._remediation_steps("Nope_Not_A_Label"))
+        self.assertEqual([], triage._remediation_steps(""))
+
+    def test_returned_list_is_defensive_copy(self):
+        # A caller mutating the returned list must not corrupt the
+        # module-level source of truth.
+        got = triage._remediation_steps("SSO_Federation")
+        got.append("mutation")
+        again = triage._remediation_steps("SSO_Federation")
+        self.assertNotIn("mutation", again)
+
+
 if __name__ == "__main__":
     unittest.main()

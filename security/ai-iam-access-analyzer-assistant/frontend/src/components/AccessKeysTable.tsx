@@ -401,6 +401,32 @@ function ExpandedRowDetail({ row }: { row: AccessKeyRow }) {
           <Box variant="awsui-key-label">Source policies</Box>
           <Box variant="small">{row.policies}</Box>
         </div>
+        {row.suggested_remediation_steps && row.suggested_remediation_steps.length > 0 && (
+          <div>
+            <Box variant="awsui-key-label">Migration steps</Box>
+            <Box variant="small" color="text-body-secondary">
+              Deactivate → monitor a full business cycle → delete. Never a bare delete on an in-use key.
+            </Box>
+            <ol style={{ marginTop: "8px", paddingLeft: "20px" }}>
+              {row.suggested_remediation_steps.map((step, i) => (
+                <li key={i} style={{ marginBottom: "6px", lineHeight: 1.4 }}>
+                  <Box variant="small">{step}</Box>
+                </li>
+              ))}
+            </ol>
+            {row.suggested_remediation_url && (
+              <Box variant="small" margin={{ top: "xs" }}>
+                <Link
+                  href={row.suggested_remediation_url}
+                  external
+                  externalIconAriaLabel="Opens AWS documentation in a new tab"
+                >
+                  Open AWS documentation
+                </Link>
+              </Box>
+            )}
+          </div>
+        )}
       </SpaceBetween>
     </div>
   );
