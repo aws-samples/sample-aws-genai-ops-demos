@@ -204,7 +204,7 @@ Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeli
 | **AWSServicesLifecycleTrackerSpoke-{region}** *(multi-account, per spoke account)* | Read-only scan role | IAM role `LifecycleTrackerScanRole` trusting the hub pipeline role; no bootstrap needed | None |
 | **AWSServicesLifecycleTrackerOrg-{region}** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying CloudFormation StackSet whose template is the Spoke stack | Organizations trusted access |
 
-The Terraform path (`terraform/`) deploys the first five rows as one root module, one `.tf` file per stack (`data.tf`, `auth.tf`, `pipeline.tf`, `api.tf`, `frontend.tf`), with the same resource names. The service config populator is one Python file shared by both paths (`scripts/service_config_populator.py`: CDK inlines it into a custom resource, Terraform runs it through `aws_lambda_invocation`). Spoke and Org stacks are not ported: they are a CloudFormation StackSet by design.
+The Terraform path (`terraform/`) deploys the first five rows as one root module, one `.tf` file per stack (`data.tf`, `auth.tf`, `pipeline.tf`, `api.tf`, `frontend.tf`), with the same resource names. It also creates one zero-cost CloudFormation stack, `AWSServicesLifecycleTrackerTracking-{region}` (a single `WaitConditionHandle`), whose only purpose is to carry the solution adoption tracking code that the CDK Pipeline stack carries in its description; set `enable_deployment_metrics = false` in `terraform/terraform.tfvars` to opt out. The service config populator is one Python file shared by both paths (`scripts/service_config_populator.py`: CDK inlines it into a custom resource, Terraform runs it through `aws_lambda_invocation`). Spoke and Org stacks are not ported: they are a CloudFormation StackSet by design.
 
 ## Project Structure
 
@@ -243,6 +243,7 @@ project-root/
 │   ├── pipeline.tf                 # Durable pipeline + API Lambda + schedules
 │   ├── api.tf                      # HTTP API + JWT authorizer
 │   ├── frontend.tf                 # CloudFront + S3
+│   ├── tracking.tf                 # Zero-cost CloudFormation marker stack (adoption metrics, opt-out)
 │   ├── variables.tf / outputs.tf
 │   └── terraform.tfvars.example
 │

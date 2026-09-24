@@ -27,6 +27,12 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "enable_deployment_metrics" {
+  description = "Create a zero-cost CloudFormation marker stack so this deployment is counted in AWS solution adoption metrics (see tracking.tf). Set to false to opt out."
+  type        = bool
+  default     = true
+}
+
 variable "pipeline_role_name" {
   description = "Name of the hub pipeline IAM role. Fixed by design (spoke trust policies pin it); IAM is global, so change it only if the name is already taken in this account, e.g. by a CDK deployment of this demo in another region."
   type        = string

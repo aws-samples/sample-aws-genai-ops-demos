@@ -22,6 +22,10 @@ region = "us-east-1"
 # CloudWatch log retention in days for both Lambda functions (default: 30).
 # log_retention_days = 30
 
+# Solution adoption metrics: a zero-cost CloudFormation marker stack carrying
+# the repository tracking code (default: true). Set to false to opt out.
+# enable_deployment_metrics = true
+
 # Hub pipeline role name. IAM is global: override only if the default name is
 # already taken in this account (e.g. a CDK deployment in another region).
 # pipeline_role_name = "aws-services-lifecycle-pipeline-role"
