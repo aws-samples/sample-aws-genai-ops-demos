@@ -241,23 +241,47 @@ def _get_permissions_summary(role_name: str) -> dict:
 
 
 def _get_usage_summary(role_name: str, lookback_days: int) -> dict:
-    """Check CloudTrail for recent usage."""
+    """Check CloudTrail for recent usage.
+
+    Same fix as generate_policy.py's _analyze_cloudtrail_usage: CloudTrail's
+    LookupEvents "Username" attribute does NOT resolve to a role name for
+    assumed-role activity -- it resolves to the SESSION name (RoleSessionName,
+    or a service-generated name for AWS-service callers like Lambda).
+    Filtering LookupAttributes on Username=role_name silently matched zero
+    events for every role ever exercised via AssumeRole or a Lambda/ECS
+    execution role -- i.e. almost all real-world usage -- which is why this
+    tool's event_count could read 0 while IAM's own RoleLastUsed (a separate,
+    always-accurate tracker updated whenever the role is assumed) correctly
+    showed recent activity. Query unfiltered and match client-side against
+    userIdentity.arn instead. See generate_policy.py for the full rationale
+    and the LookupAttributes valid-key list this was checked against.
+    """
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
     event_count = 0
     services_used = set()
 
+    def _actor_matches_role(actor_arn: str) -> bool:
+        if f"role/{role_name}/" in actor_arn:
+            return True
+        return actor_arn.endswith(f"role/{role_name}")
+
     try:
         paginator = cloudtrail_client.get_paginator("lookup_events")
         for page in paginator.paginate(
-            LookupAttributes=[
-                {"AttributeKey": "Username", "AttributeValue": role_name},
-            ],
             StartTime=start_time,
             EndTime=end_time,
             PaginationConfig={"MaxItems": 200, "PageSize": 50},
         ):
             for event in page.get("Events", []):
+                try:
+                    raw_event = json.loads(event.get("CloudTrailEvent", "{}"))
+                except (TypeError, ValueError):
+                    raw_event = {}
+                actor_arn = raw_event.get("userIdentity", {}).get("arn", "")
+                if not _actor_matches_role(actor_arn):
+                    continue
+
                 event_count += 1
                 source = event.get("EventSource", "").replace(".amazonaws.com", "")
                 services_used.add(source)
