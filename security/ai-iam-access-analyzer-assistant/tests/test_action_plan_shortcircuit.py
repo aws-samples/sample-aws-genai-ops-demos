@@ -163,6 +163,37 @@ class HandlerActionPlanShortCircuitTest(unittest.TestCase):
         invoke.assert_called_once()
         self.assertEqual(response["statusCode"], 200)
 
+    def test_ready_after_delivered_plan_does_not_re_run_it(self):
+        """Pins the Step 8 self-close gap Quick's clean-paced tour walk
+        surfaced: after the action plan is delivered (the prior assistant
+        turn carries _ACTION_PLAN_FOOTER_MARKER, "Say `export that`..."),
+        a trailing "ready for the next step" must NOT re-run
+        generate_action_plan — the tour is over, this is a stray
+        continuation attempt, not a new request for the same step. Falls
+        through to Bedrock, which the new TOUR COMPLETION prompt rule
+        instructs to close out gracefully instead of re-running the tool."""
+        delivered_plan = (
+            "Prioritized action plan — showing top 10 of 27 findings.\n\n"
+            "| # | Action | Role | Priority score |\n|---|---|---|---|\n"
+            "| 1 | Delete unused role | demo-orphan-role | 90 |\n\n"
+            "---\n"
+            "Say `export that` to save this plan to S3, or ask for details on a specific role."
+        )
+        history = [{"role": "assistant", "content": delivered_plan}]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "That completes the tour!"}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready for the next step", history), None)
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
     def test_bare_ready_after_unrelated_announcement_does_not_short_circuit(self):
         history = [
             {"role": "assistant", "content": "Want me to check the blast radius next? Ready when you are."},

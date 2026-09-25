@@ -200,7 +200,8 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles that came up earlier in the tour, or the top unused/highest-risk roles if none did)
    - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan)
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
-   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   TOUR COMPLETION (REQUIRED): Step 8's response MUST end with an explicit closing line that the tour is complete — something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -1276,13 +1277,23 @@ def _shortcircuit_action_plan_and_export(user_message: str):
 
 def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
     """Same pattern as _prior_turn_announced_access_key_audit: true when the
-    most recent assistant turn was clearly setting up the action-plan step.
-    The GUIDED TOUR's Step 8 says "pull everything we've found into a
+    most recent assistant turn was clearly setting up the action-plan step
+    (about to run it), NOT when the plan has already been delivered. The
+    GUIDED TOUR's Step 8 says "pull everything we've found into a
     prioritized backlog" -- "backlog" alone doesn't match
     _ACTION_PLAN_INTENT (which wants "action plan" or "remediation
     backlog"), so a bare "ready" after that announcement would otherwise
     fall through to a full Bedrock round trip on the tour's own closing
-    step, same failure mode already fixed for Step 6's access-key audit."""
+    step, same failure mode already fixed for Step 6's access-key audit.
+
+    Explicitly returns False when the prior turn already carries
+    _ACTION_PLAN_FOOTER_MARKER -- that string only appears on an
+    ALREADY-DELIVERED plan (see _render_action_plan), never on the
+    announcement that precedes it. Without this guard, a trailing "ready"
+    sent after Step 8 already completed would match on the delivered
+    plan's own "Prioritized action plan" text and silently re-run the tool
+    -- the tour has no other mechanism to stop advancing once Step 8 is
+    done, so this guard IS the tour's stopping condition for this path."""
     if not isinstance(conversation_history, list):
         return False
     for entry in reversed(conversation_history):
@@ -1292,6 +1303,8 @@ def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
             continue
         content = entry.get("content") or ""
         if not isinstance(content, str):
+            return False
+        if _ACTION_PLAN_FOOTER_MARKER in content:
             return False
         lower = content.lower()
         return bool(_ACTION_PLAN_INTENT.search(content)) or (
