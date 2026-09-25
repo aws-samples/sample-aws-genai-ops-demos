@@ -587,6 +587,20 @@ TOOL_CONFIG = {
                 },
             }
         },
+        # Bedrock prompt caching (#PERF-1): this entire tool list is
+        # identical on every single conversation turn -- it never varies by
+        # user, mode, or tour step. Marking a cache checkpoint here lets
+        # Bedrock skip re-processing these ~10 tool schemas on every
+        # request within the 5-minute TTL, cutting both latency and cost.
+        # Cache checkpoints are evaluated in the order tools -> system ->
+        # messages (see the matching cachePoint on SYSTEM_PROMPT below),
+        # and the combined tools+system content comfortably clears every
+        # Claude model's minimum cache-checkpoint size (as low as 512
+        # tokens on newer models, this codebase's tools+system prompt is
+        # roughly 10x that). A checkpoint here is a pure win: it can only
+        # reduce latency/cost, never increase it, and doesn't change
+        # behavior if the cache happens to miss.
+        {"cachePoint": {"type": "default"}},
     ]
 }
 
@@ -1704,9 +1718,20 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
     # end to build the top-level `coverage` array (#171).
     raw_tool_results: list = []
 
+    # Bedrock prompt caching (#PERF-1): the system prompt is identical on
+    # every turn regardless of mode or tour step (~7,500 tokens, comfortably
+    # above every Claude model's cache-checkpoint minimum). A cache
+    # checkpoint here plus the one on TOOL_CONFIG lets Bedrock skip
+    # re-processing both blocks within the 5-minute TTL -- typical guided
+    # tour cadence (a user reading a step and clicking "ready") easily
+    # stays inside that window. This targets the Step 2 timeout Quick's
+    # tour re-test surfaced: less to process before generation starts
+    # reduces latency, not just cost.
+    system_blocks = [{"text": system_prompt}, {"cachePoint": {"type": "default"}}]
+
     response = bedrock_client.converse(
         modelId=model_id,
-        system=[{"text": system_prompt}],
+        system=system_blocks,
         messages=messages,
         toolConfig=TOOL_CONFIG,
         inferenceConfig={"maxTokens": 2048},
@@ -1774,7 +1799,7 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
         # hit (toolConfig must stay present because the history contains tool use).
         response = bedrock_client.converse(
             modelId=model_id,
-            system=[{"text": system_prompt}],
+            system=system_blocks,
             messages=messages,
             toolConfig=TOOL_CONFIG,
             # 2048 (not 1024): a 1024 cap truncated long presigned download-link
