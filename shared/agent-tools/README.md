@@ -46,14 +46,12 @@ Exports: `$global:AGENT_TOOLS_SKILL_ZIP` / `AGENT_TOOLS_SKILL_ZIP`, `AGENT_TOOLS
 
 ```powershell
 & "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
-    -Parameters @{ AllowedAccounts = "111111111111" } `
-    -Manifest "..\..\shared\agent-tools\manifests\aws-vpc-dns-diagnostics-mcp.yaml"
+    -Parameters @{ AllowedAccounts = "111111111111" }
 ```
 
 ```bash
 ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
-    --param AllowedAccounts=111111111111 \
-    --manifest ../../shared/agent-tools/manifests/aws-vpc-dns-diagnostics-mcp.yaml
+    --param AllowedAccounts=111111111111
 ```
 
 What it does:
@@ -113,17 +111,20 @@ teardown:
 Rules: boundary facts only, never secrets (auth fields name *where* credentials come from),
 argv lists not shell strings, unknown fields ignored, breaking changes bump `schemaVersion`.
 
-### Local manifests (`manifests/`)
+### Where the manifest lives
 
-The manifest belongs at the root of each server's directory in the Agent Tools repository.
-Until a server ships one, this directory holds a **local override** describing that server
-exactly as it is today, passed with `-Manifest` / `--manifest`. An upstream manifest, when
-present, is used automatically; a local one is only a bridge and should be deleted once the
-server carries its own.
+**In the Agent Tools repository**, at the root of the server's own directory
+(`mcp/<server>/mcp-server.yaml`), maintained there and kept honest by that repository's CI.
+The description travels with the thing it describes. The runner finds it automatically after
+the fetch — no flag, no copy on our side, nothing that can drift.
 
-| Manifest | Server | Notes |
-|---|---|---|
-| `aws-vpc-dns-diagnostics-mcp.yaml` | VPC DNS diagnostics (SAM, SigV4 on a Function URL) | Pilot. Needs `AllowedAccounts`; per-target-account `scoped-roles.yaml` deployed separately |
+This repository does **not** keep copies of upstream manifests. A manifest describing someone
+else's server, held here, silently lies the moment they change a deploy command or rename an
+output — the exact drift the reference model exists to prevent.
+
+`-Manifest` / `--manifest` is an escape hatch for one case: a demo needs a server whose
+manifest is not upstream yet. Then the file belongs **in that demo's own folder**, marked
+temporary, and is deleted once the server ships its own. Never in `shared/`.
 
 ## For demo authors
 

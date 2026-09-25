@@ -19,8 +19,7 @@ shared/
 │   ├── deploy-mcp.ps1                  # Agent Tools MCP server runner (PowerShell)
 │   └── deploy-mcp.sh                   # Agent Tools MCP server runner (Bash)
 ├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
-│   ├── README.md                       # How demos reference skills and MCP servers; manifest schema
-│   └── manifests/                      # Local mcp-server.yaml overrides, until servers ship their own
+│   └── README.md                       # How demos reference skills and MCP servers; manifest schema
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
@@ -317,16 +316,14 @@ repository; the demo fetches it at deploy time and never copies it — one artef
 ```powershell
 & "..\..\shared\scripts\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
 & "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
-    -Parameters @{ AllowedAccounts = "111111111111" } `
-    -Manifest "..\..\shared\agent-tools\manifests\aws-vpc-dns-diagnostics-mcp.yaml"
+    -Parameters @{ AllowedAccounts = "111111111111" }
 ```
 
 **Bash**:
 ```bash
 ../../shared/scripts/deploy-skill.sh --skill eks-upgrade-readiness --ref main
 ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
-    --param AllowedAccounts=111111111111 \
-    --manifest ../../shared/agent-tools/manifests/aws-vpc-dns-diagnostics-mcp.yaml
+    --param AllowedAccounts=111111111111
 ```
 
 `deploy-skill` fetches one skill at a ref and builds the upload zip per the Agent Tools

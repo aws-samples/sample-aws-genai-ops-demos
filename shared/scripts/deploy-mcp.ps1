@@ -10,13 +10,13 @@
 # and reports how to register it with AWS DevOps Agent. Nothing is copied into this
 # repository, and this script never reads the server's internals.
 #
-# Manifest resolution: `mcp/<name>/mcp-server.yaml` in the fetched source. Until a
-# server ships one upstream, pass -Manifest <local file> (see shared/agent-tools/manifests/).
+# Manifest resolution: `mcp/<name>/mcp-server.yaml` in the fetched source — that is the
+# only sanctioned home. If a server has no manifest upstream yet, a demo may pass
+# -Manifest <path> to a temporary one kept in its OWN folder (never in shared/).
 #
 # Usage (from a demo directory):
 #   & "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
-#         -Parameters @{ AllowedAccounts = "111111111111" } `
-#         -Manifest "..\..\shared\agent-tools\manifests\aws-vpc-dns-diagnostics-mcp.yaml"
+#         -Parameters @{ AllowedAccounts = "111111111111" }
 #   & "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Destroy -Manifest ...
 #
 # Exports for the calling script:
@@ -262,8 +262,9 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
 }
 if (-not (Test-Path $manifestPath)) {
     Write-Host "      ERROR: No mcp-server.yaml for '$Server' at ref '$Ref'." -ForegroundColor Red
-    Write-Host "      This server does not ship a manifest yet. Pass -Manifest <path> to a local one" -ForegroundColor Yellow
-    Write-Host "      (see shared/agent-tools/manifests/ and shared/agent-tools/README.md)." -ForegroundColor Yellow
+    Write-Host "      This server does not ship a manifest yet. Either get one added upstream," -ForegroundColor Yellow
+    Write-Host "      or pass -Manifest <path> to a temporary one in your demo's own folder." -ForegroundColor Yellow
+    Write-Host "      See shared/agent-tools/README.md for the schema." -ForegroundColor Yellow
     Remove-Item -Recurse -Force $tempRoot -ErrorAction SilentlyContinue
     exit 1
 }

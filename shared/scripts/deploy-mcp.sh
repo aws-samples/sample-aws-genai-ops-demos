@@ -15,8 +15,7 @@
 #
 # Usage (from a demo directory):
 #   ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
-#       --param AllowedAccounts=111111111111 \
-#       --manifest ../../shared/agent-tools/manifests/aws-vpc-dns-diagnostics-mcp.yaml
+#       --param AllowedAccounts=111111111111
 #   ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --destroy --manifest ...
 #
 # Exports (when sourced): AGENT_TOOLS_MCP_ENDPOINT, AGENT_TOOLS_MCP_AUTH_METHOD,
@@ -216,8 +215,9 @@ MANIFEST_PATH="$SOURCE_DIR/mcp-server.yaml"; MANIFEST_ORIGIN="upstream"
 if [ -n "$MANIFEST" ]; then MANIFEST_PATH=$(cd "$(dirname "$MANIFEST")" && pwd)/$(basename "$MANIFEST"); MANIFEST_ORIGIN="local override"; fi
 if [ ! -f "$MANIFEST_PATH" ]; then
     echo -e "${RED}      ERROR: No mcp-server.yaml for '$SERVER' at ref '$REF'.${NC}"
-    echo -e "${YELLOW}      This server does not ship a manifest yet. Pass --manifest <path> to a local one${NC}"
-    echo -e "${YELLOW}      (see shared/agent-tools/manifests/ and shared/agent-tools/README.md).${NC}"
+    echo -e "${YELLOW}      This server does not ship a manifest yet. Either get one added upstream,${NC}"
+    echo -e "${YELLOW}      or pass --manifest <path> to a temporary one in your demo's own folder.${NC}"
+    echo -e "${YELLOW}      See shared/agent-tools/README.md for the schema.${NC}"
     rm -rf "$TEMP_ROOT"; exit 1
 fi
 load_manifest "$MANIFEST_PATH"
