@@ -104,6 +104,114 @@ class HandlerActionPlanShortCircuitTest(unittest.TestCase):
         self.assertIn("test-role-a", body["response"])
         self.assertIn("test-role-b", body["response"])
 
+    def _tour_event(self, message, history):
+        return {
+            "httpMethod": "POST",
+            "body": json.dumps({"message": message, "history": history, "mode": "guided"}),
+        }
+
+    def test_bare_ready_after_tour_step8_announcement_still_short_circuits(self):
+        """The GUIDED TOUR's Step 8 says 'pull everything we've found into
+        a prioritized backlog' — 'backlog' alone doesn't match
+        _ACTION_PLAN_INTENT (wants 'action plan' or 'remediation backlog'),
+        so a bare 'ready' after that announcement must still short-circuit
+        via the fallback check, not fall through to a full Bedrock round
+        trip on the tour's own closing step."""
+        history = [
+            {"role": "user", "content": "ready"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Reviewed 7 access keys, 2 Critical. Now let's pull everything "
+                    "we've found into a prioritized backlog — what to fix first, "
+                    "what's a quick win. Ready?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_action_plan()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._tour_event("ready", history), None)
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        tool_name, _ = invoke.call_args.args
+        self.assertEqual(tool_name, "generate_action_plan")
+        self.assertEqual(response["statusCode"], 200)
+
+    def test_exact_ready_for_the_next_step_short_circuits(self):
+        """Same confirmed root cause as Step 6's pinned test in
+        test_triage_shortcircuit.py: a live tour re-test's fixed advance
+        string was the literal "ready for the next step", which the
+        original _BARE_AFFIRMATIVE pattern did not match at all."""
+        history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Reviewed 7 access keys, 2 Critical. Now let's pull everything "
+                    "we've found into a prioritized backlog — what to fix first, "
+                    "what's a quick win. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_action_plan()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._tour_event("ready for the next step", history), None
+            )
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        self.assertEqual(response["statusCode"], 200)
+
+    def test_ready_after_delivered_plan_does_not_re_run_it(self):
+        """Pins the Step 8 self-close gap Quick's clean-paced tour walk
+        surfaced: after the action plan is delivered (the prior assistant
+        turn carries _ACTION_PLAN_FOOTER_MARKER, "Say `export that`..."),
+        a trailing "ready for the next step" must NOT re-run
+        generate_action_plan — the tour is over, this is a stray
+        continuation attempt, not a new request for the same step. Falls
+        through to Bedrock, which the new TOUR COMPLETION prompt rule
+        instructs to close out gracefully instead of re-running the tool."""
+        delivered_plan = (
+            "Prioritized action plan — showing top 10 of 27 findings.\n\n"
+            "| # | Action | Role | Priority score |\n|---|---|---|---|\n"
+            "| 1 | Delete unused role | demo-orphan-role | 90 |\n\n"
+            "---\n"
+            "Say `export that` to save this plan to S3, or ask for details on a specific role."
+        )
+        history = [{"role": "assistant", "content": delivered_plan}]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "That completes the tour!"}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready for the next step", history), None)
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
+    def test_bare_ready_after_unrelated_announcement_does_not_short_circuit(self):
+        history = [
+            {"role": "assistant", "content": "Want me to check the blast radius next? Ready when you are."},
+        ]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Checking..."}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready", history), None)
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
     def test_falls_through_to_bedrock_on_unrelated_prompt(self):
         fake_bedrock = {
             "output": {"message": {"content": [{"text": "ok"}]}},
