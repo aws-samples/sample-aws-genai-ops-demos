@@ -553,6 +553,47 @@ class RemediationMappingTest(unittest.TestCase):
             triage._suggested_remediation("alice", is_root=True),
         )
 
+    # ----- Prefix / suffix tolerance -----
+    # Real customer naming often adds environment or ownership prefixes
+    # (e.g. `prod-`, `team-alpha-`, `test-`). The classifier must match
+    # the identity signal wherever it appears, not just at start of name.
+
+    def test_prefixed_dotted_name_still_maps_to_sso_federation(self):
+        for name in (
+            "triage-test-alice.admin",   # fixture prefix
+            "prod-bob.developer",        # env prefix
+            "team-alpha-jane.doe",       # ownership prefix
+        ):
+            self.assertEqual(
+                "SSO_Federation",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to SSO_Federation",
+            )
+
+    def test_prefixed_service_name_still_maps_to_iam_role(self):
+        for name in (
+            "triage-test-svc-loader",
+            "prod-svc-data-loader",
+            "team-alpha-service-runner",
+        ):
+            self.assertEqual(
+                "IAM_Role",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to IAM_Role",
+            )
+
+    def test_prefixed_cicd_name_still_maps_to_oidc(self):
+        for name in (
+            "triage-test-bedrock-ci-worker",
+            "prod-github-actions-deployer",
+            "team-jenkins-runner",
+        ):
+            self.assertEqual(
+                "OIDC_Federation",
+                triage._suggested_remediation(name),
+                msg=f"{name!r} should map to OIDC_Federation",
+            )
+
 
 # --- Remediation doc URLs ---------------------------------------------------
 
@@ -583,6 +624,116 @@ class RemediationUrlTest(unittest.TestCase):
         # fabricate a URL for a label the tool doesn't recognize.
         self.assertEqual("", triage._remediation_url("Nope_Not_A_Label"))
         self.assertEqual("", triage._remediation_url(""))
+
+
+# --- Migration step lists ---------------------------------------------------
+
+
+class RemediationStepsTest(unittest.TestCase):
+    """Pins the _REMEDIATION_STEPS mapping — every canonical remediation
+    label has a non-empty ordered walk-through, and unknown labels yield
+    an empty list rather than a fabricated one."""
+
+    def test_every_canonical_label_has_steps(self):
+        for label in (
+            "SSO_Federation",
+            "IAM_Role",
+            "OIDC_Federation",
+            "IAM_Roles_Anywhere",
+            "Cross_Account_Role_With_External_Id",
+            "Remove_Root_Access_Keys",
+        ):
+            steps = triage._remediation_steps(label)
+            self.assertIsInstance(steps, list, msg=f"{label} must return a list")
+            self.assertGreaterEqual(
+                len(steps), 5,
+                msg=f"{label} has too few steps ({len(steps)}) — expected 5+",
+            )
+            # Every step is a non-empty string.
+            for i, step in enumerate(steps):
+                self.assertIsInstance(step, str, msg=f"{label} step {i} not a string")
+                self.assertGreater(len(step), 0, msg=f"{label} step {i} is empty")
+
+    def test_every_label_ends_with_deactivate_monitor_delete_pattern(self):
+        # Every migration must end in the safety-first three-step pattern,
+        # except Remove_Root_Access_Keys which handles it slightly
+        # differently (keys are deactivated first, then monitored, then
+        # deleted, but the pattern is present).
+        for label in (
+            "SSO_Federation",
+            "IAM_Role",
+            "OIDC_Federation",
+            "IAM_Roles_Anywhere",
+            "Cross_Account_Role_With_External_Id",
+        ):
+            steps = triage._remediation_steps(label)
+            joined = " ".join(steps).lower()
+            self.assertIn("deactivate", joined, msg=f"{label} missing 'deactivate'")
+            self.assertIn("monitor", joined, msg=f"{label} missing 'monitor'")
+            self.assertIn("delete", joined, msg=f"{label} missing 'delete'")
+
+    def test_unknown_label_returns_empty_list(self):
+        # Frontend omits the Migration steps section on empty. Never
+        # fabricate a step list for an unrecognized label.
+        self.assertEqual([], triage._remediation_steps("Nope_Not_A_Label"))
+        self.assertEqual([], triage._remediation_steps(""))
+
+    def test_returned_list_is_defensive_copy(self):
+        # A caller mutating the returned list must not corrupt the
+        # module-level source of truth.
+        got = triage._remediation_steps("SSO_Federation")
+        got.append("mutation")
+        again = triage._remediation_steps("SSO_Federation")
+        self.assertNotIn("mutation", again)
+
+
+class AccountIdResolutionTest(unittest.TestCase):
+    """Pins _account_id resolution: env var wins over STS; STS is only
+    called as a fallback; result is cached across calls; STS failure
+    yields an empty string without raising."""
+
+    def setUp(self):
+        # Reset cache and env for each test.
+        triage._CACHED_ACCOUNT_ID = ""
+        self._saved_env = os.environ.pop("AWS_ACCOUNT_ID", None)
+
+    def tearDown(self):
+        triage._CACHED_ACCOUNT_ID = ""
+        if self._saved_env is not None:
+            os.environ["AWS_ACCOUNT_ID"] = self._saved_env
+        else:
+            os.environ.pop("AWS_ACCOUNT_ID", None)
+
+    def test_env_var_wins_when_set(self):
+        os.environ["AWS_ACCOUNT_ID"] = "111122223333"
+        self.assertEqual("111122223333", triage._account_id())
+
+    def test_falls_back_to_sts_when_no_env(self):
+        from unittest.mock import patch, MagicMock
+        fake_sts = MagicMock()
+        fake_sts.get_caller_identity.return_value = {"Account": "555566667777"}
+        with patch.object(triage.boto3, "client", return_value=fake_sts):
+            self.assertEqual("555566667777", triage._account_id())
+            fake_sts.get_caller_identity.assert_called_once()
+
+    def test_result_is_cached(self):
+        from unittest.mock import patch, MagicMock
+        fake_sts = MagicMock()
+        fake_sts.get_caller_identity.return_value = {"Account": "555566667777"}
+        with patch.object(triage.boto3, "client", return_value=fake_sts):
+            triage._account_id()
+            triage._account_id()
+            triage._account_id()
+            # Only called once — subsequent invocations hit the cache.
+            fake_sts.get_caller_identity.assert_called_once()
+
+    def test_sts_failure_returns_empty_string(self):
+        from unittest.mock import patch
+        with patch.object(
+            triage.boto3, "client", side_effect=Exception("network down")
+        ):
+            # Must not raise; must return empty string.
+            self.assertEqual("", triage._account_id())
 
 
 if __name__ == "__main__":

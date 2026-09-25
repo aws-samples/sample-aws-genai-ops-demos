@@ -196,6 +196,11 @@ export interface AccessKeyRow {
   // (unknown remediation), in which case the frontend renders plain text
   // instead of a link. Never construct URLs client-side.
   suggested_remediation_url?: string;
+  // Ordered migration-step list for the remediation, emitted by the Python
+  // tool via `_REMEDIATION_STEPS`. Empty array when the tool can't map the
+  // label — the frontend then omits the "Migration steps" section from the
+  // expanded row detail. Never generate steps client-side.
+  suggested_remediation_steps?: string[];
 }
 
 export interface AccessKeysReport {

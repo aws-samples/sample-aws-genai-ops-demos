@@ -321,7 +321,12 @@ function KeyIdCell({ keyId }: { keyId: string }) {
       <Button
         iconName="copy"
         variant="inline-icon"
-        ariaLabel={`Copy ${keyId}`}
+        // aria-label mirrors the visible truncation (`AKIA…XXXX`) rather
+        // than the full key ID. On fixture data this is cosmetic, but on
+        // real data the full AKIA in the accessibility tree is a needless
+        // exposure — screen readers can announce the truncated form; a
+        // user who needs the whole string clicks the button.
+        ariaLabel={`Copy ${short}`}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(keyId);
@@ -401,6 +406,32 @@ function ExpandedRowDetail({ row }: { row: AccessKeyRow }) {
           <Box variant="awsui-key-label">Source policies</Box>
           <Box variant="small">{row.policies}</Box>
         </div>
+        {row.suggested_remediation_steps && row.suggested_remediation_steps.length > 0 && (
+          <div>
+            <Box variant="awsui-key-label">Migration steps</Box>
+            <Box variant="small" color="text-body-secondary">
+              Deactivate → monitor a full business cycle → delete. Never a bare delete on an in-use key.
+            </Box>
+            <ol style={{ marginTop: "8px", paddingLeft: "20px" }}>
+              {row.suggested_remediation_steps.map((step, i) => (
+                <li key={i} style={{ marginBottom: "6px", lineHeight: 1.4 }}>
+                  <Box variant="small">{step}</Box>
+                </li>
+              ))}
+            </ol>
+            {row.suggested_remediation_url && (
+              <Box variant="small" margin={{ top: "xs" }}>
+                <Link
+                  href={row.suggested_remediation_url}
+                  external
+                  externalIconAriaLabel="Opens AWS documentation in a new tab"
+                >
+                  Open AWS documentation
+                </Link>
+              </Box>
+            )}
+          </div>
+        )}
       </SpaceBetween>
     </div>
   );

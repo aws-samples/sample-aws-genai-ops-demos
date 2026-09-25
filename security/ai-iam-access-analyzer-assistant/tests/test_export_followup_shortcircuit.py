@@ -46,6 +46,20 @@ class ExportFollowupIntentTest(unittest.TestCase):
             "save that please",
             "export.",
             "SAVE THAT",
+            # Widened phrasings surfaced by the demo test pass — the
+            # triage tool naturally invites "export the access key audit"
+            # rather than the narrower "export that".
+            "export the access key audit",
+            "export the access-key audit",
+            "save the access key audit",
+            "export the audit",
+            "save the audit results",
+            "export the audit results",
+            "export the findings",
+            "save the results",
+            "export the triage results",
+            "download the audit",
+            "export the action plan",
         ):
             self.assertIsNotNone(
                 agent._EXPORT_FOLLOWUP_INTENT.match(msg),
@@ -61,6 +75,8 @@ class ExportFollowupIntentTest(unittest.TestCase):
             "compare roles a and b",
             "what does the export tool do",
             "why did that export fail",
+            "export the findings for role x",  # trailing phrase — falls through
+            "save the audit to my desktop",  # trailing phrase — falls through
             "hello",
             "",
         ):
@@ -68,6 +84,45 @@ class ExportFollowupIntentTest(unittest.TestCase):
                 agent._EXPORT_FOLLOWUP_INTENT.match(msg),
                 msg=f"expected NO match: {msg!r}",
             )
+
+
+class RemediationMarkdownLabelTest(unittest.TestCase):
+    """The label is embedded in the assistant's response prose and travels
+    through react-markdown + remark-gfm in the frontend. Backticks inside
+    a Markdown link's text — a code span nested inside link brackets —
+    confused the pipeline; the opening left-bracket was sometimes elided
+    and the label rendered with a dangling closing bracket. The current
+    form drops the internal backticks when a URL is present; the label
+    text itself stays verbatim per the ACCESS KEY TRIAGE prompt rule.
+    """
+
+    def test_with_url_produces_plain_link(self):
+        row = {
+            "suggested_remediation": "SSO_Federation",
+            "suggested_remediation_url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html",
+        }
+        got = agent._remediation_markdown_label(row)
+        # Correct opening-bracket + label + closing-bracket + url pattern.
+        self.assertTrue(
+            got.startswith("[SSO_Federation]("),
+            msg=f"expected clean [label](url); got {got!r}",
+        )
+        self.assertTrue(got.endswith(")"))
+        # No backticks anywhere inside a linked label — the fenced/code
+        # form was what tripped the renderer.
+        self.assertNotIn("`", got)
+
+    def test_without_url_falls_back_to_code_span(self):
+        row = {
+            "suggested_remediation": "IAM_Role",
+            "suggested_remediation_url": "",
+        }
+        self.assertEqual(agent._remediation_markdown_label(row), "`IAM_Role`")
+
+    def test_missing_label_renders_question_mark(self):
+        # Defensive: an unknown remediation with no url yields `?` inside
+        # a code span, never an empty string.
+        self.assertEqual(agent._remediation_markdown_label({}), "`?`")
 
 
 # --- Content-type inference ---------------------------------------------

@@ -18,7 +18,18 @@ import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 
-const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT as string | undefined;
+// Normalize the endpoint to always end with a single trailing slash — the
+// isDownloadUrl() prefix check assumes a slash-terminated base, and the
+// value baked into `.env.production.local` sometimes has one and
+// sometimes doesn't. See the matching normalization in `services/api.ts`.
+const RAW_API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT as
+  | string
+  | undefined;
+const API_ENDPOINT: string | undefined = RAW_API_ENDPOINT
+  ? RAW_API_ENDPOINT.endsWith("/")
+    ? RAW_API_ENDPOINT
+    : `${RAW_API_ENDPOINT}/`
+  : undefined;
 
 /**
  * True iff the given href points at our Cognito-authed /downloads/ route.

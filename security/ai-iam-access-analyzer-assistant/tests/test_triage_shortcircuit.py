@@ -340,8 +340,15 @@ class RenderingTest(unittest.TestCase):
 class RemediationLinkTest(unittest.TestCase):
     """Pins the prose renderer's link contract: when a row supplies a
     suggested_remediation_url, the top-priority line renders the label as
-    a markdown link ``[`Label`](url)``; when the URL is missing, it falls
-    back to plain backticks. Same contract for the root-row branch.
+    a plain Markdown link ``[Label](url)``; when the URL is missing, it
+    falls back to a code-span form (backticks around the label). Same
+    contract for the root-row branch.
+
+    The form was previously ``[`Label`](url)`` (backticks nested inside
+    link brackets). That confused react-markdown + remark-gfm in the
+    assistant frontend — the opening left-bracket was sometimes elided
+    and the label rendered with a dangling closing bracket — so the code
+    span is dropped when we also have a URL to link to.
     """
 
     def test_top_priority_row_renders_remediation_as_markdown_link(self):
@@ -353,9 +360,12 @@ class RemediationLinkTest(unittest.TestCase):
         )
         rendered = agent._render_triage_access_keys(result)
         self.assertIn(
-            "[`SSO_Federation`](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html)",
+            "[SSO_Federation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html)",
             rendered,
         )
+        # No backticks-in-link syntax anywhere — that's the regression
+        # this contract prevents.
+        self.assertNotIn("[`SSO_Federation`]", rendered)
 
     def test_top_priority_falls_back_to_plain_backticks_when_url_empty(self):
         result = _sample_triage_result()
@@ -392,9 +402,10 @@ class RemediationLinkTest(unittest.TestCase):
         result["summary"]["total_keys"] = 3
         rendered = agent._render_triage_access_keys(result)
         self.assertIn(
-            "[`Remove_Root_Access_Keys`](https://docs.aws.amazon.com/accounts/latest/reference/root-user-access-key.html)",
+            "[Remove_Root_Access_Keys](https://docs.aws.amazon.com/accounts/latest/reference/root-user-access-key.html)",
             rendered,
         )
+        self.assertNotIn("[`Remove_Root_Access_Keys`]", rendered)
 
 
 # --- Educational intent short-circuit -----------------------------------------

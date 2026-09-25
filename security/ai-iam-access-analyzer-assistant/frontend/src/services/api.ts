@@ -1,7 +1,20 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import { Capabilities } from "../types";
 
-const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT;
+// Normalize the endpoint to always end with a single trailing slash. The
+// backend CDK sets `VITE_API_ENDPOINT` from the API Gateway stage invoke
+// URL, which sometimes lands with a trailing slash and sometimes without
+// depending on how it was written to `.env.production.local`. Callers do
+// `${API_ENDPOINT}conversation` (no leading slash on the path piece), so
+// an unnormalized value like `.../prod` produced `.../prodconversation`
+// and blew up in <200ms with a browser `Failed to fetch`. Enforcing the
+// slash here removes an entire class of misconfiguration.
+const RAW_API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT;
+const API_ENDPOINT = RAW_API_ENDPOINT
+  ? RAW_API_ENDPOINT.endsWith("/")
+    ? RAW_API_ENDPOINT
+    : `${RAW_API_ENDPOINT}/`
+  : "";
 
 /**
  * Thrown when the synchronous /conversation call hits (or almost certainly
@@ -52,6 +65,12 @@ export async function sendMessage(
     throw new Error("Not authenticated");
   }
 
+  // Track wall-clock time so we can tell an actual API GW 29s timeout
+  // (browser sees a CORS-less 504 that looks like `Failed to fetch`) apart
+  // from a network / DNS / TLS / misconfigured-endpoint failure that
+  // rejects in a few hundred ms. Same-looking exception, opposite
+  // root cause — the operator needs different guidance for each.
+  const startedAt = Date.now();
   let response: Response;
   try {
     response = await fetch(`${API_ENDPOINT}conversation`, {
@@ -68,9 +87,22 @@ export async function sendMessage(
       }),
     });
   } catch {
-    // A raw fetch rejection ("Failed to fetch") on this endpoint is almost
-    // always API Gateway's 29s integration timeout returning a 504 without
-    // CORS headers, which the browser cannot read.
+    const elapsedMs = Date.now() - startedAt;
+    // Under ~20 seconds a `Failed to fetch` is almost never the 29s API GW
+    // timeout — the request never reached a gateway that could take that
+    // long to answer. Surface a network-level error so the operator looks
+    // at endpoint configuration / connectivity, not at synthesis load.
+    if (elapsedMs < 20_000) {
+      const seconds = (elapsedMs / 1000).toFixed(1);
+      throw new Error(
+        `Couldn't reach the API — the request failed in ${seconds}s. ` +
+          "This is a network-level failure, not a synthesis timeout. Check " +
+          "your connection or verify VITE_API_ENDPOINT points at the right " +
+          "API Gateway stage."
+      );
+    }
+    // Over ~20 seconds we're in API-GW-timeout territory: 504 without CORS
+    // headers, which the browser surfaces as an unreadable network error.
     throw new ApiTimeoutError(
       "That request didn't finish in time — it likely ran past the API gateway's 29-second limit."
     );

@@ -274,7 +274,7 @@ EXCEPTION — EDUCATIONAL QUESTIONS: If the user is asking you to EXPLAIN, DESCR
 Present the tool's output faithfully — the tool has already ranked and classified every row:
 - Show rows in the order the tool returned them. Do NOT re-rank Critical/High/Cleanup/Rotation by your own judgment; that ordering is deterministic in the tool and comes from the analysis-criteria reference document.
 - Use the `suggested_remediation` value from the tool VERBATIM (`SSO_Federation`, `IAM_Role`, `OIDC_Federation`, `Cross_Account_Role_With_External_Id`, `IAM_Roles_Anywhere`, `Remove_Root_Access_Keys`). Do not substitute a different remediation — those labels are grounded in a specific identity-pattern mapping the tool computed from the IAM user name.
-- When you mention a remediation label in prose, ALWAYS render it as a markdown link using the row's `suggested_remediation_url` — for example `[\`SSO_Federation\`](<url from row>)`. NEVER invent or paraphrase the URL; use only the exact URL the tool supplied on that row. If a row has an empty `suggested_remediation_url`, render the label as plain backticked text with no link.
+- When you mention a remediation label in prose, ALWAYS render it as a markdown link using the row's `suggested_remediation_url` — for example [SSO_Federation](<url from row>). Do NOT wrap the label in backticks inside the link brackets (a code span nested inside link text); the frontend Markdown pipeline drops the opening bracket in that form. Plain link text renders reliably. NEVER invent or paraphrase the URL; use only the exact URL the tool supplied on that row. If a row has an empty `suggested_remediation_url`, render the label as plain backticked text with no link.
 - Use cautious, advisory language throughout: "consider", "candidate for", "recommend reviewing", "suggest". Never imperatives like "delete this key" or "remove now" — the customer or resource owner decides and executes.
 - For any key that is in-use (or that you cannot confirm is unused), ALWAYS recommend the sequence **deactivate → monitor a full business cycle → delete**. Never suggest a bare delete for an in-use key.
 - Any key on the AWS account root user (`user: "<root>"` in the tool response) is Critical regardless of other flags. Surface it FIRST in your response, and quote the tool's suggested remediation (`Remove_Root_Access_Keys`) directly.
@@ -1313,16 +1313,24 @@ def _shortcircuit_action_plan(user_message: str):
 
 def _remediation_markdown_label(row: dict) -> str:
     """Format a row's suggested_remediation as a markdown fragment. When the
-    tool supplied a suggested_remediation_url, render as
-    ``[`Label`](url)`` so the assistant response links directly into AWS
-    docs. Otherwise fall back to the plain ``\`Label\``` form. The label
-    itself stays quoted verbatim (backticks preserved) per the ACCESS KEY
-    TRIAGE prompt rule — the model must not paraphrase it.
+    tool supplied a suggested_remediation_url, render as [Label](url) so
+    the assistant response links directly into AWS docs. Otherwise fall
+    back to a code-span form (backticks around the label) so the label is
+    set apart visually. The label text itself stays verbatim per the
+    ACCESS KEY TRIAGE prompt rule — the model must not paraphrase it.
+
+    Rendering note: backticks inside Markdown link text (a code span
+    nested inside link brackets) confused the react-markdown + remark-gfm
+    pipeline in the assistant frontend — the opening left-bracket was
+    sometimes elided and the label rendered with a dangling closing
+    bracket. Dropping the internal backticks when a URL is present
+    renders as a clean link and keeps the raw label text intact — the
+    link visual is enough differentiation.
     """
     label = row.get("suggested_remediation") or "?"
     url = row.get("suggested_remediation_url") or ""
     if url:
-        return f"[`{label}`]({url})"
+        return f"[{label}]({url})"
     return f"`{label}`"
 
 
@@ -1500,7 +1508,16 @@ _EXPORT_FOLLOWUP_INTENT = re.compile(
     r"(?:export|save|store|keep|persist|download|upload)"
     r"(?:\s+(?:that|this|it|the|these))?"
     r"(?:\s+(?:policy|plan|report|analysis|comparison|change[-\s]?request"
-    r"|artifact|blast[-\s]?radius|action\s+plan|findings?|result))?"
+    r"|artifact|blast[-\s]?radius|action[-\s]?plan|findings?|results?"
+    # Widened for the access-key triage tool — users naturally say
+    # "export the access key audit" or "save the audit results" rather
+    # than the narrower phrasings the original whitelist supported.
+    # Trailing " to a CSV file"-style tails are still rejected by the
+    # end-anchor.
+    r"|audit(?:\s+results?)?"
+    r"|access[-\s]?keys?(?:\s+audit(?:\s+results?)?)?"
+    r"|key[-\s]?audit(?:\s+results?)?"
+    r"|triage(?:\s+results?)?))?"
     r"(?:\s+(?:to\s+s3|to\s+file|please|for\s+me))?"
     r"\s*[.!?]*\s*$",
     re.IGNORECASE,
