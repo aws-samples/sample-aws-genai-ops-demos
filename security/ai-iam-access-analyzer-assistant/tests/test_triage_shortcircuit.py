@@ -196,6 +196,113 @@ class HandlerShortCircuitTest(unittest.TestCase):
         self.assertIn('"_type": "access_keys_report"', text)
         self.assertIn('"keys":', text)
 
+    def _tour_event(self, message, history):
+        return {
+            "httpMethod": "POST",
+            "body": json.dumps({"message": message, "history": history, "mode": "guided"}),
+        }
+
+    def test_bare_ready_after_tour_step6_announcement_still_short_circuits(self):
+        """The GUIDED TOUR's Step 6 announces the access-key audit itself
+        ("One more surface worth auditing — long-lived IAM access keys...");
+        the user's actual next message is just "ready", which never
+        contains the words "access keys" on its own. This is the exact
+        failure mode from the demo re-test: Step 6 fell through to a full,
+        slow Bedrock synthesis + tool call on every tour run because the
+        short-circuit only ever inspected the current user message."""
+        history = [
+            {"role": "user", "content": "take me on a guided tour"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Now let's validate that policy... looks good, 0 syntax errors. "
+                    "One more surface worth auditing — long-lived IAM access keys. "
+                    "These are the top credential exposure vector in AWS incident "
+                    "reports, so we always cover this before wrapping up. Ready for "
+                    "the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._tour_event("ready", history), None)
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        self.assertEqual(response["statusCode"], 200)
+        body = json.loads(response["body"])
+        self.assertEqual(body["tools_used"][0]["tool"], "triage_access_keys")
+
+    def test_bare_ready_after_an_unrelated_announcement_does_not_short_circuit(self):
+        """A bare "ready" is only a green light for THIS short-circuit when
+        the prior assistant turn was actually setting up the access-key
+        audit. If the prior turn was about something else entirely (e.g.
+        offering to compare roles), "ready" must fall through to Bedrock —
+        it might mean "ready to compare roles", not "ready to audit keys"."""
+        history = [
+            {"role": "user", "content": "compare my top 3 roles"},
+            {
+                "role": "assistant",
+                "content": "Want me to run that comparison now? Ready when you are.",
+            },
+        ]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Sure, comparing now..."}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready", history), None)
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
+    def test_bare_ready_with_no_history_does_not_short_circuit(self):
+        """A cold-start "ready" with no prior assistant turn at all must not
+        short-circuit -- there is nothing to confirm the intent against."""
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Ready for what?"}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready", []), None)
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
+    def test_longer_message_starting_with_yes_is_not_treated_as_bare_affirmative(self):
+        """"yes, but explain X first" has more content than a bare
+        affirmative and must reach the model even with a matching prior
+        turn -- the user has something else to say."""
+        history = [
+            {
+                "role": "assistant",
+                "content": "One more surface worth auditing — long-lived IAM access keys. Ready?",
+            },
+        ]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Sure, here's how it works..."}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(
+                self._tour_event("yes, but explain what it checks first", history), None
+            )
+
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
     def test_intent_that_hits_pagination_first_does_not_reach_triage(self):
         # A pagination follow-up ("next 20") that arrives with a pagination
         # context should short-circuit at the pagination path, not at the

@@ -1274,13 +1274,49 @@ def _shortcircuit_action_plan_and_export(user_message: str):
     }
 
 
-def _shortcircuit_action_plan(user_message: str):
+def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
+    """Same pattern as _prior_turn_announced_access_key_audit: true when the
+    most recent assistant turn was clearly setting up the action-plan step.
+    The GUIDED TOUR's Step 8 says "pull everything we've found into a
+    prioritized backlog" -- "backlog" alone doesn't match
+    _ACTION_PLAN_INTENT (which wants "action plan" or "remediation
+    backlog"), so a bare "ready" after that announcement would otherwise
+    fall through to a full Bedrock round trip on the tour's own closing
+    step, same failure mode already fixed for Step 6's access-key audit."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        lower = content.lower()
+        return bool(_ACTION_PLAN_INTENT.search(content)) or (
+            "prioritized" in lower and ("backlog" in lower or "plan" in lower)
+        )
+    return False
+
+
+def _shortcircuit_action_plan(user_message: str, conversation_history: list = None):
     """If the user is asking for an action plan, invoke the tool directly and
     return an assistant-ready envelope so we skip Bedrock's two round trips.
+
+    Also fires on a bare affirmative reply when the prior assistant turn
+    announced the action-plan step itself (the GUIDED TOUR's Step 8) --
+    same rationale and pattern as _shortcircuit_triage_access_keys.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _ACTION_PLAN_INTENT.search(user_message):
+    if _ACTION_PLAN_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_action_plan(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     tool_input = {"max_items": 50, "include_quick_wins": True}
@@ -1452,17 +1488,79 @@ def _render_triage_access_keys(result: dict) -> str:
     return "\n\n".join(lines)
 
 
-def _shortcircuit_triage_access_keys(user_message: str):
+_BARE_AFFIRMATIVE = re.compile(
+    r"^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
+    r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_bare_affirmative(user_message: str) -> bool:
+    """True for a short "yes/ready/go ahead"-style reply with no other
+    content — the shape of a user clicking through the GUIDED TOUR's
+    "Ready for the next step?" prompts. Deliberately anchored start-to-end
+    so a longer message that happens to START with "yes" (e.g. "yes but
+    first explain X") does NOT match — that user has more to say and
+    should reach the model, not a short-circuit."""
+    if not user_message or not isinstance(user_message, str):
+        return False
+    return bool(_BARE_AFFIRMATIVE.match(user_message))
+
+
+def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
+    """True when the most recent ASSISTANT message set up the access-key
+    audit as the next step — the GUIDED TOUR's Step 6 framing ("One more
+    surface worth auditing — long-lived IAM access keys...") or any prior
+    turn using the same language the tool-selection rule expects. Walk
+    backward past user turns to find the last assistant turn, mirroring
+    _last_assistant_artifact's traversal but only reading the text, not
+    requiring artifact-length content — a tour announcement is short."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
+            "access key" in content.lower() and "audit" in content.lower()
+        )
+    return False
+
+
+def _shortcircuit_triage_access_keys(user_message: str, conversation_history: list = None):
     """If the user is asking for an access-key audit, invoke the tool
     directly and return an assistant-ready envelope with both a prose intro
     and the raw JSON payload in a fenced ```json block. Skips both Bedrock
     round trips so the turn cannot hit the API Gateway 29s ceiling on
     accounts with a fleet of IAM users, and guarantees the frontend receives
     the machine-readable payload for the AccessKeysTable component.
+
+    Also fires on a bare affirmative reply ("ready", "yes", "go ahead", ...)
+    when the immediately prior assistant turn was clearly setting up THIS
+    audit — the GUIDED TOUR's Step 6 announces "One more surface worth
+    auditing — long-lived IAM access keys" and the user's next message is
+    just "ready", which never contains the word "access keys" and so never
+    matched _TRIAGE_ACCESS_KEYS_INTENT on its own. Without this, every
+    tour run pays a full, slow Bedrock synthesis + tool call on Step 6 while
+    an isolated direct prompt ("audit my access keys") hits this fast path
+    every time — exactly why Quick's per-tool direct-prompt tests passed
+    clean while the same step inside the real tour flow consistently timed
+    out. Same "look at the prior assistant turn" pattern as
+    _shortcircuit_export_followup, applied to a different intent.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+    if _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_access_key_audit(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     # Default parameters — include_inactive defaults to True inside the tool;
@@ -1858,7 +1956,7 @@ def handler(event, context):
         # Same idea for "generate an action plan": the tool's structured output
         # is enough, so skip both Bedrock round trips that were the main cause
         # of the ~44s timeouts observed on this prompt.
-        shortcircuit = _shortcircuit_action_plan(user_message)
+        shortcircuit = _shortcircuit_action_plan(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
@@ -1898,7 +1996,7 @@ def handler(event, context):
         # the tool payload as a fenced JSON block so the frontend's
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
-        shortcircuit = _shortcircuit_triage_access_keys(user_message)
+        shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
