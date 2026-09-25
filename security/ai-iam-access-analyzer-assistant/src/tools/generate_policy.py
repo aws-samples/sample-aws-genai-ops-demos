@@ -296,21 +296,72 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
     coverage_state = "checked"
     coverage_error: str | None = None
 
+    # CloudTrail's LookupEvents "Username" attribute filter does NOT match a
+    # role name for assumed-role activity -- it resolves to the SESSION name
+    # (the value passed as RoleSessionName, or a service-generated name for
+    # AWS-service callers like Lambda). Filtering LookupAttributes on
+    # Username=role_name therefore silently matches zero events for EVERY
+    # role, regardless of how much real activity exists under that role --
+    # a systemic false-negative, not a "role is unused" signal.
+    #
+    # LookupAttributes has no RoleName/RoleArn key at all (valid keys: EventId,
+    # EventName, ReadOnly, Username, ResourceType, ResourceName, EventSource,
+    # AccessKeyId -- confirmed against the API reference), and AccessKeyId
+    # doesn't help either since assumed-role sessions get fresh STS
+    # credentials per session, not a stable key. There is no server-side
+    # filter that identifies "activity by this role" for assumed-role
+    # events. Query unfiltered (paginating through the window) and match
+    # client-side against userIdentity.arn, which DOES contain the role name
+    # in both forms CloudTrail uses:
+    #   direct role events:    arn:aws:iam::<acct>:role/<role_name>
+    #   assumed-role sessions: arn:aws:sts::<acct>:assumed-role/<role_name>/<session>
+    # Match on a trailing "/" boundary (or end-of-string for the direct
+    # form) so a role whose name is a prefix of another role's name (e.g.
+    # "my-role" vs "my-role-v2") cannot cross-attribute the other role's
+    # activity.
+    #
+    # PERFORMANCE TRADEOFF: this scans ALL management events in the window
+    # (still capped at PageSize=50 x max_pages=20 = 1000 events total),
+    # not just this role's, because there's no way to filter server-side.
+    # In a low-traffic account this is unnoticeable. In a busy account with
+    # thousands of daily events, the 1000-event cap can be exhausted by
+    # OTHER principals' activity before this role's events are reached,
+    # producing `truncated: true` with an incomplete picture rather than a
+    # true "role has N events". If this proves to matter on a real customer
+    # account, the fix is EventHistory export to a CloudTrail Lake query
+    # (SQL filter on userIdentity.arn) instead of LookupEvents pagination --
+    # out of scope for this fix.
+    def _actor_matches_role(actor_arn: str) -> bool:
+        if f"role/{role_name}/" in actor_arn:
+            return True
+        # Direct-role form has no trailing session segment -- only match
+        # when the role name is the LAST path component (end of string),
+        # not merely a prefix of a longer role name.
+        return actor_arn.endswith(f"role/{role_name}")
+
     try:
         paginator = cloudtrail_client.get_paginator("lookup_events")
         page_count = 0
         max_pages = 20  # Safety limit
 
         for page in paginator.paginate(
-            LookupAttributes=[
-                {"AttributeKey": "Username", "AttributeValue": role_name},
-            ],
             StartTime=start_time,
             EndTime=end_time,
             PaginationConfig={"MaxItems": 1000, "PageSize": 50},
         ):
             page_count += 1
             for trail_event in page.get("Events", []):
+                # The lookup_events summary record doesn't expose
+                # userIdentity directly -- it's embedded in the raw
+                # CloudTrailEvent JSON string.
+                try:
+                    raw_event = json.loads(trail_event.get("CloudTrailEvent", "{}"))
+                except (TypeError, ValueError):
+                    raw_event = {}
+                actor_arn = raw_event.get("userIdentity", {}).get("arn", "")
+                if not _actor_matches_role(actor_arn):
+                    continue
+
                 event_count += 1
                 event_name = trail_event.get("EventName", "")
                 event_source = trail_event.get("EventSource", "")
