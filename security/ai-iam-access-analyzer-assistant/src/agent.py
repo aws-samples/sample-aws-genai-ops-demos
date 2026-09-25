@@ -1069,9 +1069,20 @@ def _render_action_plan(result: dict) -> str:
             lines.append(f"- {action} — `{role}`")
         quick_section = "\n".join(lines)
 
+    # Structured "What I can do next" footer, matching the 4-option pattern
+    # the other reports use (previously this was a single thin inline CTA).
+    # IMPORTANT: the first line after the "---" rule MUST still contain the
+    # exact _ACTION_PLAN_FOOTER_MARKER substring ("Say `export that` to save
+    # this plan to S3") verbatim — _strip_action_plan_footer cuts from
+    # "\n\n---\n" + marker, and _prior_turn_announced_action_plan uses the
+    # same marker to detect an already-delivered plan and stop the guided
+    # tour from re-running it. Keep option A carrying that phrase.
     footer = (
         "\n\n---\n"
-        "Say `export that` to save this plan to S3, or ask for details on a specific role."
+        "Say `export that` to save this plan to S3 — or:\n"
+        "- **B.** Drill into a specific role from the plan (name it).\n"
+        "- **C.** Generate a least-privilege policy for the top-priority role.\n"
+        "- **D.** Check the blast radius before you action the #1 item."
     )
 
     return "\n\n".join([*header_lines, body]) + (quick_section or "") + footer
@@ -1503,12 +1514,42 @@ def _render_triage_access_keys(result: dict) -> str:
 
     # Fenced JSON payload the frontend routes to AccessKeysTable. The
     # `_type` marker makes tryParseAccessKeysReport's detection unambiguous
-    # even if the natural shape ever changes.
+    # even if the natural shape ever changes. NOTE: this block is the
+    # table's DATA CHANNEL, not visible noise — the frontend
+    # (parseAssistantMessage → tryParseAccessKeysReport) consumes it into
+    # the AccessKeysTable component and does NOT render it as raw text.
+    # Do not remove it to "clean up" the response; that breaks the table.
     payload = {"_type": "access_keys_report", **result}
     lines.append("")
     lines.append("```json")
     lines.append(json.dumps(payload, indent=2, default=str))
     lines.append("```")
+
+    # "What I Can Do Next" footer — the triage report is the highest-signal
+    # output in the tool set (flagged Critical/High keys) but previously
+    # dead-ended with no next step. Rendered as text AFTER the fenced JSON
+    # block, so the frontend shows it as a prose section below the table.
+    # Options advance the task (remediate / export / drill in), matching the
+    # structured-footer pattern the other reports use.
+    lines.append("")
+    lines.append("---")
+    lines.append("**What I can do next:**")
+    lines.append(
+        "- **A.** Draft a remediation plan for the flagged keys "
+        "(deactivate → monitor → delete sequencing, per key)."
+    )
+    lines.append(
+        "- **B.** Show the identity-based replacement for a specific user "
+        "(SSO federation, IAM role, or OIDC — say which user)."
+    )
+    lines.append(
+        "- **C.** Export this audit to S3 for record-keeping "
+        "(say `export that`)."
+    )
+    lines.append(
+        "- **D.** Drill into one user's keys in detail "
+        "(name the user)."
+    )
 
     # Any non-fatal coverage warnings (e.g. per-user policy-walk failures)
     # get a short prose note so operators see partial-data conditions

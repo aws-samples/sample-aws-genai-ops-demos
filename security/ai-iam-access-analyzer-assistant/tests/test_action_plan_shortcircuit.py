@@ -253,6 +253,33 @@ class ActionPlanRenderingTest(unittest.TestCase):
         self.assertNotIn("role|with|pipes |", rendered)
         self.assertIn("role\\|with\\|pipes", rendered)
 
+    def test_footer_is_structured_and_preserves_the_export_marker(self):
+        """The action-plan footer was normalized from a single thin CTA to
+        a structured multi-option block (Quick's recommendation-matrix
+        consistency gap). But the footer's first line MUST still carry the
+        exact _ACTION_PLAN_FOOTER_MARKER verbatim: _strip_action_plan_footer
+        and _prior_turn_announced_action_plan (the guided-tour Step 8
+        no-re-run guard) both key off that substring. This test fails loudly
+        if a future footer edit drops or rewors the marker and silently
+        breaks those two mechanisms."""
+        rendered = agent._render_action_plan(_sample_action_plan())
+
+        # Marker still present verbatim.
+        self.assertIn(agent._ACTION_PLAN_FOOTER_MARKER, rendered)
+        # Structured multi-option shape (at least options B/C/D as bullets).
+        self.assertIn("- **B.**", rendered)
+        self.assertIn("- **C.**", rendered)
+        self.assertIn("- **D.**", rendered)
+
+        # Footer-strip still cleanly removes the whole footer.
+        stripped = agent._strip_action_plan_footer(rendered)
+        self.assertNotIn(agent._ACTION_PLAN_FOOTER_MARKER, stripped)
+        self.assertNotIn("- **B.**", stripped)
+
+        # Tour re-run guard still sees a delivered plan and refuses to re-fire.
+        history = [{"role": "assistant", "content": rendered}]
+        self.assertFalse(agent._prior_turn_announced_action_plan(history))
+
 
 if __name__ == "__main__":
     unittest.main()
