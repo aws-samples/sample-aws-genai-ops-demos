@@ -261,6 +261,28 @@ def _extract_actions_from_document(document: dict) -> set:
     return actions
 
 
+def _normalize_event_name(service: str, event_name: str) -> str:
+    """Strip an API-version-date suffix CloudTrail bakes into some Lambda
+    eventNames (e.g. ``ListFunctions20150331``, ``GetFunction20150331``) so
+    the value can be used directly as an IAM action name.
+
+    AWS's own Lambda troubleshooting guide confirms this is a known,
+    documented quirk specific to Lambda's API family: "The eventName might
+    include date and version information, such as GetFunction20150331, but
+    it's still referring to the same public API." (Lambda's stable API
+    version is 2015-03-31, hence the "20150331" suffix.)
+
+    Deliberately scoped to service == "lambda" only. A blind regex strip
+    of any trailing 8-digit run across every service risks corrupting an
+    action whose name legitimately ends in digits for some other service —
+    there is no evidence this pattern is universal, only that it is
+    confirmed and documented for Lambda.
+    """
+    if service == "lambda" and event_name[-8:].isdigit():
+        return event_name[:-8]
+    return event_name
+
+
 def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int) -> dict:
     """Query CloudTrail for actual API usage by the role.
 
@@ -372,6 +394,8 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
                 # Skip read-only events that are just credential checks
                 if event_name in ("GetCallerIdentity", "AssumeRole", "GetSessionToken"):
                     continue
+
+                event_name = _normalize_event_name(service, event_name)
 
                 action_key = f"{service}:{event_name}"
                 used_actions[service].add(event_name)

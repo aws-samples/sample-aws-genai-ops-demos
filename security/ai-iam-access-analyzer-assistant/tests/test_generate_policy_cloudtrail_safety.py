@@ -187,6 +187,93 @@ class GeneratePolicyCoverageOnHappyPathTest(unittest.TestCase):
         self.assertEqual(ct_cov["count"], 0)
 
 
+class NormalizeEventNameTest(unittest.TestCase):
+    """Pins the fix for Finding #1 from Quick's guided-tour re-test: the
+    generated policy contained the literal action `lambda:ListFunctions20150331`
+    -- CloudTrail's real eventName for Lambda's ListFunctions API, which
+    bakes in Lambda's stable API version (2015-03-31) as a trailing digit
+    suffix. AWS's own Lambda troubleshooting docs confirm this is a known,
+    documented quirk scoped to Lambda specifically -- not a general
+    CloudTrail behavior, so the fix must not blindly strip trailing digits
+    from every service's event names.
+    """
+
+    def test_lambda_event_name_strips_version_suffix(self):
+        self.assertEqual(
+            generate_policy._normalize_event_name("lambda", "ListFunctions20150331"),
+            "ListFunctions",
+        )
+        self.assertEqual(
+            generate_policy._normalize_event_name("lambda", "GetFunction20150331"),
+            "GetFunction",
+        )
+
+    def test_lambda_event_name_without_suffix_is_unchanged(self):
+        # Not every Lambda eventName carries the suffix.
+        self.assertEqual(
+            generate_policy._normalize_event_name("lambda", "InvokeFunction"),
+            "InvokeFunction",
+        )
+
+    def test_non_lambda_service_is_never_touched(self):
+        # The rule is deliberately scoped to lambda only -- an action that
+        # happens to end in 8 digits for some other service must not be
+        # mangled by an overzealous generic strip.
+        self.assertEqual(
+            generate_policy._normalize_event_name("s3", "ListBuckets"),
+            "ListBuckets",
+        )
+        self.assertEqual(
+            generate_policy._normalize_event_name("dynamodb", "SomeAction12345678"),
+            "SomeAction12345678",
+        )
+
+    def test_end_to_end_generated_policy_uses_clean_action_name(self):
+        """The full handler path: a Lambda ListFunctions call observed via
+        CloudTrail must produce `lambda:ListFunctions` in the proposed
+        policy, never the raw eventName with its version suffix."""
+        raw_event = json.dumps(
+            {
+                "userIdentity": {
+                    "arn": "arn:aws:sts::123456789012:assumed-role/demo-alphaapp-dev-role/demo-exerciser"
+                }
+            }
+        )
+        page = {
+            "Events": [
+                {
+                    "EventName": "ListFunctions20150331",
+                    "EventSource": "lambda.amazonaws.com",
+                    "CloudTrailEvent": raw_event,
+                }
+            ]
+        }
+        paginator = MagicMock()
+        paginator.paginate.return_value = iter([page])
+
+        with patch.object(
+            generate_policy,
+            "_get_role_info",
+            return_value=_stub_role_info("demo-alphaapp-dev-role"),
+        ), patch.object(
+            generate_policy,
+            "_get_current_granted_actions",
+            return_value={"lambda:listfunctions"},
+        ), patch.object(
+            generate_policy.cloudtrail_client, "get_paginator", return_value=paginator
+        ):
+            result = generate_policy.handler({"role_name": "demo-alphaapp-dev-role"})
+
+        self.assertNotIn("error", result)
+        proposed_actions = [
+            a
+            for stmt in result["proposed_policy"]["Statement"]
+            for a in stmt["Action"]
+        ]
+        self.assertIn("lambda:ListFunctions", proposed_actions)
+        self.assertNotIn("lambda:ListFunctions20150331", proposed_actions)
+
+
 class GeneratePolicyRoleAttributionTest(unittest.TestCase):
     """Pins the fix for the demo-fixture bug: CloudTrail's Username
     LookupAttribute resolves to the SESSION name for assumed-role activity
