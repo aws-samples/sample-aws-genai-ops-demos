@@ -138,6 +138,31 @@ class HandlerActionPlanShortCircuitTest(unittest.TestCase):
         self.assertEqual(tool_name, "generate_action_plan")
         self.assertEqual(response["statusCode"], 200)
 
+    def test_exact_ready_for_the_next_step_short_circuits(self):
+        """Same confirmed root cause as Step 6's pinned test in
+        test_triage_shortcircuit.py: a live tour re-test's fixed advance
+        string was the literal "ready for the next step", which the
+        original _BARE_AFFIRMATIVE pattern did not match at all."""
+        history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Reviewed 7 access keys, 2 Critical. Now let's pull everything "
+                    "we've found into a prioritized backlog — what to fix first, "
+                    "what's a quick win. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_action_plan()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._tour_event("ready for the next step", history), None
+            )
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        self.assertEqual(response["statusCode"], 200)
+
     def test_bare_ready_after_unrelated_announcement_does_not_short_circuit(self):
         history = [
             {"role": "assistant", "content": "Want me to check the blast radius next? Ready when you are."},

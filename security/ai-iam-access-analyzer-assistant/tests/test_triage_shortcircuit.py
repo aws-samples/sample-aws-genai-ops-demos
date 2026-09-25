@@ -297,6 +297,40 @@ class HandlerShortCircuitTest(unittest.TestCase):
             converse.assert_not_called()
             self.assertEqual(invoke.call_count, 1, f"expected short-circuit for {phrasing!r}")
 
+    def test_exact_ready_for_the_next_step_short_circuits(self):
+        """Pins the CONFIRMED root cause of the live guided-tour re-test
+        that stayed blocked at Step 6 through three redeploys: the test
+        harness's fixed advance string was the literal 24-character
+        "ready for the next step" (verified verbatim against the actual
+        test driver, not a paraphrase) — which the prior _BARE_AFFIRMATIVE
+        pattern did NOT match (it only tolerated a short affirmative word
+        plus an optional politeness tail, not "for the next step"). This
+        explains the isolated-1.6s / in-tour-29s+ split precisely: the
+        isolated test used "audit my access keys" (matches
+        _TRIAGE_ACCESS_KEYS_INTENT directly), while every real tour advance
+        used a phrase this short-circuit never recognized at all — no
+        context-growth theory required."""
+        history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Validated — PASS, 0 syntax errors. One more surface worth "
+                    "auditing — long-lived IAM access keys. These are the top "
+                    "credential exposure vector in AWS incident reports, so we "
+                    "always cover this before wrapping up. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._tour_event("ready for the next step", history), None
+            )
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        self.assertEqual(response["statusCode"], 200)
+
     def test_longer_message_starting_with_yes_is_not_treated_as_bare_affirmative(self):
         """"yes, but explain X first" has more content than a bare
         affirmative and must reach the model even with a matching prior

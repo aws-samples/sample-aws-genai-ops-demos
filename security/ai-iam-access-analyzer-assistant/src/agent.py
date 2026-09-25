@@ -1494,6 +1494,16 @@ _BARE_AFFIRMATIVE = re.compile(
     r"(?:yes|yeah|yep|yup|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
     r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it|i'?m\s+ready)"
     r"(?:\s*,?\s*(?:please|go\s+ahead|do\s+it|continue|proceed))?"
+    # Users often echo back the assistant's own question rather than reply
+    # with a bare word — the GUIDED TOUR literally asks "Ready for the next
+    # step?" on every step, and "ready for the next step" (exact string
+    # observed in a real re-test) has zero matches against the alternatives
+    # above without this trailing clause. Kept generic (not hardcoded to
+    # "next step" alone) so "ready to continue", "ok, moving on", etc. also
+    # match — these all carry no NEW information the model would need to
+    # see, they are pure acknowledgments of the assistant's own prompt.
+    r"(?:\s+(?:for|to|with)\s+(?:the\s+)?(?:next\s+step|continu(?:e|ing)|"
+    r"mov(?:e|ing)\s+on|proceed(?:ing)?))?"
     r"\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
