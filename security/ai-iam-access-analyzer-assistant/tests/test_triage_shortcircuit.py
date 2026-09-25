@@ -277,6 +277,26 @@ class HandlerShortCircuitTest(unittest.TestCase):
         invoke.assert_not_called()
         converse.assert_called_once()
 
+    def test_bare_ready_with_trailing_politeness_still_short_circuits(self):
+        """"yes please", "sure, go ahead", "continue please" -- natural
+        phrasings a real tester types instead of a bare "ready" -- must
+        still short-circuit. The original _BARE_AFFIRMATIVE pattern was an
+        exact enumerated list with no tolerance for these, which is a
+        plausible reason a live tour re-test kept timing out even after
+        the bare-"ready" case was fixed and verified in isolation."""
+        history = [
+            {
+                "role": "assistant",
+                "content": "One more surface worth auditing — long-lived IAM access keys. Ready?",
+            },
+        ]
+        for phrasing in ("yes please", "sure, go ahead", "continue please", "I'm ready"):
+            with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                    patch.object(agent, "converse_with_tools") as converse:
+                agent.handler(self._tour_event(phrasing, history), None)
+            converse.assert_not_called()
+            self.assertEqual(invoke.call_count, 1, f"expected short-circuit for {phrasing!r}")
+
     def test_longer_message_starting_with_yes_is_not_treated_as_bare_affirmative(self):
         """"yes, but explain X first" has more content than a bare
         affirmative and must reach the model even with a matching prior

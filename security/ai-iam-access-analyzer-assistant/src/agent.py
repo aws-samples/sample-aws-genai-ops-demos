@@ -1489,8 +1489,12 @@ def _render_triage_access_keys(result: dict) -> str:
 
 
 _BARE_AFFIRMATIVE = re.compile(
-    r"^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
-    r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it)\s*[.!?]*\s*$",
+    r"^\s*"
+    r"(?:please\s+|pls\s+)?"
+    r"(?:yes|yeah|yep|yup|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
+    r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it|i'?m\s+ready)"
+    r"(?:\s*,?\s*(?:please|go\s+ahead|do\s+it|continue|proceed))?"
+    r"\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 
