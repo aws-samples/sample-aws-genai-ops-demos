@@ -1,0 +1,86 @@
+# Demo Scenario Definitions — starter template
+#
+# One declarative list of the failures (or pre-existing conditions) a native-agent demo
+# can inject. The SAME file drives three things, so they can never disagree:
+#
+#   1. the Lab injector    — which handler to call, and how to detect current state
+#   2. the Lab UI          — the cards a presenter sees, without touching frontend code
+#   3. the demo's README    — the scenario table
+#
+# It is also the output shape of the capability analysis described in
+# `.kiro/steering/native-agent-demo-guide.md`: deciding what to demonstrate and defining
+# it for the Lab are the same step, not two.
+#
+# Copy this file to your demo (e.g. `lab/scenarios.yaml`) and edit. Delete the comments.
+
+schemaVersion: 1
+
+# What the demo showcases. The capability is REFERENCED, never copied into this repo.
+capability:
+  kind: skill                        # skill | custom-agent | mcp-server
+  name: eks-upgrade-readiness        # directory name in the Agent Tools repository
+  ref: main                          # tag, branch or commit the demo was tested against
+  # The declared agent type(s). This decides which bricks the demo needs — a chat-only
+  # capability needs no alarms, no SNS and no webhook at all.
+  agentTypes: [chat]                 # chat | incident-rca | incident-triage | evaluation | incident-mitigation
+  # How a presenter invokes it. Lifted from the capability's own activation description.
+  prompt: "Is the payment-platform EKS cluster ready to upgrade to the next version?"
+
+scenarios:
+  # ── A pre-existing condition: breaks nothing today, blocks an upgrade later ──────────
+  - id: pdb-blocks-eviction
+    name: PDB blocks eviction
+    category: Workload
+    severity: high                   # low | medium | high | critical
+
+    # Why this scenario exists at all. If the agent reaches the same conclusion without
+    # the capability, the scenario proves nothing and should be deleted.
+    demonstrates:
+      check: WKLD-04                 # the gate, tool or behaviour this exercises
+      withCapability: "Reports NOT READY, naming the PDB and the blocked deployment"
+      withoutCapability: "Lists cluster facts; does not connect the PDB to upgrade safety"
+
+    # Whether this scenario needs an alarm to fire. Chat and evaluation motions: false.
+    triggersAlarm: false
+
+    inject:
+      route: /admin/scenarios/pdb-blocks-eviction/inject   # POST to inject, DELETE to roll back
+      summary: "Applies a PodDisruptionBudget with maxUnavailable=0 to payment-processor"
+
+    # How the Lab decides whether this is CURRENTLY injected. Derive it from the live
+    # environment, never from the state store — otherwise the UI lies after a manual fix.
+    detect:
+      summary: "PDB exists on payment-processor with maxUnavailable=0"
+
+    # Mandatory. Demos get abandoned mid-run; nothing may stay broken indefinitely.
+    autoRevertSeconds: 600
+
+    # Optional: what the presenter should say or show while this is injected.
+    talkTrack: "Nothing is broken right now — that is the point. This is what the agent
+      catches before a drain turns it into an outage."
+
+  # ── An active failure: something visibly breaks and an alarm fires ──────────────────
+  - id: dns-resolution-failure
+    name: DNS resolution failure
+    category: Networking
+    severity: critical
+    demonstrates:
+      check: DRAIN-06
+      withCapability: "Traces application errors across namespaces to CoreDNS in kube-system"
+      withoutCapability: "Reports pod errors without identifying the shared DNS cause"
+    triggersAlarm: true
+    alarm:
+      name: dns-resolution-failure   # CloudWatch alarm that starts the investigation
+      expectFiringWithinSeconds: 120 # so the UI can show a realistic countdown
+    inject:
+      route: /admin/scenarios/dns-resolution-failure/inject
+      summary: "Scales CoreDNS to 0 replicas"
+    detect:
+      summary: "CoreDNS deployment has 0 replicas"
+    autoRevertSeconds: 600
+
+# Operational warnings a presenter must not have to remember. Anything recorded here
+# should be enforced by the Lab (disabled buttons, ordering hints) rather than by prose
+# in a README that nobody re-reads before a call.
+notes:
+  - "Run one scenario at a time: concurrent injections make the agent's findings ambiguous."
