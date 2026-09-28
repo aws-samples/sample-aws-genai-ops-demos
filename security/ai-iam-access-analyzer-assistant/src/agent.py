@@ -200,7 +200,8 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles that came up earlier in the tour, or the top unused/highest-risk roles if none did)
    - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan)
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
-   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   TOUR COMPLETION (REQUIRED): Step 8's response MUST end with an explicit closing line that the tour is complete — something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -1274,13 +1275,61 @@ def _shortcircuit_action_plan_and_export(user_message: str):
     }
 
 
-def _shortcircuit_action_plan(user_message: str):
+def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
+    """Same pattern as _prior_turn_announced_access_key_audit: true when the
+    most recent assistant turn was clearly setting up the action-plan step
+    (about to run it), NOT when the plan has already been delivered. The
+    GUIDED TOUR's Step 8 says "pull everything we've found into a
+    prioritized backlog" -- "backlog" alone doesn't match
+    _ACTION_PLAN_INTENT (which wants "action plan" or "remediation
+    backlog"), so a bare "ready" after that announcement would otherwise
+    fall through to a full Bedrock round trip on the tour's own closing
+    step, same failure mode already fixed for Step 6's access-key audit.
+
+    Explicitly returns False when the prior turn already carries
+    _ACTION_PLAN_FOOTER_MARKER -- that string only appears on an
+    ALREADY-DELIVERED plan (see _render_action_plan), never on the
+    announcement that precedes it. Without this guard, a trailing "ready"
+    sent after Step 8 already completed would match on the delivered
+    plan's own "Prioritized action plan" text and silently re-run the tool
+    -- the tour has no other mechanism to stop advancing once Step 8 is
+    done, so this guard IS the tour's stopping condition for this path."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        if _ACTION_PLAN_FOOTER_MARKER in content:
+            return False
+        lower = content.lower()
+        return bool(_ACTION_PLAN_INTENT.search(content)) or (
+            "prioritized" in lower and ("backlog" in lower or "plan" in lower)
+        )
+    return False
+
+
+def _shortcircuit_action_plan(user_message: str, conversation_history: list = None):
     """If the user is asking for an action plan, invoke the tool directly and
     return an assistant-ready envelope so we skip Bedrock's two round trips.
+
+    Also fires on a bare affirmative reply when the prior assistant turn
+    announced the action-plan step itself (the GUIDED TOUR's Step 8) --
+    same rationale and pattern as _shortcircuit_triage_access_keys.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _ACTION_PLAN_INTENT.search(user_message):
+    if _ACTION_PLAN_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_action_plan(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     tool_input = {"max_items": 50, "include_quick_wins": True}
@@ -1452,17 +1501,93 @@ def _render_triage_access_keys(result: dict) -> str:
     return "\n\n".join(lines)
 
 
-def _shortcircuit_triage_access_keys(user_message: str):
+_BARE_AFFIRMATIVE = re.compile(
+    r"^\s*"
+    r"(?:please\s+|pls\s+)?"
+    r"(?:yes|yeah|yep|yup|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
+    r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it|i'?m\s+ready)"
+    r"(?:\s*,?\s*(?:please|go\s+ahead|do\s+it|continue|proceed))?"
+    # Users often echo back the assistant's own question rather than reply
+    # with a bare word — the GUIDED TOUR literally asks "Ready for the next
+    # step?" on every step, and "ready for the next step" (exact string
+    # observed in a real re-test) has zero matches against the alternatives
+    # above without this trailing clause. Kept generic (not hardcoded to
+    # "next step" alone) so "ready to continue", "ok, moving on", etc. also
+    # match — these all carry no NEW information the model would need to
+    # see, they are pure acknowledgments of the assistant's own prompt.
+    r"(?:\s+(?:for|to|with)\s+(?:the\s+)?(?:next\s+step|continu(?:e|ing)|"
+    r"mov(?:e|ing)\s+on|proceed(?:ing)?))?"
+    r"\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_bare_affirmative(user_message: str) -> bool:
+    """True for a short "yes/ready/go ahead"-style reply with no other
+    content — the shape of a user clicking through the GUIDED TOUR's
+    "Ready for the next step?" prompts. Deliberately anchored start-to-end
+    so a longer message that happens to START with "yes" (e.g. "yes but
+    first explain X") does NOT match — that user has more to say and
+    should reach the model, not a short-circuit."""
+    if not user_message or not isinstance(user_message, str):
+        return False
+    return bool(_BARE_AFFIRMATIVE.match(user_message))
+
+
+def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
+    """True when the most recent ASSISTANT message set up the access-key
+    audit as the next step — the GUIDED TOUR's Step 6 framing ("One more
+    surface worth auditing — long-lived IAM access keys...") or any prior
+    turn using the same language the tool-selection rule expects. Walk
+    backward past user turns to find the last assistant turn, mirroring
+    _last_assistant_artifact's traversal but only reading the text, not
+    requiring artifact-length content — a tour announcement is short."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
+            "access key" in content.lower() and "audit" in content.lower()
+        )
+    return False
+
+
+def _shortcircuit_triage_access_keys(user_message: str, conversation_history: list = None):
     """If the user is asking for an access-key audit, invoke the tool
     directly and return an assistant-ready envelope with both a prose intro
     and the raw JSON payload in a fenced ```json block. Skips both Bedrock
     round trips so the turn cannot hit the API Gateway 29s ceiling on
     accounts with a fleet of IAM users, and guarantees the frontend receives
     the machine-readable payload for the AccessKeysTable component.
+
+    Also fires on a bare affirmative reply ("ready", "yes", "go ahead", ...)
+    when the immediately prior assistant turn was clearly setting up THIS
+    audit — the GUIDED TOUR's Step 6 announces "One more surface worth
+    auditing — long-lived IAM access keys" and the user's next message is
+    just "ready", which never contains the word "access keys" and so never
+    matched _TRIAGE_ACCESS_KEYS_INTENT on its own. Without this, every
+    tour run pays a full, slow Bedrock synthesis + tool call on Step 6 while
+    an isolated direct prompt ("audit my access keys") hits this fast path
+    every time — exactly why Quick's per-tool direct-prompt tests passed
+    clean while the same step inside the real tour flow consistently timed
+    out. Same "look at the prior assistant turn" pattern as
+    _shortcircuit_export_followup, applied to a different intent.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+    if _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_access_key_audit(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     # Default parameters — include_inactive defaults to True inside the tool;
@@ -1858,7 +1983,7 @@ def handler(event, context):
         # Same idea for "generate an action plan": the tool's structured output
         # is enough, so skip both Bedrock round trips that were the main cause
         # of the ~44s timeouts observed on this prompt.
-        shortcircuit = _shortcircuit_action_plan(user_message)
+        shortcircuit = _shortcircuit_action_plan(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
@@ -1898,7 +2023,7 @@ def handler(event, context):
         # the tool payload as a fenced JSON block so the frontend's
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
-        shortcircuit = _shortcircuit_triage_access_keys(user_message)
+        shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
