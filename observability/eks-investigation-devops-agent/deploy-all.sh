@@ -236,8 +236,7 @@ npx cdk deploy "$AGENT_SPACE_STACK_NAME" \
     -c "environment=$ENVIRONMENT" \
     -c "projectName=$PROJECT_NAME" \
     -c "devOpsAgentRegion=$DEVOPS_AGENT_REGION" \
-    --require-approval never \
-    --no-cli-pager
+    --require-approval never
 cd ..
 
 # The webhook secret value never enters this script. The custom resource writes it
@@ -280,8 +279,7 @@ CDK_CONTEXT="-c environment=$ENVIRONMENT -c projectName=$PROJECT_NAME -c eksNode
 cd cdk
 npx cdk deploy --all \
     $CDK_CONTEXT \
-    --require-approval never \
-    --no-cli-pager
+    --require-approval never
 cd ..
 echo "  Infrastructure deployed."
 echo ""
@@ -1002,12 +1000,13 @@ if [ -n "$NLB_HOSTNAME" ]; then
         -c eksNodeArchitecture=$EKS_ARCHITECTURE \
         -c eksNodeInstanceType=$EKS_INSTANCE_TYPE \
         -c eksNodeDesiredCapacity=2 \
+        -c eksKubernetesVersion=$EKS_KUBERNETES_VERSION \
         -c apiGatewayEndpoint=$NLB_HOSTNAME \
         -c devOpsAgentWebhookUrl=$DEVOPS_WEBHOOK_URL \
         -c devOpsAgentWebhookSecretArn=$DEVOPS_WEBHOOK_SECRET_ARN \
-        -c devOpsAgentRegion=${DEVOPS_AGENT_REGION:-us-east-1} \
-        --require-approval never \
-        --no-cli-pager
+        -c devOpsAgentRegion=$DEVOPS_AGENT_REGION \
+        -c devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID \
+        --require-approval never
     cd ..
     echo "  CloudFront updated with API origin."
 else
