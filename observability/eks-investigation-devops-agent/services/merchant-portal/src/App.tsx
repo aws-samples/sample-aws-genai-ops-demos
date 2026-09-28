@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
@@ -9,7 +10,8 @@ import CartPage from './pages/CartPage'
 import CheckoutPage from './pages/CheckoutPage'
 import TransactionsPage from './pages/TransactionsPage'
 import TransactionDetailPage from './pages/TransactionDetailPage'
-import DevOpsAgentLabPage from './pages/DevOpsAgentLabPage'
+// The Lab (Cloudscape) is a separate chunk: the shop does not pay for it.
+const DevOpsAgentLabPage = lazy(() => import('./pages/DevOpsAgentLabPage'))
 
 function App() {
   return (
@@ -17,6 +19,8 @@ function App() {
       <CartProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          {/* The Lab is the presenter's control room: its own Cloudscape shell, not a Helios page. */}
+          <Route path="/lab" element={<ProtectedRoute><Suspense fallback={<p>Loading the Lab…</p>}><DevOpsAgentLabPage /></Suspense></ProtectedRoute>} />
           <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
             <Route index element={<Navigate to="/catalog" replace />} />
             <Route path="catalog" element={<CatalogPage />} />
@@ -24,7 +28,6 @@ function App() {
             <Route path="checkout" element={<CheckoutPage />} />
             <Route path="transactions" element={<TransactionsPage />} />
             <Route path="transactions/:id" element={<TransactionDetailPage />} />
-            <Route path="lab" element={<DevOpsAgentLabPage />} />
           </Route>
         </Routes>
       </CartProvider>

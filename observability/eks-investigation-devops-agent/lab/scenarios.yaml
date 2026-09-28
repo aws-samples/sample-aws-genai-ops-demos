@@ -1,0 +1,175 @@
+# DevOps Agent Lab — scenario definitions (single source of truth)
+#
+# This file drives three things, so they can never disagree:
+#   1. the Lab engine  — which handler to call and how long before auto-revert
+#   2. the Lab UI      — the cards, walkthroughs and skill a presenter sees
+#   3. the README      — the scenario table
+#
+# Shape: shared/templates/demo-scenarios.yaml.example. It is bundled into the Lab
+# Lambda at synth time (see cdk/lib/failure-simulator-api-stack.ts) and served as-is
+# on GET /admin/scenarios; the frontend has no scenario knowledge of its own.
+
+schemaVersion: 1
+
+capability:
+  kind: skill
+  name: helios-incident-report
+  # Defined below under `skills`, not in the Agent Tools repository: it carries the
+  # business context of the fictional Helios platform that this demo simulates.
+  source: inline
+  agentTypes: [incident-rca, chat]
+  prompt: "We're seeing payment failures on Helios. What is going on, and what is the business impact?"
+
+scenarios:
+  - id: db-connection-failure
+    name: Database connection failure
+    category: Database
+    severity: critical
+    handler: db_connection_failure          # inject/revert/probe functions in k8s_ops.py
+    demonstrates:
+      check: Automated incident investigation
+      withCapability: "Root cause (wrong DB_PASSWORD env var) plus revenue impact, SLA budget consumed and a PCI-DSS flag for the plain-text credential"
+      withoutCapability: "Root cause and remediation, without the business framing"
+    triggersAlarm: true
+    alarm:
+      envVar: ALARM_NAME                    # CloudWatch alarm name is injected by CDK
+      expectFiringWithinSeconds: 120
+    inject:
+      route: /admin/scenarios/db-connection-failure/inject
+      summary: "Sets DB_PASSWORD=wrong-password on payment-processor and restarts it"
+    detect:
+      summary: "payment-processor container env DB_PASSWORD is the literal wrong-password"
+    autoRevertSeconds: 600
+    description: >-
+      Sets a wrong database password on the payment-processor deployment, causing
+      CrashLoopBackOff. Fluent Bit ships error logs to CloudWatch, where a metric filter
+      triggers an alarm. The alarm notifies an SNS topic, which invokes a Lambda function
+      that sends an HMAC-signed webhook to the DevOps Agent, kicking off an autonomous
+      investigation. The agent checks pods, logs, RDS connectivity and security groups,
+      then delivers a root cause analysis with remediation steps.
+    incidentChain:
+      - Payment Processor pod gets wrong DB_PASSWORD
+      - Pod crashes, CrashLoopBackOff
+      - Fluent Bit ships error logs to CloudWatch
+      - Metric filter detects "database connection" errors
+      - CloudWatch alarm fires, SNS, Lambda
+      - Lambda sends HMAC webhook, DevOps Agent investigates
+    customerImpact:
+      - Checkout fails with "Payment processor is unavailable"
+      - Transaction history may show empty results or fail to load
+      - Product catalog and cart keep working (merchant-gateway is unaffected)
+      - Visible immediately on any payment operation
+    demoFlow:
+      - Click Inject and wait about 10 seconds for the pod to crash
+      - "Open the Shop tab, add an item, try to check out: the payment fails"
+      - Come back here and watch the alarm flip to ALARM (about 2 minutes)
+      - "Open the DevOps Agent console: a new investigation appears automatically"
+      - Watch the agent check pods, logs, RDS connectivity and security groups
+      - The agent delivers a root cause analysis with remediation steps
+      - Click Rollback when done, or let the auto-revert do it
+    talkTrack: "A credential in plain text is both the outage and a compliance event. Watch whether the agent flags it as one."
+
+  - id: dns-resolution-failure
+    name: DNS resolution failure
+    category: Networking
+    severity: critical
+    handler: dns_resolution_failure
+    demonstrates:
+      check: Cross-namespace root cause
+      withCapability: "Traces application ENOTFOUND errors to CoreDNS in kube-system and frames the outage in SLA minutes"
+      withoutCapability: "Reports application errors while every pod shows Running and Ready"
+    triggersAlarm: true
+    alarm:
+      envVar: DNS_ALARM_NAME
+      expectFiringWithinSeconds: 120
+    inject:
+      route: /admin/scenarios/dns-resolution-failure/inject
+      summary: "Scales the CoreDNS deployment in kube-system to 0 replicas"
+    detect:
+      summary: "CoreDNS deployment has 0 replicas"
+    autoRevertSeconds: 600
+    description: >-
+      Scales CoreDNS to 0 replicas, breaking all service-to-service DNS resolution. Pods
+      stay Running and Ready (health checks use IP), but every inter-service call fails
+      with ENOTFOUND. The agent must trace across namespaces to find the root cause in
+      kube-system: the classic "it's always DNS" scenario.
+    incidentChain:
+      - CoreDNS deployment scaled to 0 replicas in kube-system
+      - All DNS queries in the cluster start failing
+      - merchant-gateway cannot resolve the payment-processor hostname
+      - API calls fail with ENOTFOUND, yet all pods show Running and Ready
+      - Fluent Bit ships error logs to CloudWatch
+      - DNS resolution alarm fires, SNS, Lambda, DevOps Agent
+    customerImpact:
+      - Every page hangs then fails, since every API call depends on DNS
+      - Checkout, transaction history and catalog all return errors
+      - Confusing on purpose, pod status looks healthy everywhere
+      - The hardest kind of incident to diagnose by hand
+    demoFlow:
+      - Click Inject, CoreDNS is scaled to 0
+      - Try any action in the app, everything fails or hangs
+      - Come back here, pods still show Running (that is the trap)
+      - Wait about 2 minutes for the alarm to fire
+      - Open the DevOps Agent console, watch it trace from app errors to CoreDNS
+      - The agent names CoreDNS in kube-system as the root cause
+      - Click Rollback to restore DNS resolution
+    talkTrack: "Nothing here looks broken from the inside. This is the incident that burns an on-call engineer's evening."
+
+# The custom skill the presenter creates in the DevOps Agent console (copy-paste).
+skills:
+  - name: helios-incident-report
+    agentType: Generic
+    feature: "Use a custom skill during an investigation to enforce the report format"
+    pitch: >-
+      Adds ACME Tech business context: revenue impact (EUR 2.4M/day), SLA tracking
+      (99.95%), PCI-DSS compliance rules and severity classification. The agent already
+      investigates; this skill teaches it your business standards.
+    description: >-
+      Incident reporting standard for the Helios Commerce platform operated by ACME Tech.
+      Use when investigating any incident affecting the Helios payment processing system
+      including CloudWatch alarms, EKS pod failures, database issues, or DNS resolution
+      problems. Enforces business context, SLA tracking, and executive-ready report format.
+    instructions: |
+      # Helios Commerce — Incident Report Standard
+
+      ## Business Context
+
+      Helios Commerce is ACME Tech's flagship e-commerce payment platform.
+      - **Revenue impact**: Helios processes ~EUR 2.4M in daily transactions across 3 merchant accounts
+      - **SLA commitment**: 99.95% uptime (max 21.6 min/month downtime) per merchant contract
+      - **Peak hours**: 10:00-14:00 and 18:00-22:00 CET; incidents during peak have 3x revenue impact
+      - **Compliance**: PCI-DSS Level 1; any credential exposure must be reported to the security team within 1 hour
+      - **Escalation**: CRITICAL incidents must notify the VP of Engineering (on-call rotation in PagerDuty)
+
+      ## Report Format
+
+      Structure every investigation report with these sections:
+
+      ### 1. Executive Summary
+      One paragraph: what happened, when it started, current status, and business severity.
+      Always state whether this occurred during peak hours.
+
+      ### 2. Business Impact
+      - Estimated failed transactions and revenue loss (use EUR 2.4M/day / 1440 min = ~EUR 1,667/min)
+      - Which merchant accounts are affected (Helios Electronics, TechStore Global, Fashion Boutique)
+      - SLA budget consumed: calculate minutes of downtime vs. 21.6 min monthly budget
+
+      ### 3. Root Cause
+      - Technical root cause with evidence (log lines, metrics, config diffs)
+      - How it was introduced and by whom (deployment, manual change, drift)
+
+      ### 4. Severity Classification
+      Apply these rules:
+      - **P1 CRITICAL**: All payment processing down, or credential exposure (PCI-DSS breach)
+      - **P2 HIGH**: Single merchant affected, or degraded performance >50% error rate
+      - **P3 MEDIUM**: Intermittent errors, <10% of transactions affected
+      - **SECURITY**: Any plain-text credentials in env vars or logs; flag for immediate PCI review
+
+      ### 5. Remediation & Next Steps
+      - Immediate fix (exact commands)
+      - Post-incident: what monitoring would catch this faster
+      - Architecture improvement to prevent recurrence
+
+notes:
+  - "Run one scenario at a time: concurrent injections make the agent's findings ambiguous. The Lab refuses a second inject while one is active."
+  - "Every injection is one Lambda durable function execution: inject, wait up to autoRevertSeconds for a rollback, revert. Nothing stays broken if the browser is closed."

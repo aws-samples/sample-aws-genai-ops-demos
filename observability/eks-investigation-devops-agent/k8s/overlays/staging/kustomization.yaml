@@ -6,8 +6,10 @@ namespace: payment-demo
 resources:
   - ../../base
 
-commonLabels:
-  environment: staging
+labels:
+  - includeSelectors: true
+    pairs:
+      environment: staging
 
 # Staging uses base replicas (1 for all services - demo environment)
 
