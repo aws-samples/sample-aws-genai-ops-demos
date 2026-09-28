@@ -12,13 +12,16 @@
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.1.0",
+    "@cloudscape-design/components": "3.0.1109",
+    "@cloudscape-design/global-styles": "1.0.46",
     "ajv": "^8.18.0",
     "aws-amplify": "^6.0.0",
     "minimatch": "^10.2.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^6.22.0"
+    "react-router-dom": "^6.22.0",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",

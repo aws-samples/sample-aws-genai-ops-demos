@@ -5,7 +5,7 @@
 
 When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the AWS DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
 
-The demo includes a **DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
+The demo includes a **AWS DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
 
 ## At a Glance
 
@@ -23,7 +23,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Custom Skills** | Create a business-context skill → agent uses it in Chat to produce executive-ready reports |
 | **On-demand Chat** | Ask the agent about platform issues → get structured reports with SLA and revenue impact |
 | **Account Usage & Quotas** | Live usage dashboard in the Lab UI (investigation, evaluation, on-demand hours) |
-| **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
+| **Agent tasks** | Recent tasks of the Agent Space (investigations, evaluations, chats) with tool calls, skills loaded and summaries |
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 
 ## Interactive Demo
@@ -162,15 +162,14 @@ No human intervention needed between the crash and the diagnosis.
 
 ## DevOps Agent Lab
 
-The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner). It's powered by a separate Lambda-based API (outside the EKS cluster) that uses kubectl to inject and rollback failures.
+The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner). It's powered by two Lambda functions outside the EKS cluster that use kubectl to inject and roll back failures.
 
 **How it works:**
-- A Lambda function in VPC runs kubectl commands against the EKS cluster via a kubectl Lambda layer
-- EKS authentication uses STS presigned URLs (same mechanism as `aws eks get-token`)
-- API Gateway exposes routes for inject, rollback, status, usage, and investigation logs
-- CloudFront routes `/admin/*` requests to the API Gateway
-- DynamoDB stores scenario timers for server-side auto-revert (10 minutes)
-- The Lambda calls the DevOps Agent API (SigV4-signed, cross-region) for usage and investigation data
+- `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `k8s_ops.py`.
+- Every injection is one **Lambda durable function** execution (the *engine*): `inject` → `await-rollback` (waits up to `autoRevertSeconds`, 10 minutes by default, for the presenter to click Rollback) → `revert`. If nobody clicks, the wait times out and the revert runs anyway, so nothing stays broken if the browser is closed. There is no state store: the cluster says what is injected, the execution history says where the run is.
+- The *API* Lambda (behind API Gateway, reached through CloudFront `/admin/*`) probes the cluster live, starts engine runs through the `live` alias, resolves the run's callback on Rollback, and reads the DevOps Agent API (SigV4-signed, cross-region) for usage and investigation data.
+- Both functions run in the VPC with a kubectl Lambda layer; EKS authentication uses STS presigned URLs (same mechanism as `aws eks get-token`).
+- The Lab refuses a second injection while one is running: one scenario at a time keeps the investigation unambiguous.
 
 **Why Lambda outside the cluster:** If we put the simulator inside EKS, a DNS failure scenario would kill the simulator too. The Lambda is isolated from cluster failures.
 
@@ -178,10 +177,10 @@ The Lab is a built-in demo control center accessible via the 🧪 icon in the po
 
 | Section | API Endpoint | Data Source |
 |---------|-------------|-------------|
-| 🔥 Scenarios | `POST/DELETE /admin/scenarios/{id}/inject` | kubectl → EKS |
-| Status cards | `GET /admin/status` | kubectl + CloudWatch |
-| 🧠 Skills | N/A (copy-paste to Operator Access) | Static content in UI |
-| 📋 Logs | `GET /admin/logs` | DevOps Agent API (list-backlog-tasks, list-executions, list-journal-records) |
+| 🔥 Scenarios | `GET /admin/scenarios`, `POST/DELETE /admin/scenarios/{id}/inject` | `lab/scenarios.yaml`; engine durable function |
+| Live status | `GET /admin/status` | kubectl + CloudWatch + durable execution history |
+| 🧠 Skill | N/A (copy-paste to Operator Access) | `lab/scenarios.yaml` (`skills`) |
+| 📋 Investigations | `GET /admin/logs` | DevOps Agent API (list-backlog-tasks, list-executions, list-journal-records) |
 | 📊 Usage | `GET /admin/usage` | DevOps Agent API (get-account-usage) |
 
 ## Run the Demo
@@ -196,19 +195,19 @@ Open the Portal URL, log in with `demo-merchant-1` / `DemoPass2026!`, browse the
 
 Click the 🧪 lab icon in the bottom-right corner of the portal. The Lab has four sections:
 
-- **🔥 Scenarios** — inject real infrastructure failures
-- **🧠 Skills** — create a custom skill to teach the agent your business context
-- **📋 Logs** — view recent investigations with metrics (tool calls, skills loaded, duration)
-- **📊 Usage** — monitor DevOps Agent account usage and estimated cost
+- **🔥 Scenarios** — inject real infrastructure failures; each card shows live pods, replicas and alarm state, the auto-revert countdown and the engine run's steps
+- **🧠 Skill** — create a custom skill to teach the agent your business context (copy-paste fields)
+- **📋 Agent tasks** — recent tasks of the Agent Space with metrics (tool calls, skills loaded, duration)
+- **📊 Usage** — DevOps Agent account usage and estimated cost
 
 ### 3. Inject a failure (automated investigation)
 
-Pick a scenario and click **Inject**:
+Pick a scenario and click **Inject** (scenarios are defined in `lab/scenarios.yaml`):
 
 | Scenario | What Breaks | How the Agent Finds It |
 |----------|------------|----------------------|
-| **Database Connection Failure** | Wrong DB password → CrashLoopBackOff | Reads pod logs, traces to credential mismatch |
-| **DNS Resolution Failure** | CoreDNS scaled to 0 → all DNS fails | Traces from app errors across namespaces to kube-system |
+| **Database connection failure** | Wrong DB password → CrashLoopBackOff | Reads pod logs, traces to credential mismatch |
+| **DNS resolution failure** | CoreDNS scaled to 0 → all DNS fails | Traces from app errors across namespaces to kube-system |
 
 Wait ~2 minutes for the CloudWatch alarm to fire. The agent starts investigating automatically.
 
@@ -220,7 +219,7 @@ Open the DevOps Agent Operator Access (link in the Lab UI) to watch the agent:
 - Review security groups and recent changes
 - Deliver a root cause analysis with remediation steps
 
-The Lab's **Logs** section shows a compact summary of each investigation with metrics.
+The Lab's **Agent tasks** section shows a compact summary of each task with metrics.
 
 ### 5. Demo the Skills feature
 
@@ -264,7 +263,7 @@ The Power will:
 
 ### 7. Rollback
 
-Click **Rollback** on the scenario card, or wait for the auto-revert timer (10 minutes).
+Click **Rollback** on the scenario card, or let the engine revert on its own when the auto-revert timeout (10 minutes) expires.
 
 ## CDK Stacks
 
@@ -281,7 +280,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `DevOpsAgentEksMonitoring-{region}` | Observability | CloudWatch log groups, metric filters, alarms, SNS topic |
 | `DevOpsAgentEksAgentSpace-{agent-region}` | Agent onboarding | Agent Space, IAM roles, operator app, AWS association, webhook + secret |
 | `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook (secret imported by ARN) |
-| `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab API | API Gateway, Lambda (kubectl), DynamoDB (timers) |
+| `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab | API Gateway, API Lambda (kubectl), engine Lambda durable function (`live` alias) |
 
 ## Project Structure
 
@@ -298,7 +297,9 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   └── lambda/
 │       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
 │       ├── devops-agent-trigger/     # Alarm → webhook Lambda
-│       └── failure-simulator-api/    # Lab API Lambda (inject/rollback/status/usage/logs)
+│       └── failure-simulator-api/    # Lab backend: index.py (API), engine.py (durable function), k8s_ops.py (handlers)
+├── lab/
+│   └── scenarios.yaml                # Lab scenarios + skill: single source of truth for engine, UI and README
 ├── k8s/                              # Kubernetes manifests (Kustomize)
 │   ├── base/                         # Deployments, services, configmap, Fluent Bit
 │   └── overlays/dev|staging|prod     # Environment-specific patches

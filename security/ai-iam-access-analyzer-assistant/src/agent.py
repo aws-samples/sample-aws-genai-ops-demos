@@ -46,6 +46,8 @@ OPERATIONAL GUIDANCE:
 When you recommend a change (policy modification, role deletion, permission removal), always suggest the appropriate next steps for enterprise change management:
 
 RESPONSE FORMATTING:
+Respond entirely in English. Never mix in words or characters from another language mid-sentence or inside a table cell, even a single word — write out the full English word instead (for example "downgrade", never a partial substitution).
+Match emoji and word choice to what's actually being reported — never apply achievement/celebration framing (trophy 🏆, "Winner", "Congratulations", medals) to a negative or risk-related result. When presenting compare_roles' rankings (most_risky, most_permissive, least_used, safest_to_delete), every one of those categories names something UNDESIRABLE — being "ranked first" there is bad news for that role, not a prize. The table's whole STRUCTURE must read as a warning list, not a leaderboard: use a warning-toned heading (e.g. "⚠️ Risk ranking"), and rename the "who's on top" column to something that names the concern rather than the achievement — "Role flagged", "Role of concern", or similar, never "Winner". Word each row's reason column as WHY that ranking matters from a security standpoint, not just the raw stat: "Highest permission count (18) — broadest attack surface if compromised" rather than a bare "18 actions vs. 3". Adapt the exact column names to whatever categories compare_by actually returned for this call — the requirement is the warning tone throughout, not fixed wording. This applies broadly — never let a positive-sounding label (winner, champion, best, top performer) attach to a role, key, or finding that the data says is risky.
 When presenting both recommendations and follow-up options in the same response, use DIFFERENT labeling systems to avoid ambiguity:
 - Use numbered lists (1, 2, 3) for recommendations/findings
 - Use lettered options (A, B, C, D) or descriptive labels for "Next Steps" / "What I can do next" sections
@@ -145,6 +147,7 @@ PERFORMANCE RULE (CRITICAL — prevents timeouts):
 - These tools are EXPENSIVE and MUST each be the ONLY tool call in their turn — NEVER chain them with another tool: generate_policy, check_dependencies, generate_action_plan, compare_roles.
 - NEVER offer a compound choice that spans two or more heavy operations in one turn (for example "A: generate an action plan, B: deep-dive top 3, Both: do everything"). If a user's goal implies multiple heavy operations, present them as sequential steps, do the first one now, and offer the next as a follow-up. Do NOT ask the user to pick "Both" or "All" — that path always risks the 29-second timeout.
 - INVESTIGATING A ROLE OR FINDING: when the user selects a role/finding to look into (by number, like "8", or by name), call ONLY get_finding_details in that turn, and pass the ROLE NAME via the role_name parameter — NOT the row number. You already know which role a number refers to from the list you just showed (e.g. "8" = ConsoleAdminAccess), so call get_finding_details with role_name="ConsoleAdminAccess". NEVER pass a bare row number as finding_id, and do NOT call list_findings again just to resolve the number — that wastes a round-trip and causes timeouts. Do NOT also run blast radius (check_dependencies) or generate a policy in the same turn. After presenting the details, OFFER those as explicit next steps — e.g. "Want me to check the blast radius before you'd change anything?" or "Want a least-privilege policy for this role?" — and run them in their own separate turns when the user says yes.
+- SELF-SELECTING A ROLE OR FINDING (no user number/name given — e.g. "drill into the most interesting one," the guided tour's Step 2, or any time you choose the target yourself): the role_name you pass to get_finding_details MUST be an exact, verbatim role name copied from a row in the list_findings tool result already in this conversation. NEVER pass a name you invented while writing your own prose about "which one sounds interesting" — pick by an objective rule (highest severity; on a tie, the first such row) and copy that row's exact name field. If you have not yet called list_findings in this conversation, call it first — do not guess a plausible-sounding role name from memory or pattern.
 - Only ever combine two tools in one turn when BOTH are lightweight (e.g. list_findings) AND the task genuinely needs both. When in doubt, do one and offer the next.
 - export_report must be called ALONE (never alongside other tools) so it completes within the time limit.
 
@@ -192,7 +195,7 @@ You can also serve as an IAM security educator. When users ask to learn, or when
 
 1. GUIDED TOUR: When asked for a guided tour or walkthrough, lead the user step-by-step through:
    - Step 1: "Let me show you your current findings" (call list_findings)
-   - Step 2: "Let me drill into the most interesting one" (call get_finding_details)
+   - Step 2: "Let me drill into the most interesting one" (call get_finding_details). CRITICAL: the role_name you pass MUST be copied verbatim from a row in Step 1's actual list_findings result — never a name you characterize as "interesting-sounding" in your own prose. Pick the row with the highest severity (or the first CRITICAL/HIGH row if there's a tie) and bind to ITS exact role name from the tool payload before writing anything about why you're drilling into it.
    - Step 3: "Now let's check the blast radius before we'd make any changes" (call check_dependencies)
    - Step 4: "Here's what a least-privilege policy would look like" (call generate_policy)
    - Step 5: "Let me validate that policy" (call validate_policy)
@@ -200,7 +203,8 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles that came up earlier in the tour, or the top unused/highest-risk roles if none did)
    - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan)
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
-   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
+   TOUR COMPLETION (REQUIRED): Step 8's response MUST end with an explicit closing line that the tour is complete — something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -587,6 +591,20 @@ TOOL_CONFIG = {
                 },
             }
         },
+        # Bedrock prompt caching (#PERF-1): this entire tool list is
+        # identical on every single conversation turn -- it never varies by
+        # user, mode, or tour step. Marking a cache checkpoint here lets
+        # Bedrock skip re-processing these ~10 tool schemas on every
+        # request within the 5-minute TTL, cutting both latency and cost.
+        # Cache checkpoints are evaluated in the order tools -> system ->
+        # messages (see the matching cachePoint on SYSTEM_PROMPT below),
+        # and the combined tools+system content comfortably clears every
+        # Claude model's minimum cache-checkpoint size (as low as 512
+        # tokens on newer models, this codebase's tools+system prompt is
+        # roughly 10x that). A checkpoint here is a pure win: it can only
+        # reduce latency/cost, never increase it, and doesn't change
+        # behavior if the cache happens to miss.
+        {"cachePoint": {"type": "default"}},
     ]
 }
 
@@ -1274,13 +1292,61 @@ def _shortcircuit_action_plan_and_export(user_message: str):
     }
 
 
-def _shortcircuit_action_plan(user_message: str):
+def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
+    """Same pattern as _prior_turn_announced_access_key_audit: true when the
+    most recent assistant turn was clearly setting up the action-plan step
+    (about to run it), NOT when the plan has already been delivered. The
+    GUIDED TOUR's Step 8 says "pull everything we've found into a
+    prioritized backlog" -- "backlog" alone doesn't match
+    _ACTION_PLAN_INTENT (which wants "action plan" or "remediation
+    backlog"), so a bare "ready" after that announcement would otherwise
+    fall through to a full Bedrock round trip on the tour's own closing
+    step, same failure mode already fixed for Step 6's access-key audit.
+
+    Explicitly returns False when the prior turn already carries
+    _ACTION_PLAN_FOOTER_MARKER -- that string only appears on an
+    ALREADY-DELIVERED plan (see _render_action_plan), never on the
+    announcement that precedes it. Without this guard, a trailing "ready"
+    sent after Step 8 already completed would match on the delivered
+    plan's own "Prioritized action plan" text and silently re-run the tool
+    -- the tour has no other mechanism to stop advancing once Step 8 is
+    done, so this guard IS the tour's stopping condition for this path."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        if _ACTION_PLAN_FOOTER_MARKER in content:
+            return False
+        lower = content.lower()
+        return bool(_ACTION_PLAN_INTENT.search(content)) or (
+            "prioritized" in lower and ("backlog" in lower or "plan" in lower)
+        )
+    return False
+
+
+def _shortcircuit_action_plan(user_message: str, conversation_history: list = None):
     """If the user is asking for an action plan, invoke the tool directly and
     return an assistant-ready envelope so we skip Bedrock's two round trips.
+
+    Also fires on a bare affirmative reply when the prior assistant turn
+    announced the action-plan step itself (the GUIDED TOUR's Step 8) --
+    same rationale and pattern as _shortcircuit_triage_access_keys.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _ACTION_PLAN_INTENT.search(user_message):
+    if _ACTION_PLAN_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_action_plan(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     tool_input = {"max_items": 50, "include_quick_wins": True}
@@ -1452,17 +1518,93 @@ def _render_triage_access_keys(result: dict) -> str:
     return "\n\n".join(lines)
 
 
-def _shortcircuit_triage_access_keys(user_message: str):
+_BARE_AFFIRMATIVE = re.compile(
+    r"^\s*"
+    r"(?:please\s+|pls\s+)?"
+    r"(?:yes|yeah|yep|yup|sure|ok(?:ay)?|ready|go(?:\s+ahead)?|"
+    r"continue|next|proceed|sounds\s+good|let'?s\s+go|do\s+it|i'?m\s+ready)"
+    r"(?:\s*,?\s*(?:please|go\s+ahead|do\s+it|continue|proceed))?"
+    # Users often echo back the assistant's own question rather than reply
+    # with a bare word — the GUIDED TOUR literally asks "Ready for the next
+    # step?" on every step, and "ready for the next step" (exact string
+    # observed in a real re-test) has zero matches against the alternatives
+    # above without this trailing clause. Kept generic (not hardcoded to
+    # "next step" alone) so "ready to continue", "ok, moving on", etc. also
+    # match — these all carry no NEW information the model would need to
+    # see, they are pure acknowledgments of the assistant's own prompt.
+    r"(?:\s+(?:for|to|with)\s+(?:the\s+)?(?:next\s+step|continu(?:e|ing)|"
+    r"mov(?:e|ing)\s+on|proceed(?:ing)?))?"
+    r"\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_bare_affirmative(user_message: str) -> bool:
+    """True for a short "yes/ready/go ahead"-style reply with no other
+    content — the shape of a user clicking through the GUIDED TOUR's
+    "Ready for the next step?" prompts. Deliberately anchored start-to-end
+    so a longer message that happens to START with "yes" (e.g. "yes but
+    first explain X") does NOT match — that user has more to say and
+    should reach the model, not a short-circuit."""
+    if not user_message or not isinstance(user_message, str):
+        return False
+    return bool(_BARE_AFFIRMATIVE.match(user_message))
+
+
+def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
+    """True when the most recent ASSISTANT message set up the access-key
+    audit as the next step — the GUIDED TOUR's Step 6 framing ("One more
+    surface worth auditing — long-lived IAM access keys...") or any prior
+    turn using the same language the tool-selection rule expects. Walk
+    backward past user turns to find the last assistant turn, mirroring
+    _last_assistant_artifact's traversal but only reading the text, not
+    requiring artifact-length content — a tour announcement is short."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            return False
+        return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
+            "access key" in content.lower() and "audit" in content.lower()
+        )
+    return False
+
+
+def _shortcircuit_triage_access_keys(user_message: str, conversation_history: list = None):
     """If the user is asking for an access-key audit, invoke the tool
     directly and return an assistant-ready envelope with both a prose intro
     and the raw JSON payload in a fenced ```json block. Skips both Bedrock
     round trips so the turn cannot hit the API Gateway 29s ceiling on
     accounts with a fleet of IAM users, and guarantees the frontend receives
     the machine-readable payload for the AccessKeysTable component.
+
+    Also fires on a bare affirmative reply ("ready", "yes", "go ahead", ...)
+    when the immediately prior assistant turn was clearly setting up THIS
+    audit — the GUIDED TOUR's Step 6 announces "One more surface worth
+    auditing — long-lived IAM access keys" and the user's next message is
+    just "ready", which never contains the word "access keys" and so never
+    matched _TRIAGE_ACCESS_KEYS_INTENT on its own. Without this, every
+    tour run pays a full, slow Bedrock synthesis + tool call on Step 6 while
+    an isolated direct prompt ("audit my access keys") hits this fast path
+    every time — exactly why Quick's per-tool direct-prompt tests passed
+    clean while the same step inside the real tour flow consistently timed
+    out. Same "look at the prior assistant turn" pattern as
+    _shortcircuit_export_followup, applied to a different intent.
     """
     if not user_message or not isinstance(user_message, str):
         return None
-    if not _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+    if _TRIAGE_ACCESS_KEYS_INTENT.search(user_message):
+        pass
+    elif _looks_like_bare_affirmative(user_message) and _prior_turn_announced_access_key_audit(
+        conversation_history
+    ):
+        pass
+    else:
         return None
 
     # Default parameters — include_inactive defaults to True inside the tool;
@@ -1704,9 +1846,20 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
     # end to build the top-level `coverage` array (#171).
     raw_tool_results: list = []
 
+    # Bedrock prompt caching (#PERF-1): the system prompt is identical on
+    # every turn regardless of mode or tour step (~7,500 tokens, comfortably
+    # above every Claude model's cache-checkpoint minimum). A cache
+    # checkpoint here plus the one on TOOL_CONFIG lets Bedrock skip
+    # re-processing both blocks within the 5-minute TTL -- typical guided
+    # tour cadence (a user reading a step and clicking "ready") easily
+    # stays inside that window. This targets the Step 2 timeout Quick's
+    # tour re-test surfaced: less to process before generation starts
+    # reduces latency, not just cost.
+    system_blocks = [{"text": system_prompt}, {"cachePoint": {"type": "default"}}]
+
     response = bedrock_client.converse(
         modelId=model_id,
-        system=[{"text": system_prompt}],
+        system=system_blocks,
         messages=messages,
         toolConfig=TOOL_CONFIG,
         inferenceConfig={"maxTokens": 2048},
@@ -1774,7 +1927,7 @@ def converse_with_tools(messages: list, model_id: str = None, system_prompt: str
         # hit (toolConfig must stay present because the history contains tool use).
         response = bedrock_client.converse(
             modelId=model_id,
-            system=[{"text": system_prompt}],
+            system=system_blocks,
             messages=messages,
             toolConfig=TOOL_CONFIG,
             # 2048 (not 1024): a 1024 cap truncated long presigned download-link
@@ -1858,7 +2011,7 @@ def handler(event, context):
         # Same idea for "generate an action plan": the tool's structured output
         # is enough, so skip both Bedrock round trips that were the main cause
         # of the ~44s timeouts observed on this prompt.
-        shortcircuit = _shortcircuit_action_plan(user_message)
+        shortcircuit = _shortcircuit_action_plan(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
@@ -1898,7 +2051,7 @@ def handler(event, context):
         # the tool payload as a fenced JSON block so the frontend's
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
-        shortcircuit = _shortcircuit_triage_access_keys(user_message)
+        shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,

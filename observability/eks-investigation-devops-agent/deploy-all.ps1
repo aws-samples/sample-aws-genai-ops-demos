@@ -220,8 +220,7 @@ try {
         -c "environment=$Environment" `
         -c "projectName=$ProjectName" `
         -c "devOpsAgentRegion=$DevOpsAgentRegion" `
-        --require-approval never `
-        --no-cli-pager
+        --require-approval never
     if ($LASTEXITCODE -ne 0) { throw "Agent Space stack deployment failed" }
 } finally {
     Pop-Location
@@ -273,8 +272,7 @@ $cdkArgs = @(
     "-c", "devOpsAgentWebhookSecretArn=$DevOpsWebhookSecretArn",
     "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
     "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
-    "--require-approval", "never",
-    "--no-cli-pager"
+    "--require-approval", "never"
 )
 & $cdkArgs[0] $cdkArgs[1..($cdkArgs.Length-1)]
 $cdkDeployExit = $LASTEXITCODE
@@ -1018,8 +1016,7 @@ if ($NLB_HOSTNAME) {
         "-c", "devOpsAgentWebhookSecretArn=$DevOpsWebhookSecretArn",
         "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
         "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
-        "--require-approval", "never",
-        "--no-cli-pager"
+        "--require-approval", "never"
     )
     & $cdkArgs[0] $cdkArgs[1..($cdkArgs.Length-1)]
     $frontendDeployExit = $LASTEXITCODE
