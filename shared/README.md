@@ -20,6 +20,8 @@ shared/
 │   └── deploy-mcp.sh                   # Agent Tools MCP server runner (Bash)
 ├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
 │   └── README.md                       # How demos reference skills and MCP servers; manifest schema
+├── lab/                                # The Demo Lab shared by native-agent demos (engine, API, CDK construct, UI)
+│   └── README.md                       # What a demo writes (scenarios.yaml + handlers.py) and how to wire the construct and page
 ├── templates/                          # Starter files copied into a new demo
 │   └── demo-scenarios.yaml.example     # Lab scenario definitions (see .kiro/steering/native-agent-demo-guide.md)
 └── utils/                              # Shared utility functions

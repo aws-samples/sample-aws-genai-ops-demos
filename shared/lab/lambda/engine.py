@@ -8,9 +8,9 @@ Two roads lead to `revert`, and only two:
     (SendDurableExecutionCallbackSuccess) and the wait returns at once;
   * nobody does: the callback times out (CallbackTimeoutError) and the revert runs anyway.
 
-There is no state store. "Is it injected?" is read from the cluster (k8s_ops.probe);
+There is no state store. "Is it injected?" is read from the environment (handlers.probe);
 "where is the run?" is read from the execution history (see index.py). Closing the
-browser, a Lambda cold start or an API error cannot leave the cluster broken.
+browser, a Lambda cold start or an API error cannot leave the environment broken.
 
 Invoke through the `live` alias with a unique DurableExecutionName
 (`<scenario-id>-<epoch>`), payload {"scenarioId": "..."}.
@@ -25,7 +25,7 @@ from aws_durable_execution_sdk_python.config import Duration, WaitForCallbackCon
 from aws_durable_execution_sdk_python.context import WaitForCallbackContext
 from aws_durable_execution_sdk_python.exceptions import CallbackTimeoutError
 
-import k8s_ops
+import handlers
 import scenarios
 
 logger = logging.getLogger()
@@ -36,10 +36,10 @@ STEP_AWAIT = 'await-rollback'
 STEP_REVERT = 'revert'
 
 
-def _handler_for(scenario: Dict[str, Any]) -> k8s_ops.Handler:
+def _handler_for(scenario: Dict[str, Any]) -> handlers.Handler:
     name = scenario.get('handler', '')
     try:
-        return k8s_ops.HANDLERS[name]
+        return handlers.HANDLERS[name]
     except KeyError:
         raise ValueError(f"Scenario {scenario.get('id')!r} names unknown handler {name!r}")
 

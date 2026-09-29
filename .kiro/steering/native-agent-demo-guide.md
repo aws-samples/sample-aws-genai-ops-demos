@@ -249,9 +249,11 @@ Why hard rules 4–6 exist, and how the engine honours them:
 
 Learned the hard way, so you do not have to: quote YAML list lines containing `: ` (they
 parse as mappings and crash the card); never reuse a durable execution name (names are
-idempotency keys; the Lab uses `<scenario-id>-<epoch>`); the Lab's own validation
-(`pytest` in `shared/lab/lambda`) checks that every `handler` exists and every walkthrough
-line is a string, so run it before the first deploy.
+idempotency keys; the Lab uses `<scenario-id>-<epoch>`); the Lab's own validator
+(`python shared/lab/lambda/validate.py <demo>/lab`) checks that every `handler` exists,
+every walkthrough line is a string and every scenario states its with/without difference,
+so run it before the first deploy. How to wire the construct and the page into a demo:
+`shared/lab/README.md`.
 
 ### Does the demo need an app?
 

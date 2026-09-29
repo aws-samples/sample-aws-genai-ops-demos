@@ -1,9 +1,5 @@
 """
-Kubernetes operations for the DevOps Agent Lab.
-
-kubectl comes from the Lambda layer (@aws-cdk/lambda-layer-kubectl-v36); the EKS
-bearer token is an STS presigned URL, same mechanism as `aws eks get-token`.
-No aws CLI in the layer: AWS calls go through boto3.
+Lab handlers for the EKS demo: the only Lab code this demo writes.
 
 Every scenario in lab/scenarios.yaml names a `handler`; HANDLERS maps that name to
 three functions:
@@ -12,7 +8,12 @@ three functions:
     probe()  -> dict   {"injected": bool, "facts": [fact, ...]}  read from the cluster,
                        never from a state store (a manual kubectl fix must show)
 `environment()` returns the facts shown in the Lab header. Facts are labelled values
-the UI renders without knowing what they are (see facts.py).
+the UI renders without knowing what they are (facts.py comes from shared/lab/lambda,
+bundled next to this file by the LabBackend construct).
+
+kubectl comes from the Lambda layer (@aws-cdk/lambda-layer-kubectl-v36); the EKS
+bearer token is an STS presigned URL, same mechanism as `aws eks get-token`.
+No aws CLI in the layer: AWS calls go through boto3.
 """
 
 import base64
@@ -21,11 +22,12 @@ import logging
 import os
 import subprocess
 import time
-from typing import Any, Callable, Dict, List, NamedTuple
+from typing import Any, Dict, List
 
 import boto3
 
 from facts import console_link, console_url, fact, item
+from handler_contract import Handler
 
 logger = logging.getLogger(__name__)
 
@@ -283,12 +285,6 @@ def probe_dns_resolution_failure() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Registry: scenarios.yaml `handler` -> functions
 # ---------------------------------------------------------------------------
-
-class Handler(NamedTuple):
-    inject: Callable[[], Dict[str, Any]]
-    revert: Callable[[], Dict[str, Any]]
-    probe: Callable[[], Dict[str, Any]]
-
 
 HANDLERS: Dict[str, Handler] = {
     'db_connection_failure': Handler(inject_db_connection_failure, revert_db_connection_failure, probe_db_connection_failure),

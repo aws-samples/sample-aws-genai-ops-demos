@@ -10,8 +10,11 @@ Routes
   GET    /admin/tasks                      recent tasks of the Agent Space (investigations, evaluations, chats)
 
 State lives in two places only, neither of them a database:
-  * the cluster (k8s_ops.probe): is the failure present right now?
+  * the environment (handlers.probe): is the failure present right now?
   * the durable execution history (engine.py): where is the run, when does it auto-revert?
+
+`handlers` is the demo's module (lab/handlers.py), bundled next to this file by the
+LabBackend construct together with the demo's scenarios.yaml.
 """
 
 import json
@@ -25,7 +28,7 @@ from urllib.parse import quote
 import boto3
 
 import devops_agent
-import k8s_ops
+import handlers
 import scenarios
 from engine import STEP_AWAIT, STEP_INJECT, STEP_REVERT
 from facts import console_link, console_url, fact
@@ -190,7 +193,7 @@ def _run_view(execution: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _environment() -> Dict[str, Any]:
-    env_facts = k8s_ops.environment() if hasattr(k8s_ops, 'environment') else []
+    env_facts = handlers.environment() if hasattr(handlers, 'environment') else []
     trigger = os.environ.get('TRIGGER_LAMBDA_NAME', '')
     return {
         'region': REGION,
@@ -252,7 +255,7 @@ def get_status() -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for s in scenarios.all_scenarios():
         sid = s['id']
-        handler = k8s_ops.HANDLERS.get(s.get('handler', ''))
+        handler = handlers.HANDLERS.get(s.get('handler', ''))
         try:
             probe = handler.probe() if handler else {'injected': False, 'error': f"unknown handler {s.get('handler')!r}"}
         except Exception as e:
@@ -327,8 +330,8 @@ def rollback(scenario_id: str) -> Dict[str, Any]:
         return {'success': False, 'statusCode': 409,
                 'message': 'The injection is still starting; retry in a few seconds.'}
 
-    # No run owns the failure (manual kubectl change, or a run that already ended): revert directly.
-    handler = k8s_ops.HANDLERS.get(scenario.get('handler', ''))
+    # No run owns the failure (changed by hand, or a run that already ended): revert directly.
+    handler = handlers.HANDLERS.get(scenario.get('handler', ''))
     if handler and handler.probe().get('injected'):
         result = handler.revert()
         return {'success': True, 'scenario': scenario_id, **result, 'directRevert': True}

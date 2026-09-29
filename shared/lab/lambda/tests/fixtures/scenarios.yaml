@@ -1,0 +1,53 @@
+schemaVersion: 1
+capability:
+  kind: skill
+  name: fixture-skill
+  source: agent-tools
+  ref: main
+  agentTypes: [incident-rca, chat]
+  prompt: "What is wrong with the thing?"
+scenarios:
+  - id: thing-breaks
+    name: The thing breaks
+    category: Fixture
+    handler: thing_breaks
+    demonstrates:
+      check: Fixture check
+      withCapability: "Names the thing"
+      withoutCapability: "Lists facts"
+    triggersAlarm: true
+    alarm:
+      envVar: THING_ALARM_NAME
+      expectFiringWithinSeconds: 60
+    inject:
+      summary: "Breaks the thing"
+    detect:
+      summary: "The thing is broken"
+    autoRevertSeconds: 600
+    description: Breaks the thing.
+    incidentChain:
+      - "Thing breaks: alarm fires"
+    customerImpact:
+      - Nothing works
+    demoFlow:
+      - Click Inject
+    talkTrack: "Watch the thing."
+  - id: other-thing-breaks
+    name: The other thing breaks
+    category: Fixture
+    handler: other_thing_breaks
+    demonstrates:
+      check: Other check
+      withCapability: "Names the other thing"
+      withoutCapability: "Lists facts"
+    triggersAlarm: false
+    autoRevertSeconds: 300
+    description: Breaks the other thing.
+skills:
+  - name: fixture-skill
+    source: agent-tools
+    ref: main
+    feature: "Fixture feature"
+    pitch: "Fixture pitch"
+notes:
+  - "One at a time."

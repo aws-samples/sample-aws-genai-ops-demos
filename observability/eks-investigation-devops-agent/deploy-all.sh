@@ -336,6 +336,12 @@ FAILURE_SIM_LAMBDA_ROLE_ARN=$(aws cloudformation describe-stacks \
     --output text --region "$AWS_REGION" 2>/dev/null || echo "")
 if [ -n "$FAILURE_SIM_LAMBDA_ROLE_ARN" ] && [ "$FAILURE_SIM_LAMBDA_ROLE_ARN" != "None" ]; then
     echo "  Granting EKS access to Failure Simulator Lambda ($FAILURE_SIM_LAMBDA_ROLE_ARN)..."
+    # Access entries bind to the role's unique id: an entry left over from a previous
+    # deployment of a same-named role no longer matches. Recreate it every time.
+    aws eks delete-access-entry \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$FAILURE_SIM_LAMBDA_ROLE_ARN" \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
     aws eks create-access-entry \
         --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
         --principal-arn "$FAILURE_SIM_LAMBDA_ROLE_ARN" \
