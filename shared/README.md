@@ -21,6 +21,10 @@ shared/
 ├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
 │   ├── README.md                       # How demos reference skills and MCP servers; manifest schema
 │   └── manifests/                      # Local mcp-server.yaml overrides, until servers ship their own
+├── lab/                                # Demo Lab mechanism: durable engine, DevOps Agent data-plane calls, LabEngine CDK construct
+│   └── README.md                       # How a demo wires the engine into its own Lab (each demo writes its own Lab)
+├── templates/                          # Examples a new demo adapts
+│   └── demo-scenarios.yaml.example     # Lab scenario definitions, an example not a schema
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)

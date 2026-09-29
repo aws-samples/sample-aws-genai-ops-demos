@@ -1,11 +1,12 @@
 """
-Local tests for the Lab engine (Lambda durable function) and the API routing.
+Tests for the EKS demo's Lab: the shared durable engine wired to this demo's scenarios,
+the API rules the UI relies on, and the scenarios.yaml consistency.
 
 The durable handler runs for real inside DurableFunctionTestRunner; only the
-kubectl-backed handlers are mocked. What is under test is the orchestration:
-inject -> wait for a rollback -> revert, on both roads (manual callback, timeout).
+kubectl-backed handlers are replaced by recorders. Under test: the orchestration
+(inject -> wait for a rollback -> revert, on both roads) and the API contract.
 
-Run from cdk/lambda/failure-simulator-api:  python -m pytest tests -q
+Run from the demo's lab/ folder:  python -m pytest tests -q
 """
 
 import json
@@ -17,29 +18,32 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LAMBDA_DIR = os.path.dirname(HERE)
-sys.path.insert(0, LAMBDA_DIR)
+LAB_DIR = os.path.dirname(HERE)
+REPO_ROOT = os.path.abspath(os.path.join(LAB_DIR, '..', '..', '..'))
+sys.path.insert(0, LAB_DIR)
+sys.path.insert(0, os.path.join(REPO_ROOT, 'shared', 'lab', 'lambda'))
 os.environ.setdefault('AWS_REGION', 'eu-west-1')
 os.environ.setdefault('AWS_DEFAULT_REGION', 'eu-west-1')
-os.environ['SCENARIOS_FILE'] = os.path.join(LAMBDA_DIR, '..', '..', '..', 'lab', 'scenarios.yaml')
+os.environ['SCENARIOS_FILE'] = os.path.join(LAB_DIR, 'scenarios.yaml')
 
 from aws_durable_execution_sdk_python.execution import InvocationStatus  # noqa: E402
 from aws_durable_execution_sdk_python.lambda_service import OperationType  # noqa: E402
 from aws_durable_execution_sdk_python_testing import DurableFunctionTestRunner  # noqa: E402
 
-import engine  # noqa: E402
-import k8s_ops  # noqa: E402
+import engine  # noqa: E402  (shared)
+import engine_main  # noqa: E402
+import handlers  # noqa: E402
 import scenarios  # noqa: E402
 
 
 def _fake_handlers():
     calls = []
-    fake = k8s_ops.Handler(
+    fake = handlers.Handler(
         inject=lambda: calls.append('inject') or {'message': 'broken'},
         revert=lambda: calls.append('revert') or {'message': 'fixed'},
-        probe=lambda: {'injected': 'inject' in calls and 'revert' not in calls},
+        probe=lambda: {'injected': 'inject' in calls and 'revert' not in calls, 'facts': []},
     )
-    return calls, {name: fake for name in k8s_ops.HANDLERS}
+    return calls, {name: fake for name in handlers.HANDLERS}
 
 
 def _step_names(res) -> set:
@@ -50,16 +54,23 @@ def _result(res) -> dict:
     return json.loads(res.result) if isinstance(res.result, str) else res.result
 
 
+# ---------------------------------------------------------------------------
+# scenarios.yaml is the single source of truth: keep it consistent with handlers.py
+# ---------------------------------------------------------------------------
+
 def test_scenarios_yaml_is_consistent():
     data = scenarios.load()
     assert data['schemaVersion'] == 1
     ids = [s['id'] for s in data['scenarios']]
     assert len(ids) == len(set(ids)) and ids, 'scenario ids must be unique'
     for s in data['scenarios']:
-        assert s['handler'] in k8s_ops.HANDLERS, f"{s['id']}: handler {s['handler']!r} not in k8s_ops.HANDLERS"
-        assert s['inject']['route'] == f"/admin/scenarios/{s['id']}/inject"
+        assert s['handler'] in handlers.HANDLERS, f"{s['id']}: handler {s['handler']!r} not in handlers.HANDLERS"
         assert scenarios.auto_revert_seconds(s) > 0
-        assert len(f"{s['id']}-{int(time.time())}") <= 64
+        if s.get('triggersAlarm'):
+            assert (s.get('alarm') or {}).get('envVar'), f"{s['id']}: triggersAlarm needs alarm.envVar"
+        assert len(engine.Engine.execution_name(s['id'])) <= 64
+        for k in ('check', 'withCapability', 'withoutCapability'):
+            assert (s.get('demonstrates') or {}).get(k), f"{s['id']}: demonstrates.{k} (no difference, no scenario)"
         # An unquoted "text: more text" list item parses as a one-key mapping, which the UI
         # cannot render (React error #31). Every walkthrough line must be a plain string.
         for key in ('incidentChain', 'customerImpact', 'demoFlow'):
@@ -67,10 +78,14 @@ def test_scenarios_yaml_is_consistent():
                 assert isinstance(line, str), f"{s['id']}.{key}: quote this line in scenarios.yaml -> {line!r}"
 
 
+# ---------------------------------------------------------------------------
+# Engine: both roads to `revert`
+# ---------------------------------------------------------------------------
+
 def test_manual_rollback_resolves_callback_then_reverts():
-    calls, handlers = _fake_handlers()
-    with patch.dict(k8s_ops.HANDLERS, handlers, clear=True):
-        runner = DurableFunctionTestRunner(handler=engine.handler, poll_interval=0.2)
+    calls, fakes = _fake_handlers()
+    with patch.dict(handlers.HANDLERS, fakes, clear=True):
+        runner = DurableFunctionTestRunner(handler=engine_main.handler, poll_interval=0.2)
         with runner:
             arn = runner.run_async(input=json.dumps({'scenarioId': 'db-connection-failure'}), timeout=60)
             # One callback per execution; its history event is not named after the wait step.
@@ -88,11 +103,10 @@ def test_manual_rollback_resolves_callback_then_reverts():
 
 
 def test_timeout_auto_reverts():
-    calls, handlers = _fake_handlers()
+    calls, fakes = _fake_handlers()
     short = {**scenarios.get('dns-resolution-failure'), 'autoRevertSeconds': 1}
-    with patch.dict(k8s_ops.HANDLERS, handlers, clear=True), \
-         patch.object(scenarios, 'get', return_value=short):
-        runner = DurableFunctionTestRunner(handler=engine.handler, poll_interval=0.2)
+    with patch.dict(handlers.HANDLERS, fakes, clear=True), patch.object(scenarios, 'get', return_value=short):
+        runner = DurableFunctionTestRunner(handler=engine_main.handler, poll_interval=0.2)
         with runner:
             res = runner.run(input=json.dumps({'scenarioId': 'dns-resolution-failure'}), timeout=60)
 
@@ -102,9 +116,9 @@ def test_timeout_auto_reverts():
 
 
 def test_unknown_scenario_fails_before_touching_the_cluster():
-    calls, handlers = _fake_handlers()
-    with patch.dict(k8s_ops.HANDLERS, handlers, clear=True):
-        runner = DurableFunctionTestRunner(handler=engine.handler, poll_interval=0.2)
+    calls, fakes = _fake_handlers()
+    with patch.dict(handlers.HANDLERS, fakes, clear=True):
+        runner = DurableFunctionTestRunner(handler=engine_main.handler, poll_interval=0.2)
         with runner:
             res = runner.run(input=json.dumps({'scenarioId': 'nope'}), timeout=30)
     assert res.status == InvocationStatus.FAILED
@@ -112,16 +126,17 @@ def test_unknown_scenario_fails_before_touching_the_cluster():
 
 
 # ---------------------------------------------------------------------------
-# API routing (index.py) with the Lambda control plane mocked
+# API (api.py) with the Lambda control plane mocked
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def api():
-    import index
-    index.ENGINE_FUNCTION_ARN = 'arn:aws:lambda:eu-west-1:123456789012:function:lab-engine:live'
+    os.environ['ENGINE_FUNCTION_ARN'] = 'arn:aws:lambda:eu-west-1:123456789012:function:lab-engine:live'
+    import api as api_module
     fake_lambda = MagicMock()
-    with patch.object(index, '_lambda_client', return_value=fake_lambda):
-        yield index, fake_lambda
+    api_module._engine = engine.Engine(os.environ['ENGINE_FUNCTION_ARN'], lambda_client=fake_lambda)
+    yield api_module, fake_lambda
+    api_module._engine = None
 
 
 def _event(method, path):
@@ -166,15 +181,41 @@ def test_rollback_resolves_the_callback_of_the_running_execution(api):
     assert fake_lambda.send_durable_execution_callback_success.call_args.kwargs['CallbackId'] == 'cb-1'
 
 
-def test_status_never_filters_on_more_than_one_execution_status(api):
+def test_status_lists_executions_with_at_most_one_status_filter(api):
     """ListDurableExecutionsByFunction rejects multi-status filters (InvalidParameterValueException)."""
     index, fake_lambda = api
     fake_lambda.list_durable_executions_by_function.return_value = {'DurableExecutions': []}
-    with patch.object(index.k8s_ops, 'HANDLERS', {}), patch.object(index, '_alarms', return_value={}):
+    with patch.object(index.handlers, 'HANDLERS', {}), patch.object(index, '_alarms', return_value={}), \
+         patch.object(index.handlers, 'environment', return_value=[]):
         resp = index.handler(_event('GET', '/admin/status'), None)
     assert resp['statusCode'] == 200
     for call in fake_lambda.list_durable_executions_by_function.call_args_list:
         assert len(call.kwargs.get('Statuses', [])) <= 1, call.kwargs
+
+
+def test_status_returns_probe_facts_plus_alarm_fact_and_run_phases(api):
+    index, fake_lambda = api
+    fake_lambda.list_durable_executions_by_function.return_value = {'DurableExecutions': [
+        {'DurableExecutionName': 'db-connection-failure-1700000000', 'DurableExecutionArn': 'arn:run', 'Status': 'RUNNING'}]}
+    paginator = MagicMock()
+    paginator.paginate.return_value = [{'Events': [
+        {'EventType': 'StepSucceeded', 'Name': 'inject'},
+        {'EventType': 'CallbackStarted', 'Name': 'await-rollback', 'CallbackStartedDetails': {'CallbackId': 'cb-1', 'Timeout': 600}},
+    ]}]
+    fake_lambda.get_paginator.return_value = paginator
+    probe = lambda: {'injected': True, 'facts': [{'label': 'Thing', 'value': 'broken', 'status': 'error'}]}
+    fakes = {name: handlers.Handler(lambda: {}, lambda: {}, probe) for name in handlers.HANDLERS}
+    with patch.object(index.handlers, 'HANDLERS', fakes), \
+         patch.object(index.handlers, 'environment', return_value=[]), \
+         patch.object(index, '_alarms', return_value={'x': {'name': 'x', 'state': 'ALARM', 'reason': ''}}), \
+         patch.object(index.scenarios, 'alarm_name', return_value='x'):
+        body = json.loads(index.handler(_event('GET', '/admin/status'), None)['body'])
+    assert body['busy'] == 'db-connection-failure'
+    st = body['scenarios']['db-connection-failure']
+    assert [f['label'] for f in st['facts']] == ['Thing', 'Alarm']
+    assert [p['id'] for p in st['run']['phases']] == ['inject', 'await-rollback', 'revert']
+    assert [p['status'] for p in st['run']['phases']] == ['success', 'in-progress', 'pending']
+    assert all(p['label'] for p in st['run']['phases'])
 
 
 def test_unknown_route_is_404(api):
