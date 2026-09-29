@@ -14,10 +14,10 @@
 # otherwise a built-in reader for the manifest subset). Mirrors deploy-mcp.ps1.
 #
 # Usage (from a demo directory):
-#   ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
+#   ../../shared/devops-agent/agent-tools/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
 #       --param AllowedAccounts=111111111111 \
-#       --manifest ../../shared/agent-tools/manifests/aws-vpc-dns-diagnostics-mcp.yaml
-#   ../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --destroy --manifest ...
+#       --manifest ./mcp-server.yaml   # temporary, kept in the demo folder until the server ships one
+#   ../../shared/devops-agent/agent-tools/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --destroy --manifest ...
 #
 # Exports (when sourced): AGENT_TOOLS_MCP_ENDPOINT, AGENT_TOOLS_MCP_AUTH_METHOD,
 #                         AGENT_TOOLS_MCP_SIGNING_SERVICE, AGENT_TOOLS_MCP_STACK
@@ -217,7 +217,7 @@ if [ -n "$MANIFEST" ]; then MANIFEST_PATH=$(cd "$(dirname "$MANIFEST")" && pwd)/
 if [ ! -f "$MANIFEST_PATH" ]; then
     echo -e "${RED}      ERROR: No mcp-server.yaml for '$SERVER' at ref '$REF'.${NC}"
     echo -e "${YELLOW}      This server does not ship a manifest yet. Pass --manifest <path> to a local one${NC}"
-    echo -e "${YELLOW}      (see shared/agent-tools/manifests/ and shared/agent-tools/README.md).${NC}"
+    echo -e "${YELLOW}      (keep a temporary manifest in the demo's own folder; see shared/devops-agent/README.md).${NC}"
     rm -rf "$TEMP_ROOT"; exit 1
 fi
 load_manifest "$MANIFEST_PATH"

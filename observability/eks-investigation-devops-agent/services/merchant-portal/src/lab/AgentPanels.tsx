@@ -85,8 +85,8 @@ function AgentToolsSkillFields({ skill }: { skill: Skill }) {
   const ref = skill.ref ?? 'main'
   const customAgent = skill.kind === 'custom-agent'
   const sourceUrl = `${AGENT_TOOLS_REPO}/tree/${ref}/${customAgent ? 'custom-agents' : 'skills'}/${skill.name}`
-  const command = `& "..\\..\\shared\\scripts\\deploy-skill.ps1" -${customAgent ? 'CustomAgent' : 'Skill'} ${skill.name} -Ref ${ref}`
-  const commandSh = `../../shared/scripts/deploy-skill.sh --${customAgent ? 'custom-agent' : 'skill'} ${skill.name} --ref ${ref}`
+  const command = `& "..\\..\\shared\\devops-agent\\agent-tools\\deploy-skill.ps1" -${customAgent ? 'CustomAgent' : 'Skill'} ${skill.name} -Ref ${ref}`
+  const commandSh = `../../shared/devops-agent/agent-tools/deploy-skill.sh --${customAgent ? 'custom-agent' : 'skill'} ${skill.name} --ref ${ref}`
   return (
     <>
       <KeyValuePairs

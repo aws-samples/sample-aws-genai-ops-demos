@@ -1,5 +1,5 @@
 """
-Engine Lambda entry point of the EKS demo: the shared durable engine (shared/lab) wired
+Engine Lambda entry point of the EKS demo: the shared durable engine (shared/devops-agent/lab) wired
 to this demo's scenarios and handlers.
 """
 

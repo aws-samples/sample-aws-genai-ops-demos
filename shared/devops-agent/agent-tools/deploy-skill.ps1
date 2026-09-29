@@ -12,8 +12,8 @@
 # accepts, and never the repo-only files (README, CHANGELOG, evals, eval config).
 #
 # Usage (from a demo directory):
-#   & "..\..\shared\scripts\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
-#   & "..\..\shared\scripts\deploy-skill.ps1" -CustomAgent aws-health-report -Ref v1.2.0
+#   & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
+#   & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -CustomAgent aws-health-report -Ref v1.2.0
 #
 # Exports for the calling script:
 #   $global:AGENT_TOOLS_SKILL_ZIP    Full path of the produced zip (skills only)
