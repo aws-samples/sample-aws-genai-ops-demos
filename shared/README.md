@@ -7,23 +7,15 @@ This directory contains shared utilities, scripts, and resources used across all
 ```
 shared/
 ├── README.md                           # This file
-├── scripts/                            # Shared deployment and utility scripts
-│   ├── check-prerequisites.ps1         # Prerequisites validation (PowerShell)
-│   ├── check-prerequisites.sh          # Prerequisites validation (Bash)
-│   ├── check-org-access.ps1            # Multi-account (hub-and-spoke) prerequisites (PowerShell)
-│   ├── check-org-access.sh             # Multi-account (hub-and-spoke) prerequisites (Bash)
-│   ├── deploy-cdk.ps1                  # CDK deployment automation (PowerShell)
-│   ├── deploy-cdk.sh                   # CDK deployment automation (Bash)
-│   ├── deploy-skill.ps1                # Agent Tools skill / custom agent packager (PowerShell)
-│   ├── deploy-skill.sh                 # Agent Tools skill / custom agent packager (Bash)
-│   ├── deploy-mcp.ps1                  # Agent Tools MCP server runner (PowerShell)
-│   └── deploy-mcp.sh                   # Agent Tools MCP server runner (Bash)
-├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
-│   └── README.md                       # How demos reference skills and MCP servers; manifest schema
-├── lab/                                # Demo Lab mechanism: durable engine, DevOps Agent data-plane calls, LabEngine CDK construct
-│   └── README.md                       # How a demo wires the engine into its own Lab (each demo writes its own Lab)
-├── templates/                          # Examples a new demo adapts
-│   └── demo-scenarios.yaml.example     # Lab scenario definitions, an example not a schema (see .kiro/steering/native-agent-demo-guide.md)
+├── scripts/                            # Generic deployment scripts, called by every demo
+│   ├── check-prerequisites.ps1 | .sh   # Tooling, credentials, region, service availability
+│   ├── check-org-access.ps1 | .sh      # Multi-account (hub-and-spoke) prerequisites
+│   └── deploy-cdk.ps1 | .sh            # CDK bootstrap, dependencies, deploy
+├── devops-agent/                       # Everything a demo of an AWS DevOps Agent capability consumes
+│   ├── README.md                       # The bricks and how to wire them; the one entry point
+│   ├── agent-tools/                    # deploy-skill.*, deploy-mcp.*: fetch a capability from the Agent Tools repository
+│   ├── lab/                            # The Lab mechanism: durable engine, agent data-plane calls, LabEngine CDK construct
+│   └── examples/scenarios.yaml         # A Lab scenario file to adapt
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
@@ -318,15 +310,15 @@ repository; the demo fetches it at deploy time and never copies it — one artef
 
 **PowerShell**:
 ```powershell
-& "..\..\shared\scripts\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
-& "..\..\shared\scripts\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
+& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
+& "..\..\shared\devops-agent\agent-tools\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
     -Parameters @{ AllowedAccounts = "111111111111" }
 ```
 
 **Bash**:
 ```bash
-../../shared/scripts/deploy-skill.sh --skill eks-upgrade-readiness --ref main
-../../shared/scripts/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
+../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main
+../../shared/devops-agent/agent-tools/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
     --param AllowedAccounts=111111111111
 ```
 
@@ -334,7 +326,8 @@ repository; the demo fetches it at deploy time and never copies it — one artef
 upload rules. `deploy-mcp` fetches one MCP server at a ref, deploys it from its
 `mcp-server.yaml` manifest, reads the endpoint from the declared stack output and prints
 the DevOps Agent registration step; `-Destroy` / `--destroy` tears it down. Full usage,
-exports and the manifest schema: [shared/agent-tools/README.md](agent-tools/README.md).
+exports, the manifest schema and the Lab mechanism for DevOps Agent demos:
+[shared/devops-agent/README.md](devops-agent/README.md).
 
 ## Best Practices
 

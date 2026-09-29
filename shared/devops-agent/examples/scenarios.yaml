@@ -121,7 +121,7 @@ scenarios:
 # ── Skills the Lab offers to the presenter ───────────────────────────────────────────────
 # Usually one entry, the capability itself. The Skill panel renders it in one of two ways.
 skills:
-  # Referenced: the panel shows the shared/scripts/deploy-skill command and the console link.
+  # Referenced: the panel shows the shared/devops-agent/agent-tools/deploy-skill command and the console link.
   - name: eks-upgrade-readiness
     source: agent-tools
     ref: main
