@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+cat <<'EOF'
+Aurora MySQL incident scenarios:
+  connection-storm   Open ~200 held connections     -> DatabaseConnections high
+  cpu-spike          CPU-burn query workers          -> CPUUtilization high
+  deadlock           Opposing-order transactions     -> InnoDB Deadlocks
+  failover           aws rds failover-db-cluster     -> RDS failover event (EventBridge)
+  memory-pressure    Large sorts / temp tables       -> FreeableMemory low (dedicated alarm)
+  replica-lag        Heavy write churn               -> AuroraReplicaLag high (dedicated alarm)
+
+On the bastion:
+  sudo /opt/aurora-demo/seed-data
+  sudo /opt/aurora-demo/inject <scenario>
+  sudo /opt/aurora-demo/rollback <scenario>
+  sudo /opt/aurora-demo/status
+
+From your laptop:
+  bash scripts/inject-failure.sh <scenario> --key-file <path>
+  bash scripts/inject-failure.sh <scenario> --key-file <path> --rollback
+EOF
