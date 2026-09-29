@@ -162,7 +162,7 @@ No human intervention needed between the crash and the diagnosis.
 
 ## DevOps Agent Lab
 
-The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner): two Lambda functions outside the EKS cluster, an API Gateway and a Cloudscape page. The injection engine is the repository's shared mechanism ([`shared/lab/`](../../shared/lab/README.md)); everything else (scenarios, handlers, API routes, UI) is this demo's own, in `lab/` and `services/merchant-portal/src/lab/`, and serves as the reference other demos adapt.
+The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner): two Lambda functions outside the EKS cluster, an API Gateway and a Cloudscape page. The injection engine is the repository's shared mechanism ([`shared/devops-agent/lab/`](../../shared/devops-agent/README.md)); everything else (scenarios, handlers, API routes, UI) is this demo's own, in `lab/` and `services/merchant-portal/src/lab/`, and serves as the reference other demos adapt.
 
 **How it works:**
 - `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `lab/handlers.py`.
@@ -297,7 +297,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   └── lambda/
 │       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
 │       └── devops-agent-trigger/     # Alarm → webhook Lambda
-├── lab/                              # The Lab backend (bundled with the shared engine, shared/lab/)
+├── lab/                              # The Lab backend (bundled with the shared engine, shared/devops-agent/lab/)
 │   ├── scenarios.yaml                # Scenario definitions + skill: single source of truth for engine, UI and README
 │   ├── handlers.py                   # inject / revert / probe per scenario (kubectl)
 │   ├── api.py                        # Lab API routes (status, scenarios, inject, rollback, tasks, usage)
@@ -327,14 +327,14 @@ The demo does not deploy from this folder alone. It uses these files from the re
 | File | Used by | For |
 |---|---|---|
 | `shared/scripts/check-prerequisites.ps1` / `.sh` | `deploy-all.ps1` / `.sh` | Tooling, credentials and region checks; DevOps Agent availability |
-| `shared/lab/cdk/lab-engine.ts` | `cdk/lib/failure-simulator-api-stack.ts` | `LabEngine` construct: the two Lab Lambda functions, their role, the `live` alias, the code bundle |
-| `shared/lab/lambda/engine.py` | `lab/engine_main.py`, `lab/api.py` | The durable inject → wait for rollback → revert execution and its control plane |
-| `shared/lab/lambda/devops_agent.py` | `lab/api.py` | Agent tasks and spend, read from the DevOps Agent data plane |
-| `shared/lab/lambda/requirements.txt` | the bundle | Durable execution SDK, PyYAML |
+| `shared/devops-agent/lab/cdk/lab-engine.ts` | `cdk/lib/failure-simulator-api-stack.ts` | `LabEngine` construct: the two Lab Lambda functions, their role, the `live` alias, the code bundle |
+| `shared/devops-agent/lab/lambda/engine.py` | `lab/engine_main.py`, `lab/api.py` | The durable inject → wait for rollback → revert execution and its control plane |
+| `shared/devops-agent/lab/lambda/devops_agent.py` | `lab/api.py` | Agent tasks and spend, read from the DevOps Agent data plane |
+| `shared/devops-agent/lab/lambda/requirements.txt` | the bundle | Durable execution SDK, PyYAML |
 
 At synth time the construct copies the three Python files next to this demo's `lab/*.py`
 and `scenarios.yaml`, and that flat folder becomes the Lambda code
-([how it works](../../shared/lab/README.md)).
+([how it works](../../shared/devops-agent/README.md)).
 
 ## Cost Estimate
 

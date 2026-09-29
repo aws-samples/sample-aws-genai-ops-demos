@@ -10,8 +10,8 @@
 # copied into this repository.
 #
 # Usage (from a demo directory):
-#   ../../shared/scripts/deploy-skill.sh --skill eks-upgrade-readiness --ref main
-#   ../../shared/scripts/deploy-skill.sh --custom-agent aws-health-report --ref v1.2.0
+#   ../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main
+#   ../../shared/devops-agent/agent-tools/deploy-skill.sh --custom-agent aws-health-report --ref v1.2.0
 #
 # Exports (when sourced): AGENT_TOOLS_SKILL_ZIP, AGENT_TOOLS_SKILL_DIR
 

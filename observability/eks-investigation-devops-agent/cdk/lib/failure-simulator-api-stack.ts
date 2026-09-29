@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { KubectlV36Layer } from '@aws-cdk/lambda-layer-kubectl-v36';
 import { Construct } from 'constructs';
 import * as path from 'path';
-import { LabEngine } from '../../../../shared/lab/cdk/lab-engine';
+import { LabEngine } from '../../../../shared/devops-agent/lab/cdk/lab-engine';
 
 export interface FailureSimulatorApiStackProps extends cdk.StackProps {
   environment: string;

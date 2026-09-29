@@ -5,7 +5,7 @@
 #   2. the Lab UI      — the cards, walkthroughs and skill a presenter sees
 #   3. the README      — the scenario table
 #
-# Shape: shared/templates/demo-scenarios.yaml.example. It is bundled into the Lab
+# Example it started from: shared/devops-agent/examples/scenarios.yaml. It is bundled into the Lab
 # Lambda at synth time (see cdk/lib/failure-simulator-api-stack.ts) and served as-is
 # on GET /admin/scenarios; the frontend has no scenario knowledge of its own.
 

@@ -6,7 +6,7 @@
  * reference) and passes in what its handlers need.
  *
  * One code bundle, two functions, one role:
- *   shared/lab/lambda/*.py + requirements.txt   engine.py (the durable mechanism), devops_agent.py
+ *   shared/devops-agent/lab/lambda/*.py + requirements.txt   engine.py (the durable mechanism), devops_agent.py
  *   <demo>/lab/*.py                             the demo's handlers, API, entry points
  *   <demo>/lab/*.yaml                           the demo's scenario definitions
  * copied flat into a staging folder at synth time, then pip-installed for the Lambda
@@ -21,7 +21,7 @@
  *
  * The construct lives outside the demo's node_modules: the demo's CDK project must map
  * `aws-cdk-lib` and `constructs` to its own copies (tsconfig `paths` + `tsconfig-paths`
- * for ts-node + jest `moduleNameMapper`), see shared/lab/README.md.
+ * for ts-node + jest `moduleNameMapper`), see shared/devops-agent/README.md.
  */
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
