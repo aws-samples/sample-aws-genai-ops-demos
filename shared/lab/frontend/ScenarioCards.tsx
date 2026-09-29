@@ -111,6 +111,8 @@ export interface ScenarioCardsProps {
   busy: string | null
   /** id of the scenario an inject/rollback call is in flight for */
   acting: string | null
+  /** scenario whose rollback was accepted by the engine but not yet visible in the status poll */
+  rollbackRequested?: string | null
   /** remaining seconds before auto-revert, per scenario, ticking locally */
   remaining: Record<string, number | null>
   loading: boolean
@@ -118,7 +120,7 @@ export interface ScenarioCardsProps {
   onRollback: (id: string) => void
 }
 
-export default function ScenarioCards({ scenarios, statuses, links, busy, acting, remaining, loading, onInject, onRollback }: ScenarioCardsProps) {
+export default function ScenarioCards({ scenarios, statuses, links, busy, acting, rollbackRequested, remaining, loading, onInject, onRollback }: ScenarioCardsProps) {
   return (
     <Cards
       items={scenarios}
@@ -131,7 +133,8 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
       cardDefinition={{
         header: item => {
           const st = statuses[item.id]
-          const state = deriveState(st)
+          const derived = deriveState(st)
+          const state: LabState = rollbackRequested === item.id && derived === 'injected' ? 'reverting' : derived
           const ind = STATE_INDICATOR[state]
           const canInject = state === 'healthy' && !busy && acting === null
           const canRollback = (state === 'injected' || state === 'manual' || state === 'injecting') && acting === null

@@ -10,7 +10,7 @@
  * navigation it wants in the top bar (see `LabPageProps`). No router or auth import
  * here: this file is shared by every demo (shared/lab/frontend).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@cloudscape-design/global-styles/index.css'
 import Alert from '@cloudscape-design/components/alert'
 import AppLayout from '@cloudscape-design/components/app-layout'
@@ -22,7 +22,6 @@ import Header from '@cloudscape-design/components/header'
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs'
 import SpaceBetween from '@cloudscape-design/components/space-between'
 import TextContent from '@cloudscape-design/components/text-content'
-import TopNavigation, { TopNavigationProps } from '@cloudscape-design/components/top-navigation'
 import { AgentTask, Fact, LabEnvironment, ScenariosResponse, StatusResponse, UsageResponse, consoleLinks, formatCountdown, labApi } from './api'
 import ScenarioCards, { deriveState, factToPair } from './ScenarioCards'
 import { SkillPanel, TasksPanel, UsagePanel } from './AgentPanels'
@@ -33,18 +32,15 @@ const POLL_BUSY_MS = 3_000
 const EMPTY_ENV: LabEnvironment = { region: '', partition: 'aws', devOpsAgentRegion: '', devOpsAgentSpaceId: '' }
 
 export interface LabPageProps {
-  /** Top bar title. Default: "AWS DevOps Agent Demo Lab". */
+  /** Page title. Default: "AWS DevOps Agent Demo Lab". */
   title?: string
-  /** One line under the H1. Default names the demo platform generically. */
+  /** One line under the title. Default names the demo environment generically. */
   tagline?: string
-  /** Where the title links to (e.g. the Lab route). */
-  homeHref?: string
-  onHome?: () => void
-  /** Demo-owned utilities placed before the Lab's own (a "Back to <app>" button, a user menu). */
-  utilities?: TopNavigationProps.Utility[]
+  /** Demo-owned buttons placed before the Lab's own in the header (a "Back to <app>" button, sign out). */
+  actions?: ReactNode
 }
 
-export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, homeHref = '/lab', onHome, utilities = [] }: LabPageProps) {
+export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, actions }: LabPageProps) {
   const [definitions, setDefinitions] = useState<ScenariosResponse | null>(null)
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [usage, setUsage] = useState<UsageResponse | null>(null)
@@ -52,6 +48,9 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   const [tasksLoading, setTasksLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  // Scenario whose rollback the engine has acknowledged but the status poll has not
+  // reflected yet; cleared once the execution history shows the wait step resolved.
+  const [rollbackRequested, setRollbackRequested] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ type: FlashbarProps.Type; content: string } | null>(null)
   // Auto-revert deadlines (epoch ms) per scenario, set from each status poll, ticked locally.
   const [deadlines, setDeadlines] = useState<Record<string, number | null>>({})
@@ -65,6 +64,12 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
       const data = await labApi.status()
       setStatus(data)
       setError(null)
+      setRollbackRequested(prev => {
+        if (!prev) return prev
+        const run = data.scenarios[prev]?.run
+        const waiting = run?.status === 'RUNNING' && run.phases.find(p => p.id === 'await-rollback')?.status === 'in-progress'
+        return waiting ? prev : null
+      })
       const received = Date.now()
       setDeadlines(Object.fromEntries(Object.entries(data.scenarios).map(([id, st]) => {
         const left = st.run?.remainingSeconds
@@ -120,6 +125,8 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
     try {
       const res = kind === 'inject' ? await labApi.inject(id) : await labApi.rollback(id)
       setNotice({ type: res.success ? 'success' : 'error', content: res.message })
+      // The engine acknowledged the rollback: show "reverting" now, not at the next poll.
+      if (kind === 'rollback' && res.success) setRollbackRequested(id)
     } catch (e) {
       setNotice({ type: 'error', content: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -130,8 +137,14 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
 
   // Sticky scope indicator: the whole page is about the injected scenario while one is active.
   const busyScenario = busy ? scenarios.find(s => s.id === busy) : undefined
-  const busyState = busy ? deriveState(statuses[busy]) : 'healthy'
+  const derivedBusyState = busy ? deriveState(statuses[busy]) : 'healthy'
+  const busyState = busy && rollbackRequested === busy && derivedBusyState === 'injected' ? 'reverting' : derivedBusyState
+  // Not stacked: at most three messages, and the newest (the action's outcome) must be
+  // visible right under the banner whose button was just clicked.
   const flashItems: FlashbarProps.MessageDefinition[] = []
+  if (error) {
+    flashItems.push({ id: 'error', type: 'error', header: 'Lab API unreachable', content: error })
+  }
   if (busyScenario) {
     const left = remaining[busy!]
     flashItems.push({
@@ -150,9 +163,6 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   if (notice) {
     flashItems.push({ id: 'notice', type: notice.type, content: notice.content, dismissible: true, onDismiss: () => setNotice(null) })
   }
-  if (error) {
-    flashItems.push({ id: 'error', type: 'error', header: 'Lab API unreachable', content: error })
-  }
 
   const content = (
     <ContentLayout
@@ -163,6 +173,7 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
           description={tagline ?? 'Break the demo environment on purpose, watch the AWS DevOps Agent work on it, put it back.'}
           actions={
             <SpaceBetween direction="horizontal" size="xs">
+              {actions}
               {links.devOpsAgent && <Button href={links.devOpsAgent} target="_blank" iconAlign="right" iconName="external">DevOps Agent console</Button>}
               <Button iconName="refresh" onClick={() => { fetchStatus(); fetchAgentData() }} ariaLabel="Refresh">Refresh</Button>
             </SpaceBetween>
@@ -190,6 +201,7 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
           links={links}
           busy={busy}
           acting={acting}
+          rollbackRequested={rollbackRequested}
           remaining={remaining}
           loading={!definitions || !status}
           onInject={id => act(id, 'inject')}
@@ -212,27 +224,17 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   )
 
   // Own shell, separate from the demo's application: the presenter's control room.
-  // No side navigation, no tools panel, whole width (no max content width),
-  // notifications sticky at the top.
+  // No top bar (the page header carries the title and the demo's actions), no side
+  // navigation, no tools panel, whole width, notifications sticky at the top.
   return (
-    <>
-      <TopNavigation
-        identity={{ href: homeHref, title, onFollow: e => { if (onHome) { e.preventDefault(); onHome() } } }}
-        utilities={[
-          ...utilities,
-          ...(links.devOpsAgent ? [{ type: 'button' as const, text: 'DevOps Agent console', href: links.devOpsAgent, external: true, externalIconAriaLabel: '(opens in a new tab)' }] : []),
-        ]}
-        i18nStrings={{ overflowMenuTriggerText: 'More', overflowMenuTitleText: 'All' }}
-      />
-      <AppLayout
-        navigationHide
-        toolsHide
-        contentType="cards"
-        maxContentWidth={Number.MAX_VALUE}
-        notifications={<Flashbar items={flashItems} stackItems />}
-        stickyNotifications
-        content={content}
-      />
-    </>
+    <AppLayout
+      navigationHide
+      toolsHide
+      contentType="cards"
+      maxContentWidth={Number.MAX_VALUE}
+      notifications={<Flashbar items={flashItems} />}
+      stickyNotifications
+      content={content}
+    />
   )
 }
