@@ -1,7 +1,7 @@
 # DevOps Agent Demo Lab — FSx for Windows SLA review
 #
 # Output of the capability analysis (.kiro/steering/native-agent-demo-guide.md) for the
-# storage-fsx-windows-sla-optimizer skill. Drives the shared Lab (shared/lab/):
+# storage-fsx-windows-sla-optimizer skill. Drives this demo's Lab (engine from shared/devops-agent/lab/):
 # engine handlers, API, UI cards. Handlers live in lab/handlers.py.
 
 schemaVersion: 1

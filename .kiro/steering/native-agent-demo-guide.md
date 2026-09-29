@@ -22,7 +22,7 @@ handling and tracking. This guide adds only what is specific to demonstrating a 
 | **Motion** | How the agent gets invoked: a person asking in Chat, an alarm starting an investigation, or an evaluation run. Determined by the capability's declared agent type — see step 2. |
 | **Brick** | One reusable part of a demo (Agent Space, Lab, trigger chain, environment, …). Listed under *The bricks*. |
 | **Lab** | The demo's own control surface for injecting a scenario, seeing what is currently injected, rolling it back, and watching the agent's results. Each demo writes its own; the EKS demo is the reference. |
-| **Engine** | The Lab's injection runtime: one Lambda durable function execution per injection (inject, wait for a rollback, revert). Shared mechanism in `shared/lab/`, never re-derived. |
+| **Engine** | The Lab's injection runtime: one Lambda durable function execution per injection (inject, wait for a rollback, revert). Shared mechanism in `shared/devops-agent/lab/`, never re-derived. |
 | **Handler** | The demo-specific code behind one scenario: `inject()`, `revert()` and a probe of the live environment, in the demo's `lab/`. |
 | **Scenario** | One injectable-and-reversible condition — an active failure, or a pre-existing mis-configuration that breaks nothing yet. Defined in the demo's `lab/scenarios.yaml`. |
 | **Agent Space** | The AWS DevOps Agent construct a demo creates and associates with an account; capabilities are registered into it. |
@@ -43,7 +43,7 @@ Non-negotiable. Each is explained in the section it points to.
 5. "Is this injected?" **must** be derived from the live environment, never from stored
    state. The Lab has no state store. → *The Lab*
 6. Scenario definitions **must** be declarative data: `lab/scenarios.yaml`, one file
-   driving the engine, the API and the Lab UI. → `shared/templates/demo-scenarios.yaml.example`
+   driving the engine, the API and the Lab UI. → `shared/devops-agent/examples/scenarios.yaml`
 7. **Never** fabricate user impact. If the failure is legible without an app, ship no app.
    → *Does the demo need an app?*
 8. Teardown **must** remove the Agent Space, or the demo fails validation. → *The bricks*
@@ -84,7 +84,7 @@ whatever forks exist into a single message rather than a series. Record the answ
 demo's README so the next presenter knows why the demo is shaped the way it is.
 
 **The analysis ends with a file, not prose.** Before asking, draft the demo's
-`lab/scenarios.yaml` from `shared/templates/demo-scenarios.yaml.example` (step 3 writes the
+`lab/scenarios.yaml` from `shared/devops-agent/examples/scenarios.yaml` (step 3 writes the
 scenarios, step 4 completes them). Questions then point at concrete entries ("keep
 `pdb-blocks-eviction`, drop `karpenter-drift`?"), and the builder's answers edit the file
 that the Lab will run. Three phases, one interruption: **analyse → ask → build**.
@@ -206,7 +206,7 @@ handler named and its with/without statement written.
 | Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*` |
 | Mock environment | Always | Smallest that hosts the scenarios |
 | **Lab** — inject / rollback / status | Always | Not optional — see below. The demo's own; adapt the reference |
-| Engine — one durable execution per injection | Whenever anything is injectable | Shared mechanism (`shared/lab/`); no state store |
+| Engine — one durable execution per injection | Whenever anything is injectable | Shared mechanism (`shared/devops-agent/lab/`); no state store |
 | Trigger chain — alarm → SNS → HMAC Lambda → webhook | Incident RCA / triage only | Skip entirely for Chat |
 | Observation surface — agent tasks, capability, spend | Always | In the Lab (data from the shared `devops_agent.py`); otherwise the presenter leaves the demo to see results |
 | **App** showing user impact | Only when the failure is illegible without one | See the tiers below |
@@ -225,12 +225,12 @@ and replicas. Derive it from these rules and from `demo-lab-ui-guide.md`, and ad
 reference implementation (`observability/eks-investigation-devops-agent`, folders `lab/`
 and `services/merchant-portal/src/lab/`) rather than copying it or turning it into a
 library. Two examples of the scenario file: the EKS demo's `lab/scenarios.yaml` and
-`shared/templates/demo-scenarios.yaml.example`; they are examples, not a schema.
+`shared/devops-agent/examples/scenarios.yaml`; they are examples, not a schema.
 
-**Only the mechanism is shared** (`shared/lab/`, see its README): the durable engine
+**Only the mechanism is shared** (`shared/devops-agent/lab/`, see `shared/devops-agent/README.md`): the durable engine
 (`engine.py`: the inject → wait → revert execution and its control plane), the DevOps
 Agent data-plane calls (`devops_agent.py`: tasks, usage), and the `LabEngine` CDK
-construct (one bundle from `shared/lab/lambda` plus the demo's `lab/`, the durable
+construct (one bundle from `shared/devops-agent/lab/lambda` plus the demo's `lab/`, the durable
 function with its `live` alias, the API function, one role). A demo wires them with three
 lines (`engine_main.py`), fronts the API function with its own API Gateway, and adds what
 its handlers need (network access, a kubectl layer, permissions). Never re-derive the
@@ -280,7 +280,7 @@ scenarios, Lab UI and API, wording): derive it. Mechanism is what does not chang
 demos and was expensive to get right once: reuse it as code, never re-derive it, not by a
 human and not by an agent.
 
-Mechanism today: the Lab engine (`shared/lab/`), the capability fetch
+Mechanism today: the Lab engine (`shared/devops-agent/lab/`), the capability fetch
 (`shared/scripts/deploy-skill.*`, `deploy-mcp.*`), and the Agent Space construct with its
 webhook and the alarm-to-webhook trigger Lambda (in the EKS demo's
 `cdk/lib/constructs/devops-agent-space.ts`, `cdk/lib/devops-agent-stack.ts` and
