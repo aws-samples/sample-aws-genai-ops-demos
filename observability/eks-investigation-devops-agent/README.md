@@ -319,6 +319,23 @@ All stack IDs include the region suffix for multi-region deployment support.
     └── architecture.drawio            # Detailed architecture diagram (editable)
 ```
 
+### Shared with the repository
+
+The demo does not deploy from this folder alone. It uses these files from the repository's
+[`shared/`](../../shared/README.md) directory, so deploy from a full clone:
+
+| File | Used by | For |
+|---|---|---|
+| `shared/scripts/check-prerequisites.ps1` / `.sh` | `deploy-all.ps1` / `.sh` | Tooling, credentials and region checks; DevOps Agent availability |
+| `shared/lab/cdk/lab-engine.ts` | `cdk/lib/failure-simulator-api-stack.ts` | `LabEngine` construct: the two Lab Lambda functions, their role, the `live` alias, the code bundle |
+| `shared/lab/lambda/engine.py` | `lab/engine_main.py`, `lab/api.py` | The durable inject → wait for rollback → revert execution and its control plane |
+| `shared/lab/lambda/devops_agent.py` | `lab/api.py` | Agent tasks and spend, read from the DevOps Agent data plane |
+| `shared/lab/lambda/requirements.txt` | the bundle | Durable execution SDK, PyYAML |
+
+At synth time the construct copies the three Python files next to this demo's `lab/*.py`
+and `scenarios.yaml`, and that flat folder becomes the Lambda code
+([how it works](../../shared/lab/README.md)).
+
 ## Cost Estimate
 
 All costs approximate, based on `us-east-1` pricing.
