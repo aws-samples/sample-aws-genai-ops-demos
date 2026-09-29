@@ -162,10 +162,10 @@ No human intervention needed between the crash and the diagnosis.
 
 ## DevOps Agent Lab
 
-The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner). It's powered by two Lambda functions outside the EKS cluster that use kubectl to inject and roll back failures.
+The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner): two Lambda functions outside the EKS cluster, an API Gateway and a Cloudscape page. The injection engine is the repository's shared mechanism ([`shared/lab/`](../../shared/lab/README.md)); everything else (scenarios, handlers, API routes, UI) is this demo's own, in `lab/` and `services/merchant-portal/src/lab/`, and serves as the reference other demos adapt.
 
 **How it works:**
-- `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `k8s_ops.py`.
+- `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `lab/handlers.py`.
 - Every injection is one **Lambda durable function** execution (the *engine*): `inject` → `await-rollback` (waits up to `autoRevertSeconds`, 10 minutes by default, for the presenter to click Rollback) → `revert`. If nobody clicks, the wait times out and the revert runs anyway, so nothing stays broken if the browser is closed. There is no state store: the cluster says what is injected, the execution history says where the run is.
 - The *API* Lambda (behind API Gateway, reached through CloudFront `/admin/*`) probes the cluster live, starts engine runs through the `live` alias, resolves the run's callback on Rollback, and reads the DevOps Agent API (SigV4-signed, cross-region) for usage and investigation data.
 - Both functions run in the VPC with a kubectl Lambda layer; EKS authentication uses STS presigned URLs (same mechanism as `aws eks get-token`).
@@ -296,10 +296,13 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   ├── scripts/bundle-lambdas.js     # Cross-platform custom-resource bundling
 │   └── lambda/
 │       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
-│       ├── devops-agent-trigger/     # Alarm → webhook Lambda
-│       └── failure-simulator-api/    # Lab backend: index.py (API), engine.py (durable function), k8s_ops.py (handlers)
-├── lab/
-│   └── scenarios.yaml                # Lab scenarios + skill: single source of truth for engine, UI and README
+│       └── devops-agent-trigger/     # Alarm → webhook Lambda
+├── lab/                              # The Lab backend (bundled with the shared engine, shared/lab/)
+│   ├── scenarios.yaml                # Scenario definitions + skill: single source of truth for engine, UI and README
+│   ├── handlers.py                   # inject / revert / probe per scenario (kubectl)
+│   ├── api.py                        # Lab API routes (status, scenarios, inject, rollback, tasks, usage)
+│   ├── engine_main.py                # Durable function entry point: shared engine + this demo's handlers
+│   └── tests/                        # Engine on both roads (recorder handlers), API rules, YAML consistency
 ├── k8s/                              # Kubernetes manifests (Kustomize)
 │   ├── base/                         # Deployments, services, configmap, Fluent Bit
 │   └── overlays/dev|staging|prod     # Environment-specific patches

@@ -1,0 +1,146 @@
+# lab/scenarios.yaml — the Lab's single source of truth
+#
+# One declarative file drives the whole Lab, so its three consumers can never disagree:
+#
+#   1. the engine   — which handler to call, how long before the auto-revert
+#   2. the Lab API  — what to serve to the UI, which alarm to look up
+#   3. the Lab UI   — the scenario cards, walkthroughs, skill panel and presenter notes
+#
+# It is also the OUTPUT of deciding what a demo demonstrates: for every scenario, state
+# what the agent concludes with and without the capability (`demonstrates`); if the
+# answer is the same, the scenario proves nothing and does not belong here.
+#
+# This is an EXAMPLE to adapt, not a schema to satisfy. The demo's own Lab code (engine
+# handlers, API, UI) reads this file, so keep what serves the demo, add what it needs,
+# and keep the one rule that matters: one file drives the injector, the live-state check
+# and the presenter's card, so they cannot disagree. A second example, in use:
+# observability/eks-investigation-devops-agent/lab/scenarios.yaml.
+#
+# Copy this file to `<demo>/lab/scenarios.yaml`, fill it, delete the comments.
+#
+# YAML gotcha: a list line containing ": " (colon-space) parses as a one-key mapping,
+# not a string, and the UI cannot render it. Quote such lines:  - "Open the console: ..."
+
+schemaVersion: 1
+
+# ── The subject of the demo ──────────────────────────────────────────────────────────────
+capability:
+  kind: skill                        # skill | custom-agent | mcp-server
+  name: eks-upgrade-readiness        # directory name in the Agent Tools repository
+  source: agent-tools                # agent-tools (referenced, never copied) | inline (defined under `skills`)
+  ref: main                          # agent-tools only: tag, branch or commit the demo was tested against
+  # Declared agent type(s), read from the capability's metadata. Decides the bricks:
+  # a chat-only capability needs no alarm, no SNS and no webhook.
+  agentTypes: [chat]                 # chat | incident-rca | incident-triage | evaluation | incident-mitigation
+  # How a presenter invokes it in Chat. Lifted from the capability's activation
+  # description. Shown with a copy button in the Lab.
+  prompt: "Is the payment-platform EKS cluster ready to upgrade to the next version?"
+
+# ── Scenarios ────────────────────────────────────────────────────────────────────────────
+scenarios:
+  # A pre-existing condition: breaks nothing today, blocks an upgrade later.
+  - id: pdb-blocks-eviction          # [a-z0-9-]; also the route: POST/DELETE /admin/scenarios/<id>/inject
+    name: PDB blocks eviction        # card title
+    category: Workload               # card fact
+    handler: pdb_blocks_eviction     # key in the demo's lab/handlers.py HANDLERS registry (inject / revert / probe)
+
+    # Why this scenario exists. If the agent reaches the same conclusion without the
+    # capability, the scenario proves nothing: delete it (hard rule 3).
+    demonstrates:
+      check: WKLD-04                                   # the gate, tool or behaviour exercised; shown as "capability shown"
+      withCapability: "Reports NOT READY, naming the PDB and the blocked deployment"
+      withoutCapability: "Lists cluster facts; does not connect the PDB to upgrade safety"
+
+    # Does this scenario start an investigation through an alarm? Chat and evaluation: false.
+    triggersAlarm: false
+    # alarm:                         # required when triggersAlarm is true
+    #   envVar: PDB_ALARM_NAME       # the Lambda env var CDK fills with the alarm name (names are deployment-specific)
+    #   expectFiringWithinSeconds: 120
+
+    inject:
+      summary: "Applies a PodDisruptionBudget with maxUnavailable=0 to payment-processor"   # prose only
+    detect:
+      summary: "PDB exists on payment-processor with maxUnavailable=0"                       # prose only; the probe implements it
+
+    # Mandatory (hard rule 4). The engine waits this long for a Rollback click, then reverts.
+    autoRevertSeconds: 600
+
+    # Card body. Lists render as bullets; keep each line a plain string (see the gotcha above).
+    description: >-
+      Applies a PodDisruptionBudget that forbids any voluntary disruption of payment-processor.
+      Nothing breaks now; the next node drain will hang on it.
+    incidentChain:
+      - PDB with maxUnavailable=0 applied to payment-processor
+      - Cluster upgrade starts, nodes must be drained
+      - "Drain blocks forever: the PDB refuses every eviction"
+    customerImpact:
+      - Nothing visible today
+      - Upgrade window overruns; the platform team rolls back under pressure
+    demoFlow:
+      - Click Inject
+      - Open the DevOps Agent console and paste the prompt above in Chat
+      - The agent reports NOT READY and names the PDB
+      - Click Rollback, ask again, watch the verdict flip
+    talkTrack: "Nothing is broken right now. That is the point: this is what the agent catches before a drain turns it into an outage."
+
+  # An active failure: something visibly breaks and an alarm fires.
+  - id: dns-resolution-failure
+    name: DNS resolution failure
+    category: Networking
+    handler: dns_resolution_failure
+    demonstrates:
+      check: Cross-namespace root cause
+      withCapability: "Traces application errors across namespaces to CoreDNS in kube-system"
+      withoutCapability: "Reports pod errors without identifying the shared DNS cause"
+    triggersAlarm: true
+    alarm:
+      envVar: DNS_ALARM_NAME
+      expectFiringWithinSeconds: 120
+    inject:
+      summary: "Scales CoreDNS to 0 replicas"
+    detect:
+      summary: "CoreDNS deployment has 0 replicas"
+    autoRevertSeconds: 600
+    description: >-
+      Scales CoreDNS to 0 replicas. Pods stay Running and Ready, yet every inter-service
+      call fails with ENOTFOUND.
+    incidentChain:
+      - CoreDNS scaled to 0 in kube-system
+      - Every in-cluster DNS query fails
+      - Alarm fires, SNS, webhook, the agent investigates
+    customerImpact:
+      - Every page hangs then fails
+      - Pod status looks healthy everywhere, which is the trap
+    demoFlow:
+      - Click Inject
+      - Wait about 2 minutes for the alarm
+      - Open the DevOps Agent console and watch the investigation reach CoreDNS
+      - Click Rollback
+    talkTrack: "Nothing looks broken from the inside. This is the incident that burns an on-call engineer's evening."
+
+# ── Skills the Lab offers to the presenter ───────────────────────────────────────────────
+# Usually one entry, the capability itself. The Skill panel renders it in one of two ways.
+skills:
+  # Referenced: the panel shows the shared/scripts/deploy-skill command and the console link.
+  - name: eks-upgrade-readiness
+    source: agent-tools
+    ref: main
+    feature: "Evaluate a cluster against the upgrade-readiness gates from Chat"     # "capability shown" line
+    pitch: >-
+      The agent already knows Kubernetes. This skill gives it the upgrade-readiness gates
+      and the report format the platform team signs off on.
+  # Inline: the panel shows copy-paste fields for the DevOps Agent console.
+  # - name: helios-incident-report
+  #   source: inline
+  #   agentType: Generic
+  #   feature: "Enforce the report format during an investigation"
+  #   pitch: "..."
+  #   description: "..."             # the skill's own description field
+  #   instructions: |                # the skill's own body, Markdown
+  #     # ...
+
+# ── Presenter notes ──────────────────────────────────────────────────────────────────────
+# Shown once above the scenarios. Anything a presenter must not have to remember.
+# Where the Lab can enforce a note (disabled buttons, ordering), it does; the note explains why.
+notes:
+  - "Run one scenario at a time: concurrent injections make the agent's findings ambiguous. The Lab refuses a second inject while one is active."

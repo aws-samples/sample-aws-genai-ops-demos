@@ -338,6 +338,12 @@ $FailureSimLambdaRoleArn = aws cloudformation describe-stacks `
     --output text --region $AWS_REGION 2>$null
 if ($FailureSimLambdaRoleArn -and $FailureSimLambdaRoleArn -ne "None") {
     Write-Host "  Granting EKS access to Failure Simulator Lambda ($FailureSimLambdaRoleArn)..."
+    # Access entries bind to the role's unique id: an entry left over from a previous
+    # deployment of a same-named role no longer matches. Recreate it every time.
+    aws eks delete-access-entry `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $FailureSimLambdaRoleArn `
+        --region $AWS_REGION 2>$null | Out-Null
     aws eks create-access-entry `
         --cluster-name "$ProjectName-$Environment-cluster" `
         --principal-arn $FailureSimLambdaRoleArn `
