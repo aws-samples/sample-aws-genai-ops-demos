@@ -38,13 +38,99 @@ export function AgentMarkdown({ children }: { children: string }) {
 // Skill: the presenter creates it by copy-paste in the DevOps Agent console
 // ---------------------------------------------------------------------------
 
+const AGENT_TOOLS_REPO = 'https://github.com/aws/tools-for-devops-agent'
+
+/** Inline skill: the presenter creates it in the console by copy-paste (name, description, instructions). */
+function InlineSkillFields({ skill }: { skill: Skill }) {
+  return (
+    <>
+      <KeyValuePairs
+        columns={3}
+        items={[
+          { label: 'Name', value: <CopyToClipboard variant="inline" textToCopy={skill.name} copyButtonAriaLabel="Copy skill name" copySuccessText="Name copied" copyErrorText="Copy failed" /> },
+          { label: 'Agent type', value: skill.agentType ?? 'Generic' },
+          { label: 'Status', value: <StatusIndicator type="success">Active</StatusIndicator> },
+        ]}
+      />
+      <KeyValuePairs
+        columns={1}
+        items={[
+          {
+            label: 'Description',
+            value: (
+              <SpaceBetween size="xs">
+                <Box variant="p">{skill.description}</Box>
+                <CopyToClipboard variant="button" textToCopy={skill.description ?? ''} copyButtonText="Copy description" copySuccessText="Description copied" copyErrorText="Copy failed" />
+              </SpaceBetween>
+            ),
+          },
+        ]}
+      />
+      <ExpandableSection headerText="Instructions" headerActions={
+        <CopyToClipboard variant="button" textToCopy={skill.instructions ?? ''} copyButtonText="Copy instructions" copySuccessText="Instructions copied" copyErrorText="Copy failed" />
+      }>
+        <Box variant="code">
+          <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '0.85em' }}>{skill.instructions}</pre>
+        </Box>
+      </ExpandableSection>
+    </>
+  )
+}
+
+/**
+ * Referenced skill: it lives in the Agent Tools repository and is never copied here.
+ * The panel shows where it comes from and the one command that packages it for upload.
+ */
+function AgentToolsSkillFields({ skill }: { skill: Skill }) {
+  const ref = skill.ref ?? 'main'
+  const customAgent = skill.kind === 'custom-agent'
+  const sourceUrl = `${AGENT_TOOLS_REPO}/tree/${ref}/${customAgent ? 'custom-agents' : 'skills'}/${skill.name}`
+  const command = `& "..\\..\\shared\\scripts\\deploy-skill.ps1" -${customAgent ? 'CustomAgent' : 'Skill'} ${skill.name} -Ref ${ref}`
+  const commandSh = `../../shared/scripts/deploy-skill.sh --${customAgent ? 'custom-agent' : 'skill'} ${skill.name} --ref ${ref}`
+  return (
+    <>
+      <KeyValuePairs
+        columns={3}
+        items={[
+          { label: 'Name', value: <Link external href={sourceUrl}>{skill.name}</Link> },
+          { label: 'Source', value: `Agent Tools repository, ${ref}` },
+          { label: 'Agent type', value: skill.agentType ?? 'Generic' },
+        ]}
+      />
+      <KeyValuePairs
+        columns={1}
+        items={[
+          {
+            label: 'Package it for upload (run from the demo folder)',
+            value: (
+              <SpaceBetween size="xs">
+                <Box variant="code">{command}</Box>
+                <SpaceBetween direction="horizontal" size="xs">
+                  <CopyToClipboard variant="button" textToCopy={command} copyButtonText="Copy PowerShell" copySuccessText="Copied" copyErrorText="Copy failed" />
+                  <CopyToClipboard variant="button" textToCopy={commandSh} copyButtonText="Copy Bash" copySuccessText="Copied" copyErrorText="Copy failed" />
+                </SpaceBetween>
+                <Box color="text-body-secondary" fontSize="body-s">
+                  Then upload the zip in the console: Skills, Add skill, Upload. The skill stays in its repository; the demo references it at the ref above.
+                </Box>
+              </SpaceBetween>
+            ),
+          },
+        ]}
+      />
+    </>
+  )
+}
+
 export function SkillPanel({ skill, prompt, links }: { skill: Skill; prompt?: string; links: ReturnType<typeof consoleLinks> }) {
+  const referenced = skill.source === 'agent-tools'
   return (
     <Container
       header={
         <Header
           variant="h2"
-          description="Skills encode your team's reporting standards. They load automatically and change how the agent reasons and reports."
+          description={referenced
+            ? 'Skills teach the agent a domain. This one comes from the public Agent Tools repository; the demo references it, never copies it.'
+            : "Skills encode your team's reporting standards. They load automatically and change how the agent reasons and reports."}
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               {links.skills && <Button href={links.skills} iconAlign="right" iconName="external" target="_blank">Open Skills in the console</Button>}
@@ -60,35 +146,7 @@ export function SkillPanel({ skill, prompt, links }: { skill: Skill; prompt?: st
         {skill.feature && (
           <Box color="text-body-secondary" fontSize="body-s">Showcases: <strong>{skill.feature}</strong></Box>
         )}
-        <KeyValuePairs
-          columns={3}
-          items={[
-            { label: 'Name', value: <CopyToClipboard variant="inline" textToCopy={skill.name} copyButtonAriaLabel="Copy skill name" copySuccessText="Name copied" copyErrorText="Copy failed" /> },
-            { label: 'Agent type', value: skill.agentType ?? 'Generic' },
-            { label: 'Status', value: <StatusIndicator type="success">Active</StatusIndicator> },
-          ]}
-        />
-        <KeyValuePairs
-          columns={1}
-          items={[
-            {
-              label: 'Description',
-              value: (
-                <SpaceBetween size="xs">
-                  <Box variant="p">{skill.description}</Box>
-                  <CopyToClipboard variant="button" textToCopy={skill.description} copyButtonText="Copy description" copySuccessText="Description copied" copyErrorText="Copy failed" />
-                </SpaceBetween>
-              ),
-            },
-          ]}
-        />
-        <ExpandableSection headerText="Instructions" headerActions={
-          <CopyToClipboard variant="button" textToCopy={skill.instructions} copyButtonText="Copy instructions" copySuccessText="Instructions copied" copyErrorText="Copy failed" />
-        }>
-          <Box variant="code">
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '0.85em' }}>{skill.instructions}</pre>
-          </Box>
-        </ExpandableSection>
+        {referenced ? <AgentToolsSkillFields skill={skill} /> : <InlineSkillFields skill={skill} />}
         {prompt && (
           <KeyValuePairs
             columns={1}

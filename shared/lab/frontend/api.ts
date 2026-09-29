@@ -29,13 +29,22 @@ export interface Scenario {
   talkTrack?: string
 }
 
+/**
+ * A skill the Lab offers to the presenter. `source: agent-tools` means it lives in the
+ * Agent Tools repository (the panel shows the deploy-skill command and a link at `ref`);
+ * `inline` (default) means the YAML carries the description and instructions to paste
+ * into the console.
+ */
 export interface Skill {
   name: string
+  source?: 'inline' | 'agent-tools'
+  kind?: 'skill' | 'custom-agent'
+  ref?: string
   agentType?: string
   feature?: string
   pitch?: string
-  description: string
-  instructions: string
+  description?: string
+  instructions?: string
 }
 
 export interface LabEnvironment {
