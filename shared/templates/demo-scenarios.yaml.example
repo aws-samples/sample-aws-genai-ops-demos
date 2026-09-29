@@ -10,8 +10,13 @@
 # `.kiro/steering/native-agent-demo-guide.md`: step 3 drafts the scenarios, step 4
 # completes them. Deciding what to demonstrate and defining it for the Lab is one step.
 #
+# This is an EXAMPLE to adapt, not a schema to satisfy. The demo's own Lab code (engine
+# handlers, API, UI) reads this file, so keep what serves the demo, add what it needs,
+# and keep the one rule that matters: one file drives the injector, the live-state check
+# and the presenter's card, so they cannot disagree. A second example, in use:
+# observability/eks-investigation-devops-agent/lab/scenarios.yaml.
+#
 # Copy this file to `<demo>/lab/scenarios.yaml`, fill it, delete the comments.
-# Every field below is read by the shared Lab (`shared/lab/`) unless marked "prose only".
 #
 # YAML gotcha: a list line containing ": " (colon-space) parses as a one-key mapping,
 # not a string, and the UI cannot render it. Quote such lines:  - "Open the console: ..."
