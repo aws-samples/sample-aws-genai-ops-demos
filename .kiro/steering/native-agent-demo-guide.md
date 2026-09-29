@@ -21,8 +21,10 @@ handling and tracking. This guide adds only what is specific to demonstrating a 
 | **Native-agent demo** | A demo whose subject *is* a capability: it stands up an environment, breaks or mis-configures something, and lets the agent work on it. |
 | **Motion** | How the agent gets invoked: a person asking in Chat, an alarm starting an investigation, or an evaluation run. Determined by the capability's declared agent type — see step 2. |
 | **Brick** | One reusable part of a demo (Agent Space, Lab, trigger chain, environment, …). Listed under *The bricks*. |
-| **Lab** | The demo's own control surface for injecting a scenario, seeing what is currently injected, rolling it back, and watching the agent's results. |
-| **Scenario** | One injectable-and-reversible condition — an active failure, or a pre-existing mis-configuration that breaks nothing yet. |
+| **Lab** | The demo's own control surface for injecting a scenario, seeing what is currently injected, rolling it back, and watching the agent's results. Shared implementation in `shared/lab/`. |
+| **Engine** | The Lab's injection runtime: one Lambda durable function execution per injection (inject, wait for a rollback, revert). Part of the shared Lab. |
+| **Handler** | The demo-specific code behind one scenario: `inject()`, `revert()` and `probe()` in the demo's `lab/handlers.py`. The only Lab code a demo writes. |
+| **Scenario** | One injectable-and-reversible condition — an active failure, or a pre-existing mis-configuration that breaks nothing yet. Defined in the demo's `lab/scenarios.yaml`. |
 | **Agent Space** | The AWS DevOps Agent construct a demo creates and associates with an account; capabilities are registered into it. |
 
 ## Hard rules
@@ -36,11 +38,12 @@ Non-negotiable. Each is explained in the section it points to.
    is among the motions you demonstrate. Chat and Evaluation need none of it. → *Step 2*
 3. Every scenario **must** carry a stated with-capability / without-capability difference.
    No difference, no scenario. → *Step 3*
-4. Every injection **must** auto-revert on a server-side timer. → *The Lab*
-5. "Is this injected?" **must** be derived from the live environment, never read from the
-   state store. → *The Lab*
-6. Scenario definitions **must** be declarative data — one definition driving the injector,
-   the state check and the Lab card. → `shared/templates/demo-scenarios.yaml.example`
+4. Every injection **must** revert without anyone present: it is one Lambda durable
+   function execution whose wait for a rollback times out into the revert. → *The Lab*
+5. "Is this injected?" **must** be derived from the live environment, never from stored
+   state. The Lab has no state store. → *The Lab*
+6. Scenario definitions **must** be declarative data: `lab/scenarios.yaml`, one file
+   driving the engine, the API and the Lab UI. → `shared/templates/demo-scenarios.yaml.example`
 7. **Never** fabricate user impact. If the failure is legible without an app, ship no app.
    → *Does the demo need an app?*
 8. Teardown **must** remove the Agent Space, or the demo fails validation. → *The bricks*
@@ -80,6 +83,12 @@ Present derived conclusions as statements with a one-line reason, not as questio
 whatever forks exist into a single message rather than a series. Record the answers in the
 demo's README so the next presenter knows why the demo is shaped the way it is.
 
+**The analysis ends with a file, not prose.** Before asking, draft the demo's
+`lab/scenarios.yaml` from `shared/templates/demo-scenarios.yaml.example` (step 3 writes the
+scenarios, step 4 completes them). Questions then point at concrete entries ("keep
+`pdb-blocks-eviction`, drop `karpenter-drift`?"), and the builder's answers edit the file
+that the Lab will run. Three phases, one interruption: **analyse → ask → build**.
+
 ## Finding a capability to showcase
 
 In the Agent Tools repository:
@@ -109,7 +118,7 @@ capability  →  motion  →  scenarios  →  environment  →  bricks
 
 | Signal | Tells you |
 |---|---|
-| `aws-devops-agent-skills.agent-types` | The **motion(s)** the skill supports. Several may be declared — the builder chooses (decision #2) |
+| `aws-devops-agent-skills.agent-types` | The **motion(s)** the skill supports. Several may be declared — that is a fork, the builder chooses (see *Ask the builder*) |
 | `aws-devops-agent-skills.aws-services` | The **environment** you will have to stand up — a head start on step 4 |
 | The `description` field | The activation phrases — these become the demo's literal prompts |
 | `references/` | The **scenario candidates** — a structured check registry (YAML), or diagnostic queries and checklists in markdown |
@@ -119,7 +128,7 @@ capability  →  motion  →  scenarios  →  environment  →  bricks
 them). When `agent-types` is missing, fall back in order: the skill's `README.md` ("Agent
 Types" section), then inference from the description and body — "health check", "dig
 deeper" or an interactive mode point to Chat; "investigation", "root cause", "incident"
-point to Incident RCA. An inferred motion is decision #5: confirm it before building.
+point to Incident RCA. An inferred motion is a fork: confirm it with the builder before building.
 
 **For an MCP server**, the question inverts. Read the tool list and the read-only/mutating
 classification, then ask: *what can the agent now see that it could not before?* The demo
@@ -141,7 +150,7 @@ A Chat-only skill in a demo built around alarms never loads. An Evaluation demo 
 investigations has nothing to evaluate.
 
 **Several agent types declared** (e.g. `"Chat tasks, Evaluation, Incident RCA"`): the demo
-need not exercise all of them — that is decision #2. Chaining motions is legitimate and often
+need not exercise all of them — that is the builder's fork. Chaining motions is legitimate and often
 the strongest demo (inject → RCA investigates → ask in Chat → run an Evaluation), but each
 motion is a brick to build and a step the presenter must run.
 
@@ -159,7 +168,8 @@ Where the capability ships a structured check registry, derivation is close to m
 1. Filter checks by applicability against the environment you intend to build (no Karpenter
    in the demo → every Karpenter check is out of scope).
 2. For each remaining check, ask: can I make this fail with a **cheap, reversible** injection?
-3. Rank by injection cost × severity. Present the ranked list to the builder (decision #4).
+3. Rank by injection cost × impact. If more candidates survive than a demo should carry,
+   present the ranked list to the builder (a fork); otherwise propose the set and proceed.
 
 Two honest constraints:
 
@@ -171,11 +181,21 @@ Two honest constraints:
   nothing until drain day. That demo's story is "it stopped you walking into an outage", and
   it needs no alarms at all.
 
+Write the survivors into `lab/scenarios.yaml` now: `demonstrates.withCapability` and
+`withoutCapability` are the with/without test made permanent, `incidentChain`,
+`customerImpact` and `demoFlow` are what the presenter will read from the card. Leave
+`handler` and `alarm` for step 4.
+
 ### Step 4 — Derive the environment
 
 The smallest environment that can host the chosen scenarios and produce the telemetry the
 agent reads. Nothing more. The environment is the most expensive brick to build, deploy and
-maintain, and it is why a demo costs money per day (decision #7 caps it).
+maintain, and it is why a demo costs money per day. If the estimate is high or the deploy
+slow, ask the builder for a ceiling (a fork); otherwise state the estimate and proceed.
+
+Complete `lab/scenarios.yaml` here: each scenario's `handler` (the function trio you will
+write in `lab/handlers.py`), `alarm.envVar` for alarm-driven scenarios, `autoRevertSeconds`.
+The analysis is done when this file would pass the Lab's validation.
 
 ## The bricks
 
@@ -184,10 +204,10 @@ maintain, and it is why a demo costs money per day (decision #7 caps it).
 | Agent Space, IAM roles, account association | Always | |
 | Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*` |
 | Mock environment | Always | Smallest that hosts the scenarios |
-| **Lab** — inject / rollback / status | Always | Not optional — see below |
-| State store for injections and expiry | Whenever anything is injectable | Holds intent and expiry only |
+| **Lab** — inject / rollback / status | Always | Not optional — see below. Shared: `shared/lab/` |
+| Engine — one durable execution per injection | Whenever anything is injectable | Part of the shared Lab; no state store |
 | Trigger chain — alarm → SNS → HMAC Lambda → webhook | Incident RCA / triage only | Skip entirely for Chat |
-| Observation surface — investigations, journal, usage | Always | Otherwise the presenter leaves the demo to see results |
+| Observation surface — agent tasks, skill, spend | Always | Part of the shared Lab; otherwise the presenter leaves the demo to see results |
 | **App** showing user impact | Only when the failure is illegible without one | See the tiers below |
 | Teardown | Always | Must remove the Agent Space; a demo that cannot be destroyed fails validation |
 
@@ -198,14 +218,40 @@ copy-pasted shell commands. Injection is one click or one command, current state
 rollback is immediate. A demo whose failures can only be injected by hand is not deliverable
 by a presenter who did not build it.
 
-Why hard rules 4–6 exist, learned from the demos that already work:
+The Lab is shared (`shared/lab/`, extracted from the EKS demo). A demo writes exactly two
+things for it:
 
+- `lab/scenarios.yaml` — the definitions (template: `shared/templates/demo-scenarios.yaml.example`).
+- `lab/handlers.py` — a `HANDLERS` registry mapping each scenario's `handler` name to three
+  functions: `inject()` breaks it, `revert()` puts it back, `probe()` reads the **live**
+  environment and returns `{"injected": bool, "facts": [...]}`. Facts are labelled values
+  (`{"label", "value", "status"?, "link"?}`) the UI renders without knowing what they are:
+  pods, replicas, a BGP session, a file system's throughput mode — whatever proves the state.
+
+Everything else (engine, API, UI, bundling, IAM for the durable execution) comes from the
+shared Lab; the demo's CDK only adds what its handlers need (network access, a kubectl
+layer, permissions on the resources they touch).
+
+Why hard rules 4–6 exist, and how the engine honours them:
+
+- **Auto-revert** (rule 4) — demos get abandoned mid-run. Every injection is one Lambda
+  durable function execution: `inject` → `await-rollback` → `revert`. Rollback resolves the
+  execution's callback and the revert runs at once; nobody clicks and the wait times out
+  after `autoRevertSeconds` into the same revert. Two roads, one revert step, no timer to
+  lose, no browser to keep open.
 - **Live state over stored state** (rule 5) — a demo that trusts its own database lies the
-  moment someone fixes something by hand. Read the running config; count the replicas.
-- **Auto-revert** (rule 4) — demos get abandoned mid-run; an environment left broken
-  overnight costs money and confuses the next presenter.
+  moment someone fixes something by hand. `probe()` reads the running environment; the
+  execution history says where the run is. There is nothing else to get out of sync.
 - **Scenarios as data** (rule 6) — hardcoding them in the UI means three places to keep in
-  sync: injector, state check, card. One definition, three consumers.
+  sync. One file, three consumers.
+- **One scenario at a time** — concurrent injections make the agent's findings ambiguous.
+  The Lab refuses a second inject (HTTP 409) while an execution is running.
+
+Learned the hard way, so you do not have to: quote YAML list lines containing `: ` (they
+parse as mappings and crash the card); never reuse a durable execution name (names are
+idempotency keys; the Lab uses `<scenario-id>-<epoch>`); the Lab's own validation
+(`pytest` in `shared/lab/lambda`) checks that every `handler` exists and every walkthrough
+line is a string, so run it before the first deploy.
 
 ### Does the demo need an app?
 
@@ -215,16 +261,18 @@ Why hard rules 4–6 exist, learned from the demos that already work:
 | Synthetic traffic | A canary, ping or load generator — no UI | You need telemetry, not a human-visible consequence |
 | Full app | A real user journey that visibly breaks | The audience is business-facing, or the failure needs a face ("checkout fails" rather than "pods restarting") |
 
-Prefer the cheapest tier that makes the failure legible (decisions #3 and #6). An invented
+Prefer the cheapest tier that makes the failure legible; when the tier is not obvious from
+the capability, the audience decides it, and that is the builder's fork. An invented
 user journey that does not exist in the scenario reads as set dressing and costs credibility
 with the audience most able to notice.
 
 ## Shared infrastructure, when it exists
 
-Where a shared construct covers a brick, use it rather than rebuilding — the Agent Space,
-webhook and alarm bridge carry undocumented traps (role naming collisions, the deploy-region
-versus Agent-Space-region split, cross-region event delivery) that are expensive to
-rediscover.
+Where a shared construct covers a brick, use it rather than rebuilding. Today: the Lab
+(`shared/lab/`: engine, API, UI). The Agent Space, webhook and alarm bridge are still
+per demo (the EKS demo is the reference); they carry undocumented traps (role naming
+collisions, the deploy-region versus Agent-Space-region split, cross-region event delivery)
+that are expensive to rediscover, so copy from the reference rather than from memory.
 
 - **Two strikes before generalising.** The first demo needing something unusual keeps it
   local. When a *second* demo needs the same thing, promote it to the shared brick.
@@ -234,9 +282,13 @@ rediscover.
 ## Before you call it done
 
 - The capability is referenced at a stated ref, not copied.
-- The builder's answers to decisions #1–#7 are recorded in the README.
-- Each scenario has a recorded with-capability / without-capability difference.
-- Every injection reverts, automatically as well as on demand.
+- The builder's answers at every fork (capability, motion, scenario set, app tier, cost
+  ceiling) are recorded in the README.
+- Each scenario has a recorded with-capability / without-capability difference
+  (`demonstrates` in `lab/scenarios.yaml`).
+- `lab/scenarios.yaml` passes the Lab's validation; every `handler` has its trio.
+- Every injection reverts, automatically as well as on demand (both roads exercised once
+  against the deployed demo).
 - The motion matches the capability's declared agent type.
 - Teardown removes the Agent Space and everything else.
 - A presenter who did not build it can deliver it from the README.

@@ -20,6 +20,8 @@ shared/
 │   └── deploy-mcp.sh                   # Agent Tools MCP server runner (Bash)
 ├── agent-tools/                        # Consuming capabilities from the Agent Tools repository
 │   └── README.md                       # How demos reference skills and MCP servers; manifest schema
+├── templates/                          # Starter files copied into a new demo
+│   └── demo-scenarios.yaml.example     # Lab scenario definitions (see .kiro/steering/native-agent-demo-guide.md)
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
