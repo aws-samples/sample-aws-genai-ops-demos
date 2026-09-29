@@ -258,6 +258,15 @@ You can also serve as an IAM security educator. When users ask to learn, or when
 
 When a user is ready to make a change, offer to generate a Change Request document they can use for their internal approval process. Format it as a structured markdown document they can copy into their ticketing system (Jira, ServiceNow, etc.).
 
+CRITICAL — SPLIT CHECK_DEPENDENCIES FROM CHANGE REQUEST GENERATION ACROSS TWO TURNS: if the user's request also requires calling check_dependencies first (to get the blast radius data the document needs), do NOT call the tool and write the document in the same turn — call check_dependencies ALONE, present the blast radius result, and ask "Want me to draft a formal Change Request from this?" as a distinct next step. Only write the document in a turn where you do NOT also call check_dependencies.
+
+CRITICAL — KEEP THE CHANGE REQUEST DOCUMENT CONCISE (measured: even a zero-tool-call turn spent purely writing the full six-section document exceeds the API Gateway's 29-second ceiling on its own — this is a document-length problem, not a tool-call problem):
+- Each of the six sections (summary, blast radius, rollback plan, testing plan, approval requirements, implementation window) gets 2-4 sentences or a short bullet list — NEVER multiple paragraphs per section.
+- Do not restate the full blast-radius tool output inside the document; summarize it in 1-2 sentences ("3 dependents: X, Y, Z — deleting this role breaks the checkout flow") and reference the earlier turn instead of repeating the raw data.
+- Target the whole document at roughly 300-500 words total. If you notice yourself writing long, well-developed paragraphs for each section, stop and compress — a Change Request is a checklist stakeholders skim before approving, not an essay.
+
+CHANGE REQUEST FOLLOW-UP OFFERS — advance the task, never restart it: when the Change Request document's own "Next Steps" offers "generate the least-privilege policy now" and the user accepts, that generate_policy call is NOT the end of the chain — immediately after it returns, offer to validate it ("Want me to validate this policy before it goes in the CR?"), the same way the guided tour always pairs Step 4 (generate_policy) with Step 5 (validate_policy) right after. A generated-but-unvalidated policy is itself a rollback risk (this codebase's generate_policy has previously produced a raw CloudTrail eventName as an invalid IAM action, which validate_policy is what catches). Do NOT add validate_policy as a peer option on the CR document's own footer — there is no policy to validate until generate_policy has actually run. More generally, the CR footer's own next-step options (copy to ticketing, generate the policy, export, test in non-prod) are all things that ADVANCE the specific change already in flight — never offer list_findings, triage_access_keys, or generate_action_plan from the CR footer; those are account-wide, upstream-of-where-the-user-already-is, and would read as restarting the funnel rather than helping finish the change.
+
 You have access to the following tools - use them to answer user questions:
 - list_findings: Query Security Hub for IAM Access Analyzer findings
 - get_finding_details: Get detailed context on a specific finding
@@ -1060,9 +1069,20 @@ def _render_action_plan(result: dict) -> str:
             lines.append(f"- {action} — `{role}`")
         quick_section = "\n".join(lines)
 
+    # Structured "What I can do next" footer, matching the 4-option pattern
+    # the other reports use (previously this was a single thin inline CTA).
+    # IMPORTANT: the first line after the "---" rule MUST still contain the
+    # exact _ACTION_PLAN_FOOTER_MARKER substring ("Say `export that` to save
+    # this plan to S3") verbatim — _strip_action_plan_footer cuts from
+    # "\n\n---\n" + marker, and _prior_turn_announced_action_plan uses the
+    # same marker to detect an already-delivered plan and stop the guided
+    # tour from re-running it. Keep option A carrying that phrase.
     footer = (
         "\n\n---\n"
-        "Say `export that` to save this plan to S3, or ask for details on a specific role."
+        "Say `export that` to save this plan to S3 — or:\n"
+        "- **B.** Drill into a specific role from the plan (name it).\n"
+        "- **C.** Generate a least-privilege policy for the top-priority role.\n"
+        "- **D.** Check the blast radius before you action the #1 item."
     )
 
     return "\n\n".join([*header_lines, body]) + (quick_section or "") + footer
@@ -1494,12 +1514,42 @@ def _render_triage_access_keys(result: dict) -> str:
 
     # Fenced JSON payload the frontend routes to AccessKeysTable. The
     # `_type` marker makes tryParseAccessKeysReport's detection unambiguous
-    # even if the natural shape ever changes.
+    # even if the natural shape ever changes. NOTE: this block is the
+    # table's DATA CHANNEL, not visible noise — the frontend
+    # (parseAssistantMessage → tryParseAccessKeysReport) consumes it into
+    # the AccessKeysTable component and does NOT render it as raw text.
+    # Do not remove it to "clean up" the response; that breaks the table.
     payload = {"_type": "access_keys_report", **result}
     lines.append("")
     lines.append("```json")
     lines.append(json.dumps(payload, indent=2, default=str))
     lines.append("```")
+
+    # "What I Can Do Next" footer — the triage report is the highest-signal
+    # output in the tool set (flagged Critical/High keys) but previously
+    # dead-ended with no next step. Rendered as text AFTER the fenced JSON
+    # block, so the frontend shows it as a prose section below the table.
+    # Options advance the task (remediate / export / drill in), matching the
+    # structured-footer pattern the other reports use.
+    lines.append("")
+    lines.append("---")
+    lines.append("**What I can do next:**")
+    lines.append(
+        "- **A.** Draft a remediation plan for the flagged keys "
+        "(deactivate → monitor → delete sequencing, per key)."
+    )
+    lines.append(
+        "- **B.** Show the identity-based replacement for a specific user "
+        "(SSO federation, IAM role, or OIDC — say which user)."
+    )
+    lines.append(
+        "- **C.** Export this audit to S3 for record-keeping "
+        "(say `export that`)."
+    )
+    lines.append(
+        "- **D.** Drill into one user's keys in detail "
+        "(name the user)."
+    )
 
     # Any non-fatal coverage warnings (e.g. per-user policy-walk failures)
     # get a short prose note so operators see partial-data conditions
