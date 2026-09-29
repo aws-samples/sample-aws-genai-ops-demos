@@ -17,7 +17,7 @@ Global asset storage and rendering pipeline serving 30M+ Creative Cloud subscrib
 - Aurora read replicas in 3 regions for low-latency metadata queries
 
 ## Content Delivery
-- Amazon CloudFront with 100+ Points of Presence for global asset delivery
+- Amazon CloudFront for global asset delivery from edge locations in hundreds of cities around the world
 - Custom domain with dedicated IP (BYOIP) for enterprise clients
 - CloudFront Functions for URL signing and access control at the edge
 - Origin Shield enabled for cache efficiency
