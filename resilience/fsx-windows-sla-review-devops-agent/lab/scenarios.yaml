@@ -135,4 +135,5 @@ skills:
 notes:
   - "Run one scenario at a time: concurrent injections make the report ambiguous. The Lab refuses a second inject while one is active."
   - "The file system is Single-AZ on purpose: dimension 1 is a Warning in every report, and it is what makes the backups scenario bite."
-  - "Trend-based findings (idle file system, over-provisioned throughput, storage growth) need about 14 days of CloudWatch history; a freshly deployed demo reports them as insufficient data. This is the skill being honest, not a bug."
+  - "Trend-based findings need about 14 days of CloudWatch history; a freshly deployed demo reports them as insufficient data. This is the skill being honest, not a bug."
+  - "No client ever mounts this file system, on purpose. From day 14 the report adds the idle-file-system cost note (billed for no workload): the environment itself delivers the cost story, no scenario needed."
