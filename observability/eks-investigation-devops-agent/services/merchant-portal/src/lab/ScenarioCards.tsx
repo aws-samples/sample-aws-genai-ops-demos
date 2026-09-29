@@ -10,7 +10,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between'
 import StatusIndicator, { StatusIndicatorProps } from '@cloudscape-design/components/status-indicator'
 import Steps from '@cloudscape-design/components/steps'
 import TextContent from '@cloudscape-design/components/text-content'
-import { Alarm, Pod, Run, Scenario, ScenarioStatus, consoleLinks, formatCountdown } from './api'
+import { Fact, Run, Scenario, ScenarioStatus, consoleLinks, formatCountdown } from './api'
 
 export type LabState = 'healthy' | 'injecting' | 'injected' | 'reverting' | 'manual' | 'unknown'
 
@@ -28,8 +28,8 @@ export function deriveState(st?: ScenarioStatus): LabState {
   return 'healthy'
 }
 
-// The value of the "Injection" key: what the Lab is doing to the cluster for this
-// scenario. Never "healthy": health is a property of the cluster, shown in Live status.
+// The value of the "Failure injection" key: what the Lab is doing to the environment for
+// this scenario. Never "healthy": health is a property of the environment, shown as facts.
 const STATE_INDICATOR: Record<LabState, { type: StatusIndicatorProps.Type; label: string }> = {
   healthy: { type: 'stopped', label: 'Not injected' },
   injecting: { type: 'in-progress', label: 'Injecting' },
@@ -39,24 +39,50 @@ const STATE_INDICATOR: Record<LabState, { type: StatusIndicatorProps.Type; label
   unknown: { type: 'loading', label: 'Checking' },
 }
 
-function podIndicator(pod: Pod) {
-  const healthy = pod.ready && pod.status === 'Running'
-  const pending = pod.status === 'Pending' || pod.status === 'ContainerCreating'
-  const type: StatusIndicatorProps.Type = healthy ? 'success' : pending ? 'pending' : 'error'
+/** Render one fact's value. The UI never interprets the domain: status, detail, items and
+ *  progress come from the probe as-is. */
+export function FactValue({ fact }: { fact: Fact }) {
+  if (fact.progress) {
+    const status = fact.status === 'error' ? 'error' : fact.status === 'success' ? 'success' : 'in-progress'
+    return (
+      <ProgressBar
+        variant="key-value"
+        value={fact.progress.percent}
+        status={status}
+        label={fact.value}
+        description={fact.detail}
+        additionalInfo={fact.progress.text}
+      />
+    )
+  }
+  if (fact.items) {
+    return (
+      <SpaceBetween size="xxs">
+        {fact.items.map(it => (
+          <StatusIndicator key={it.text} type={it.status ?? 'info'}>
+            {it.text}
+            {it.detail && <Box variant="span" color="text-body-secondary" fontSize="body-s"> {it.detail}</Box>}
+          </StatusIndicator>
+        ))}
+        {fact.items.length === 0 && <StatusIndicator type={fact.status ?? 'stopped'}>{fact.value ?? 'None'}</StatusIndicator>}
+      </SpaceBetween>
+    )
+  }
   return (
-    <StatusIndicator key={pod.name} type={type}>
-      {pod.status}{pod.restarts > 0 ? ` (${pod.restarts} restarts)` : ''}
-      <Box variant="span" color="text-body-secondary" fontSize="body-s"> {pod.name}</Box>
-    </StatusIndicator>
+    <SpaceBetween size="xxs">
+      {fact.status ? <StatusIndicator type={fact.status}>{fact.value ?? ''}</StatusIndicator> : <Box>{fact.value ?? '–'}</Box>}
+      {fact.detail && <Box fontSize="body-s" color="text-body-secondary">{fact.detail}</Box>}
+    </SpaceBetween>
   )
 }
 
-function alarmIndicator(alarm?: Alarm | null) {
-  if (!alarm) return <StatusIndicator type="stopped">Not configured</StatusIndicator>
-  const map: Record<string, StatusIndicatorProps.Type> = {
-    ALARM: 'error', OK: 'success', INSUFFICIENT_DATA: 'pending', NOT_FOUND: 'stopped', ERROR: 'warning',
+/** A fact as a KeyValuePairs item; the fact's link becomes the pair's info link. */
+export function factToPair(fact: Fact) {
+  return {
+    label: fact.label,
+    value: <FactValue fact={fact} />,
+    info: fact.link ? <Link external href={fact.link.href} variant="info">{fact.link.text}</Link> : undefined,
   }
-  return <StatusIndicator type={map[alarm.state] ?? 'info'}>{alarm.state.replace('_', ' ')}</StatusIndicator>
 }
 
 /** Engine run as Cloudscape Steps: one per durable step, statuses from the execution history. */
@@ -156,45 +182,12 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
           },
           {
             id: 'status',
-            header: 'Live cluster status',
+            header: 'Live status',
             content: item => {
               const st = statuses[item.id]
-              const dep = st?.deployment
               const total = item.autoRevertSeconds || 600
               const left = remaining[item.id]
-              const pairs = [
-                {
-                  label: 'Deployment',
-                  value: dep ? (
-                    <ProgressBar
-                      variant="key-value"
-                      value={dep.replicas > 0 ? Math.round((dep.readyReplicas / dep.replicas) * 100) : 0}
-                      status={dep.replicas > 0 && dep.readyReplicas === 0 ? 'error' : 'in-progress'}
-                      label={dep.name}
-                      description={`${dep.namespace}`}
-                      additionalInfo={`${dep.readyReplicas}/${dep.replicas} replicas ready`}
-                    />
-                  ) : <StatusIndicator type="stopped">{st?.error ? 'Unreachable' : 'Not found'}</StatusIndicator>,
-                  info: links.eksCluster ? <Link external href={links.eksCluster} variant="info">Console</Link> : undefined,
-                },
-                {
-                  label: 'Pods',
-                  value: st?.pods && st.pods.length > 0
-                    ? <SpaceBetween size="xxs">{st.pods.map(podIndicator)}</SpaceBetween>
-                    : <StatusIndicator type={st?.injected ? 'error' : 'stopped'}>No pods</StatusIndicator>,
-                  info: dep && links.eksPods(dep.namespace) ? <Link external href={links.eksPods(dep.namespace)!} variant="info">Console</Link> : undefined,
-                },
-                {
-                  label: 'Alarm',
-                  value: (
-                    <SpaceBetween size="xxs">
-                      {alarmIndicator(st?.alarm)}
-                      {st?.alarm?.name && <Box fontSize="body-s" color="text-body-secondary">{st.alarm.name}</Box>}
-                    </SpaceBetween>
-                  ),
-                  info: links.alarm(st?.alarm?.name) ? <Link external href={links.alarm(st?.alarm?.name)!} variant="info">Console</Link> : undefined,
-                },
-              ]
+              const pairs = (st?.facts ?? []).map(factToPair)
               if (left !== null && left !== undefined) {
                 pairs.push({
                   label: 'Auto-revert',
@@ -212,8 +205,10 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
               }
               return (
                 <SpaceBetween size="s">
-                  {st?.error && <StatusIndicator type="warning">Cluster probe failed: {st.error}</StatusIndicator>}
-                  <KeyValuePairs columns={pairs.length} items={pairs} />
+                  {st?.error && <StatusIndicator type="warning">Probe failed: {st.error}</StatusIndicator>}
+                  {pairs.length > 0
+                    ? <KeyValuePairs columns={Math.min(pairs.length, 4)} items={pairs} />
+                    : !st?.error && <StatusIndicator type="loading">Reading the environment</StatusIndicator>}
                 </SpaceBetween>
               )
             },

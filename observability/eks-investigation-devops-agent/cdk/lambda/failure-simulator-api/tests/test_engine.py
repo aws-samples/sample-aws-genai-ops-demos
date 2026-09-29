@@ -57,8 +57,9 @@ def test_scenarios_yaml_is_consistent():
     assert len(ids) == len(set(ids)) and ids, 'scenario ids must be unique'
     for s in data['scenarios']:
         assert s['handler'] in k8s_ops.HANDLERS, f"{s['id']}: handler {s['handler']!r} not in k8s_ops.HANDLERS"
-        assert s['inject']['route'] == f"/admin/scenarios/{s['id']}/inject"
         assert scenarios.auto_revert_seconds(s) > 0
+        if s.get('triggersAlarm'):
+            assert (s.get('alarm') or {}).get('envVar'), f"{s['id']}: triggersAlarm needs alarm.envVar"
         assert len(f"{s['id']}-{int(time.time())}") <= 64
         # An unquoted "text: more text" list item parses as a one-key mapping, which the UI
         # cannot render (React error #31). Every walkthrough line must be a plain string.
@@ -175,6 +176,25 @@ def test_status_never_filters_on_more_than_one_execution_status(api):
     assert resp['statusCode'] == 200
     for call in fake_lambda.list_durable_executions_by_function.call_args_list:
         assert len(call.kwargs.get('Statuses', [])) <= 1, call.kwargs
+
+
+def test_status_returns_probe_facts_plus_alarm_fact(api):
+    """The UI knows nothing about the domain: everything it shows is a labelled fact."""
+    index, fake_lambda = api
+    fake_lambda.list_durable_executions_by_function.return_value = {'DurableExecutions': []}
+    probe = lambda: {'injected': True, 'facts': [{'label': 'Thing', 'value': 'broken', 'status': 'error'}]}
+    handlers = {name: index.k8s_ops.Handler(lambda: {}, lambda: {}, probe) for name in index.k8s_ops.HANDLERS}
+    with patch.object(index.k8s_ops, 'HANDLERS', handlers), \
+         patch.object(index, '_alarms', return_value={'x': {'name': 'x', 'state': 'ALARM', 'reason': ''}}), \
+         patch.object(index.scenarios, 'alarm_name', return_value='x'):
+        body = json.loads(index.handler(_event('GET', '/admin/status'), None)['body'])
+    for sid, st in body['scenarios'].items():
+        assert st['injected'] is True
+        labels = [f['label'] for f in st['facts']]
+        assert labels[0] == 'Thing'
+        assert 'Alarm' in labels, f'{sid}: alarm-driven scenarios get an Alarm fact'
+        assert all('label' in f for f in st['facts'])
+        assert 'pods' not in st and 'deployment' not in st
 
 
 def test_unknown_route_is_404(api):

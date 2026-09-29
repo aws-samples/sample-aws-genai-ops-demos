@@ -14,13 +14,12 @@ export interface Scenario {
   id: string
   name: string
   category: string
-  severity: 'low' | 'medium' | 'high' | 'critical'
   handler: string
   demonstrates?: { check?: string; withCapability?: string; withoutCapability?: string }
   triggersAlarm?: boolean
   alarm?: { envVar?: string; expectFiringWithinSeconds?: number }
   alarmName?: string
-  inject: { route: string; summary?: string }
+  inject?: { summary?: string }
   detect?: { summary?: string }
   autoRevertSeconds: number
   description?: string
@@ -42,11 +41,12 @@ export interface Skill {
 export interface LabEnvironment {
   region: string
   partition: string
-  clusterName: string
-  namespace: string
-  triggerLambdaName: string
   devOpsAgentRegion: string
   devOpsAgentSpaceId: string
+  /** Console URL of the alarm-to-webhook Lambda, when the demo has a trigger chain. */
+  triggerLambdaUrl?: string | null
+  /** Demo-provided facts about the environment as a whole (cluster, namespace, ...). */
+  facts?: Fact[]
 }
 
 export interface ScenariosResponse {
@@ -59,9 +59,24 @@ export interface ScenariosResponse {
   environment: LabEnvironment
 }
 
-export interface Pod { name: string; status: string; ready: boolean; restarts: number }
-export interface Deployment { name: string; namespace: string; replicas: number; readyReplicas: number; availableReplicas: number }
-export interface Alarm { name?: string; state: string; reason?: string; error?: string }
+/** Cloudscape StatusIndicator types the backend may use on a fact. */
+export type FactStatus = 'success' | 'error' | 'warning' | 'pending' | 'stopped' | 'in-progress' | 'info' | 'loading'
+
+/**
+ * A labelled value returned by a scenario's probe. The UI renders facts without knowing
+ * the domain: `value` (with optional status and detail), or `items` (a list of them), or
+ * `progress` (a bar). `link` becomes the key/value pair's info link.
+ */
+export interface FactItem { text: string; status?: FactStatus; detail?: string }
+export interface Fact {
+  label: string
+  value?: string
+  items?: FactItem[]
+  status?: FactStatus
+  detail?: string
+  progress?: { percent: number; text: string }
+  link?: { text: string; href: string }
+}
 
 export interface Run {
   executionArn: string
@@ -77,9 +92,7 @@ export interface Run {
 export interface ScenarioStatus {
   injected: boolean
   error?: string
-  deployment?: Deployment | null
-  pods?: Pod[]
-  alarm?: Alarm | null
+  facts: Fact[]
   run?: Run
   lastRun?: Run
 }
@@ -149,14 +162,13 @@ export function consoleHost(env: Pick<LabEnvironment, 'region' | 'partition'>): 
   return `https://${region}.console.aws.amazon.com`
 }
 
+/** Links the Lab itself owns: the agent's console and the trigger chain. Everything
+ *  environment-specific arrives as a fact with its own link. */
 export function consoleLinks(env: LabEnvironment) {
   const host = consoleHost(env)
-  const { region, clusterName, namespace, devOpsAgentRegion, devOpsAgentSpaceId, triggerLambdaName } = env
+  const { region, devOpsAgentRegion, devOpsAgentSpaceId, triggerLambdaUrl } = env
   return {
-    eksCluster: clusterName ? `${host}/eks/home?region=${region}#/clusters/${clusterName}` : null,
-    eksPods: (ns: string) => clusterName ? `${host}/eks/home?region=${region}#/clusters/${clusterName}/pods?namespace=${ns || namespace}` : null,
-    alarm: (name?: string) => name ? `${host}/cloudwatch/home?region=${region}#alarmsV2:alarm/${encodeURIComponent(name)}` : null,
-    triggerLambda: triggerLambdaName ? `${host}/lambda/home?region=${region}#/functions/${triggerLambdaName}` : null,
+    triggerLambda: triggerLambdaUrl ?? null,
     devOpsAgent: devOpsAgentSpaceId
       ? `https://${devOpsAgentSpaceId}.aidevops.global.app.aws/`
       : devOpsAgentRegion ? `${host.replace(region, devOpsAgentRegion)}/aidevops/home#/agent-spaces` : null,

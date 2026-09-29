@@ -3,7 +3,7 @@ DevOps Agent Lab API (API Gateway proxy handler).
 
 Routes
   GET    /admin/scenarios                  lab/scenarios.yaml as served to the UI + environment facts
-  GET    /admin/status                     per scenario: live cluster probe, alarm, current/last run
+  GET    /admin/status                     per scenario: injected?, live facts (probe + alarm), current/last run
   POST   /admin/scenarios/{id}/inject      start one engine execution (refused while one is running)
   DELETE /admin/scenarios/{id}/inject      resolve the run's callback so the engine reverts now
   GET    /admin/usage                      DevOps Agent account usage
@@ -20,6 +20,7 @@ import os
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import boto3
 
@@ -27,6 +28,7 @@ import devops_agent
 import k8s_ops
 import scenarios
 from engine import STEP_AWAIT, STEP_INJECT, STEP_REVERT
+from facts import console_link, console_url, fact
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -188,15 +190,28 @@ def _run_view(execution: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _environment() -> Dict[str, Any]:
+    env_facts = k8s_ops.environment() if hasattr(k8s_ops, 'environment') else []
+    trigger = os.environ.get('TRIGGER_LAMBDA_NAME', '')
     return {
         'region': REGION,
         'partition': boto3.session.Session().get_partition_for_region(REGION) if REGION else 'aws',
-        'clusterName': k8s_ops.EKS_CLUSTER_NAME,
-        'namespace': k8s_ops.NAMESPACE,
-        'triggerLambdaName': os.environ.get('TRIGGER_LAMBDA_NAME', ''),
         'devOpsAgentRegion': os.environ.get('DEVOPS_AGENT_REGION', ''),
         'devOpsAgentSpaceId': os.environ.get('DEVOPS_AGENT_SPACE_ID', ''),
+        'triggerLambdaUrl': console_url('lambda', f'/functions/{trigger}') if trigger else None,
+        'facts': env_facts,
     }
+
+
+ALARM_STATUS = {'ALARM': 'error', 'OK': 'success', 'INSUFFICIENT_DATA': 'pending', 'NOT_FOUND': 'stopped', 'ERROR': 'warning'}
+
+
+def _alarm_fact(alarm: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not alarm:
+        return fact('Alarm', 'Not configured', status='stopped')
+    name = alarm.get('name', '')
+    return fact('Alarm', alarm['state'].replace('_', ' '), status=ALARM_STATUS.get(alarm['state'], 'info'),
+                detail=alarm.get('error') or name,
+                link=console_link('Console', console_url('cloudwatch', f'alarmsV2:alarm/{quote(name, safe="")}')) if name else None)
 
 
 def get_scenarios() -> Dict[str, Any]:
@@ -241,8 +256,12 @@ def get_status() -> Dict[str, Any]:
         try:
             probe = handler.probe() if handler else {'injected': False, 'error': f"unknown handler {s.get('handler')!r}"}
         except Exception as e:
-            probe = {'injected': False, 'error': str(e), 'deployment': None, 'pods': []}
-        entry: Dict[str, Any] = {**probe, 'alarm': alarms.get(scenarios.alarm_name(s))}
+            probe = {'injected': False, 'error': str(e)}
+        entry: Dict[str, Any] = {'injected': bool(probe.get('injected')), 'facts': list(probe.get('facts') or [])}
+        if probe.get('error'):
+            entry['error'] = probe['error']
+        if s.get('triggersAlarm'):
+            entry['facts'].append(_alarm_fact(alarms.get(scenarios.alarm_name(s))))
         if sid in running:
             entry['run'] = _run_view(running[sid])
         elif sid in last_done:

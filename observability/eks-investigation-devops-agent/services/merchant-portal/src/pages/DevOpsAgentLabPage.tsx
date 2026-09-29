@@ -12,21 +12,23 @@ import '@cloudscape-design/global-styles/index.css'
 import Alert from '@cloudscape-design/components/alert'
 import AppLayout from '@cloudscape-design/components/app-layout'
 import Button from '@cloudscape-design/components/button'
+import Container from '@cloudscape-design/components/container'
 import ContentLayout from '@cloudscape-design/components/content-layout'
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar'
 import Header from '@cloudscape-design/components/header'
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs'
 import SpaceBetween from '@cloudscape-design/components/space-between'
 import TextContent from '@cloudscape-design/components/text-content'
 import TopNavigation from '@cloudscape-design/components/top-navigation'
 import { useAuth } from '../context/AuthContext'
-import { AgentTask, ScenariosResponse, StatusResponse, UsageResponse, consoleLinks, formatCountdown, labApi } from '../lab/api'
-import ScenarioCards, { deriveState } from '../lab/ScenarioCards'
+import { AgentTask, Fact, LabEnvironment, ScenariosResponse, StatusResponse, UsageResponse, consoleLinks, formatCountdown, labApi } from '../lab/api'
+import ScenarioCards, { deriveState, factToPair } from '../lab/ScenarioCards'
 import { SkillPanel, TasksPanel, UsagePanel } from '../lab/AgentPanels'
 
 const POLL_IDLE_MS = 10_000
 const POLL_BUSY_MS = 3_000
 
-const EMPTY_ENV = { region: '', partition: 'aws', clusterName: '', namespace: '', triggerLambdaName: '', devOpsAgentRegion: '', devOpsAgentSpaceId: '' }
+const EMPTY_ENV: LabEnvironment = { region: '', partition: 'aws', devOpsAgentRegion: '', devOpsAgentSpaceId: '' }
 
 export default function DevOpsAgentLabPage() {
   const navigate = useNavigate()
@@ -97,6 +99,8 @@ export default function DevOpsAgentLabPage() {
   const scenarios = definitions?.scenarios ?? []
   const statuses = status?.scenarios ?? {}
   const autoRevertMinutes = Math.round(Math.max(600, ...scenarios.map(s => s.autoRevertSeconds || 0)) / 60)
+  // Region belongs with the demo's own facts (cluster, namespace, ...), it is not a card of its own.
+  const envFacts: Fact[] = [...(env.facts ?? []), ...(env.region ? [{ label: 'Region', value: env.region }] : [])]
 
   async function act(id: string, kind: 'inject' | 'rollback') {
     setActing(id)
@@ -159,10 +163,15 @@ export default function DevOpsAgentLabPage() {
       <SpaceBetween size="l">
         <Header
           variant="h2"
-          description={`Inject a real infrastructure failure. Each injection is a Lambda durable function run: it reverts when you click Rollback, or on its own after ${autoRevertMinutes} minutes, even with this page closed.${env.clusterName ? ` Cluster ${env.clusterName} in ${env.region}.` : ''}`}
+          description={`Inject a real infrastructure failure. Each injection is a Lambda durable function run: it reverts when you click Rollback, or on its own after ${autoRevertMinutes} minutes, even with this page closed.`}
         >
           Failure scenarios
         </Header>
+        {envFacts.length > 0 && (
+          <Container header={<Header variant="h3">Environment</Header>}>
+            <KeyValuePairs columns={Math.min(envFacts.length + 1, 4)} items={envFacts.map(factToPair)} />
+          </Container>
+        )}
         <ScenarioCards
           scenarios={scenarios}
           statuses={statuses}

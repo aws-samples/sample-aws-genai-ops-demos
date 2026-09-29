@@ -24,7 +24,6 @@ scenarios:
   - id: db-connection-failure
     name: Database connection failure
     category: Database
-    severity: critical
     handler: db_connection_failure          # inject/revert/probe functions in k8s_ops.py
     demonstrates:
       check: Automated incident investigation
@@ -35,7 +34,6 @@ scenarios:
       envVar: ALARM_NAME                    # CloudWatch alarm name is injected by CDK
       expectFiringWithinSeconds: 120
     inject:
-      route: /admin/scenarios/db-connection-failure/inject
       summary: "Sets DB_PASSWORD=wrong-password on payment-processor and restarts it"
     detect:
       summary: "payment-processor container env DB_PASSWORD is the literal wrong-password"
@@ -72,7 +70,6 @@ scenarios:
   - id: dns-resolution-failure
     name: DNS resolution failure
     category: Networking
-    severity: critical
     handler: dns_resolution_failure
     demonstrates:
       check: Cross-namespace root cause
@@ -83,7 +80,6 @@ scenarios:
       envVar: DNS_ALARM_NAME
       expectFiringWithinSeconds: 120
     inject:
-      route: /admin/scenarios/dns-resolution-failure/inject
       summary: "Scales the CoreDNS deployment in kube-system to 0 replicas"
     detect:
       summary: "CoreDNS deployment has 0 replicas"

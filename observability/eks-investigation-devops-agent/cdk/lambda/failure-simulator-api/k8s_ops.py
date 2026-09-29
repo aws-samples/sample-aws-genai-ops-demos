@@ -9,8 +9,10 @@ Every scenario in lab/scenarios.yaml names a `handler`; HANDLERS maps that name 
 three functions:
     inject() -> dict   break something
     revert() -> dict   put it back
-    probe()  -> dict   {"injected": bool, ...live facts}  read from the cluster,
+    probe()  -> dict   {"injected": bool, "facts": [fact, ...]}  read from the cluster,
                        never from a state store (a manual kubectl fix must show)
+`environment()` returns the facts shown in the Lab header. Facts are labelled values
+the UI renders without knowing what they are (see facts.py).
 """
 
 import base64
@@ -19,9 +21,11 @@ import logging
 import os
 import subprocess
 import time
-from typing import Any, Callable, Dict, NamedTuple
+from typing import Any, Callable, Dict, List, NamedTuple
 
 import boto3
+
+from facts import console_link, console_url, fact, item
 
 logger = logging.getLogger(__name__)
 
@@ -130,36 +134,54 @@ def _must(r: Dict[str, Any], what: str) -> None:
         raise RuntimeError(f"{what}: {r['stderr'].strip()}")
 
 
-def _pods(namespace: str, selector: str) -> list:
-    """Compact pod list: name, status (waiting reason wins), ready, restarts."""
+def _cluster_console(fragment: str = '') -> str:
+    return console_url('eks', f'/clusters/{EKS_CLUSTER_NAME}{fragment}')
+
+
+def _pods_fact(label: str, namespace: str, selector: str) -> Dict[str, Any]:
+    """One fact listing the pods behind a selector: name, phase (waiting reason wins), restarts."""
     try:
-        items = _kubectl_json(['get', 'pods', '-n', namespace, '-l', selector]).get('items', [])
+        pods = _kubectl_json(['get', 'pods', '-n', namespace, '-l', selector]).get('items', [])
     except RuntimeError as e:
         logger.warning('Pod listing failed for %s/%s: %s', namespace, selector, e)
-        return []
-    out = []
-    for pod in items:
-        status = pod.get('status', {}).get('phase', 'Unknown')
+        return fact(label, 'Unreachable', status='warning', detail=str(e))
+    items = []
+    for pod in pods:
+        phase = pod.get('status', {}).get('phase', 'Unknown')
         restarts, ready = 0, True
         for cs in pod.get('status', {}).get('containerStatuses', []):
             restarts += cs.get('restartCount', 0)
             ready = ready and cs.get('ready', False)
             reason = cs.get('state', {}).get('waiting', {}).get('reason')
             if reason:
-                status = reason
-        out.append({'name': pod['metadata']['name'], 'status': status, 'ready': ready, 'restarts': restarts})
-    return out
+                phase = reason
+        healthy = ready and phase == 'Running'
+        pending = phase in ('Pending', 'ContainerCreating')
+        items.append(item(pod['metadata']['name'],
+                          status='success' if healthy else 'pending' if pending else 'error',
+                          detail=phase + (f', {restarts} restarts' if restarts else '')))
+    return fact(label, items=items, value=None if items else 'No pods',
+                status=None if items else 'error',
+                link=console_link('Console', _cluster_console(f'/pods?namespace={namespace}')))
 
 
-def _deployment_summary(dep: dict) -> dict:
-    spec, st = dep.get('spec', {}), dep.get('status', {})
-    return {
-        'name': dep.get('metadata', {}).get('name', ''),
-        'namespace': dep.get('metadata', {}).get('namespace', ''),
-        'replicas': spec.get('replicas', 0),
-        'readyReplicas': st.get('readyReplicas', 0),
-        'availableReplicas': st.get('availableReplicas', 0),
-    }
+def _deployment_fact(dep: dict) -> Dict[str, Any]:
+    """One fact for a Deployment: ready/desired replicas as a progress bar."""
+    meta, spec, st = dep.get('metadata', {}), dep.get('spec', {}), dep.get('status', {})
+    desired, ready = spec.get('replicas', 0), st.get('readyReplicas', 0)
+    status = 'error' if desired and not ready else 'in-progress' if ready < desired else 'success'
+    return fact('Deployment', meta.get('name', ''), status=status,
+                detail=f"{meta.get('namespace', '')} namespace",
+                progress={'percent': round(ready / desired * 100) if desired else 0, 'text': f'{ready}/{desired} replicas ready'},
+                link=console_link('Console', _cluster_console()))
+
+
+def environment() -> List[Dict[str, Any]]:
+    """Facts about the environment as a whole, shown in the Lab header."""
+    return [
+        fact('Cluster', EKS_CLUSTER_NAME, link=console_link('Console', _cluster_console())),
+        fact('Namespace', NAMESPACE),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -200,15 +222,19 @@ def probe_db_connection_failure() -> Dict[str, Any]:
     try:
         dep = _kubectl_json(['get', f'deployment/{DEPLOYMENT_NAME}', '-n', NAMESPACE])
     except RuntimeError as e:
-        return {'injected': False, 'error': str(e), 'deployment': None, 'pods': []}
+        return {'injected': False, 'error': str(e), 'facts': []}
     injected = any(
         e.get('name') == 'DB_PASSWORD' and e.get('value') == WRONG_PASSWORD
         for e in dep['spec']['template']['spec']['containers'][0].get('env', [])
     )
     return {
         'injected': injected,
-        'deployment': _deployment_summary(dep),
-        'pods': _pods(NAMESPACE, f'app.kubernetes.io/name={DEPLOYMENT_NAME}'),
+        'facts': [
+            _deployment_fact(dep),
+            _pods_fact('Pods', NAMESPACE, f'app.kubernetes.io/name={DEPLOYMENT_NAME}'),
+            fact('DB_PASSWORD', 'wrong-password (literal)' if injected else 'from secret db-credentials',
+                 status='error' if injected else 'success'),
+        ],
     }
 
 
@@ -244,11 +270,13 @@ def probe_dns_resolution_failure() -> Dict[str, Any]:
     try:
         dep = _kubectl_json(['get', 'deployment/coredns', '-n', 'kube-system'])
     except RuntimeError as e:
-        return {'injected': False, 'error': str(e), 'deployment': None, 'pods': []}
+        return {'injected': False, 'error': str(e), 'facts': []}
     return {
         'injected': dep.get('spec', {}).get('replicas', COREDNS_REPLICAS) == 0,
-        'deployment': _deployment_summary(dep),
-        'pods': _pods('kube-system', 'k8s-app=kube-dns'),
+        'facts': [
+            _deployment_fact(dep),
+            _pods_fact('CoreDNS pods', 'kube-system', 'k8s-app=kube-dns'),
+        ],
     }
 
 
