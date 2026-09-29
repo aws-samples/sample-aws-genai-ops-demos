@@ -6,9 +6,9 @@
  * right now (the demo's live probes, as facts) and where each engine run is (Lambda
  * durable function history). The page holds no scenario knowledge of its own.
  *
- * The demo wraps this component with its own router and auth and passes the
- * navigation it wants in the top bar (see `LabPageProps`). No router or auth import
- * here: this file is shared by every demo (shared/lab/frontend).
+ * This is the EKS demo's Lab UI, and the reference implementation other demos adapt
+ * (rules: .kiro/steering/demo-lab-ui-guide.md). It is mounted by the portal's router
+ * behind its authentication; no router or auth import here.
  */
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@cloudscape-design/global-styles/index.css'

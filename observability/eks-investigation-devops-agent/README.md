@@ -162,7 +162,7 @@ No human intervention needed between the crash and the diagnosis.
 
 ## DevOps Agent Lab
 
-The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner). It is the repository's shared Lab ([`shared/lab/`](../../shared/lab/README.md)): two Lambda functions outside the EKS cluster, an API and a Cloudscape page, fed by this demo's `lab/` folder.
+The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner): two Lambda functions outside the EKS cluster, an API Gateway and a Cloudscape page. The injection engine is the repository's shared mechanism ([`shared/lab/`](../../shared/lab/README.md)); everything else (scenarios, handlers, API routes, UI) is this demo's own, in `lab/` and `services/merchant-portal/src/lab/`, and serves as the reference other demos adapt.
 
 **How it works:**
 - `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `lab/handlers.py`.
@@ -297,9 +297,12 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   └── lambda/
 │       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
 │       └── devops-agent-trigger/     # Alarm → webhook Lambda
-├── lab/                              # This demo's part of the shared Lab (shared/lab/)
+├── lab/                              # The Lab backend (bundled with the shared engine, shared/lab/)
 │   ├── scenarios.yaml                # Scenario definitions + skill: single source of truth for engine, UI and README
-│   └── handlers.py                   # inject / revert / probe per scenario (kubectl)
+│   ├── handlers.py                   # inject / revert / probe per scenario (kubectl)
+│   ├── api.py                        # Lab API routes (status, scenarios, inject, rollback, tasks, usage)
+│   ├── engine_main.py                # Durable function entry point: shared engine + this demo's handlers
+│   └── tests/                        # Engine on both roads (recorder handlers), API rules, YAML consistency
 ├── k8s/                              # Kubernetes manifests (Kustomize)
 │   ├── base/                         # Deployments, services, configmap, Fluent Bit
 │   └── overlays/dev|staging|prod     # Environment-specific patches

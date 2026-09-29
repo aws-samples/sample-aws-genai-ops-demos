@@ -8,8 +8,7 @@ three functions:
     probe()  -> dict   {"injected": bool, "facts": [fact, ...]}  read from the cluster,
                        never from a state store (a manual kubectl fix must show)
 `environment()` returns the facts shown in the Lab header. Facts are labelled values
-the UI renders without knowing what they are (facts.py comes from shared/lab/lambda,
-bundled next to this file by the LabBackend construct).
+the UI renders without knowing what they are (see facts.py).
 
 kubectl comes from the Lambda layer (@aws-cdk/lambda-layer-kubectl-v36); the EKS
 bearer token is an STS presigned URL, same mechanism as `aws eks get-token`.
@@ -22,12 +21,18 @@ import logging
 import os
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, NamedTuple
 
 import boto3
 
 from facts import console_link, console_url, fact, item
-from handler_contract import Handler
+
+
+class Handler(NamedTuple):
+    """One scenario's code: break it, put it back, read the live state."""
+    inject: Callable[[], Dict[str, Any]]
+    revert: Callable[[], Dict[str, Any]]
+    probe: Callable[[], Dict[str, Any]]
 
 logger = logging.getLogger(__name__)
 

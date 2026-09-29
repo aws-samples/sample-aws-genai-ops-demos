@@ -1,10 +1,11 @@
 import * as cdk from 'aws-cdk-lib';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { KubectlV36Layer } from '@aws-cdk/lambda-layer-kubectl-v36';
 import { Construct } from 'constructs';
 import * as path from 'path';
-import { LabBackend } from '../../../../shared/lab/cdk/lab-backend';
+import { LabEngine } from '../../../../shared/lab/cdk/lab-engine';
 
 export interface FailureSimulatorApiStackProps extends cdk.StackProps {
   environment: string;
@@ -21,15 +22,16 @@ export interface FailureSimulatorApiStackProps extends cdk.StackProps {
 }
 
 /**
- * The EKS demo's Lab: the shared LabBackend (engine, API, bundling, durable IAM) plus
- * what this demo's handlers need to reach and change the cluster: VPC placement, the
- * kubectl layer, EKS/STS/CloudWatch permissions. Scenario definitions live in
- * ../../lab/scenarios.yaml, the handlers in ../../lab/handlers.py.
+ * The EKS demo's Lab backend: the shared LabEngine (durable engine + API Lambda, one
+ * bundle, one role) fed by this demo's ../../lab folder (scenarios.yaml, handlers.py,
+ * api.py, engine_main.py), plus what the handlers need to reach and change the cluster
+ * (VPC placement, kubectl layer, EKS/STS/CloudWatch permissions) and the API Gateway
+ * the Lab UI calls through CloudFront /admin/*.
  */
 export class FailureSimulatorApiStack extends cdk.Stack {
   public readonly apiEndpoint: string;
   public readonly apiId: string;
-  public readonly apiStageName: string;
+  public readonly apiStageName = 'prod';
 
   constructor(scope: Construct, id: string, props: FailureSimulatorApiStackProps) {
     super(scope, id, props);
@@ -66,17 +68,16 @@ export class FailureSimulatorApiStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // The Lab. deploy-all grants the ONE role an EKS access entry
+    // Engine + API Lambda. deploy-all grants the ONE role an EKS access entry
     // (see the FailureSimulatorLambdaRoleArn output), hence the fixed role name.
     // -----------------------------------------------------------------------
-    const lab = new LabBackend(this, 'Lab', {
+    const lab = new LabEngine(this, 'Lab', {
       labDir: path.join(__dirname, '..', '..', 'lab'),
       stageDir: path.join(__dirname, '..', '.lab-stage'),
+      engineHandler: 'engine_main.handler',
+      apiHandler: 'api.handler',
       namePrefix: `${projectName}-${environment}`,
       roleName: `${projectName}-${environment}-failure-simulator-role`,
-      devOpsAgentRegion,
-      devOpsAgentSpaceId,
-      triggerLambdaName: `${projectName}-${environment}-devops-trigger`,
       layers: [new KubectlV36Layer(this, 'KubectlLayer')],   // keep within one minor of eksKubernetesVersion (bin/app.ts)
       vpc,
       vpcSubnets: { subnets: privateComputeSubnets },
@@ -88,6 +89,9 @@ export class FailureSimulatorApiStack extends cdk.Stack {
         ALARM_NAME: alarmName,
         DNS_ALARM_NAME: `${projectName}-${environment}-dns-resolution-errors`,
         METRICS_NAMESPACE: `${projectName}/${environment}`,
+        TRIGGER_LAMBDA_NAME: `${projectName}-${environment}-devops-trigger`,
+        DEVOPS_AGENT_REGION: devOpsAgentRegion,
+        DEVOPS_AGENT_SPACE_ID: devOpsAgentSpaceId,
       },
       policyStatements: [
         new iam.PolicyStatement({
@@ -101,23 +105,54 @@ export class FailureSimulatorApiStack extends cdk.Stack {
           resources: ['*'],
         }),
         new iam.PolicyStatement({
-          sid: 'DnsScenarioMetric',
-          actions: ['cloudwatch:PutMetricData'],
+          sid: 'CloudWatchAlarmsAndDnsMetric',
+          actions: ['cloudwatch:DescribeAlarms', 'cloudwatch:PutMetricData'],
           resources: ['*'],
         }),
       ],
     });
 
-    this.apiEndpoint = lab.api.url;
-    this.apiId = lab.api.restApiId;
-    this.apiStageName = lab.apiStageName;
+    // -----------------------------------------------------------------------
+    // API Gateway — the routes this Lab's api.py serves
+    // -----------------------------------------------------------------------
+    // Scoped under `lab` so the API and its methods keep the logical ids they were deployed
+    // with (the Frontend stack imports the API id; methods cannot be recreated in place).
+    const api = new apigateway.RestApi(lab, 'RestApi', {
+      restApiName: `${projectName}-${environment}-failure-simulator-api`,
+      description: 'DevOps Agent Lab API for the EKS demo',
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization'],
+      },
+      deployOptions: {
+        stageName: this.apiStageName,
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        metricsEnabled: true,
+      },
+    });
+
+    const integration = new apigateway.LambdaIntegration(lab.apiFunction);
+    const admin = api.root.addResource('admin');
+    admin.addResource('status').addMethod('GET', integration);
+    admin.addResource('usage').addMethod('GET', integration);
+    admin.addResource('tasks').addMethod('GET', integration);
+    // /admin/scenarios lists definitions; /admin/scenarios/{id}/inject drives one.
+    const scenarios = admin.addResource('scenarios');
+    scenarios.addMethod('GET', integration);
+    const inject = scenarios.addResource('{scenarioId}').addResource('inject');
+    inject.addMethod('POST', integration);
+    inject.addMethod('DELETE', integration);
+
+    this.apiEndpoint = api.url;
+    this.apiId = api.restApiId;
 
     // -----------------------------------------------------------------------
     // Outputs
     // -----------------------------------------------------------------------
     new cdk.CfnOutput(this, 'FailureSimulatorApiEndpoint', {
       description: 'DevOps Agent Lab API Gateway endpoint URL',
-      value: lab.api.url,
+      value: api.url,
     });
 
     new cdk.CfnOutput(this, 'FailureSimulatorLambdaRoleArn', {
