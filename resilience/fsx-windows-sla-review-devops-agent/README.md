@@ -22,9 +22,9 @@ dimensions and names the fix; without it, the same question gets a list of setti
 
 ## Why this demo is shaped this way
 
-Decisions taken while deriving the demo from the skill (the
-[native-agent demo guide](../../.kiro/steering/native-agent-demo-guide.md) asks the builder
-at every fork; the answers are recorded here so the next presenter knows why):
+Decisions taken while deriving the demo from the skill (the demo was built capability-first:
+skill, then motion, then scenarios, then the smallest environment; the builder was asked at
+every fork and the answers are recorded here so the next presenter knows why):
 
 - **All three declared motions.** The skill declares `Chat tasks, Evaluation, Incident RCA`.
   Chat carries the review; Incident RCA is exercised by one scenario whose failure produces an

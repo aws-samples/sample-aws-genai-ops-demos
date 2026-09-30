@@ -7,7 +7,8 @@
  * right now (the file system's live facts) and where each engine run is (Lambda durable
  * function history). The page holds no scenario knowledge of its own.
  *
- * Adapted from the reference Lab of the EKS demo (rules: .kiro/steering/demo-lab-ui-guide.md).
+ * Adapted from the reference Lab of the EKS demo (observability/eks-investigation-devops-agent,
+ * services/merchant-portal/src/lab/).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@cloudscape-design/global-styles/index.css'
