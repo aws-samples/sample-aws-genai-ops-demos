@@ -73,7 +73,7 @@ Four CDK stacks (diagram and data flows in [ARCHITECTURE.md](ARCHITECTURE.md)):
 |---|---|
 | `FsxSlaReviewAgentSpace-{agent-region}` | The Agent Space: IAM roles, operator app, AWS association, eventChannel webhook (shared `DevOpsAgentSpace` construct) |
 | `FsxSlaReviewDirectory-{region}` | VPC (one AZ, one NAT gateway), the Windows Server domain controller that promotes `corp.example.com` from its user data, the service-account secret |
-| `FsxSlaReviewFileSystem-{region}` | The file system, the `FreeStorageCapacity` alarm, the lifecycle canary and its alarm, the alarm → webhook trigger chain (shared `AlarmTrigger` construct). Main stack |
+| `FsxSlaReviewFileSystem-{region}` | The file system, the `FreeStorageCapacity` alarm, the lifecycle canary and its alarm, the alarm → webhook trigger chain (shared `AlarmTrigger` construct). Main stack: carries the solution adoption tracking tag `(uksb-do9bhieqqh)(tag:fsx-windows-sla-review,resilience)` |
 | `FsxSlaReviewLab-{region}` | The Lab: durable engine + API (shared `LabEngine` construct) behind a Lambda function URL, the site on S3 + CloudFront with HTTP Basic authentication at the edge |
 
 ## Prerequisites
@@ -81,7 +81,8 @@ Four CDK stacks (diagram and data flows in [ARCHITECTURE.md](ARCHITECTURE.md)):
 - An AWS account with administrator access, in a region where
   [AWS DevOps Agent is available](https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html)
   (or set `DEVOPS_AGENT_REGION` to one that is; the file system deploys where your CLI points)
-- AWS CLI 2.34.20+, Node.js 20+, Python 3.12+ (the Lab Lambda bundle is pip-installed at synth time)
+- AWS CLI 2.34.64+ (the DevOps Agent Asset API the skill registration uses), Node.js 20+,
+  Python 3.12+ (the Lab Lambda bundle is pip-installed at synth time)
 - Credentials configured your usual way (`aws sso login --profile <name>` and `AWS_PROFILE`, an
   IAM role, or `aws configure`); the deploy script verifies them with `aws sts get-caller-identity`
 

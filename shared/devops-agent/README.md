@@ -69,7 +69,8 @@ demo's README.
    **registers the skill in the Agent Space through the Asset API**, `create-asset` from the zip
    (name and description come from the `SKILL.md` front matter) or `update-asset` when a skill of
    that name exists (`list-assets` returns `items`, not `assets`). No console step: a deploy script
-   that has the Agent Space id from its stack outputs leaves the demo ready to use.
+   that has the Agent Space id from its stack outputs leaves the demo ready to use. Needs AWS CLI
+   2.34.64+ (the release that added the Asset API); pass that floor to `check-prerequisites`.
    Without it: prints the upload step (DevOps Agent console, Agent Space, Skills; pick **All
    agents** when a custom agent will use the skill). Custom agents are created in the web app;
    the script points at `SYSTEM_PROMPT.md` to paste.

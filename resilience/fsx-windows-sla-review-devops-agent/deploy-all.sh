@@ -49,7 +49,7 @@ echo ""
 # -----------------------------------------------------------------------------
 # Prerequisites (shared): tooling, credentials, region, DevOps Agent availability
 # -----------------------------------------------------------------------------
-source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.20 --require-cdk --min-node-version 20
+source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.64 --require-cdk --min-node-version 20
 REGION="$AWS_REGION"
 AGENT_REGION="$DEVOPS_AGENT_REGION"
 echo "  Deploy region: $REGION   Agent Space region: $AGENT_REGION   Account: $AWS_ACCOUNT_ID"

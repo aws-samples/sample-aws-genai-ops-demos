@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "devops-agent" -MinAwsCliVersion "2.34.20" -RequireCDK
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "devops-agent" -MinAwsCliVersion "2.34.64" -RequireCDK
 if ($LASTEXITCODE -ne 0) { exit 1 }
 $region = $global:AWS_REGION
 $agentRegion = $global:DEVOPS_AGENT_REGION
