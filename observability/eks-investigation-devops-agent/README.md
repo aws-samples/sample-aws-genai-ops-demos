@@ -288,15 +288,11 @@ All stack IDs include the region suffix for multi-region deployment support.
 ├── deploy-all.sh / .ps1              # One-command deployment
 ├── cdk/
 │   ├── bin/app.ts                    # CDK entry point (10 stacks, region-suffixed)
-│   ├── lib/
-│   │   ├── constructs/
-│   │   │   └── devops-agent-space.ts # Reusable Agent Space construct
-│   │   ├── devops-agent-space-stack.ts # Thin regional stack wrapper
-│   │   └── ...                       # Other stack definitions
-│   ├── scripts/bundle-lambdas.js     # Cross-platform custom-resource bundling
-│   └── lambda/
-│       ├── devops-agent-webhook-provisioner/ # CFN custom resource (URL + secret)
-│       └── devops-agent-trigger/     # Alarm → webhook Lambda
+│   └── lib/
+│       ├── devops-agent-space-stack.ts # Agent Space stack: the shared DevOpsAgentSpace construct + outputs
+│       ├── devops-agent-stack.ts     # Trigger chain stack: the shared AlarmTrigger on the critical-alarms topic
+│       ├── failure-simulator-api-stack.ts # Lab stack: the shared LabEngine + this demo's API Gateway
+│       └── ...                       # Other stack definitions
 ├── lab/                              # The Lab backend (bundled with the shared engine, shared/devops-agent/lab/)
 │   ├── scenarios.yaml                # Scenario definitions + skill: single source of truth for engine, UI and README
 │   ├── handlers.py                   # inject / revert / probe per scenario (kubectl)
@@ -327,6 +323,8 @@ The demo does not deploy from this folder alone. It uses these files from the re
 | File | Used by | For |
 |---|---|---|
 | `shared/scripts/check-prerequisites.ps1` / `.sh` | `deploy-all.ps1` / `.sh` | Tooling, credentials and region checks; DevOps Agent availability |
+| `shared/devops-agent/agent-space/cdk/agent-space.ts` + `lambda/webhook-provisioner/` | `cdk/lib/devops-agent-space-stack.ts` | `DevOpsAgentSpace` construct: IAM roles, Agent Space, operator app, AWS association, webhook (custom resource, secret in Secrets Manager) |
+| `shared/devops-agent/agent-space/cdk/alarm-trigger.ts` + `lambda/alarm-trigger/` | `cdk/lib/devops-agent-stack.ts` | `AlarmTrigger` construct: SNS → Lambda → HMAC-signed incident on the webhook |
 | `shared/devops-agent/lab/cdk/lab-engine.ts` | `cdk/lib/failure-simulator-api-stack.ts` | `LabEngine` construct: the two Lab Lambda functions, their role, the `live` alias, the code bundle |
 | `shared/devops-agent/lab/lambda/engine.py` | `lab/engine_main.py`, `lab/api.py` | The durable inject → wait for rollback → revert execution and its control plane |
 | `shared/devops-agent/lab/lambda/devops_agent.py` | `lab/api.py` | Agent tasks and spend, read from the DevOps Agent data plane |

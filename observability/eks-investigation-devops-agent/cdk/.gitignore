@@ -5,4 +5,3 @@ dist
 *.d.ts
 !jest.config.js
 .lab-stage/
-!scripts/bundle-lambdas.js
