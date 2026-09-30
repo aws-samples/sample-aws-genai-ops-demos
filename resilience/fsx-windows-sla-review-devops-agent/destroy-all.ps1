@@ -1,6 +1,7 @@
 # Removes everything deploy-all.ps1 created, Agent Space included (a demo that cannot be
-# destroyed fails validation). CDK orders the stacks: Lab, then the file system (FSx takes
-# about 10 minutes to delete), then the directory, and the Agent Space in its own region.
+# destroyed fails validation). Stacks go in dependency order: Lab, the file system (FSx takes
+# about 10 minutes to delete, its backups with it), the directory, then the Agent Space in
+# its own region. Each step goes through the shared deploy-cdk script.
 
 param(
     [string]$ProjectName = "fsx-sla-review"
@@ -13,22 +14,30 @@ Set-Location $PSScriptRoot
 if ($LASTEXITCODE -ne 0) { exit 1 }
 $region = $global:AWS_REGION
 $agentRegion = $global:DEVOPS_AGENT_REGION
+$context = @("projectName=$ProjectName", "devOpsAgentRegion=$agentRegion")
 
 Write-Host ""
 Write-Host "Destroying the FSx for Windows SLA review demo in $region (Agent Space in $agentRegion)..." -ForegroundColor Yellow
 Write-Host "  The file system and its automatic backups are deleted; this takes about 15 minutes."
 
-Push-Location cdk
-try {
-    npx -y cdk destroy --all --force -c "projectName=$ProjectName" -c "devOpsAgentRegion=$agentRegion"
-    if ($LASTEXITCODE -ne 0) { throw "cdk destroy failed" }
-} finally {
-    Pop-Location
+$env:AWS_REGION = $region
+foreach ($stack in @("FsxSlaReviewLab-$region", "FsxSlaReviewFileSystem-$region", "FsxSlaReviewDirectory-$region")) {
+    Write-Host ""
+    Write-Host "Removing $stack..." -ForegroundColor Cyan
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $stack -DestroyStack -SkipBootstrap -CdkContext $context
+    if ($LASTEXITCODE -ne 0) { exit 1 }
 }
+
+Write-Host ""
+Write-Host "Removing FsxSlaReviewAgentSpace-$agentRegion..." -ForegroundColor Cyan
+$env:AWS_REGION = $agentRegion
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "FsxSlaReviewAgentSpace-$agentRegion" -DestroyStack -SkipBootstrap -CdkContext $context
+$exit = $LASTEXITCODE
+$env:AWS_REGION = $region
+if ($exit -ne 0) { exit 1 }
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  Teardown Complete" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  Not removed: the CDK bootstrap stack, and any skill you uploaded in the Agent Space console" -ForegroundColor Cyan
-Write-Host "  (the Agent Space itself is gone, so the skill is too)." -ForegroundColor Cyan
+Write-Host "  Not removed: the CDK bootstrap stack. The Agent Space is gone, and the skill registered in it with it." -ForegroundColor Cyan
