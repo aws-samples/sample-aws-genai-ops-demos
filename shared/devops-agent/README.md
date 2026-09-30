@@ -30,6 +30,22 @@ shared/devops-agent/
 Reference implementation of a demo built on these bricks:
 `observability/eks-investigation-devops-agent` (folders `lab/`, `cdk/lib/devops-agent-space-stack.ts`,
 `cdk/lib/devops-agent-stack.ts`, `cdk/lib/failure-simulator-api-stack.ts`, `services/merchant-portal/src/lab/`).
+Second demo, built from the guides below: `resilience/fsx-windows-sla-review-devops-agent`.
+
+## Building a demo: the steering files
+
+Two steering files turn these bricks into a demo; this README is the mechanism reference they
+point at.
+
+| File | What it settles |
+|---|---|
+| `.kiro/steering/native-agent-demo-guide.md` | How to derive a demo from a capability: read the skill or MCP server, deduce the motion, derive discriminating scenarios, then the smallest environment; the bricks to build; the forks where the builder must be asked; the hard rules (auto-revert, live state, one scenario at a time, Agent Space teardown) and the lessons that cost a deploy each |
+| `.kiro/steering/demo-lab-ui-guide.md` | How a Lab reads: shell, labelled facts, vocabulary (agent tasks, spend, failure injection), the engine run as steps, the capability panel, Markdown from the agent |
+
+Kiro loads them when a request matches their description (`inclusion: auto`); any other
+assistant, or a person, reads them directly. The contract between the three: the guides say
+what to derive and why, this folder holds what is never re-derived, the two demos show the
+result.
 
 Every construct here lives outside the demo's `node_modules`, so the demo's CDK project resolves
 `aws-cdk-lib` and `constructs` for it (one copy, or `instanceof` checks fail): `tsconfig.json`
