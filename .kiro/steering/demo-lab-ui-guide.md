@@ -39,7 +39,14 @@ not of a scenario; "Critical" alone means nothing. Use `KeyValuePairs` for every
   Injected outside the Lab), **Category**, **Agent trigger** (CloudWatch alarm,
   automatic investigation / Chat prompt, manual). No severity unless the demo acts on it.
 - Under the description: **DevOps Agent capability shown** and **What the agent should
-  conclude**, straight from the scenario's with/without statement.
+  conclude**, straight from the scenario's with/without statement. Both in the
+  presenter's words: "Alarm coverage: does anything watch this file system?", never the
+  capability's internal numbering or jargon ("Dimension 7" means nothing on a card).
+- Chat-driven scenarios carry their own prompt on the card, as `CopyToClipboard`
+  ("Ask in Chat"), right where the demo flow says to ask; the prompt is data
+  (`prompt` in `lab/scenarios.yaml`), not something the presenter hunts for in another
+  panel. Alarm-driven scenarios show the trigger chain instead (the "Webhook trigger
+  Lambda" link belongs to `triggersAlarm` cards only; on a Chat card it is noise).
 - Live state as facts with the demo's own labels (Deployment, Pods, DB_PASSWORD,
   Lifecycle, Alarm, …), each with a `StatusIndicator`, an optional detail line and a
   Console link as the pair's `info`. Ratios (replicas ready, storage free) as
@@ -84,14 +91,26 @@ Use the agent's own words, so the Lab and the console read the same:
 
 ## The capability panel
 
-The panel shows what the demo showcases, in the form the presenter needs to install it:
+The deploy registers the capability (`deploy-skill -AgentSpaceId`, `deploy-mcp`), so the
+panel shows its **state**, read live from the Agent Space, not instructions to install
+what is already there:
 
-- Inline skill (defined by the demo): copy buttons for name, description, instructions;
-  `CopyToClipboard`, never an `Alert`, for the chat prompt.
-- Skill or custom agent from the Agent Tools repository: link to the source at the
-  stated ref, the `deploy-skill` command (PowerShell and Bash) with copy buttons, the
-  console upload step.
-- MCP server: link to the source, the `deploy-mcp` command, the registration step.
+- Registered (the normal case): a compact container at the bottom of the page. Name as
+  a link to the skill in the operator app, `StatusIndicator` Active / Inactive, version,
+  agent types, source at the stated ref, what it showcases. Nothing to copy, nothing to
+  do. The state comes from the shared `devops_agent.get_skill(name)` (Asset API) served
+  by the Lab API; never from a flag.
+- Missing: the same container becomes a `warning` and moves to the **top of the page**,
+  above the scenarios, because it is now the prerequisite to every card. Only then show
+  the fix: re-run the deploy script, or the `deploy-skill` command with the Agent Space
+  id (PowerShell and Bash, copy buttons), and as a last resort the console upload step.
+- Inline skill (defined by the demo, created by copy-paste in the console): the copy
+  buttons for name, description and instructions are the registration, so they stay;
+  still, when `get_skill` finds it, say so and demote the copy fields to an
+  `ExpandableSection`.
+- MCP server: registered state (tools, auth method) when the demo can read it; otherwise
+  the `deploy-mcp` command and the registration step.
+- No prompt in this panel: prompts live on the scenario cards (above).
 
 ## Text from the agent
 
@@ -106,5 +125,9 @@ Markdown in a card reads as a headline soup.
   #31). Quote them, and test that every walkthrough line is a string.
 - Console URLs: derive the host from the partition (`console.aws.amazon.com`,
   `console.amazonaws.cn`, `console.amazonaws-us-gov.com`), never hardcode a region.
+- Operator app URLs (`https://<agentSpaceId>.aidevops.global.app.aws`): the skills list is
+  `/knowledge?tab=skills`, one skill is `/knowledge/skills/<assetId>` (the asset id from
+  `get_skill`), an investigation is `/<agentSpaceId>/investigation/<taskId>`. `/skills`
+  does not exist; a guessed path is a dead button in front of the audience.
 - Lazy-load the Lab route so the demo application does not pay for Cloudscape.
 - A `Box` has no `fontStyle`; italics go in an `<i>`.
