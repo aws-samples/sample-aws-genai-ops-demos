@@ -16,6 +16,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | AI Load Test Generator Agent | Resilience | Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing | [resilience/ai-load-test-generation-with-dlt/](resilience/ai-load-test-generation-with-dlt/README.md) |
+| FSx for Windows SLA Review with AWS DevOps Agent | Resilience | Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix | [resilience/fsx-windows-sla-review-devops-agent/](resilience/fsx-windows-sla-review-devops-agent/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
 | SaaS Status MCP Server for AWS DevOps Agent | Observability | Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more) — so investigations stop chasing internal infrastructure when the outage is upstream | [observability/saas-status-mcp/](observability/saas-status-mcp/README.md) |
@@ -46,7 +47,8 @@ observability/
 └── saas-status-mcp/
 resilience/
 ├── ai-chaos-engineering-with-fis/
-└── ai-load-test-generation-with-dlt/
+├── ai-load-test-generation-with-dlt/
+└── fsx-windows-sla-review-devops-agent/
 security/
 ├── ai-iam-access-analyzer-assistant/
 ├── ai-incident-response-playbook-builder/
