@@ -69,7 +69,10 @@ scenarios:
     handler: backups_disabled
     demonstrates:
       check: "Backups: is there a daily recovery point, and what does its absence mean on a Single-AZ file system?"
-      withCapability: "Warning: no daily recovery point, and for a Single-AZ file system this is the only recovery path from an unrecoverable failure; rating capped at Medium, remediation with a 7-35 day retention"
+      # Observed in the review of 2026-09-30 (skill loaded, backups injected off): "Backups are
+      # off. AutomaticBackupRetentionDays = 0, confirmed by an empty backup list. On Single-AZ,
+      # backups are your only recovery path if something goes seriously wrong." Rating Medium.
+      withCapability: "Warning on backups: retention 0 confirmed by an empty backup list, and on Single-AZ backups are the only recovery path; the file system is rated Medium"
       withoutCapability: "May mention that backups are off; does not connect it to the Single-AZ recovery model or rate the file system"
     prompt: "Review all my FSx for Windows file systems in {region} for SLA readiness."
     triggersAlarm: false
