@@ -2,6 +2,7 @@ import Box from '@cloudscape-design/components/box'
 import Button from '@cloudscape-design/components/button'
 import Cards from '@cloudscape-design/components/cards'
 import ColumnLayout from '@cloudscape-design/components/column-layout'
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard'
 import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs'
 import Link from '@cloudscape-design/components/link'
@@ -180,6 +181,17 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
                     ]}
                   />
                 )}
+                {/* Chat-driven scenarios carry their prompt; alarm-driven ones are asked by the alarm. */}
+                {item.prompt && !item.triggersAlarm && (
+                  <KeyValuePairs
+                    columns={1}
+                    items={[{
+                      label: 'Ask in Chat once injected',
+                      value: <CopyToClipboard variant="inline" textToCopy={item.prompt} copyButtonAriaLabel="Copy prompt" copySuccessText="Prompt copied" copyErrorText="Copy failed" />,
+                      info: links.chat ? <Link external href={links.chat} variant="info">Open Chat</Link> : undefined,
+                    }]}
+                  />
+                )}
               </SpaceBetween>
             ),
           },
@@ -248,7 +260,8 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
                     <div>
                       <Box variant="h4">Incident chain</Box>
                       <TextContent><ol>{(item.incidentChain ?? []).map((t, i) => <li key={i}>{t}</li>)}</ol></TextContent>
-                      {links.triggerLambda && <Link external href={links.triggerLambda}>Webhook trigger Lambda</Link>}
+                      {/* The trigger chain belongs to alarm-driven scenarios only. */}
+                      {item.triggersAlarm && links.triggerLambda && <Link external href={links.triggerLambda}>Webhook trigger Lambda</Link>}
                     </div>
                     <div>
                       <Box variant="h4">Demo flow</Box>

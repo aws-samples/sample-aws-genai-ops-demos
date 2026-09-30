@@ -108,6 +108,11 @@ export default function LabPage() {
   const statuses = status?.scenarios ?? {}
   const autoRevertMinutes = Math.round(Math.max(600, ...scenarios.map(s => s.autoRevertSeconds || 0)) / 60)
   const envFacts: Fact[] = [...(env.facts ?? []), ...(env.region ? [{ label: 'Region', value: env.region }] : [])]
+  // Registered skills are shown as state at the bottom; a skill the Agent Space does not have
+  // is the prerequisite to every scenario and goes to the top.
+  const skills = definitions?.skills ?? []
+  const missingSkills = skills.filter(s => s.registration?.success && !s.registration.found)
+  const registeredSkills = skills.filter(s => !(s.registration?.success && !s.registration.found))
 
   async function act(id: string, kind: 'inject' | 'rollback') {
     setActing(id)
@@ -178,6 +183,10 @@ export default function LabPage() {
         >
           Failure scenarios
         </Header>
+        {/* A skill the deploy did not register is the prerequisite to every card: it goes first. */}
+        {missingSkills.map(skill => (
+          <SkillPanel key={skill.name} skill={skill} links={links} agentSpaceId={env.devOpsAgentSpaceId} />
+        ))}
         {envFacts.length > 0 && (
           <Container header={<Header variant="h3">Environment</Header>}>
             <KeyValuePairs columns={Math.min(envFacts.length + 1, 4)} items={envFacts.map(factToPair)} />
@@ -201,8 +210,8 @@ export default function LabPage() {
           </Alert>
         )}
 
-        {definitions?.skills.map(skill => (
-          <SkillPanel key={skill.name} skill={skill} prompt={definitions.capability?.prompt} links={links} />
+        {registeredSkills.map(skill => (
+          <SkillPanel key={skill.name} skill={skill} links={links} agentSpaceId={env.devOpsAgentSpaceId} />
         ))}
 
         <TasksPanel tasks={tasks} links={links} loading={tasksLoading} />

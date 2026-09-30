@@ -11,6 +11,7 @@ Run from the demo's lab/ folder:  python -m pytest tests -q
 
 import json
 import os
+import re
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -281,13 +282,32 @@ def test_status_returns_probe_facts_plus_alarm_fact_and_run_phases(api):
         assert len(call.kwargs.get('Statuses', [])) <= 1, call.kwargs
 
 
-def test_scenarios_route_fills_the_region_into_the_prompt(api):
+def test_scenarios_route_fills_the_region_and_reports_the_skill_state(api):
     index, _ = api
-    with patch.object(index.handlers, 'environment', return_value=[]):
+    registration = {'success': True, 'found': True, 'assetId': 'ki-1', 'status': 'ACTIVE', 'version': 2, 'agentTypes': ['GENERIC']}
+    with patch.object(index.handlers, 'environment', return_value=[]), \
+         patch.object(index.devops_agent, 'get_skill', return_value=registration) as get_skill:
         body = json.loads(index.handler(_event('GET', '/admin/scenarios'), None)['body'])
     assert '{region}' not in body['capability']['prompt'] and index.REGION in body['capability']['prompt']
     assert [s['id'] for s in body['scenarios']] == ['misconfigured-ad-credentials', 'backups-disabled', 'alarms-removed']
     assert body['scenarios'][0]['alarmName'] == 'test-file-system-misconfigured'
+    # Chat scenarios carry their own prompt, region filled in; the alarm-driven one has none.
+    assert body['scenarios'][0].get('prompt') is None
+    assert all(index.REGION in s['prompt'] for s in body['scenarios'][1:])
+    # The capability panel shows the skill's state, read from the Agent Space.
+    get_skill.assert_called_once_with('storage-fsx-windows-sla-optimizer')
+    assert body['skills'][0]['registration'] == registration
+
+
+def test_scenario_text_is_in_the_presenters_words():
+    """Cards are read by a presenter: no capability-internal numbering, and Chat scenarios have a prompt."""
+    for s in scenarios.all_scenarios():
+        check = s['demonstrates']['check']
+        assert not re.search(r'\bDimension \d', check), f"{s['id']}: say what the check is, not its number: {check!r}"
+        if not s.get('triggersAlarm'):
+            assert s.get('prompt'), f"{s['id']}: a Chat-driven scenario carries the prompt to paste"
+        for line in s.get('demoFlow') or []:
+            assert 'click' not in line.lower(), f"{s['id']}: write 'choose', not 'click': {line!r}"
 
 
 def test_unknown_route_is_404(api):

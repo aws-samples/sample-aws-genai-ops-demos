@@ -21,6 +21,8 @@ export interface Scenario {
   category: string
   handler: string
   demonstrates?: { check?: string; withCapability?: string; withoutCapability?: string }
+  /** Chat-driven scenarios: the sentence to paste in the agent's chat (shown on the card). */
+  prompt?: string
   triggersAlarm?: boolean
   alarm?: { envVar?: string; expectFiringWithinSeconds?: number }
   alarmName?: string
@@ -45,6 +47,19 @@ export interface Skill {
   pitch?: string
   description?: string
   instructions?: string
+  /** Is the skill registered in the Agent Space? Read live by the Lab API (Asset API). */
+  registration?: SkillRegistration
+}
+
+export interface SkillRegistration {
+  success: boolean
+  found: boolean
+  assetId?: string
+  status?: string
+  version?: number
+  agentTypes?: string[]
+  updatedAt?: string
+  message?: string
 }
 
 export interface LabEnvironment {
@@ -169,14 +184,17 @@ export function consoleHost(env: Pick<LabEnvironment, 'region' | 'partition'>): 
 export function consoleLinks(env: LabEnvironment) {
   const host = consoleHost(env)
   const { region, devOpsAgentRegion, devOpsAgentSpaceId, triggerLambdaUrl } = env
+  // Operator app paths: /knowledge?tab=skills lists the skills, /knowledge/skills/<assetId> is one skill.
+  const app = devOpsAgentSpaceId ? `https://${devOpsAgentSpaceId}.aidevops.global.app.aws` : null
   return {
     triggerLambda: triggerLambdaUrl ?? null,
-    devOpsAgent: devOpsAgentSpaceId
-      ? `https://${devOpsAgentSpaceId}.aidevops.global.app.aws/`
+    devOpsAgent: app
+      ? `${app}/`
       : devOpsAgentRegion ? `${host.replace(region, devOpsAgentRegion)}/aidevops/home#/agent-spaces` : null,
-    skills: devOpsAgentSpaceId ? `https://${devOpsAgentSpaceId}.aidevops.global.app.aws/skills` : null,
-    investigation: (taskId: string) => devOpsAgentSpaceId
-      ? `https://${devOpsAgentSpaceId}.aidevops.global.app.aws/${devOpsAgentSpaceId}/investigation/${taskId}` : null,
+    chat: app ? `${app}/chat` : null,
+    skills: app ? `${app}/knowledge?tab=skills` : null,
+    skill: (assetId: string) => app ? `${app}/knowledge/skills/${assetId}` : null,
+    investigation: (taskId: string) => app ? `${app}/${devOpsAgentSpaceId}/investigation/${taskId}` : null,
   }
 }
 

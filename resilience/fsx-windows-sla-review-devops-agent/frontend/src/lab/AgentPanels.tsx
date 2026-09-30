@@ -40,16 +40,14 @@ export function AgentMarkdown({ children }: { children: string }) {
 
 const AGENT_TOOLS_REPO = 'https://github.com/aws/tools-for-devops-agent'
 
-/** Inline skill: the presenter creates it in the console by copy-paste (name, description, instructions). */
+/** Inline skill: the presenter creates it in the operator app by copy-paste (name, description, instructions). */
 function InlineSkillFields({ skill }: { skill: Skill }) {
   return (
     <>
       <KeyValuePairs
-        columns={3}
+        columns={1}
         items={[
           { label: 'Name', value: <CopyToClipboard variant="inline" textToCopy={skill.name} copyButtonAriaLabel="Copy skill name" copySuccessText="Name copied" copyErrorText="Copy failed" /> },
-          { label: 'Agent type', value: skill.agentType ?? 'Generic' },
-          { label: 'Status', value: <StatusIndicator type="success">Active</StatusIndicator> },
         ]}
       />
       <KeyValuePairs
@@ -78,84 +76,107 @@ function InlineSkillFields({ skill }: { skill: Skill }) {
 }
 
 /**
- * Referenced skill: it lives in the Agent Tools repository and is never copied here.
- * The panel shows where it comes from and the one command that packages it for upload.
+ * Referenced skill that the deploy did NOT register: the one command that fetches, packages
+ * and registers it (deploy-skill with the Agent Space id), and the console upload as a fallback.
  */
-function AgentToolsSkillFields({ skill }: { skill: Skill }) {
+function AgentToolsInstallFields({ skill, agentSpaceId }: { skill: Skill; agentSpaceId: string }) {
   const ref = skill.ref ?? 'main'
   const customAgent = skill.kind === 'custom-agent'
-  const sourceUrl = `${AGENT_TOOLS_REPO}/tree/${ref}/${customAgent ? 'custom-agents' : 'skills'}/${skill.name}`
-  const command = `& "..\\..\\shared\\devops-agent\\agent-tools\\deploy-skill.ps1" -${customAgent ? 'CustomAgent' : 'Skill'} ${skill.name} -Ref ${ref}`
-  const commandSh = `../../shared/devops-agent/agent-tools/deploy-skill.sh --${customAgent ? 'custom-agent' : 'skill'} ${skill.name} --ref ${ref}`
+  const kind = customAgent ? 'CustomAgent' : 'Skill'
+  const space = agentSpaceId ? ` -AgentSpaceId ${agentSpaceId}` : ''
+  const spaceSh = agentSpaceId ? ` --agent-space-id ${agentSpaceId}` : ''
+  const command = `& "..\\..\\shared\\devops-agent\\agent-tools\\deploy-skill.ps1" -${kind} ${skill.name} -Ref ${ref}${space}`
+  const commandSh = `../../shared/devops-agent/agent-tools/deploy-skill.sh --${customAgent ? 'custom-agent' : 'skill'} ${skill.name} --ref ${ref}${spaceSh}`
   return (
-    <>
-      <KeyValuePairs
-        columns={3}
-        items={[
-          { label: 'Name', value: <Link external href={sourceUrl}>{skill.name}</Link> },
-          { label: 'Source', value: `Agent Tools repository, ${ref}` },
-          { label: 'Agent type', value: skill.agentType ?? 'Generic' },
-        ]}
-      />
-      <KeyValuePairs
-        columns={1}
-        items={[
-          {
-            label: 'Package it for upload (run from the demo folder)',
-            value: (
-              <SpaceBetween size="xs">
-                <Box variant="code">{command}</Box>
-                <SpaceBetween direction="horizontal" size="xs">
-                  <CopyToClipboard variant="button" textToCopy={command} copyButtonText="Copy PowerShell" copySuccessText="Copied" copyErrorText="Copy failed" />
-                  <CopyToClipboard variant="button" textToCopy={commandSh} copyButtonText="Copy Bash" copySuccessText="Copied" copyErrorText="Copy failed" />
-                </SpaceBetween>
-                <Box color="text-body-secondary" fontSize="body-s">
-                  Then upload the zip in the console: Skills, Add skill, Upload. The skill stays in its repository; the demo references it at the ref above.
-                </Box>
+    <KeyValuePairs
+      columns={1}
+      items={[
+        {
+          label: 'Register it (run from the demo folder; the deploy script does this on its own)',
+          value: (
+            <SpaceBetween size="xs">
+              <Box variant="code">{command}</Box>
+              <SpaceBetween direction="horizontal" size="xs">
+                <CopyToClipboard variant="button" textToCopy={command} copyButtonText="Copy PowerShell" copySuccessText="Copied" copyErrorText="Copy failed" />
+                <CopyToClipboard variant="button" textToCopy={commandSh} copyButtonText="Copy Bash" copySuccessText="Copied" copyErrorText="Copy failed" />
               </SpaceBetween>
-            ),
-          },
-        ]}
-      />
-    </>
+              <Box color="text-body-secondary" fontSize="body-s">
+                Fetches the skill at the ref, packages it and registers it in this Agent Space through the Asset API. Fallback: upload the zip it produces in the operator app (Knowledge, Skills). The skill stays in its repository; the demo references it.
+              </Box>
+            </SpaceBetween>
+          ),
+        },
+      ]}
+    />
   )
 }
 
-export function SkillPanel({ skill, prompt, links }: { skill: Skill; prompt?: string; links: ReturnType<typeof consoleLinks> }) {
+const REGISTRATION_STATUS: Record<string, StatusIndicatorProps.Type> = { ACTIVE: 'success', INACTIVE: 'stopped' }
+
+/**
+ * What the demo showcases, as its STATE in the Agent Space (read live through the Asset API),
+ * not as installation instructions: the deploy registers the skill, so a registered skill is
+ * the normal case and needs nothing from the presenter. When it is missing, the panel turns
+ * into the prerequisite (rendered at the top of the page by LabPage) and shows the fix.
+ */
+export function SkillPanel({ skill, links, agentSpaceId }: { skill: Skill; links: ReturnType<typeof consoleLinks>; agentSpaceId: string }) {
   const referenced = skill.source === 'agent-tools'
+  const reg = skill.registration
+  const found = reg?.found === true
+  const unknown = !reg || !reg.success
+  const ref = skill.ref ?? 'main'
+  const sourceUrl = referenced
+    ? `${AGENT_TOOLS_REPO}/tree/${ref}/${skill.kind === 'custom-agent' ? 'custom-agents' : 'skills'}/${skill.name}`
+    : undefined
+  const skillUrl = found && reg?.assetId ? links.skill(reg.assetId) : null
+
+  const registration = found
+    ? <StatusIndicator type={REGISTRATION_STATUS[reg?.status ?? ''] ?? 'info'}>{reg?.status === 'ACTIVE' ? 'Registered, active' : `Registered, ${(reg?.status ?? '').toLowerCase()}`}</StatusIndicator>
+    : unknown
+      ? <StatusIndicator type="warning">Unknown{reg?.message ? `: ${reg.message}` : ''}</StatusIndicator>
+      : <StatusIndicator type="error">Not registered in this Agent Space</StatusIndicator>
+
   return (
     <Container
       header={
         <Header
           variant="h2"
-          description={referenced
-            ? 'Skills teach the agent a domain. This one comes from the public Agent Tools repository; the demo references it, never copies it.'
-            : "Skills encode your team's reporting standards. They load automatically and change how the agent reasons and reports."}
+          description={found
+            ? (referenced
+              ? 'Skills teach the agent a domain. This one comes from the public Agent Tools repository; the deploy registered it, the demo never copies it.'
+              : "Skills encode your team's reporting standards. They load automatically and change how the agent reasons and reports.")
+            : 'The scenarios below demonstrate this skill. Until it is registered in the Agent Space, the agent answers without it.'}
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              {links.skills && <Button href={links.skills} iconAlign="right" iconName="external" target="_blank">Open Skills in the console</Button>}
+              {skillUrl
+                ? <Button href={skillUrl} iconAlign="right" iconName="external" target="_blank">Open the skill in the operator app</Button>
+                : links.skills && <Button href={links.skills} iconAlign="right" iconName="external" target="_blank">Open Skills in the operator app</Button>}
             </SpaceBetween>
           }
         >
-          Agent skill
+          {found ? 'Agent skill' : 'Agent skill: prerequisite'}
         </Header>
       }
     >
       <SpaceBetween size="l">
+        <KeyValuePairs
+          columns={4}
+          items={[
+            { label: 'Skill', value: sourceUrl ? <Link external href={sourceUrl}>{skill.name}</Link> : skill.name },
+            { label: 'Registration', value: registration },
+            ...(found ? [{ label: 'Version', value: `${reg?.version ?? '?'}${reg?.updatedAt ? `, ${new Date(reg.updatedAt).toLocaleString()}` : ''}` }] : []),
+            { label: 'Agent types', value: found && reg?.agentTypes?.length ? reg.agentTypes.join(', ') : (skill.agentType ?? 'Generic') },
+          ]}
+        />
         <Box variant="p">{skill.pitch}</Box>
         {skill.feature && (
           <Box color="text-body-secondary" fontSize="body-s">Showcases: <strong>{skill.feature}</strong></Box>
         )}
-        {referenced ? <AgentToolsSkillFields skill={skill} /> : <InlineSkillFields skill={skill} />}
-        {prompt && (
-          <KeyValuePairs
-            columns={1}
-            items={[{
-              label: 'Chat prompt to try once the skill exists',
-              value: <CopyToClipboard variant="inline" textToCopy={prompt} copyButtonAriaLabel="Copy prompt" copySuccessText="Prompt copied" copyErrorText="Copy failed" />,
-            }]}
-          />
-        )}
+        {referenced
+          ? (!found && !unknown && <AgentToolsInstallFields skill={skill} agentSpaceId={agentSpaceId} />)
+          : (found
+            ? <ExpandableSection headerText="Skill definition (already registered)"><SpaceBetween size="l"><InlineSkillFields skill={skill} /></SpaceBetween></ExpandableSection>
+            : <InlineSkillFields skill={skill} />)}
       </SpaceBetween>
     </Container>
   )
