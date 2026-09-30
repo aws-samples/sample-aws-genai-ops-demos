@@ -1,6 +1,9 @@
 ---
 inclusion: fileMatch
-fileMatchPattern: '**/{cdk/**/app.py,cdk/**/app.ts,terraform/*.tf}'
+fileMatchPattern:
+  - '**/cdk/**/app.py'
+  - '**/cdk/**/app.ts'
+  - '**/terraform/*.tf'
 ---
 
 # Solution Adoption Tracking Requirements
