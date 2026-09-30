@@ -19,7 +19,7 @@ done
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.20 --require-cdk
+source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.64 --require-cdk
 REGION="$AWS_REGION"
 AGENT_REGION="$DEVOPS_AGENT_REGION"
 CONTEXT=(--cdk-context "projectName=$PROJECT_NAME" --cdk-context "devOpsAgentRegion=$AGENT_REGION")
