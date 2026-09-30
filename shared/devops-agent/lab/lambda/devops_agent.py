@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import boto3
@@ -45,6 +46,13 @@ def get_usage() -> Dict[str, Any]:
         return {'success': False, 'message': str(e)}
 
 
+def _iso(value: Any) -> str:
+    """The Asset API returns timestamps as epoch seconds over the wire; the UI wants ISO 8601."""
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+    return str(value or '')
+
+
 def get_skill(name: str) -> Dict[str, Any]:
     """Is the capability registered in the Agent Space? Read from the Asset API (ListAssets,
     assetType skill), matched on the skill's name. The Lab shows this state instead of
@@ -65,7 +73,7 @@ def get_skill(name: str) -> Dict[str, Any]:
                         'status': meta.get('status', ''),
                         'version': asset.get('version'),
                         'agentTypes': meta.get('agent_types') or [],
-                        'updatedAt': asset.get('updatedAt', ''),
+                        'updatedAt': _iso(asset.get('updatedAt')),
                     }
             token = page.get('nextToken')
             path = f'/asset/agent-space/{AGENT_SPACE_ID}/assets?assetType=skill&nextToken={token}' if token else None
