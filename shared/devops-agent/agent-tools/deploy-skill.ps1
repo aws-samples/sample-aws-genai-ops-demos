@@ -15,9 +15,17 @@
 #   & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
 #   & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -CustomAgent aws-health-report -Ref v1.2.0
 #
+# With -AgentSpaceId, the skill is also registered in that Agent Space through the Asset API
+# (create-asset from the zip, or update-asset when a skill of that name already exists), so
+# no console upload is needed. Needs aidevops:ListAssets, CreateAsset, UpdateAsset on the
+# Agent Space (the deploying admin has them).
+#   & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill storage-fsx-windows-sla-optimizer -Ref main `
+#       -AgentSpaceId <id> -AgentSpaceRegion eu-central-1 [-AgentTypes GENERIC]
+#
 # Exports for the calling script:
 #   $global:AGENT_TOOLS_SKILL_ZIP    Full path of the produced zip (skills only)
 #   $global:AGENT_TOOLS_SKILL_DIR    Fetched source directory (temp, delete when done)
+#   $global:AGENT_TOOLS_SKILL_ASSET_ID   Asset id of the registered skill (with -AgentSpaceId)
 
 param(
     [string]$Skill = "",
@@ -27,7 +35,12 @@ param(
     # Where to write the zip. Defaults to the caller's current directory.
     [string]$OutputDirectory = ".",
     # Keep the fetched source directory instead of deleting it (debugging).
-    [switch]$KeepSource = $false
+    [switch]$KeepSource = $false,
+    # Register the skill in this Agent Space (skills only). Empty: package only, print the upload step.
+    [string]$AgentSpaceId = "",
+    [string]$AgentSpaceRegion = "",
+    # Agent types the skill applies to: GENERIC (all), or a list such as CHAT,INCIDENT_RCA.
+    [string[]]$AgentTypes = @("GENERIC")
 )
 
 $ErrorActionPreference = "Stop"
@@ -143,13 +156,45 @@ if ($isSkill) {
 
     Write-Host "      OK: $($files.Count) files -> $zipPath" -ForegroundColor Green
 
+    # Register through the Asset API when an Agent Space is given. For zip uploads the service
+    # reads name and description from the SKILL.md front matter; metadata carries the agent types.
+    $assetId = ""
+    if (-not [string]::IsNullOrEmpty($AgentSpaceId)) {
+        Write-Host ""
+        Write-Host "Registering the skill in Agent Space $AgentSpaceId..." -ForegroundColor Yellow
+        $regionArgs = if ($AgentSpaceRegion) { @("--region", $AgentSpaceRegion) } else { @() }
+        $existing = aws devops-agent list-assets --agent-space-id $AgentSpaceId --asset-type skill --no-cli-pager @regionArgs | ConvertFrom-Json
+        $current = $existing.items | Where-Object { $_.metadata.name -eq $name } | Select-Object -First 1
+        $request = @{
+            agentSpaceId = $AgentSpaceId
+            metadata     = @{ agent_types = @($AgentTypes); status = "ACTIVE" }
+            content      = @{ zip = @{ zipFile = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zipPath)) } }
+        }
+        if ($current) { $request.assetId = $current.assetId } else { $request.assetType = "skill" }
+        $requestFile = Join-Path $tempRoot "asset-request.json"
+        [IO.File]::WriteAllText($requestFile, ($request | ConvertTo-Json -Depth 5 -Compress))
+        $verb = if ($current) { "update-asset" } else { "create-asset" }
+        $result = aws devops-agent $verb --cli-input-json "file://$requestFile" --no-cli-pager @regionArgs | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $result.asset.assetId) {
+            Write-Host "      ERROR: $verb failed; upload $zipPath in the console instead" -ForegroundColor Red
+            exit 1
+        }
+        $assetId = $result.asset.assetId
+        $global:AGENT_TOOLS_SKILL_ASSET_ID = $assetId
+        Write-Host "      OK: $(if ($current) { 'updated' } else { 'created' }) skill asset $assetId (version $($result.asset.version), agent types $($AgentTypes -join ','))" -ForegroundColor Green
+    }
+
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
     Write-Host "  Skill packaged: $name @ $Ref ($commit)" -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
     Write-Host "  Zip:      $zipPath" -ForegroundColor Cyan
-    Write-Host "  Upload:   DevOps Agent console -> Agent Space -> Skills -> Upload" -ForegroundColor Cyan
-    Write-Host "            Pick 'All agents' if a custom agent will use this skill." -ForegroundColor Gray
+    if ($assetId) {
+        Write-Host "  Skill:    registered in Agent Space $AgentSpaceId as $assetId (ACTIVE)" -ForegroundColor Cyan
+    } else {
+        Write-Host "  Upload:   DevOps Agent console -> Agent Space -> Skills -> Upload" -ForegroundColor Cyan
+        Write-Host "            Pick 'All agents' if a custom agent will use this skill." -ForegroundColor Gray
+    }
     Write-Host "  Source:   $Repo/tree/$Ref/$sparsePath" -ForegroundColor Cyan
 } else {
     $promptPath = Join-Path $sourceDir "SYSTEM_PROMPT.md"

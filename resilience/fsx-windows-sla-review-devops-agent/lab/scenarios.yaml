@@ -1,0 +1,142 @@
+# DevOps Agent Demo Lab — FSx for Windows SLA review
+#
+# Output of the capability analysis for the storage-fsx-windows-sla-optimizer skill (see the
+# README, "Why this demo is shaped this way"). Drives this demo's Lab (engine from
+# shared/devops-agent/lab/): engine handlers, API, UI cards. Handlers live in lab/handlers.py.
+
+schemaVersion: 1
+
+capability:
+  kind: skill
+  name: storage-fsx-windows-sla-optimizer
+  source: agent-tools
+  ref: main
+  # Declared: "Chat tasks, Evaluation, Incident RCA". All three are exercised: Chat and
+  # the weekly Evaluation on every scenario, Incident RCA on misconfigured-ad-credentials
+  # (a canary publishes the file system's lifecycle as a metric; its alarm starts the
+  # investigation). Builder's decision, recorded in the README.
+  agentTypes: [chat, evaluation, incident-rca]
+  prompt: "Review all my FSx for Windows file systems in {region} for SLA readiness."
+
+scenarios:
+  - id: misconfigured-ad-credentials
+    name: Active Directory credentials rotated
+    category: Active Directory
+    handler: misconfigured_ad_credentials
+    demonstrates:
+      check: Dimension 2, Active Directory health, with root-cause code mapping
+      withCapability: "Critical: file system MISCONFIGURED; the reported detail ACTIVE_DIRECTORY_INVALID_CREDENTIALS is mapped to a rotated or expired service-account password, with the Protected Users caveat and the AWSSupport-ValidateFSxWindowsADConfig runbook as the next step"
+      withoutCapability: "Reports that the file system is misconfigured and lists generic AD connectivity causes; does not read the lifecycle detail code"
+    triggersAlarm: true
+    alarm:
+      envVar: MISCONFIGURED_ALARM_NAME
+      # FSx validates the new credentials against the domain for 7-8 minutes (lifecycle UPDATING)
+      # before it declares MISCONFIGURED; the canary alarm follows within two minutes.
+      expectFiringWithinSeconds: 660
+    inject:
+      summary: "UpdateFileSystem with a wrong self-managed AD service-account password; the file system enters UPDATING, then MISCONFIGURED"
+    detect:
+      summary: "DescribeFileSystems shows Lifecycle MISCONFIGURED, or UPDATING with a self-managed AD update in flight"
+    # Long enough for the validation (8 min), the alarm, the investigation (5-10 min) and the talk.
+    autoRevertSeconds: 1800
+    description: >-
+      Someone rotated the service account that FSx uses to talk to Active Directory and
+      forgot the file system. FSx cannot reach the domain any more: the file system goes
+      MISCONFIGURED, backups stop, and after long enough the data becomes inaccessible.
+      The canary sees the lifecycle change, the alarm fires, the agent investigates.
+    incidentChain:
+      - Service-account password changed on the file system's AD configuration
+      - "FSx lifecycle: AVAILABLE, UPDATING for 7-8 minutes while FSx validates, then MISCONFIGURED with detail ACTIVE_DIRECTORY_INVALID_CREDENTIALS"
+      - The canary publishes FileSystemMisconfigured = 1, the alarm fires, SNS, webhook
+      - The agent investigates with the skill loaded
+    customerImpact:
+      - "SMB clients keep working for now: the file server is up, only its AD link is broken"
+      - Backups and patching fail from here on; prolonged, the file system is quarantined and the data is inaccessible
+    demoFlow:
+      - "Click Inject: the lifecycle fact reads UPDATING while FSx validates the credentials (7-8 minutes), then MISCONFIGURED"
+      - The alarm fires within two more minutes and the investigation appears under Agent tasks
+      - "The investigation names the cause: invalid credentials, a rotated password, not a network problem"
+      - "Click Rollback: the correct password is restored and the file system returns to AVAILABLE in a few minutes (the card says Reverting)"
+    talkTrack: "Every generic runbook says check the security groups. The skill reads the detail code and says: the password was rotated. That is an hour saved."
+
+  - id: backups-disabled
+    name: Automatic backups disabled
+    category: Data protection
+    handler: backups_disabled
+    demonstrates:
+      check: Dimension 5, backups (with the Single-AZ baseline of dimension 1)
+      withCapability: "Warning: no daily recovery point, and for a Single-AZ file system this is the only recovery path from an unrecoverable failure; rating capped at Medium, remediation with a 7-35 day retention"
+      withoutCapability: "May mention that backups are off; does not connect it to the Single-AZ recovery model or rate the file system"
+    triggersAlarm: false
+    inject:
+      summary: "UpdateFileSystem sets AutomaticBackupRetentionDays to 0 (online, applies in seconds)"
+    detect:
+      summary: "DescribeFileSystems shows WindowsConfiguration.AutomaticBackupRetentionDays == 0"
+    autoRevertSeconds: 600
+    description: >-
+      Turns off the file system's daily automatic backups. Nothing breaks and no alarm
+      fires: the file system is one unrecoverable Single-AZ failure away from data loss,
+      and only a review notices.
+    incidentChain:
+      - Automatic backup retention set to 0 days
+      - No daily recovery point is taken from now on
+      - "A Single-AZ failure-recovery event that cannot complete leaves one option: restore from a backup that does not exist"
+    customerImpact:
+      - Nothing visible today
+      - Recovery time after an unrecoverable failure becomes unbounded
+    demoFlow:
+      - Click Inject
+      - Open the DevOps Agent console and paste the prompt above in Chat
+      - "The report rates the file system Medium at best: backups Warning, Single-AZ Warning"
+      - Click Rollback, ask again, watch the backups dimension return to Pass
+    talkTrack: "The skill does not just list settings. It knows that on Single-AZ the backup is the whole recovery plan."
+
+  - id: alarms-removed
+    name: No CloudWatch alarm on the file system
+    category: Observability
+    handler: alarms_removed
+    demonstrates:
+      check: Dimension 7, alarms and observability
+      withCapability: "Warning: no AWS/FSx alarm scoped to the file system, so low storage, throughput saturation or a Misconfigured state would go unnoticed; remediation names the FreeStorageCapacity alarm at the 20% floor"
+      withoutCapability: "Reviews the file system configuration; alarm coverage is not part of an availability assessment"
+    triggersAlarm: false
+    inject:
+      summary: "Deletes the demo's FreeStorageCapacity alarm"
+    detect:
+      summary: "DescribeAlarms returns no AWS/FSx alarm whose FileSystemId dimension is this file system"
+    autoRevertSeconds: 600
+    description: >-
+      Removes the only CloudWatch alarm watching the file system. The skill treats
+      observability as an SLA dimension: an outage you cannot detect is an outage that
+      lasts until a user calls.
+    incidentChain:
+      - FreeStorageCapacity alarm deleted
+      - Storage can fill to the 10% floor with nobody paged
+      - Writes start failing before anyone looks
+    customerImpact:
+      - Nothing visible today
+      - The next capacity problem is discovered by users, not by operations
+    demoFlow:
+      - Click Inject
+      - Ask for the review in Chat
+      - "Dimension 7 flips to Warning with the exact alarm to create"
+      - Click Rollback; the alarm is recreated and the dimension passes again
+    talkTrack: "Most reviews stop at the resource. This one asks who would know when it breaks."
+
+skills:
+  - name: storage-fsx-windows-sla-optimizer
+    source: agent-tools
+    kind: skill
+    ref: main
+    agentType: Generic
+    feature: "Rated seven-dimension SLA review of FSx for Windows from Chat, with remediation the platform team can act on"
+    pitch: >-
+      The agent already knows AWS. This skill gives it the FSx for Windows availability
+      model (Multi-AZ failover, the Active Directory dependency, read + 2 x write sizing,
+      the 20% storage floor) and a report format with a rating that can be signed off.
+
+notes:
+  - "Run one scenario at a time: concurrent injections make the report ambiguous. The Lab refuses a second inject while one is active."
+  - "The file system is Single-AZ on purpose: dimension 1 is a Warning in every report, and it is what makes the backups scenario bite."
+  - "Trend-based findings need about 14 days of CloudWatch history; a freshly deployed demo reports them as insufficient data. This is the skill being honest, not a bug."
+  - "No client ever mounts this file system, on purpose. From day 14 the report adds the idle-file-system cost note (billed for no workload): the environment itself delivers the cost story, no scenario needed."

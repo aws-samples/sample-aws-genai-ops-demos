@@ -36,6 +36,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 
 - [Natural Language Chaos Engineering with AWS FIS](resilience/ai-chaos-engineering-with-fis/README.md): Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching
 - [AI Load Test Generator Agent](resilience/ai-load-test-generation-with-dlt/README.md): Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing
+- [FSx for Windows SLA Review with AWS DevOps Agent](resilience/fsx-windows-sla-review-devops-agent/README.md): Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix
 
 ## Observability
 
