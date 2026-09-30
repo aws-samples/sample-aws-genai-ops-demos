@@ -6,9 +6,9 @@
 #   2. the Lab API  — what to serve to the UI, which alarm to look up
 #   3. the Lab UI   — the scenario cards, walkthroughs, skill panel and presenter notes
 #
-# It is also the OUTPUT of deciding what a demo demonstrates: for every scenario, state
-# what the agent concludes with and without the capability (`demonstrates`); if the
-# answer is the same, the scenario proves nothing and does not belong here.
+# It is also the OUTPUT of the capability analysis in
+# `.kiro/steering/native-agent-demo-guide.md`: step 3 drafts the scenarios, step 4
+# completes them. Deciding what to demonstrate and defining it for the Lab is one step.
 #
 # This is an EXAMPLE to adapt, not a schema to satisfy. The demo's own Lab code (engine
 # handlers, API, UI) reads this file, so keep what serves the demo, add what it needs,

@@ -30,12 +30,42 @@ shared/devops-agent/
 Reference implementation of a demo built on these bricks:
 `observability/eks-investigation-devops-agent` (folders `lab/`, `cdk/lib/devops-agent-space-stack.ts`,
 `cdk/lib/devops-agent-stack.ts`, `cdk/lib/failure-simulator-api-stack.ts`, `services/merchant-portal/src/lab/`).
+Second demo, built from the guides below: `resilience/fsx-windows-sla-review-devops-agent`.
+
+## How a demo based on AWS DevOps Agent uses these files
+
+| Brick | The demo… | When | What the demo writes itself |
+|---|---|---|---|
+| `agent-space/cdk/agent-space.ts` | imports `DevOpsAgentSpace` into its Agent Space stack, gives it a name, exports the id, webhook URL and secret ARN | synth / deploy, first stack | the stack and its outputs (10 lines) |
+| `agent-space/cdk/alarm-trigger.ts` | imports `AlarmTrigger`, hands it the webhook URL and secret from `--context`, its alarm topics and the context lines the incident should carry | synth / deploy, Incident RCA demos only | which alarms, which context lines |
+| `lab/cdk/lab-engine.ts` | imports `LabEngine`, points it at its `lab/` folder, adds what the handlers need (IAM, VPC, layers, timeouts); fronts `apiFunction` with its own API Gateway or function URL | synth / deploy | `lab/handlers.py` (inject / revert / probe), `lab/api.py`, `lab/engine_main.py`, `lab/scenarios.yaml`, the Lab UI |
+| `lab/lambda/*.py`, `agent-space/lambda/*` | never touches them: the constructs bundle them into the demo's functions | deploy | nothing |
+| `agent-tools/deploy-skill.*`, `deploy-mcp.*` | calls them from `deploy-all` with the capability name, ref and Agent Space id | deploy, last step | one line in `deploy-all` |
+| `examples/scenarios.yaml` | copies and adapts it | while building | its own `lab/scenarios.yaml` |
+
+Import, call, or copy: only the last row is copied. The rest is used as is; a demo that needs
+one of them to behave differently changes it here, once, and every demo gets the fix.
 
 Every construct here lives outside the demo's `node_modules`, so the demo's CDK project resolves
 `aws-cdk-lib` and `constructs` for it (one copy, or `instanceof` checks fail): `tsconfig.json`
 `paths` (no `rootDir`), `cdk.json` app command with `-r tsconfig-paths/register`, jest
 `moduleNameMapper`. Copy the three edits from the EKS demo. The Lambda code is plain Python on
 what the runtime ships (boto3, botocore): nothing to bundle, no extra dependency in the demo.
+
+## Building a demo: the steering files
+
+Two steering files turn these bricks into a demo; this README is the mechanism reference they
+point at.
+
+| File | What it settles |
+|---|---|
+| `.kiro/steering/native-agent-demo-guide.md` | How to derive a demo from a capability: read the skill or MCP server, deduce the motion, derive discriminating scenarios, then the smallest environment; the bricks to build; the forks where the builder must be asked; the hard rules (auto-revert, live state, one scenario at a time, Agent Space teardown) and the lessons that cost a deploy each |
+| `.kiro/steering/demo-lab-ui-guide.md` | How a Lab reads: shell, labelled facts, vocabulary (agent tasks, spend, failure injection), the engine run as steps, the capability panel, Markdown from the agent |
+
+Kiro loads them when a request matches their description (`inclusion: auto`); any other
+assistant, or a person, reads them directly. The contract between the three: the guides say
+what to derive and why, this folder holds what is never re-derived, the two demos show the
+result.
 
 ---
 
