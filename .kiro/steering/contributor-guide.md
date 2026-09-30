@@ -328,22 +328,9 @@ new MyStack(app, `MyStack-${region}`, { env: { region } });
 
 ### Solution Adoption Tracking
 
-**Tracking ID**: `uksb-do9bhieqqh`
+**Tracking ID**: `uksb-do9bhieqqh`. Add it to the CDK **app file** (`app.py` or `app.ts`), on the **main stack only** (one tracked stack per demo, never in a stack class constructor), as `description="Brief description (uksb-do9bhieqqh)(tag:kebab-case-demo-name,pillar-name)"`.
 
-Add to the CDK **app file** (`app.py` or `app.ts`), on the **main stack only**:
-
-```python
-MyStack(
-    app,
-    f"MyStack-{region}",
-    description="Brief description (uksb-do9bhieqqh)(tag:demo-name,pillar-name)",
-)
-```
-
-Rules:
-- Only one stack per demo gets tracking (prevents duplicate metrics)
-- Never in stack class constructors
-- Tags format: `(tag:kebab-case-demo-name,pillar-name)`
+`solution-adoption-tracking.md` is the source of truth for tracking: it carries the app-file examples, the common mistakes, the current demo tags, and the Terraform marker-stack path. Follow it for anything beyond the one-liner above rather than duplicating its rules here.
 
 ### Import Patterns
 
