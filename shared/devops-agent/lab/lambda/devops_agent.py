@@ -1,5 +1,6 @@
 """
-Read-only calls to the AWS DevOps Agent data plane (usage, recent tasks of the Agent Space).
+Read-only calls to the AWS DevOps Agent data plane: usage, recent tasks of the Agent Space,
+and whether a skill is registered in it (Asset API).
 
 The Lambda runtime's boto3 has no service model for the agent yet, so requests are
 SigV4-signed by hand. All data-plane APIs live under dp.aidevops.<region>.api.aws.
@@ -42,6 +43,36 @@ def get_usage() -> Dict[str, Any]:
     except Exception as e:
         logger.warning('DevOps Agent usage failed: %s', e)
         return {'success': False, 'message': str(e)}
+
+
+def get_skill(name: str) -> Dict[str, Any]:
+    """Is the capability registered in the Agent Space? Read from the Asset API (ListAssets,
+    assetType skill), matched on the skill's name. The Lab shows this state instead of
+    installation instructions: the deploy registers the skill (deploy-skill -AgentSpaceId),
+    so 'missing' is the exceptional case and the one that needs the presenter's attention."""
+    if not AGENT_SPACE_ID:
+        return {'success': False, 'found': False, 'message': 'DEVOPS_AGENT_SPACE_ID not configured'}
+    try:
+        path: Optional[str] = f'/asset/agent-space/{AGENT_SPACE_ID}/assets?assetType=skill'
+        while path:
+            page = _call('GET', path)
+            for asset in page.get('items', []):
+                meta = asset.get('metadata') or {}
+                if meta.get('name') == name:
+                    return {
+                        'success': True, 'found': True,
+                        'assetId': asset.get('assetId', ''),
+                        'status': meta.get('status', ''),
+                        'version': asset.get('version'),
+                        'agentTypes': meta.get('agent_types') or [],
+                        'updatedAt': asset.get('updatedAt', ''),
+                    }
+            token = page.get('nextToken')
+            path = f'/asset/agent-space/{AGENT_SPACE_ID}/assets?assetType=skill&nextToken={token}' if token else None
+        return {'success': True, 'found': False}
+    except Exception as e:
+        logger.warning('DevOps Agent skill lookup failed: %s', e)
+        return {'success': False, 'found': False, 'message': str(e)}
 
 
 def _execution_details(task_id: str) -> Dict[str, Any]:

@@ -295,9 +295,12 @@ event.
 ### The agent data plane (Python)
 
 `devops_agent.get_tasks()` (recent tasks of the Agent Space with execution facts and the
-Markdown summary) and `devops_agent.get_usage()` (monthly hours per motion). Reads
-`DEVOPS_AGENT_REGION` and `DEVOPS_AGENT_SPACE_ID`; the construct grants the four read-only
-`aidevops:*` actions.
+Markdown summary), `devops_agent.get_usage()` (monthly hours per motion) and
+`devops_agent.get_skill(name)` (is the skill registered: asset id, status, version, agent
+types, from the Asset API). Reads `DEVOPS_AGENT_REGION` and `DEVOPS_AGENT_SPACE_ID`; the
+construct grants the five read-only `aidevops:*` actions. The Lab shows the skill's *state*
+with `get_skill`, and installation instructions only when it is missing: the deploy registers
+it (`deploy-skill -AgentSpaceId`), so a missing skill is the exception, and the prerequisite.
 
 ### The construct (CDK, TypeScript)
 
