@@ -51,12 +51,12 @@ demo's README.
 ### Skills and custom agents
 
 ```powershell
-& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
+& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main -AgentSpaceId $agentSpaceId -AgentSpaceRegion $agentRegion
 & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -CustomAgent aws-health-report -Ref main
 ```
 
 ```bash
-../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main
+../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main --agent-space-id "$AGENT_SPACE_ID" --agent-space-region "$AGENT_REGION"
 ../../shared/devops-agent/agent-tools/deploy-skill.sh --custom-agent aws-health-report --ref main
 ```
 
@@ -64,11 +64,18 @@ demo's README.
    (`git clone --depth 1 --filter=blob:none --sparse` + `git sparse-checkout set`).
 2. Skills: builds `<name>.zip` per the Agent Tools upload rules (allowed extensions only;
    `README.md`, `CHANGELOG.md`, `evals/`, `.skilleval.*` excluded).
-3. Prints the upload step: DevOps Agent console, Agent Space, Skills. Pick **All agents** when a
-   custom agent will use the skill. Custom agents are created in the web app; the script points
-   at `SYSTEM_PROMPT.md` to paste.
+3. With `-AgentSpaceId <id> [-AgentSpaceRegion <region>] [-AgentTypes GENERIC]` (Bash:
+   `--agent-space-id`, `--agent-space-region`, `--agent-types GENERIC` or `CHAT,INCIDENT_RCA`):
+   **registers the skill in the Agent Space through the Asset API**, `create-asset` from the zip
+   (name and description come from the `SKILL.md` front matter) or `update-asset` when a skill of
+   that name exists (`list-assets` returns `items`, not `assets`). No console step: a deploy script
+   that has the Agent Space id from its stack outputs leaves the demo ready to use.
+   Without it: prints the upload step (DevOps Agent console, Agent Space, Skills; pick **All
+   agents** when a custom agent will use the skill). Custom agents are created in the web app;
+   the script points at `SYSTEM_PROMPT.md` to paste.
 
-Exports: `$global:AGENT_TOOLS_SKILL_ZIP` / `AGENT_TOOLS_SKILL_ZIP`, `AGENT_TOOLS_SKILL_DIR`.
+Exports: `$global:AGENT_TOOLS_SKILL_ZIP` / `AGENT_TOOLS_SKILL_ZIP`, `AGENT_TOOLS_SKILL_DIR`,
+`AGENT_TOOLS_SKILL_ASSET_ID` (when registered).
 
 ### MCP servers
 

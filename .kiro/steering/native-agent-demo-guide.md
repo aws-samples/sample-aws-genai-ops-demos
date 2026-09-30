@@ -211,7 +211,7 @@ time in the script's banner and in the README. Re-running the script must resume
 | Brick | Needed when | Notes |
 |---|---|---|
 | Agent Space, IAM roles, account association | Always | |
-| Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*` |
+| Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*`. Give `deploy-skill` the Agent Space id from the stack outputs: it registers the skill through the Asset API and the deploy ends with nothing to upload |
 | Mock environment | Always | Smallest that hosts the scenarios |
 | **Lab** — inject / rollback / status | Always | Not optional — see below. The demo's own; adapt the reference |
 | Engine — one durable execution per injection | Whenever anything is injectable | Shared mechanism (`shared/devops-agent/lab/`); no state store |
@@ -342,7 +342,9 @@ first and passes its outputs to the others as `--context`; the secret value neve
 
 ## Before you call it done
 
-- The capability is referenced at a stated ref, not copied.
+- The capability is referenced at a stated ref, not copied, and the deploy script registers
+  it (a skill through the Asset API, an MCP server through its registration step): the
+  presenter opens the Lab and the agent already knows the domain.
 - The builder's answers at every fork (capability, motion, scenario set, app tier, cost
   ceiling) are recorded in the README.
 - Each scenario has a recorded with-capability / without-capability difference

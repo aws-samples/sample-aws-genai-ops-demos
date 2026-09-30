@@ -123,6 +123,15 @@ export class LabStack extends cdk.Stack {
       ],
     });
 
+    // FunctionUrlOrigin.withOriginAccessControl grants lambda:InvokeFunctionUrl only; the OAC
+    // documentation requires lambda:InvokeFunction as well, and without it every signed
+    // request from CloudFront is a 403 (rendered as the site's index.html by the SPA error mapping).
+    lab.apiFunction.addPermission('InvokeFromCloudFront', {
+      principal: new iam.ServicePrincipal('cloudfront.amazonaws.com'),
+      action: 'lambda:InvokeFunction',
+      sourceArn: distribution.distributionArn,
+    });
+
     new cdk.CfnOutput(this, 'LabUrl', { value: `https://${distribution.distributionDomainName}/`, description: 'The Demo Lab (HTTP Basic authentication, credentials printed by deploy-all)' });
     new cdk.CfnOutput(this, 'LabUser', { value: props.labUser });
     new cdk.CfnOutput(this, 'SiteBucketName', { value: siteBucket.bucketName });

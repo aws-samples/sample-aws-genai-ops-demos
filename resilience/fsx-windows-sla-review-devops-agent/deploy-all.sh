@@ -150,9 +150,10 @@ aws s3 sync frontend/dist "s3://$SITE_BUCKET" --delete --region "$REGION" --no-c
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --no-cli-pager > /dev/null
 echo -e "${GREEN}  Site published.${NC}"
 
-# The capability stays in the Agent Tools repository; this packages it for the console upload.
-source ../../shared/devops-agent/agent-tools/deploy-skill.sh --skill storage-fsx-windows-sla-optimizer --ref main
-SKILL_ZIP="$AGENT_TOOLS_SKILL_ZIP"
+# The capability stays in the Agent Tools repository: fetched at its ref, packaged, and
+# registered in the Agent Space through the Asset API (GENERIC = every agent type).
+../../shared/devops-agent/agent-tools/deploy-skill.sh --skill storage-fsx-windows-sla-optimizer --ref main \
+    --agent-space-id "$AGENT_SPACE_ID" --agent-space-region "$AGENT_REGION" --agent-types GENERIC
 
 # -----------------------------------------------------------------------------
 # Summary
@@ -168,10 +169,9 @@ echo -e "${CYAN}  Agent Space:   https://$AGENT_SPACE_ID.aidevops.global.app.aws
 echo -e "${CYAN}  File system:   $FILE_SYSTEM_ID ($REGION)${NC}"
 echo -e "${CYAN}  Region:        $REGION${NC}"
 echo ""
-echo -e "${YELLOW}  Next: upload the skill in the Agent Space (Skills, Add skill, Upload):${NC}"
-echo -e "${YELLOW}        $SKILL_ZIP${NC}"
-echo -e "${YELLOW}        pick agent types Chat tasks, Evaluation and Incident RCA (or Generic).${NC}"
-echo -e "${YELLOW}  Then: open the Lab, inject a scenario, and ask in Chat:${NC}"
+echo -e "${CYAN}  Skill:         storage-fsx-windows-sla-optimizer registered in the Agent Space (all agent types)${NC}"
+echo ""
+echo -e "${YELLOW}  Next: open the Lab, inject a scenario, and ask in the Agent Space chat:${NC}"
 echo -e "${YELLOW}        Review all my FSx for Windows file systems in $REGION for SLA readiness.${NC}"
 echo ""
 echo -e "${YELLOW}  Running cost about \$5/day. Tear down: ./destroy-all.sh${NC}"

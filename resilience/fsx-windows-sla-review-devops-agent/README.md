@@ -57,13 +57,13 @@ API and the Lab cards).
 
 | Scenario | What the Lab does | Dimension | With the skill | Without |
 |---|---|---|---|---|
-| **Active Directory credentials rotated** | `UpdateFileSystem` with a wrong service-account password; the file system goes `MISCONFIGURED`; a canary metric alarms and starts an investigation | 2, Active Directory health | Critical, `ACTIVE_DIRECTORY_INVALID_CREDENTIALS` mapped to a rotated password, the Protected Users caveat, the `AWSSupport-ValidateFSxWindowsADConfig` runbook | "Misconfigured", generic AD connectivity causes |
+| **Active Directory credentials rotated** | `UpdateFileSystem` with a wrong service-account password; after 7-8 minutes of validation the file system goes `MISCONFIGURED`; a canary metric alarms and starts an investigation | 2, Active Directory health | Critical, `ACTIVE_DIRECTORY_INVALID_CREDENTIALS` mapped to a rotated password, the Protected Users caveat, the `AWSSupport-ValidateFSxWindowsADConfig` runbook | "Misconfigured", generic AD connectivity causes |
 | **Automatic backups disabled** | `AutomaticBackupRetentionDays` set to 0 | 5, backups (with the Single-AZ baseline) | Warning, no recovery point on a file system whose only recovery path is a backup; rating capped at Medium | May mention backups are off |
 | **No CloudWatch alarm on the file system** | The `FreeStorageCapacity` alarm is deleted | 7, alarms and observability | Warning, no `AWS/FSx` alarm scoped to the file system, the exact alarm to create | Alarm coverage is not part of the assessment |
 
 Every injection is one Lambda durable function execution: inject, wait for a rollback, revert.
-Click **Rollback** or let the 10-minute auto-revert run; either road ends in the same revert,
-with the page closed or not.
+Click **Rollback** or let the auto-revert run (30 minutes for the credentials scenario, 10 for
+the others); either road ends in the same revert, with the page closed or not.
 
 ## Architecture
 
@@ -107,18 +107,14 @@ The script prints the cost and duration first, then:
 3. deploys the file system (25-35 minutes; FSx joins the domain at creation and fails after
    30 minutes if the domain is not there, hence the wait);
 4. deploys the Lab and publishes its site;
-5. packages the skill with `shared/devops-agent/agent-tools/deploy-skill.*` and prints the upload step.
+5. fetches the skill at its ref with `shared/devops-agent/agent-tools/deploy-skill.*`, packages
+   it, and registers it in the Agent Space through the Asset API (agent type Generic, so Chat,
+   Incident RCA and Evaluation all load it). Nothing to upload or paste in the console.
 
 It ends with the Lab URL, the sign-in (user `presenter`, a generated password; pass
 `-LabPassword` / `--lab-password` to choose one), the Agent Space console URL and the chat
-prompt. Re-running the script is safe: every step is idempotent and it resumes where it stopped.
-
-### After the deploy: upload the skill
-
-The capability lives in the Agent Tools repository; the demo references it and never copies it.
-In the Agent Space console (**Skills**, **Add skill**, **Upload**) upload the zip the script
-printed and pick the agent types **Chat tasks**, **Evaluation** and **Incident RCA** (or
-**Generic**). Custom instructions for the review live in the skill; nothing to paste.
+prompt. Re-running the script is safe: every step is idempotent and it resumes where it stopped
+(the skill is updated in place).
 
 ## Run the demo
 
@@ -131,11 +127,13 @@ printed and pick the agent types **Chat tasks**, **Evaluation** and **Incident R
    capped at Medium because of the Single-AZ baseline. Rollback, ask once more, watch it pass.
 4. **No CloudWatch alarm**: Inject, ask again. Dimension 7 flips to Warning with the alarm to
    create. Rollback.
-5. **Active Directory credentials rotated**: Inject. Within one to two minutes the **Lifecycle**
-   fact reads `MISCONFIGURED` with `ACTIVE_DIRECTORY_INVALID_CREDENTIALS`; the canary alarm fires
-   within three minutes and the **Agent tasks** table shows the investigation. Open it: the
-   cause is a rotated password, not a network problem. Rollback: the correct password is
-   restored and the file system returns to `AVAILABLE` (a few minutes; the card says Reverting).
+5. **Active Directory credentials rotated**: Inject. The **Lifecycle** fact reads `UPDATING`
+   while FSx validates the credentials against the domain (7-8 minutes), then `MISCONFIGURED`
+   with the `ACTIVE_DIRECTORY_INVALID_CREDENTIALS` detail; the canary alarm fires within two more
+   minutes and the **Agent tasks** table shows the investigation. Open it: the cause is a rotated
+   password, not a network problem. Rollback (or the 30-minute auto-revert): the correct password
+   is restored and the file system returns to `AVAILABLE` in a few minutes (the card says
+   Reverting). Start this one first in a session; the other two take seconds.
 6. Once an investigation exists, run an **Evaluation** from the Agent Space and read the
    Improvements page: it consumes the investigation the scenario left behind.
 
@@ -166,7 +164,7 @@ The demo does not deploy from this folder alone; deploy from a full clone.
 |---|---|---|
 | `shared/scripts/check-prerequisites.ps1` / `.sh` | `deploy-all.*`, `destroy-all.*` | Tooling, credentials, region, DevOps Agent availability |
 | `shared/scripts/deploy-cdk.ps1` / `.sh` | `deploy-all.*` | CDK bootstrap, dependencies, one stack per call |
-| `shared/devops-agent/agent-tools/deploy-skill.ps1` / `.sh` | `deploy-all.*` | Fetches the skill at its ref and builds the upload zip |
+| `shared/devops-agent/agent-tools/deploy-skill.ps1` / `.sh` | `deploy-all.*` | Fetches the skill at its ref, builds the zip, registers it in the Agent Space (Asset API) |
 | `shared/devops-agent/agent-space/cdk/agent-space.ts` + `lambda/webhook-provisioner/` | `cdk/lib/agent-space-stack.ts` | `DevOpsAgentSpace`: roles, Agent Space, operator app, AWS association, webhook |
 | `shared/devops-agent/agent-space/cdk/alarm-trigger.ts` + `lambda/alarm-trigger/` | `cdk/lib/file-system-stack.ts` | `AlarmTrigger`: SNS → Lambda → HMAC-signed incident on the webhook |
 | `shared/devops-agent/lab/cdk/lab-engine.ts` | `cdk/lib/lab-stack.ts` | `LabEngine`: the engine and API functions, their role, the `live` alias, the code bundle |
@@ -232,8 +230,10 @@ estimate before it starts; `destroy-all` removes everything.
 - **The Lab asks for a password you lost.** Re-run the deploy script with `-LabPassword` /
   `--lab-password`; only the Lab stack changes.
 - **No investigation after the alarm fired.** Check the trigger Lambda's log (link in each card's
-  Walkthrough) for the webhook's answer, and that the skill is uploaded with Incident RCA among
-  its agent types.
+  Walkthrough) for the webhook's answer (`200 Webhook received` is success).
+- **The investigation did not use the skill.** The Lab's **Agent tasks** table has a "Skills
+  loaded" column. `aws devops-agent list-assets --agent-space-id <id> --asset-type skill` should
+  list `storage-fsx-windows-sla-optimizer` as `ACTIVE`; re-run the deploy script to re-register it.
 
 ## Cleanup
 

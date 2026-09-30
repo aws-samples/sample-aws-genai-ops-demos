@@ -158,9 +158,11 @@ aws s3 sync frontend/dist "s3://$siteBucket" --delete --region $region --no-cli-
 aws cloudfront create-invalidation --distribution-id $distributionId --paths "/*" --no-cli-pager | Out-Null
 Write-Host "  Site published." -ForegroundColor Green
 
-# The capability stays in the Agent Tools repository; this packages it for the console upload.
-& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill "storage-fsx-windows-sla-optimizer" -Ref "main"
-$skillZip = $global:AGENT_TOOLS_SKILL_ZIP
+# The capability stays in the Agent Tools repository: fetched at its ref, packaged, and
+# registered in the Agent Space through the Asset API (GENERIC = every agent type).
+& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill "storage-fsx-windows-sla-optimizer" -Ref "main" `
+    -AgentSpaceId $agentSpaceId -AgentSpaceRegion $agentRegion -AgentTypes "GENERIC"
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # -----------------------------------------------------------------------------
 # Summary
@@ -176,10 +178,9 @@ Write-Host "  Agent Space:   https://$agentSpaceId.aidevops.global.app.aws/  (id
 Write-Host "  File system:   $fileSystemId ($region)" -ForegroundColor Cyan
 Write-Host "  Region:        $region" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Next: upload the skill in the Agent Space (Skills, Add skill, Upload):" -ForegroundColor Yellow
-Write-Host "        $skillZip" -ForegroundColor Yellow
-Write-Host "        pick agent types Chat tasks, Evaluation and Incident RCA (or Generic)." -ForegroundColor Yellow
-Write-Host "  Then: open the Lab, inject a scenario, and ask in Chat:" -ForegroundColor Yellow
+Write-Host "  Skill:         storage-fsx-windows-sla-optimizer registered in the Agent Space (all agent types)" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Next: open the Lab, inject a scenario, and ask in the Agent Space chat:" -ForegroundColor Yellow
 Write-Host "        Review all my FSx for Windows file systems in $region for SLA readiness." -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  Running cost about `$5/day. Tear down: .\destroy-all.ps1" -ForegroundColor Yellow

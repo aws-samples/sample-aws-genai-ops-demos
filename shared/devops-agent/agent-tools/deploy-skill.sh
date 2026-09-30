@@ -13,7 +13,14 @@
 #   ../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main
 #   ../../shared/devops-agent/agent-tools/deploy-skill.sh --custom-agent aws-health-report --ref v1.2.0
 #
-# Exports (when sourced): AGENT_TOOLS_SKILL_ZIP, AGENT_TOOLS_SKILL_DIR
+# With --agent-space-id, the skill is also registered in that Agent Space through the Asset
+# API (create-asset from the zip, or update-asset when a skill of that name already exists),
+# so no console upload is needed. Needs aidevops:ListAssets, CreateAsset, UpdateAsset on the
+# Agent Space (the deploying admin has them).
+#   ... --skill storage-fsx-windows-sla-optimizer --ref main --agent-space-id <id> --agent-space-region eu-central-1 [--agent-types GENERIC]
+#
+# Exports (when sourced): AGENT_TOOLS_SKILL_ZIP, AGENT_TOOLS_SKILL_DIR,
+#                         AGENT_TOOLS_SKILL_ASSET_ID (with --agent-space-id)
 
 set -e
 
@@ -23,6 +30,9 @@ REF="main"
 REPO="https://github.com/aws/tools-for-devops-agent"
 OUTPUT_DIRECTORY="."
 KEEP_SOURCE=false
+AGENT_SPACE_ID=""
+AGENT_SPACE_REGION=""
+AGENT_TYPES="GENERIC"   # comma-separated: GENERIC, or CHAT,INCIDENT_RCA,...
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -32,6 +42,9 @@ while [[ $# -gt 0 ]]; do
         --repo) REPO="$2"; shift 2 ;;
         --output-directory) OUTPUT_DIRECTORY="$2"; shift 2 ;;
         --keep-source) KEEP_SOURCE=true; shift ;;
+        --agent-space-id) AGENT_SPACE_ID="$2"; shift 2 ;;
+        --agent-space-region) AGENT_SPACE_REGION="$2"; shift 2 ;;
+        --agent-types) AGENT_TYPES="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -117,13 +130,49 @@ if [ "$IS_SKILL" = true ]; then
     export AGENT_TOOLS_SKILL_ZIP="$ZIP_PATH"
     echo -e "${GREEN}      OK: $FILE_COUNT files -> $ZIP_PATH${NC}"
 
+    # Register through the Asset API when an Agent Space is given. For zip uploads the service
+    # reads name and description from the SKILL.md front matter; metadata carries the agent types.
+    ASSET_ID=""
+    if [ -n "$AGENT_SPACE_ID" ]; then
+        echo ""
+        echo -e "${YELLOW}Registering the skill in Agent Space $AGENT_SPACE_ID...${NC}"
+        REGION_ARGS=()
+        if [ -n "$AGENT_SPACE_REGION" ]; then REGION_ARGS=(--region "$AGENT_SPACE_REGION"); fi
+        CURRENT_ID=$(aws devops-agent list-assets --agent-space-id "$AGENT_SPACE_ID" --asset-type skill --no-cli-pager "${REGION_ARGS[@]}" \
+            --query "items[?metadata.name=='$NAME'].assetId | [0]" --output text)
+        if [ "$CURRENT_ID" = "None" ]; then CURRENT_ID=""; fi
+        TYPES_JSON=$(printf '"%s",' ${AGENT_TYPES//,/ }); TYPES_JSON="[${TYPES_JSON%,}]"
+        if command -v base64 >/dev/null && base64 --help 2>&1 | grep -q -- '-w'; then ZIP_B64=$(base64 -w 0 "$ZIP_PATH"); else ZIP_B64=$(base64 < "$ZIP_PATH" | tr -d '\n'); fi
+        REQUEST_FILE="$TEMP_ROOT/asset-request.json"
+        if [ -n "$CURRENT_ID" ]; then
+            VERB="update-asset"
+            printf '{"agentSpaceId":"%s","assetId":"%s","metadata":{"agent_types":%s,"status":"ACTIVE"},"content":{"zip":{"zipFile":"%s"}}}' \
+                "$AGENT_SPACE_ID" "$CURRENT_ID" "$TYPES_JSON" "$ZIP_B64" > "$REQUEST_FILE"
+        else
+            VERB="create-asset"
+            printf '{"agentSpaceId":"%s","assetType":"skill","metadata":{"agent_types":%s,"status":"ACTIVE"},"content":{"zip":{"zipFile":"%s"}}}' \
+                "$AGENT_SPACE_ID" "$TYPES_JSON" "$ZIP_B64" > "$REQUEST_FILE"
+        fi
+        ASSET_ID=$(aws devops-agent "$VERB" --cli-input-json "file://$REQUEST_FILE" --no-cli-pager "${REGION_ARGS[@]}" --query "asset.assetId" --output text)
+        if [ -z "$ASSET_ID" ] || [ "$ASSET_ID" = "None" ]; then
+            echo -e "${RED}      ERROR: $VERB failed; upload $ZIP_PATH in the console instead${NC}"; exit 1
+        fi
+        export AGENT_TOOLS_SKILL_ASSET_ID="$ASSET_ID"
+        if [ -n "$CURRENT_ID" ]; then ACTION="updated"; else ACTION="created"; fi
+        echo -e "${GREEN}      OK: $ACTION skill asset $ASSET_ID (agent types $AGENT_TYPES)${NC}"
+    fi
+
     echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}  Skill packaged: $NAME @ $REF ($COMMIT)${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo -e "${CYAN}  Zip:      $ZIP_PATH${NC}"
-    echo -e "${CYAN}  Upload:   DevOps Agent console -> Agent Space -> Skills -> Upload${NC}"
-    echo -e "${GRAY}            Pick 'All agents' if a custom agent will use this skill.${NC}"
+    if [ -n "$ASSET_ID" ]; then
+        echo -e "${CYAN}  Skill:    registered in Agent Space $AGENT_SPACE_ID as $ASSET_ID (ACTIVE)${NC}"
+    else
+        echo -e "${CYAN}  Upload:   DevOps Agent console -> Agent Space -> Skills -> Upload${NC}"
+        echo -e "${GRAY}            Pick 'All agents' if a custom agent will use this skill.${NC}"
+    fi
     echo -e "${CYAN}  Source:   $REPO/tree/$REF/$SPARSE_PATH${NC}"
 else
     if [ ! -f "$SOURCE_DIR/SYSTEM_PROMPT.md" ]; then

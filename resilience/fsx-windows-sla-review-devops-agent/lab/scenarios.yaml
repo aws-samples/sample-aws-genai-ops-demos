@@ -30,12 +30,15 @@ scenarios:
     triggersAlarm: true
     alarm:
       envVar: MISCONFIGURED_ALARM_NAME
-      expectFiringWithinSeconds: 180
+      # FSx validates the new credentials against the domain for 7-8 minutes (lifecycle UPDATING)
+      # before it declares MISCONFIGURED; the canary alarm follows within two minutes.
+      expectFiringWithinSeconds: 660
     inject:
-      summary: "UpdateFileSystem with a wrong self-managed AD service-account password; the file system enters MISCONFIGURED"
+      summary: "UpdateFileSystem with a wrong self-managed AD service-account password; the file system enters UPDATING, then MISCONFIGURED"
     detect:
-      summary: "DescribeFileSystems shows Lifecycle MISCONFIGURED or an AD configuration whose password no longer matches the secret"
-    autoRevertSeconds: 600
+      summary: "DescribeFileSystems shows Lifecycle MISCONFIGURED, or UPDATING with a self-managed AD update in flight"
+    # Long enough for the validation (8 min), the alarm, the investigation (5-10 min) and the talk.
+    autoRevertSeconds: 1800
     description: >-
       Someone rotated the service account that FSx uses to talk to Active Directory and
       forgot the file system. FSx cannot reach the domain any more: the file system goes
@@ -43,17 +46,17 @@ scenarios:
       The canary sees the lifecycle change, the alarm fires, the agent investigates.
     incidentChain:
       - Service-account password changed on the file system's AD configuration
-      - "FSx lifecycle: AVAILABLE, then MISCONFIGURED with detail ACTIVE_DIRECTORY_INVALID_CREDENTIALS"
+      - "FSx lifecycle: AVAILABLE, UPDATING for 7-8 minutes while FSx validates, then MISCONFIGURED with detail ACTIVE_DIRECTORY_INVALID_CREDENTIALS"
       - The canary publishes FileSystemMisconfigured = 1, the alarm fires, SNS, webhook
       - The agent investigates with the skill loaded
     customerImpact:
       - "SMB clients keep working for now: the file server is up, only its AD link is broken"
       - Backups and patching fail from here on; prolonged, the file system is quarantined and the data is inaccessible
     demoFlow:
-      - Click Inject and watch the lifecycle fact flip to MISCONFIGURED (one to two minutes)
-      - Wait for the alarm (about three minutes), then open the DevOps Agent console
+      - "Click Inject: the lifecycle fact reads UPDATING while FSx validates the credentials (7-8 minutes), then MISCONFIGURED"
+      - The alarm fires within two more minutes and the investigation appears under Agent tasks
       - "The investigation names the cause: invalid credentials, a rotated password, not a network problem"
-      - Click Rollback; the correct password is restored and the file system returns to AVAILABLE
+      - "Click Rollback: the correct password is restored and the file system returns to AVAILABLE in a few minutes (the card says Reverting)"
     talkTrack: "Every generic runbook says check the security groups. The skill reads the detail code and says: the password was rotated. That is an hour saved."
 
   - id: backups-disabled
