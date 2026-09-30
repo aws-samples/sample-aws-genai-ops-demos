@@ -1,6 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { DevOpsAgentSpace } from './constructs/devops-agent-space';
+import { DevOpsAgentSpace } from '../../../../shared/devops-agent/agent-space/cdk/agent-space';
 
 /**
  * DevOpsAgentSpaceStack — owns the AWS DevOps Agent Agent Space and everything
@@ -10,8 +10,8 @@ import { DevOpsAgentSpace } from './constructs/devops-agent-space';
  * Deploys to the DevOps Agent region (`devOpsAgentRegion` context), which may
  * differ from the infra region — an Agent Space monitors resources across all
  * regions of the associated account, so it does not need to live with the EKS
- * stacks. All heavy lifting is in the reusable DevOpsAgentSpace construct
- * (lib/constructs/devops-agent-space.ts).
+ * stacks. All heavy lifting is in the shared DevOpsAgentSpace construct
+ * (shared/devops-agent/agent-space/), used as is.
  *
  * Replaces the imperative `aws devops-agent` CLI flow previously in
  * scripts/setup-devops-agent.ps1|.sh — including the manual console step of

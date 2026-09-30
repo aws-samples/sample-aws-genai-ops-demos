@@ -153,6 +153,7 @@ const failureSimulatorApiStack = new FailureSimulatorApiStack(app, `DevOpsAgentE
   eksSecurityGroup: networkStack.eksSecurityGroup,
   eksClusterName: computeStack.clusterName,
   alarmName: `${projectName}-${environment}-database-connection-errors`,
+  triggerFunctionName: devOpsAgentStack.triggerFunctionName,
   devOpsAgentRegion,
   devOpsAgentSpaceId: app.node.tryGetContext('devOpsAgentSpaceId') || '',
   description: 'DevOps Agent EKS Demo Failure Simulator API Stack',
