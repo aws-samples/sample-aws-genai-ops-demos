@@ -15,6 +15,8 @@ export interface FailureSimulatorApiStackProps extends cdk.StackProps {
   eksSecurityGroup: ec2.ISecurityGroup;
   eksClusterName: string;
   alarmName: string;
+  /** Name of the alarm-to-webhook trigger Lambda (the Lab links to its console page) */
+  triggerFunctionName: string;
   /** DevOps Agent region (cross-stack from DevOpsAgentStack or context fallback) */
   devOpsAgentRegion: string;
   /** DevOps Agent Space ID (cross-stack reference from DevOpsAgentStack) */
@@ -44,6 +46,7 @@ export class FailureSimulatorApiStack extends cdk.Stack {
       eksSecurityGroup,
       eksClusterName,
       alarmName,
+      triggerFunctionName,
       devOpsAgentRegion,
       devOpsAgentSpaceId,
     } = props;
@@ -89,7 +92,7 @@ export class FailureSimulatorApiStack extends cdk.Stack {
         ALARM_NAME: alarmName,
         DNS_ALARM_NAME: `${projectName}-${environment}-dns-resolution-errors`,
         METRICS_NAMESPACE: `${projectName}/${environment}`,
-        TRIGGER_LAMBDA_NAME: `${projectName}-${environment}-devops-trigger`,
+        TRIGGER_LAMBDA_NAME: triggerFunctionName,
         DEVOPS_AGENT_REGION: devOpsAgentRegion,
         DEVOPS_AGENT_SPACE_ID: devOpsAgentSpaceId,
       },

@@ -11,6 +11,12 @@ shared/devops-agent/
 ├── agent-tools/           fetch a capability from the public Agent Tools repository
 │   ├── deploy-skill.ps1 | .sh     skill or custom agent: sparse-fetch at a ref, build the upload zip
 │   └── deploy-mcp.ps1 | .sh       MCP server: sparse-fetch at a ref, deploy from its manifest, print the registration step
+├── agent-space/           the Agent Space and the Incident RCA trigger chain
+│   ├── cdk/agent-space.ts         DevOpsAgentSpace construct: roles, Agent Space, operator app, AWS association, webhook
+│   ├── cdk/alarm-trigger.ts       AlarmTrigger construct: SNS -> Lambda -> HMAC-signed incident on the webhook
+│   └── lambda/
+│       ├── webhook-provisioner/   custom resource: RegisterService + AssociateService, secret straight to Secrets Manager
+│       └── alarm-trigger/         alarm notification -> signed incident event
 ├── lab/                   the Demo Lab mechanism (each demo writes its own Lab on top of it)
 │   ├── cdk/lab-engine.ts          LabEngine construct: one bundle (shared + <demo>/lab), engine function + live alias, API function, one role
 │   └── lambda/
@@ -22,8 +28,14 @@ shared/devops-agent/
 ```
 
 Reference implementation of a demo built on these bricks:
-`observability/eks-investigation-devops-agent` (folders `lab/`, `cdk/lib/failure-simulator-api-stack.ts`,
-`services/merchant-portal/src/lab/`).
+`observability/eks-investigation-devops-agent` (folders `lab/`, `cdk/lib/devops-agent-space-stack.ts`,
+`cdk/lib/devops-agent-stack.ts`, `cdk/lib/failure-simulator-api-stack.ts`, `services/merchant-portal/src/lab/`).
+
+Every construct here lives outside the demo's `node_modules`, so the demo's CDK project resolves
+`aws-cdk-lib` and `constructs` for it (one copy, or `instanceof` checks fail): `tsconfig.json`
+`paths` (no `rootDir`), `cdk.json` app command with `-r tsconfig-paths/register`, jest
+`moduleNameMapper`. Copy the three edits from the EKS demo. The Lambda code is plain Python on
+what the runtime ships (boto3, botocore): nothing to bundle, no extra dependency in the demo.
 
 ---
 
@@ -129,6 +141,68 @@ the demo's own folder**, marked temporary, and is deleted once the server ships 
 
 ---
 
+## The Agent Space and the trigger chain
+
+Two constructs, used as is. Every demo needs the first; only demos whose motion is Incident
+RCA need the second (Chat and Evaluation start no investigation from an alarm).
+
+### `DevOpsAgentSpace` (`agent-space/cdk/agent-space.ts`)
+
+```typescript
+import { DevOpsAgentSpace } from '../../../../shared/devops-agent/agent-space/cdk/agent-space';
+
+const space = new DevOpsAgentSpace(this, 'Space', { name: projectName, description: '...' });
+// space.agentSpaceId, space.agentSpaceArn, space.webhookUrl, space.webhookSecret (Secret), space.agentSpaceRole, space.operatorRole
+```
+
+Provisions, in the stack's region (which must be one where AWS DevOps Agent is available):
+the monitoring role and the operator-app role (both trusting `aidevops.amazonaws.com` for
+`sts:AssumeRole` **and** `sts:TagSession`, scoped by `aws:SourceAccount` and an `ArnLike`
+`aws:SourceArn` on `agentspace/*`), the Agent Space with the operator app, the AWS association
+(`accountType: monitor`, all regions of the account) and the generic eventChannel webhook.
+Options: `monitorAccountId`, `enableOperatorApp`, `enableWebhook`.
+
+The webhook is a Lambda-backed custom resource because CloudFormation cannot do it:
+`RegisterService(eventChannel)` has no resource type, `AWS::DevOpsAgent::Association` exposes
+no webhook attributes, and `AssociateService` returns the HMAC secret **exactly once**, in its
+create response. The provisioner (`lambda/webhook-provisioner/index.py`) registers the
+account-level eventChannel service if none exists, associates it, writes the secret straight
+into the Secrets Manager secret the construct created and returns only the URL: the value never
+enters CloudFormation state, events or outputs. If the write fails it disassociates at once
+(a webhook whose secret is lost is unusable). The control-plane calls are SigV4-signed by hand
+(`cp.aidevops.<region>.api.aws`, rest-json, signing name `aidevops`), like the data-plane calls
+in `devops_agent.py` (`dp.aidevops...`), so the Lambda has no dependency to bundle. Any property change replaces the webhook
+(new URL, new secret); that is the only correct behaviour.
+
+The demo's stack exports what the deploy script needs (`AgentSpaceId`, `WebhookUrl`,
+`WebhookSecretArn`): the Agent Space stack deploys first, the script reads the outputs with
+`describe-stacks` and passes them to the other stacks as `--context`. The secret value never
+crosses the script.
+
+### `AlarmTrigger` (`agent-space/cdk/alarm-trigger.ts`)
+
+```typescript
+import { AlarmTrigger } from '../../../../shared/devops-agent/agent-space/cdk/alarm-trigger';
+
+const trigger = new AlarmTrigger(this, 'Trigger', {
+  webhookUrl,                                              // from the Agent Space stack outputs (context)
+  webhookSecret: secretsmanager.Secret.fromSecretCompleteArn(this, 'Secret', webhookSecretArn),
+  webhookSecretRegion,                                     // when the Agent Space is in another region
+  topics: [alarmsTopic],                                   // the demo's alarm topics
+  context: { 'File system': fileSystemId },                // lines added to every incident
+});
+// trigger.function (name it in the Lab for a console link), trigger.topic (publish to start an investigation)
+```
+
+One Python Lambda subscribed to the demo's alarm topics and to a topic of its own. On each
+`ALARM` notification (OK is ignored) it builds a generic incident (alarm name, description,
+reason, trigger metric, the `context` lines, the region), signs `"<timestamp>:<json>"` with the
+HMAC secret (`x-amzn-event-timestamp`, `x-amzn-event-signature`) and POSTs it to the webhook.
+The payload prescribes nothing: the agent decides what to investigate. Deploy it in the alarms'
+region; the secret may live elsewhere (the Agent Space region), hence `webhookSecretRegion`.
+
+---
+
 ## The Lab mechanism
 
 A Lab is a demo's control room: inject a scenario, see what is injected, roll it back, watch
@@ -211,11 +285,6 @@ At synth time the construct copies `lab/lambda/*.py` and the demo's `lab/*.py` a
 into one staging folder, pip-installs the requirements for the Lambda runtime without Docker
 (falls back to the CDK image), and that flat folder becomes the code of both functions. Demo
 files must not be named `engine.py` or `devops_agent.py`.
-
-Because the construct lives outside the demo's `node_modules`, the demo's CDK project resolves
-`aws-cdk-lib` and `constructs` for it (one copy, or `instanceof` checks fail): `tsconfig.json`
-`paths` (no `rootDir`), `cdk.json` app command with `-r tsconfig-paths/register`, jest
-`moduleNameMapper`. Copy the three edits from the EKS demo.
 
 ### What a demo writes
 

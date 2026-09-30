@@ -52,12 +52,25 @@ See `shared/README.md` for full documentation on the region-to-prefix mapping.
 
 ### Infrastructure as Code
 
-**AWS CDK is required** — TypeScript (preferred) or Python. No Terraform or CloudFormation-only.
+**AWS CDK is required** — TypeScript (preferred) or Python. No Terraform-only or CloudFormation-only demos.
 
 Why CDK:
 - Stack outputs enable deployment scripts to retrieve dynamic URLs
 - Higher-level abstractions reduce boilerplate
 - Consistency across all existing demos
+
+#### Optional: a Terraform path on top of CDK
+
+A demo MAY ship a Terraform deployment **in addition to** its CDK one (examples: `observability/saas-status-mcp`, `operations-automation/aws-services-lifecycle-tracker`). CDK stays the primary, documented-first path; Terraform is a mirror for teams that standardize on it. If you ship one:
+
+- **Layout**: a single root module next to the CDK code (`terraform/` or `infrastructure/terraform/`), one `.tf` file per CDK stack, plus `variables.tf`, `outputs.tf` and a committed `terraform.tfvars.example`. State, lock file, `terraform.tfvars` and any staging/zip directories go in `.gitignore`.
+- **Scripts**: `deploy-all-terraform.ps1` and `deploy-all-terraform.sh` (or `<custom-name>-terraform.*` matching the CDK script name). Same rules as every deploy script: call the shared prerequisites script first, take the region from it (never hardcode), end with the same user-friendly summary as the CDK script.
+- **Same result**: same resource names, same IAM boundaries, same outputs consumed by the frontend/scripts. Document that the two paths cannot be deployed side by side in one account and region.
+- **No `cdk bootstrap` dependency**: the Terraform path must not need the CDK toolkit stack or CDK assets.
+- **Teardown**: `terraform destroy` must remove everything the path created (manage Lambda log groups explicitly, `force_destroy` on demo buckets). Same rule as CDK: a path that leaves orphans fails validation.
+- **Solution adoption tracking**: mandatory, see `solution-adoption-tracking.md`, "Terraform path". Terraform resources are invisible to the adoption dashboard; the path must create a zero-cost CloudFormation marker stack carrying the same tracking code and tags as the CDK main stack, with an `enable_deployment_metrics` opt-out.
+- **What may stay CDK-only**: features built on CloudFormation-native constructs (StackSets, custom resource providers, CDK Pipelines). Say so in the README rather than half-porting them.
+- **README**: Quick Start shows both paths ("Two IaC options — CDK (default) or Terraform. Both produce the same result."), plus Terraform-specific prerequisites, manual run and cleanup.
 
 ### Scripting & Deployment
 
@@ -546,7 +559,8 @@ Never create separate CONTRIBUTING.md or LICENSE files in demo directories.
 - Use stack IDs without region suffix
 - Hardcode API endpoints in frontend code
 - Put solution tracking in stack classes (use app files)
-- Mix IaC tools (CDK only)
+- Ship a Terraform-only or CloudFormation-only demo (CDK is the primary path; Terraform may only be added on top of it)
+- Ship a Terraform path without the CloudFormation tracking marker stack (the deployment would be invisible to adoption metrics)
 - Commit `cdk.out*` directories
 - Duplicate region detection logic
 - Add `-SkipSetup` to `deploy-all` scripts

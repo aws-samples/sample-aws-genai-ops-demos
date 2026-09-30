@@ -14,6 +14,7 @@ shared/
 ├── devops-agent/                       # Everything a demo of an AWS DevOps Agent capability consumes
 │   ├── README.md                       # The bricks and how to wire them; the one entry point
 │   ├── agent-tools/                    # deploy-skill.*, deploy-mcp.*: fetch a capability from the Agent Tools repository
+│   ├── agent-space/                    # DevOpsAgentSpace and AlarmTrigger CDK constructs with their Lambda code
 │   ├── lab/                            # The Lab mechanism: durable engine, agent data-plane calls, LabEngine CDK construct
 │   └── examples/scenarios.yaml         # A Lab scenario file to adapt
 └── utils/                              # Shared utility functions
@@ -326,8 +327,8 @@ repository; the demo fetches it at deploy time and never copies it — one artef
 upload rules. `deploy-mcp` fetches one MCP server at a ref, deploys it from its
 `mcp-server.yaml` manifest, reads the endpoint from the declared stack output and prints
 the DevOps Agent registration step; `-Destroy` / `--destroy` tears it down. Full usage,
-exports, the manifest schema and the Lab mechanism for DevOps Agent demos:
-[shared/devops-agent/README.md](devops-agent/README.md).
+exports, the manifest schema, the Agent Space and trigger-chain constructs and the Lab
+mechanism for DevOps Agent demos: [shared/devops-agent/README.md](devops-agent/README.md).
 
 ## Best Practices
 
