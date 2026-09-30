@@ -280,18 +280,20 @@ scenarios, Lab UI and API, wording): derive it. Mechanism is what does not chang
 demos and was expensive to get right once: reuse it as code, never re-derive it, not by a
 human and not by an agent.
 
-Mechanism today: the Lab engine (`shared/devops-agent/lab/`), the capability fetch
-(`shared/scripts/deploy-skill.*`, `deploy-mcp.*`), and the Agent Space construct with its
-webhook and the alarm-to-webhook trigger Lambda (in the EKS demo's
-`cdk/lib/constructs/devops-agent-space.ts`, `cdk/lib/devops-agent-stack.ts` and
-`cdk/lambda/`, to be promoted to `shared/devops-agent/` by the second demo that needs
-them). The Agent Space code encodes facts no documentation gives you: the webhook HMAC
-secret is returned exactly once by `AssociateService` and no API returns it again, hence
-a custom resource writing it straight to Secrets Manager; `RegisterService(eventChannel)`
-has no CloudFormation type; the roles need `sts:TagSession` and an `aws:SourceArn`
-condition on `agentspace/*`; the Agent Space must depend on both roles because the service
-validates assumability at creation and IAM is eventually consistent. Use it as is; it
-takes a name and gives back the space id, the webhook URL and the secret ARN.
+Mechanism today, all under `shared/devops-agent/` (its README is the reference): the Lab
+engine (`lab/`), the capability fetch (`agent-tools/deploy-skill.*`, `deploy-mcp.*`), the
+`DevOpsAgentSpace` construct (`agent-space/cdk/agent-space.ts`) and the `AlarmTrigger`
+construct (`agent-space/cdk/alarm-trigger.ts`, the alarm → SNS → signed webhook chain).
+The Agent Space code encodes facts no documentation gives you: the webhook HMAC secret is
+returned exactly once by `AssociateService` and no API returns it again, hence a custom
+resource writing it straight to Secrets Manager; `RegisterService(eventChannel)` has no
+CloudFormation type; the roles need `sts:TagSession` and an `aws:SourceArn` condition on
+`agentspace/*`; the Agent Space must depend on both roles because the service validates
+assumability at creation and IAM is eventually consistent. Use both as is: the Agent Space
+takes a name and gives back the space id, the webhook URL and the secret; the trigger takes
+the webhook URL, the secret, the alarm topics and the context lines the incident should
+carry (which cluster, which file system). The deploy script deploys the Agent Space stack
+first and passes its outputs to the others as `--context`; the secret value never crosses.
 
 - **Two strikes before generalising.** The first demo needing something unusual keeps it
   local. When a *second* demo needs the same thing, promote it to the shared brick.
