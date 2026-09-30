@@ -7,7 +7,7 @@
       "trigger": "Stop",
       "action": {
         "type": "agent",
-        "prompt": "Review any code changes made this turn against the standards in .kiro/steering/contributor-guide.md (naming, file location, shared utilities, CDK requirement, no hardcoded regions) and .kiro/steering/solution-adoption-tracking.md (tracking in the CDK app file, main stack only). If any change violates a standard, flag it and suggest the compliant fix. If everything conforms, say nothing."
+        "prompt": "Review any code changes made this turn against the standards in .kiro/steering/contributor-guide.md (naming, file location, shared utilities, shared scripts: check-prerequisites and deploy-cdk for every cdk deploy/bootstrap/destroy, platform-neutral cdk.json app command, CDK requirement, no hardcoded regions) and .kiro/steering/solution-adoption-tracking.md (tracking in the CDK app file, main stack only). If any change violates a standard, flag it and suggest the compliant fix. If everything conforms, say nothing."
       },
       "enabled": true
     }
