@@ -188,7 +188,7 @@ export function SkillPanel({ skill, links, agentSpaceId }: { skill: Skill; links
 
 // One colour per kind of work, so the type column reads at a glance: what the alarm started (red),
 // what the schedule ran (blue), what the agent learned on its own (grey), what someone asked (green).
-const TASK_TYPE_COLOR: Record<string, BadgeProps.Color> = {
+const TASK_TYPE_COLOR: Record<string, BadgeProps['color']> = {
   INVESTIGATION: 'red', EVALUATION: 'blue', SYSTEM_LEARNING: 'grey', CHAT: 'green', ON_DEMAND: 'green',
 }
 
