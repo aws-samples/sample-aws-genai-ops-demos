@@ -13,6 +13,7 @@
   "dependencies": {
     "@aws-amplify/ui-react": "^6.1.0",
     "@cloudscape-design/components": "3.0.1109",
+    "@cloudscape-design/design-tokens": "3.0.114",
     "@cloudscape-design/global-styles": "1.0.46",
     "ajv": "^8.18.0",
     "aws-amplify": "^6.0.0",

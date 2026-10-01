@@ -141,10 +141,10 @@ export class LabEngine extends Construct {
         ...(props.managedPolicies ?? []),
       ],
     });
-    // devops_agent.py: read-only data-plane calls the Lab shows (tasks, usage).
+    // devops_agent.py: read-only data-plane calls the Lab shows (tasks, usage, is the skill registered).
     this.role.addToPolicy(new iam.PolicyStatement({
       sid: 'DevOpsAgentReadOnly',
-      actions: ['aidevops:GetAccountUsage', 'aidevops:ListBacklogTasks', 'aidevops:ListExecutions', 'aidevops:ListJournalRecords'],
+      actions: ['aidevops:GetAccountUsage', 'aidevops:ListBacklogTasks', 'aidevops:ListExecutions', 'aidevops:ListJournalRecords', 'aidevops:ListAssets'],
       resources: ['*'],
     }));
     for (const statement of props.policyStatements ?? []) {

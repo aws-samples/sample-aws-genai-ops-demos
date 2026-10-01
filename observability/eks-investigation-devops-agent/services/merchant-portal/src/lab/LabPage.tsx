@@ -28,6 +28,8 @@ import { SkillPanel, TasksPanel, UsagePanel } from './AgentPanels'
 
 const POLL_IDLE_MS = 10_000
 const POLL_BUSY_MS = 3_000
+// Consecutive failed status polls before the page says the Lab API is unreachable.
+const UNREACHABLE_AFTER_FAILURES = 3
 
 const EMPTY_ENV: LabEnvironment = { region: '', partition: 'aws', devOpsAgentRegion: '', devOpsAgentSpaceId: '' }
 
@@ -56,6 +58,9 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   const [deadlines, setDeadlines] = useState<Record<string, number | null>>({})
   const [now, setNow] = useState(Date.now())
   const statusInFlight = useRef(false)
+  // One failed poll is not an outage (CloudFront drops the odd request to the origin): the
+  // "unreachable" banner waits for consecutive failures and clears on the next success.
+  const statusFailures = useRef(0)
 
   const fetchStatus = useCallback(async () => {
     if (statusInFlight.current) return
@@ -63,6 +68,7 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
     try {
       const data = await labApi.status()
       setStatus(data)
+      statusFailures.current = 0
       setError(null)
       setRollbackRequested(prev => {
         if (!prev) return prev
@@ -76,7 +82,10 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
         return [id, left === null || left === undefined ? null : received + left * 1000]
       })))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      statusFailures.current += 1
+      if (statusFailures.current >= UNREACHABLE_AFTER_FAILURES) {
+        setError(`${e instanceof Error ? e.message : String(e)} (${statusFailures.current} polls in a row; retrying)`)
+      }
     } finally {
       statusInFlight.current = false
     }
@@ -118,6 +127,11 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   const autoRevertMinutes = Math.round(Math.max(600, ...scenarios.map(s => s.autoRevertSeconds || 0)) / 60)
   // Region belongs with the demo's own facts (cluster, namespace, ...), it is not a card of its own.
   const envFacts: Fact[] = [...(env.facts ?? []), ...(env.region ? [{ label: 'Region', value: env.region }] : [])]
+  // Registered skills are shown as state at the bottom; a skill the Agent Space does not have
+  // is the prerequisite to every scenario and goes to the top.
+  const skills = definitions?.skills ?? []
+  const missingSkills = skills.filter(s => s.registration?.success && !s.registration.found)
+  const registeredSkills = skills.filter(s => !(s.registration?.success && !s.registration.found))
 
   async function act(id: string, kind: 'inject' | 'rollback') {
     setActing(id)
@@ -190,6 +204,10 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
         >
           Failure scenarios
         </Header>
+        {/* A skill the deploy did not register is the prerequisite to every card: it goes first. */}
+        {missingSkills.map(skill => (
+          <SkillPanel key={skill.name} skill={skill} links={links} agentSpaceId={env.devOpsAgentSpaceId} />
+        ))}
         {envFacts.length > 0 && (
           <Container header={<Header variant="h3">Environment</Header>}>
             <KeyValuePairs columns={Math.min(envFacts.length + 1, 4)} items={envFacts.map(factToPair)} />
@@ -213,8 +231,8 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
           </Alert>
         )}
 
-        {definitions?.skills.map(skill => (
-          <SkillPanel key={skill.name} skill={skill} prompt={definitions.capability?.prompt} links={links} />
+        {registeredSkills.map(skill => (
+          <SkillPanel key={skill.name} skill={skill} links={links} agentSpaceId={env.devOpsAgentSpaceId} />
         ))}
 
         <TasksPanel tasks={tasks} links={links} loading={tasksLoading} />

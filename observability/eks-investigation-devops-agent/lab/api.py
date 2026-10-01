@@ -101,9 +101,12 @@ def _alarms(names: List[str]) -> Dict[str, Dict[str, Any]]:
 
 def get_scenarios() -> Dict[str, Any]:
     data = scenarios.load()
+    # Is the skill registered in the Agent Space? The panel shows the state, not instructions.
+    skills = [{**skill, 'registration': devops_agent.get_skill(skill['name'])} for skill in data['skills']]
     return {
         'success': True,
         **data,
+        'skills': skills,
         'scenarios': [{**s, 'alarmName': scenarios.alarm_name(s)} for s in data['scenarios']],
         'environment': _environment(),
     }

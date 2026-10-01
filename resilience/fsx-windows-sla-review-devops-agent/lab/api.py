@@ -100,17 +100,23 @@ def _alarms(names: List[str]) -> Dict[str, Dict[str, Any]]:
         return {n: {'name': n, 'state': 'ERROR', 'error': str(e)} for n in names}
 
 
+def _fill(text: Optional[str]) -> Optional[str]:
+    """Prompts name the region so the review scopes itself; the YAML carries a placeholder."""
+    return text.replace('{region}', REGION or 'this region') if text else text
+
+
 def get_scenarios() -> Dict[str, Any]:
     data = scenarios.load()
     capability = dict(data.get('capability') or {})
-    if capability.get('prompt'):
-        # The chat prompt names the region so the review scopes itself; the YAML carries a placeholder.
-        capability['prompt'] = capability['prompt'].replace('{region}', REGION or 'this region')
+    capability['prompt'] = _fill(capability.get('prompt'))
+    # Is the skill registered in the Agent Space? The panel shows the state, not instructions.
+    skills = [{**skill, 'registration': devops_agent.get_skill(skill['name'])} for skill in data['skills']]
     return {
         'success': True,
         **data,
         'capability': capability,
-        'scenarios': [{**s, 'alarmName': scenarios.alarm_name(s)} for s in data['scenarios']],
+        'skills': skills,
+        'scenarios': [{**s, 'prompt': _fill(s.get('prompt')), 'alarmName': scenarios.alarm_name(s)} for s in data['scenarios']],
         'environment': _environment(),
     }
 

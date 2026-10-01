@@ -186,6 +186,28 @@ Write the survivors into `lab/scenarios.yaml` now: `demonstrates.withCapability`
 `customerImpact` and `demoFlow` are what the presenter will read from the card. Leave
 `handler` and `alarm` for step 4.
 
+Everything in that file is read by a presenter from a card, so write it in their words,
+not the capability's: `demonstrates.check` names the check in plain language ("Alarm
+coverage: does anything watch this file system?"), never the capability's internal
+numbering or section titles ("Dimension 7", "check C-12"). A Chat-driven scenario carries
+its own `prompt`, the exact sentence to paste, so the card can offer it where the demo flow
+says "ask"; an alarm-driven scenario has none (the alarm asks).
+
+**Then make the with-capability claim true.** `withCapability` is a prediction until the
+deployed demo has produced it: inject, ask (or let the alarm fire), and read the agent's
+actual output. Only what was observed stays in the file; if the agent did not say it, fix
+the environment, the scenario or the claim before calling the scenario done. Mechanics
+working (inject, revert, alarm, task created) is not the test; the agent's sentence is. The
+FSx demo shipped its two Chat scenarios on mechanics alone; the review that confirmed them
+("No native AWS/FSx alarms… the custom alarm doesn't count as coverage") was run by the
+builder afterwards, and the demo's yaml now quotes it. Run it yourself, before, and paste the
+sentence into `withCapability`: the card then shows what the agent actually says, and the
+presenter is never surprised.
+
+While there, check that the environment does not contradict the scenario: any resource that
+resembles the thing the scenario removes (an alarm on the same resource, a backup from
+another tool) must be visibly different, or the agent will be right to count it.
+
 ### Step 4 — Derive the environment
 
 The smallest environment that can host the chosen scenarios and produce the telemetry the
@@ -216,7 +238,7 @@ time in the script's banner and in the README. Re-running the script must resume
 | **Lab** — inject / rollback / status | Always | Not optional — see below. The demo's own; adapt the reference |
 | Engine — one durable execution per injection | Whenever anything is injectable | Shared mechanism (`shared/devops-agent/lab/`); no state store |
 | Trigger chain — alarm → SNS → HMAC Lambda → webhook | Incident RCA / triage only | Skip entirely for Chat |
-| Observation surface — agent tasks, capability, spend | Always | In the Lab (data from the shared `devops_agent.py`); otherwise the presenter leaves the demo to see results |
+| Observation surface — agent tasks, capability state, spend | Always | In the Lab (data from the shared `devops_agent.py`: tasks, `get_skill`, usage); otherwise the presenter leaves the demo to see results. The capability panel shows state, and instructions only when the capability is missing |
 | **App** showing user impact | Only when the failure is illegible without one | See the tiers below |
 | Teardown | Always | Must remove the Agent Space; a demo that cannot be destroyed fails validation |
 
@@ -348,7 +370,11 @@ first and passes its outputs to the others as `--context`; the secret value neve
 - The builder's answers at every fork (capability, motion, scenario set, app tier, cost
   ceiling) are recorded in the README.
 - Each scenario has a recorded with-capability / without-capability difference
-  (`demonstrates` in `lab/scenarios.yaml`).
+  (`demonstrates` in `lab/scenarios.yaml`), in the presenter's words, and its
+  `withCapability` sentence was **observed in the agent's output on the deployed demo**
+  (a Chat review or an investigation per scenario), not inferred from the capability's text.
+- The Lab shows the capability as registered (state from the Agent Space), and a fresh
+  deploy leaves nothing to upload or paste.
 - The demo's tests load `lab/scenarios.yaml` and check every `handler` has its trio, every
   walkthrough line is a string, every scenario states its with/without difference.
 - Every injection reverts, automatically as well as on demand (both roads exercised once
