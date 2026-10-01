@@ -202,10 +202,11 @@ const TASK_TYPE_COLOR: Record<string, string> = {
 function TypeBadge({ taskType }: { taskType: string }) {
   const background = TASK_TYPE_COLOR[taskType] ?? tokens.colorChartsPaletteCategorical5
   return (
+    // Same metrics as Badge's own stylesheet: body-s font, body-m line height, 0 / space-xs padding.
     <span style={{
       display: 'inline-block', background, color: tokens.colorTextBadgeBlue,
-      borderRadius: tokens.borderRadiusBadge, fontSize: tokens.fontSizeBodyS, fontWeight: tokens.fontWeightHeadingS,
-      lineHeight: tokens.fontSizeBodyS, padding: '2px 8px', whiteSpace: 'nowrap',
+      borderRadius: tokens.borderRadiusBadge, fontSize: tokens.fontSizeBodyS, lineHeight: tokens.lineHeightBodyM,
+      padding: `0 ${tokens.spaceScaledXs}`, whiteSpace: 'nowrap',
     }}>
       {taskType.replace(/_/g, ' ')}
     </span>
