@@ -28,6 +28,8 @@ import { SkillPanel, TasksPanel, UsagePanel } from './AgentPanels'
 
 const POLL_IDLE_MS = 10_000
 const POLL_BUSY_MS = 3_000
+// Consecutive failed status polls before the page says the Lab API is unreachable.
+const UNREACHABLE_AFTER_FAILURES = 3
 
 const EMPTY_ENV: LabEnvironment = { region: '', partition: 'aws', devOpsAgentRegion: '', devOpsAgentSpaceId: '' }
 
@@ -56,6 +58,9 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
   const [deadlines, setDeadlines] = useState<Record<string, number | null>>({})
   const [now, setNow] = useState(Date.now())
   const statusInFlight = useRef(false)
+  // One failed poll is not an outage (CloudFront drops the odd request to the origin): the
+  // "unreachable" banner waits for consecutive failures and clears on the next success.
+  const statusFailures = useRef(0)
 
   const fetchStatus = useCallback(async () => {
     if (statusInFlight.current) return
@@ -63,6 +68,7 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
     try {
       const data = await labApi.status()
       setStatus(data)
+      statusFailures.current = 0
       setError(null)
       setRollbackRequested(prev => {
         if (!prev) return prev
@@ -76,7 +82,10 @@ export default function LabPage({ title = 'AWS DevOps Agent Demo Lab', tagline, 
         return [id, left === null || left === undefined ? null : received + left * 1000]
       })))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      statusFailures.current += 1
+      if (statusFailures.current >= UNREACHABLE_AFTER_FAILURES) {
+        setError(`${e instanceof Error ? e.message : String(e)} (${statusFailures.current} polls in a row; retrying)`)
+      }
     } finally {
       statusInFlight.current = false
     }

@@ -85,7 +85,9 @@ Use the agent's own words, so the Lab and the console read the same:
   **Reverting**; do not wait for the next poll. Clear that optimistic state when the
   history shows the wait step resolved.
 - Poll every 10 s idle, 3 s while a run is active. Tick the countdown locally between
-  polls.
+  polls. One failed poll is not an outage: CloudFront drops the odd request to the origin
+  (a single 504 with a healthy Lambda behind it), so say "Lab API unreachable" only after
+  three consecutive failures, and clear it on the next success.
 - While a run is active, the other scenarios' Inject buttons are disabled: one scenario
   at a time, and the banner says why.
 
