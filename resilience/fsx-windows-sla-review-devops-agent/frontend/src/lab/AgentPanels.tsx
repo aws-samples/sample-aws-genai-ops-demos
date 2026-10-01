@@ -186,10 +186,13 @@ export function SkillPanel({ skill, links, agentSpaceId }: { skill: Skill; links
 // Agent tasks: what the agent did in the Agent Space, with execution facts
 // ---------------------------------------------------------------------------
 
-// One colour per kind of work, so the type column reads at a glance: what the alarm started (red),
-// what the schedule ran (blue), what the agent learned on its own (grey), what someone asked (green).
+// Two badges, two jobs. The type badge says what kind of work in a neutral palette; the priority
+// badge carries the urgency in Cloudscape's severity colours. Red belongs to priority only.
 const TASK_TYPE_COLOR: Record<string, BadgeProps['color']> = {
-  INVESTIGATION: 'red', EVALUATION: 'blue', SYSTEM_LEARNING: 'grey', CHAT: 'green', ON_DEMAND: 'green',
+  INVESTIGATION: 'blue', EVALUATION: 'green', SYSTEM_LEARNING: 'grey', CHAT: 'grey', ON_DEMAND: 'grey',
+}
+const PRIORITY_COLOR: Record<string, BadgeProps['color']> = {
+  CRITICAL: 'severity-critical', HIGH: 'severity-high', MEDIUM: 'severity-medium', LOW: 'severity-low',
 }
 
 const TASK_STATUS: Record<string, StatusIndicatorProps.Type> = {
@@ -231,7 +234,7 @@ export function TasksPanel({ tasks, links, loading }: { tasks: AgentTask[]; link
             return href ? <Link external href={href}>{l.title || l.taskId}</Link> : (l.title || l.taskId)
           },
         },
-        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><Badge color={TASK_TYPE_COLOR[l.taskType] ?? 'grey'}>{l.taskType.replace(/_/g, ' ')}</Badge>{l.priority && <Badge color="grey">{l.priority}</Badge>}</SpaceBetween> },
+        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><Badge color={TASK_TYPE_COLOR[l.taskType] ?? 'grey'}>{l.taskType.replace(/_/g, ' ')}</Badge>{l.priority && <Badge color={PRIORITY_COLOR[l.priority] ?? 'severity-neutral'}>{l.priority}</Badge>}</SpaceBetween> },
         { id: 'created', header: 'Created', cell: l => new Date(l.createdAt).toLocaleString() },
         { id: 'duration', header: 'Duration', cell: duration },
         { id: 'tools', header: 'Tool calls', cell: l => l.toolCalls ?? '–' },
