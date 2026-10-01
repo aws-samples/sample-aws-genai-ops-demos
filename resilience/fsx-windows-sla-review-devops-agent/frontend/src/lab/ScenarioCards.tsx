@@ -240,7 +240,7 @@ export default function ScenarioCards({ scenarios, statuses, links, busy, acting
                 <ExpandableSection
                   variant="footer"
                   defaultExpanded={active}
-                  headerText={active ? 'Engine run in progress' : `Last engine run: ${run.status.toLowerCase()}${ended ? ` at ${ended}` : ''}`}
+                  headerText={active ? 'Failure injection engine run in progress' : `Last failure injection engine run: ${run.status.toLowerCase()}${ended ? ` at ${ended}` : ''}`}
                 >
                   <RunSteps run={run} remaining={remaining[item.id] ?? null} />
                 </ExpandableSection>

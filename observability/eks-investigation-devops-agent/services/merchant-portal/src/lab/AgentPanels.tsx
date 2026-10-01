@@ -1,6 +1,6 @@
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import Badge from '@cloudscape-design/components/badge'
+import Badge, { BadgeProps } from '@cloudscape-design/components/badge'
 import Box from '@cloudscape-design/components/box'
 import Button from '@cloudscape-design/components/button'
 import Container from '@cloudscape-design/components/container'
@@ -186,6 +186,12 @@ export function SkillPanel({ skill, links, agentSpaceId }: { skill: Skill; links
 // Agent tasks: what the agent did in the Agent Space, with execution facts
 // ---------------------------------------------------------------------------
 
+// One colour per kind of work, so the type column reads at a glance: what the alarm started (red),
+// what the schedule ran (blue), what the agent learned on its own (grey), what someone asked (green).
+const TASK_TYPE_COLOR: Record<string, BadgeProps.Color> = {
+  INVESTIGATION: 'red', EVALUATION: 'blue', SYSTEM_LEARNING: 'grey', CHAT: 'green', ON_DEMAND: 'green',
+}
+
 const TASK_STATUS: Record<string, StatusIndicatorProps.Type> = {
   COMPLETED: 'success', IN_PROGRESS: 'in-progress', FAILED: 'error', PENDING: 'pending',
 }
@@ -225,7 +231,7 @@ export function TasksPanel({ tasks, links, loading }: { tasks: AgentTask[]; link
             return href ? <Link external href={href}>{l.title || l.taskId}</Link> : (l.title || l.taskId)
           },
         },
-        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><Badge>{l.taskType}</Badge>{l.priority && <Badge color="grey">{l.priority}</Badge>}</SpaceBetween> },
+        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><Badge color={TASK_TYPE_COLOR[l.taskType] ?? 'grey'}>{l.taskType.replace(/_/g, ' ')}</Badge>{l.priority && <Badge color="grey">{l.priority}</Badge>}</SpaceBetween> },
         { id: 'created', header: 'Created', cell: l => new Date(l.createdAt).toLocaleString() },
         { id: 'duration', header: 'Duration', cell: duration },
         { id: 'tools', header: 'Tool calls', cell: l => l.toolCalls ?? '–' },
