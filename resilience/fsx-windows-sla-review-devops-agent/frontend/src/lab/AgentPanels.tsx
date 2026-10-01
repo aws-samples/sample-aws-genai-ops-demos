@@ -205,8 +205,18 @@ export function TasksPanel({ tasks, links, loading }: { tasks: AgentTask[]; link
       loadingText="Loading agent tasks"
       items={tasks}
       trackBy="taskId"
-      header={<Header variant="h2" counter={`(${tasks.length})`} description="What the DevOps Agent has done in this Agent Space: investigations, evaluations, chats and system learning">Agent tasks</Header>}
-      empty={<Box textAlign="center" color="inherit">No tasks yet. Inject a scenario, or start a chat in the DevOps Agent console.</Box>}
+      header={
+        <Header
+          variant="h2"
+          counter={`(${tasks.length})`}
+          // Chats are per-user executions, not backlog tasks: the Lab cannot list them, the operator app does.
+          description="What the DevOps Agent has done in this Agent Space, from its backlog: investigations, evaluations and system learning. Chats are per user and live in the operator app."
+          actions={links.chat && <Button href={links.chat} iconAlign="right" iconName="external" target="_blank">Your chats in the operator app</Button>}
+        >
+          Agent tasks
+        </Header>
+      }
+      empty={<Box textAlign="center" color="inherit">No tasks yet. Inject an alarm-driven scenario to start an investigation.</Box>}
       columnDefinitions={[
         { id: 'status', header: 'Status', cell: l => <StatusIndicator type={TASK_STATUS[l.status] ?? 'info'}>{l.status}</StatusIndicator> },
         {

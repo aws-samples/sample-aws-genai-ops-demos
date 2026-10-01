@@ -94,7 +94,7 @@ scenarios:
       - Recovery time after an unrecoverable failure becomes unbounded
     demoFlow:
       - "Choose Inject; the Automatic backups fact reads Off within seconds"
-      - "Copy the prompt from this card and ask it in the Agent Space chat (Open Chat)"
+      - "Copy the prompt from this card and ask it in the Agent Space chat (Open Chat); the report comes back in the chat, not under Agent tasks"
       - "The report rates the file system Medium at best: backups Warning, Single-AZ Warning"
       - "Choose Rollback, ask again, watch the backups row return to a pass"
     talkTrack: "The skill does not just list settings. It knows that on Single-AZ the backup is the whole recovery plan."
@@ -131,7 +131,7 @@ scenarios:
       - The next capacity problem is discovered by users, not by operations
     demoFlow:
       - "Choose Inject; the FreeStorageCapacity alarm fact reads Not found within seconds"
-      - "Copy the prompt from this card and ask it in the Agent Space chat (Open Chat)"
+      - "Copy the prompt from this card and ask it in the Agent Space chat (Open Chat); the report comes back in the chat, not under Agent tasks"
       - "The alarms row of the report reads Warning: no native AWS/FSx alarms, with the FreeStorageCapacity alarm to create; the canary alarm is named and dismissed"
       - "Choose Rollback; the alarm is recreated and the row passes again"
     talkTrack: "Most reviews stop at the resource. This one asks who would know when it breaks."

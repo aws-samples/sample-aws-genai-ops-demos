@@ -60,8 +60,12 @@ not of a scenario; "Critical" alone means nothing. Use `KeyValuePairs` for every
 Use the agent's own words, so the Lab and the console read the same:
 
 - **Agent tasks**, not logs or investigations: the Agent Space backlog holds
-  investigations, evaluations, chats and system learning; the type column tells them
-  apart.
+  investigations, evaluations and system learning; the type column tells them apart.
+  **Chats are not in it**: a chat is a per-user execution (`ListChats` returns the
+  caller's own, and the Lab's role is not the presenter), so the Lab cannot list them.
+  Say so in the table's description, link to the operator app's chats, and make the
+  Chat cards' demo flow read "read the report in the chat", never "it appears under
+  Agent tasks".
 - **Agent spend**, not usage or quotas: `Estimated spend this month: $X (N agent-seconds
   at $0.0083/s, list price)`, one line total then one per motion. The usage API
   reports `limit: -1` when no quota is set; never render quota bars.

@@ -232,6 +232,9 @@ estimate before it starts; `destroy-all` removes everything.
   `--lab-password`; only the Lab stack changes.
 - **No investigation after the alarm fired.** Check the trigger Lambda's log (link in each card's
   Walkthrough) for the webhook's answer (`200 Webhook received` is success).
+- **My chat review is not under Agent tasks.** Expected: the table lists the Agent Space backlog
+  (investigations, evaluations, system learning). Chats are per user and live in the operator
+  app; the table's "Your chats in the operator app" button opens them.
 - **The investigation did not use the skill.** The Lab's **Agent tasks** table has a "Skills
   loaded" column. `aws devops-agent list-assets --agent-space-id <id> --asset-type skill` should
   list `storage-fsx-windows-sla-optimizer` as `ACTIVE`; re-run the deploy script to re-register it.
