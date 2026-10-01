@@ -1,5 +1,5 @@
 ---
-name: demo-analyst
+name: devops-agent-demo-analyst
 description: Analyse phase of a native-agent demo. Reads one AWS DevOps Agent capability from the Agent Tools repository and derives motion, scenarios and environment; writes the draft lab/scenarios.yaml and the fork questions. Read-only on the repository.
 tools: ["read", "web", "shell"]
 allowedTools: ["read", "web"]

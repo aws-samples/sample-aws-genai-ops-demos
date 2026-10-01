@@ -1,5 +1,5 @@
 ---
-name: demo-builder
+name: devops-agent-demo-builder
 description: Build phase of a native-agent demo. Turns the agreed lab/scenarios.yaml into a deployable demo on the shared DevOps Agent bricks (CDK, Lab backend and site, deploy scripts, README, tests). Never deploys, never publishes.
 tools: ["read", "write", "shell", "web"]
 allowedTools: ["read", "write"]

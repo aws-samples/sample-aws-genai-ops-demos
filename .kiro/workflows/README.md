@@ -8,7 +8,7 @@ Workflows are opt-in: Workspace Configuration, Workflows, Enable, then a new cha
 (setting `kiroAgent.workflows.enabled`; CLI `chat.enableWorkflows`). Launch a recipe by
 asking Kiro in the parent chat, or `/workflow run <name> --<input> "value"` in the CLI.
 
-## native-agent-demo
+## devops-agent-demo
 
 Builds a demo of one AWS DevOps Agent capability the way
 [`native-agent-demo-guide.md`](../steering/native-agent-demo-guide.md) prescribes, with the
@@ -24,14 +24,14 @@ analyse ─► pause: the builder answers the forks in the parent chat
 
 | Step | Agent | Writes |
 |---|---|---|
-| `analyse` | `demo-analyst` (read-only, fetches the capability from the Agent Tools repository) | `<demo>/lab/scenarios.yaml` draft, `questions.md`; pauses the run with the questions |
-| `build` | `demo-builder` (no deploy, no push, no `shared/` edits) | the demo, commits on the current branch, `build-notes.md` |
-| `steering-review` | `demo-steering-reviewer` (read-only) | `steering-review.md/.json`: conformance to the two guides, the contributor guide, tracking, the shared-bricks contract |
+| `analyse` | `devops-agent-demo-analyst` (read-only, fetches the capability from the Agent Tools repository) | `<demo>/lab/scenarios.yaml` draft, `questions.md`; pauses the run with the questions |
+| `build` | `devops-agent-demo-builder` (no deploy, no push, no `shared/` edits) | the demo, commits on the current branch, `build-notes.md` |
+| `steering-review` | `devops-agent-demo-steering-reviewer` (read-only) | `steering-review.md/.json`: conformance to the two guides, the contributor guide, tracking, the shared-bricks contract |
 | `code-review` | `semantic_reviewer` (bundled) | `code-review.md` with a VERDICT line |
 | `build-aggregate` | `wf-review-aggregator` (bundled) | `build-review.json`; APPROVED stops the loop |
-| `deploy` | `demo-deployer` (runs `deploy-all.ps1`, records outputs, never destroys) | `deployment.json` (Lab URL, demo credentials, Agent Space id) |
-| `observe` | `demo-observer` (Lab API + DevOps Agent MCP) | rewrites `withCapability` with the agent's words; `observation.md/.json` |
-| `final-review` | `demo-steering-reviewer` | `final-review.md/.json`; NOT OBSERVED is blocking |
+| `deploy` | `devops-agent-demo-deployer` (runs `deploy-all.ps1`, records outputs, never destroys) | `deployment.json` (Lab URL, demo credentials, Agent Space id) |
+| `observe` | `devops-agent-demo-observer` (Lab API + DevOps Agent MCP) | rewrites `withCapability` with the agent's words; `observation.md/.json` |
+| `final-review` | `devops-agent-demo-steering-reviewer` | `final-review.md/.json`; NOT OBSERVED is blocking |
 
 Inputs: `capability` (name in the Agent Tools repository), `capability_kind`
 (`skill` / `custom-agent` / `mcp`), `capability_ref`, `demo_path` (`<pillar>/<folder>`),

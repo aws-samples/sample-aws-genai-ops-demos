@@ -1,5 +1,5 @@
 ---
-name: demo-observer
+name: devops-agent-demo-observer
 description: Observe phase of a native-agent demo. Exercises every scenario on the deployed demo through the Lab API and the DevOps Agent, and replaces each predicted withCapability sentence with what the agent actually said. Writes the observation report and verdict.
 tools: ["read", "write", "shell", "@aws-devops-agent-eu-central-1", "@aws-devops-agent"]
 allowedTools: ["read", "@aws-devops-agent-eu-central-1", "@aws-devops-agent"]

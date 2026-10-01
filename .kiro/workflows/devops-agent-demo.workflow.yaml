@@ -12,14 +12,14 @@
 # decision (hand the branch to the publish-pr recipe when, and if, you want a PR).
 #
 # Launch from the parent chat, for example:
-#   run the native-agent-demo workflow with capability "eks-upgrade-readiness" (skill, ref main),
+#   run the devops-agent-demo workflow with capability "eks-upgrade-readiness" (skill, ref main),
 #   demo path "operations-automation/eks-upgrade-readiness-devops-agent", run id "eks-upgrade-1"
 #
 # The deploy step runs the demo's own deploy-all.ps1 with the credentials already in your
 # shell (account and region of the session). Expect about an hour for the deploy and $5/day
 # while the demo stays up; the observe step uses DevOps Agent time at list price.
 
-name: native-agent-demo
+name: devops-agent-demo
 description: Build a demo of an AWS DevOps Agent capability (skill, custom agent or MCP server) following the native-agent demo guide; analyse, ask, build, review, deploy, observe
 
 inputs:
@@ -33,7 +33,7 @@ steps:
   # ── Analyse: ends in a file and questions, then the run pauses for the builder ─────────
   - type: step
     id: analyse
-    agent: demo-analyst
+    agent: devops-agent-demo-analyst
     artifacts:
       scenarios: "{{demo_path}}/lab/scenarios.yaml"
       questions: ".kiro/workflow-runs/{{run_id}}/questions.md"
@@ -62,7 +62,7 @@ steps:
     steps:
       - type: step
         id: build
-        agent: demo-builder
+        agent: devops-agent-demo-builder
         artifacts:
           build_notes: ".kiro/workflow-runs/{{run_id}}/build-notes.md"
         prompt: >
@@ -80,7 +80,7 @@ steps:
         branches:
           - type: step
             id: steering-review
-            agent: demo-steering-reviewer
+            agent: devops-agent-demo-steering-reviewer
             artifacts:
               steering_review: ".kiro/workflow-runs/{{run_id}}/steering-review.md"
               steering_verdict: ".kiro/workflow-runs/{{run_id}}/steering-review.json"
@@ -118,7 +118,7 @@ steps:
   # ── Deploy with the demo's own script, in the session's account and region ────────────
   - type: step
     id: deploy
-    agent: demo-deployer
+    agent: devops-agent-demo-deployer
     artifacts:
       deployment: ".kiro/workflow-runs/{{run_id}}/deployment.json"
     prompt: >
@@ -129,7 +129,7 @@ steps:
   # ── Observe: predictions become the agent's actual sentences ──────────────────────────
   - type: step
     id: observe
-    agent: demo-observer
+    agent: devops-agent-demo-observer
     artifacts:
       observation: ".kiro/workflow-runs/{{run_id}}/observation.md"
       observation_verdict: ".kiro/workflow-runs/{{run_id}}/observation.json"
@@ -154,7 +154,7 @@ steps:
     steps:
       - type: step
         id: final-review
-        agent: demo-steering-reviewer
+        agent: devops-agent-demo-steering-reviewer
         artifacts:
           final_review: ".kiro/workflow-runs/{{run_id}}/final-review.md"
           final_verdict: ".kiro/workflow-runs/{{run_id}}/final-review.json"

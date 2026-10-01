@@ -1,5 +1,5 @@
 ---
-name: demo-steering-reviewer
+name: devops-agent-demo-steering-reviewer
 description: Reviews a native-agent demo against the three steering files (demo guide, Lab UI guide, contributor guide) and the shared-bricks contract, with fresh context. Read-only; writes one review file with a verdict.
 tools: ["read"]
 allowedTools: ["read"]

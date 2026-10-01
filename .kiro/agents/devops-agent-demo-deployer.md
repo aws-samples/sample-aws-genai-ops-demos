@@ -1,5 +1,5 @@
 ---
-name: demo-deployer
+name: devops-agent-demo-deployer
 description: Deploy phase of a native-agent demo. Runs the demo's own deploy-all script with the credentials already in the shell, waits, records the outputs (Lab URL, credentials, Agent Space id). Never publishes.
 tools: ["read", "write", "shell"]
 allowedTools: ["read"]
