@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@cloudscape-design/components": "3.0.1109",
+    "@cloudscape-design/design-tokens": "3.0.114",
     "@cloudscape-design/global-styles": "1.0.46",
     "react": "18.3.1",
     "react-dom": "18.3.1",

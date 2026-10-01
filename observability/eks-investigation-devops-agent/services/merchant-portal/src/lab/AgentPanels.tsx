@@ -1,6 +1,7 @@
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Badge, { BadgeProps } from '@cloudscape-design/components/badge'
+import * as tokens from '@cloudscape-design/design-tokens'
 import Box from '@cloudscape-design/components/box'
 import Button from '@cloudscape-design/components/button'
 import Container from '@cloudscape-design/components/container'
@@ -186,10 +187,29 @@ export function SkillPanel({ skill, links, agentSpaceId }: { skill: Skill; links
 // Agent tasks: what the agent did in the Agent Space, with execution facts
 // ---------------------------------------------------------------------------
 
-// Two badges, two jobs. The type badge says what kind of work in a neutral palette; the priority
-// badge carries the urgency in Cloudscape's severity colours. Red belongs to priority only.
-const TASK_TYPE_COLOR: Record<string, BadgeProps['color']> = {
-  INVESTIGATION: 'blue', EVALUATION: 'green', SYSTEM_LEARNING: 'grey', CHAT: 'grey', ON_DEMAND: 'grey',
+// Two badges, two jobs. The type badge names a category with no order and no status meaning, so it
+// uses Cloudscape's categorical data-visualization palette, in palette order (design tokens, so dark
+// mode follows). The priority badge carries the urgency in the severity colours; red belongs there only.
+const TASK_TYPE_COLOR: Record<string, string> = {
+  INVESTIGATION: tokens.colorChartsPaletteCategorical1,
+  EVALUATION: tokens.colorChartsPaletteCategorical2,
+  SYSTEM_LEARNING: tokens.colorChartsPaletteCategorical3,
+  CHAT: tokens.colorChartsPaletteCategorical4,
+  ON_DEMAND: tokens.colorChartsPaletteCategorical4,
+}
+// Badge's color prop only knows the status and severity palettes (and style is not in this
+// components version), so the categorical badge is drawn with Cloudscape's own badge tokens.
+function TypeBadge({ taskType }: { taskType: string }) {
+  const background = TASK_TYPE_COLOR[taskType] ?? tokens.colorChartsPaletteCategorical5
+  return (
+    <span style={{
+      display: 'inline-block', background, color: tokens.colorTextBadgeBlue,
+      borderRadius: tokens.borderRadiusBadge, fontSize: tokens.fontSizeBodyS, fontWeight: tokens.fontWeightHeadingS,
+      lineHeight: tokens.fontSizeBodyS, padding: '2px 8px', whiteSpace: 'nowrap',
+    }}>
+      {taskType.replace(/_/g, ' ')}
+    </span>
+  )
 }
 const PRIORITY_COLOR: Record<string, BadgeProps['color']> = {
   CRITICAL: 'severity-critical', HIGH: 'severity-high', MEDIUM: 'severity-medium', LOW: 'severity-low',
@@ -234,7 +254,7 @@ export function TasksPanel({ tasks, links, loading }: { tasks: AgentTask[]; link
             return href ? <Link external href={href}>{l.title || l.taskId}</Link> : (l.title || l.taskId)
           },
         },
-        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><Badge color={TASK_TYPE_COLOR[l.taskType] ?? 'grey'}>{l.taskType.replace(/_/g, ' ')}</Badge>{l.priority && <Badge color={PRIORITY_COLOR[l.priority] ?? 'severity-neutral'}>{l.priority}</Badge>}</SpaceBetween> },
+        { id: 'type', header: 'Type', cell: l => <SpaceBetween direction="horizontal" size="xxs"><TypeBadge taskType={l.taskType} />{l.priority && <Badge color={PRIORITY_COLOR[l.priority] ?? 'severity-neutral'}>{l.priority}</Badge>}</SpaceBetween> },
         { id: 'created', header: 'Created', cell: l => new Date(l.createdAt).toLocaleString() },
         { id: 'duration', header: 'Duration', cell: duration },
         { id: 'tools', header: 'Tool calls', cell: l => l.toolCalls ?? '–' },
