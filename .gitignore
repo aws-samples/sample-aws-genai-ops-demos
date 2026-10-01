@@ -131,3 +131,6 @@ samples/
 .Trashes
 ehthumbs.db
 Thumbs.db
+# Kiro workflow run artifacts (per-run reviews, deployment records with demo credentials)
+.kiro/workflow-runs/
+

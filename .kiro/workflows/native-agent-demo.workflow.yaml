@@ -1,0 +1,167 @@
+# Native-agent demo factory: builds a demo of one AWS DevOps Agent capability following
+# .kiro/steering/native-agent-demo-guide.md, with the phases the guide names run as steps
+# that cannot be skipped and reviewed by agents that did not write the code.
+#
+#   analyse ──► (pause: the builder answers the forks in the parent chat)
+#   ──► build-loop (max 3): build ──► steering review + code review (parallel) ──► aggregate
+#   ──► deploy ──► observe (every withCapability becomes the agent's observed sentence)
+#   ──► final steering review of what was observed
+#
+# Deliverable: a demo folder on the current branch, deployed, with scenario claims that were
+# observed. Nothing is pushed or published by this workflow: publishing is a separate human
+# decision (hand the branch to the publish-pr recipe when, and if, you want a PR).
+#
+# Launch from the parent chat, for example:
+#   run the native-agent-demo workflow with capability "eks-upgrade-readiness" (skill, ref main),
+#   demo path "operations-automation/eks-upgrade-readiness-devops-agent", run id "eks-upgrade-1"
+#
+# The deploy step runs the demo's own deploy-all.ps1 with the credentials already in your
+# shell (account and region of the session). Expect about an hour for the deploy and $5/day
+# while the demo stays up; the observe step uses DevOps Agent time at list price.
+
+name: native-agent-demo
+description: Build a demo of an AWS DevOps Agent capability (skill, custom agent or MCP server) following the native-agent demo guide; analyse, ask, build, review, deploy, observe
+
+inputs:
+  capability: prompt          # name in the Agent Tools repository, e.g. storage-fsx-windows-sla-optimizer
+  capability_kind: string     # skill | custom-agent | mcp
+  capability_ref: string      # tag, branch or commit of the Agent Tools repository, e.g. main
+  demo_path: string           # <pillar>/<demo-folder>, kebab-case, e.g. resilience/fsx-windows-sla-review-devops-agent
+  run_id: string              # distinguishes concurrent runs' artifacts, e.g. fsx-1
+
+steps:
+  # ── Analyse: ends in a file and questions, then the run pauses for the builder ─────────
+  - type: step
+    id: analyse
+    agent: demo-analyst
+    artifacts:
+      scenarios: "{{demo_path}}/lab/scenarios.yaml"
+      questions: ".kiro/workflow-runs/{{run_id}}/questions.md"
+    prompt: >
+      Run the analyse phase of the native-agent demo guide for the {{capability_kind}}
+      "{{capability}}" at ref {{capability_ref}} of the Agent Tools repository.
+      The demo folder is {{demo_path}} (create only its lab/ folder and lab/scenarios.yaml).
+      Write the draft scenarios file to {{demo_path}}/lab/scenarios.yaml and the fork
+      questions to .kiro/workflow-runs/{{run_id}}/questions.md. Then call send_message with
+      severity warning and the questions as the message, so the builder answers in the
+      parent chat; when the answers arrive, apply them to lab/scenarios.yaml (every scenario
+      keeps its with/without statement; dropped scenarios are removed, not commented), record
+      the answers under a "Decisions" comment block at the top of the file, and finish with
+      send_message severity success.
+
+  # ── Build, then two independent reviews, until approved (max 3) ───────────────────────
+  - type: repeat
+    id: build-loop
+    maxIterations: 3
+    onMaxIterations: pause
+    stopCondition:
+      fileCheck:
+        path: ".kiro/workflow-runs/{{run_id}}/build-review.json"
+        jsonPath: verdict
+        value: APPROVED
+    steps:
+      - type: step
+        id: build
+        agent: demo-builder
+        artifacts:
+          build_notes: ".kiro/workflow-runs/{{run_id}}/build-notes.md"
+        prompt: >
+          Build the demo at {{demo_path}} from its agreed {{artifacts.scenarios}}, following
+          the native-agent demo guide, the Lab UI guide and the contributor guide, on the
+          shared DevOps Agent bricks used as is. If .kiro/workflow-runs/{{run_id}}/build-review.md
+          exists, it is the previous iteration's review: fix every blocking finding first and
+          say so in your notes. Make cdk synth, the Lab tests and the frontend build pass;
+          commit on the current branch; never push, never deploy.
+          Write .kiro/workflow-runs/{{run_id}}/build-notes.md.
+
+      - type: parallel
+        id: build-reviews
+        joinPolicy: allSettled
+        branches:
+          - type: step
+            id: steering-review
+            agent: demo-steering-reviewer
+            artifacts:
+              steering_review: ".kiro/workflow-runs/{{run_id}}/steering-review.md"
+              steering_verdict: ".kiro/workflow-runs/{{run_id}}/steering-review.json"
+            prompt: >
+              Review the demo at {{demo_path}} against the steering files and the shared-bricks
+              contract. Read {{artifacts.build_notes}} for what the builder claims. Write
+              .kiro/workflow-runs/{{run_id}}/steering-review.md and
+              .kiro/workflow-runs/{{run_id}}/steering-review.json.
+          - type: step
+            id: code-review
+            agent: semantic_reviewer
+            artifacts:
+              code_review: ".kiro/workflow-runs/{{run_id}}/code-review.md"
+            prompt: >
+              Review the uncommitted and recently committed changes under {{demo_path}} as a
+              behavioral code review: correctness of the Lab handlers (inject, revert, probe
+              read live state), IAM scope of the Lab role, error handling in the deploy
+              scripts, tests that actually exercise the claims. Write your review to
+              .kiro/workflow-runs/{{run_id}}/code-review.md and end it with a line
+              "VERDICT: APPROVED" or "VERDICT: CHANGES_REQUESTED".
+
+      - type: step
+        id: build-aggregate
+        agent: wf-review-aggregator
+        artifacts:
+          build_review: ".kiro/workflow-runs/{{run_id}}/build-review.md"
+          build_verdict: ".kiro/workflow-runs/{{run_id}}/build-review.json"
+        prompt: >
+          Merge {{artifacts.steering_review}} and {{artifacts.code_review}} into
+          .kiro/workflow-runs/{{run_id}}/build-review.md, blocking findings first, deduplicated.
+          Write .kiro/workflow-runs/{{run_id}}/build-review.json with
+          {"verdict": "APPROVED" | "CHANGES_REQUESTED"}: APPROVED only if the steering verdict
+          is APPROVED and the code review ends with VERDICT: APPROVED.
+
+  # ── Deploy with the demo's own script, in the session's account and region ────────────
+  - type: step
+    id: deploy
+    agent: demo-deployer
+    artifacts:
+      deployment: ".kiro/workflow-runs/{{run_id}}/deployment.json"
+    prompt: >
+      Deploy the demo at {{demo_path}} by running its deploy-all.ps1 from that folder, with
+      the credentials already in the shell. Record the outcome in
+      .kiro/workflow-runs/{{run_id}}/deployment.json.
+
+  # ── Observe: predictions become the agent's actual sentences ──────────────────────────
+  - type: step
+    id: observe
+    agent: demo-observer
+    artifacts:
+      observation: ".kiro/workflow-runs/{{run_id}}/observation.md"
+      observation_verdict: ".kiro/workflow-runs/{{run_id}}/observation.json"
+    prompt: >
+      Using {{artifacts.deployment}}, exercise every scenario of {{demo_path}}/lab/scenarios.yaml
+      on the deployed demo: inject, obtain the agent's output (investigation or chat),
+      compare with withCapability, roll back. Rewrite each withCapability as what the agent
+      actually said; mark anything not observed. Write
+      .kiro/workflow-runs/{{run_id}}/observation.md and
+      .kiro/workflow-runs/{{run_id}}/observation.json.
+
+  # ── Final check: the yaml the observer rewrote still passes the steering review ───────
+  - type: repeat
+    id: final-gate
+    maxIterations: 1
+    onMaxIterations: pause
+    stopCondition:
+      fileCheck:
+        path: ".kiro/workflow-runs/{{run_id}}/final-review.json"
+        jsonPath: verdict
+        value: APPROVED
+    steps:
+      - type: step
+        id: final-review
+        agent: demo-steering-reviewer
+        artifacts:
+          final_review: ".kiro/workflow-runs/{{run_id}}/final-review.md"
+          final_verdict: ".kiro/workflow-runs/{{run_id}}/final-review.json"
+        prompt: >
+          Final review of {{demo_path}} after deployment and observation. Read
+          {{artifacts.observation}}: every scenario must be met and every withCapability must
+          now be an observed sentence; a NOT OBSERVED scenario is a blocking finding. Re-check
+          the README against what was actually deployed (URLs, timings, costs printed by the
+          script). Write .kiro/workflow-runs/{{run_id}}/final-review.md and
+          .kiro/workflow-runs/{{run_id}}/final-review.json. Do not fix anything; report.
