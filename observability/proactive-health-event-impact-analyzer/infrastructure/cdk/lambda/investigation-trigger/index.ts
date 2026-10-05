@@ -224,9 +224,18 @@ function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, j
     ? `[JIRA_CONFIG:${JSON.stringify(jiraConfig)}]\n\n`
     : '';
 
+  // Optional event-type signal that tells the skill to run its Security Hub
+  // Finding path. Gated solely on the existing contract key `service`
+  // (set to the literal 'SecurityHub' by the Event Router's finding
+  // normalizer) — no new interface field is introduced. For Health events this
+  // is '', so the Health prompt stays byte-identical.
+  const eventTypeTag = healthEvent.service === 'SecurityHub'
+    ? '[EVENT_TYPE:securityhub-finding]\n'
+    : '';
+
   return `[CORRELATION_ID:${healthEvent.eventId}]
 [INVESTIGATION_ID:${incidentId}]
-${jiraTag}
+${eventTypeTag}${jiraTag}
 AWS Health Event detected. Please investigate the impact on our workloads.
 
 ${accountContext}Service: ${healthEvent.service}
