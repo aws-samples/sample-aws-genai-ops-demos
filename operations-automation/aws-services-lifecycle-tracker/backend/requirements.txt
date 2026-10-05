@@ -3,3 +3,4 @@ boto3>=1.42.8
 python-dateutil
 requests
 beautifulsoup4
+moto[dynamodb]==5.*
