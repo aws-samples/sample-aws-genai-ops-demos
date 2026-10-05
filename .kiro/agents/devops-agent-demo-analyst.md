@@ -1,8 +1,8 @@
 ---
 name: devops-agent-demo-analyst
-description: Analyse phase of a native-agent demo. Reads one AWS DevOps Agent capability from the Agent Tools repository and derives motion, scenarios and environment; writes the draft lab/scenarios.yaml and the fork questions. Read-only on the repository.
-tools: ["read", "web", "shell"]
-allowedTools: ["read", "web"]
+description: Analyse phase of a native-agent demo. Reads one AWS DevOps Agent capability from the Agent Tools repository and derives motion, scenarios and environment; writes the draft lab/scenarios.yaml and the fork questions. NARROW write scope — only lab/scenarios.yaml and .kiro/workflow-runs/** ; cannot write other paths and cannot run git commit/add. Do not place it in a step that must write elsewhere or commit (use a writer agent such as wf-coder for that).
+tools: ["read", "web", "shell", "fs_write"]
+allowedTools: ["read", "web", "fs_write"]
 permissions:
   rules:
     - capability: fs_write

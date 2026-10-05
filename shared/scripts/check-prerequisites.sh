@@ -13,6 +13,8 @@ MIN_CDK_VERSION=""
 SKIP_SERVICE_CHECK=false
 REQUIRE_CDK=false
 REQUIRE_KUBECTL=false
+REQUIRE_SAM=false
+REQUIRE_DOCKER=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -46,6 +48,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --require-kubectl)
             REQUIRE_KUBECTL=true
+            shift
+            ;;
+        --require-sam)
+            REQUIRE_SAM=true
+            shift
+            ;;
+        --require-docker)
+            REQUIRE_DOCKER=true
             shift
             ;;
         *)
@@ -139,6 +149,33 @@ if [ "$REQUIRE_KUBECTL" = true ]; then
         echo -e "\033[0;32m      ✓ kubectl installed\033[0m"
     else
         echo -e "\033[0;31m      ❌ kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/\033[0m"
+        exit 1
+    fi
+fi
+
+# Check AWS SAM CLI (if required, e.g. for demos that deploy a SAM-based MCP server)
+if [ "$REQUIRE_SAM" = true ]; then
+    echo -e "\n\033[0;33mChecking AWS SAM CLI...\033[0m"
+    if command -v sam &> /dev/null; then
+        echo -e "\033[0;32m      ✓ AWS SAM CLI installed\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ AWS SAM CLI not found.\033[0m"
+        echo -e "\033[0;36m      Install it: brew install aws-sam-cli  (macOS)\033[0m"
+        echo -e "\033[0;36m      Other options: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html\033[0m"
+        exit 1
+    fi
+fi
+
+# Check Docker (if required). A SAM app whose build must run in a container
+# (`sam build --use-container`) needs a RUNNING Docker engine. Checks the daemon responds,
+# not just that the CLI is on PATH.
+if [ "$REQUIRE_DOCKER" = true ]; then
+    echo -e "\n\033[0;33mChecking Docker...\033[0m"
+    if command -v docker &> /dev/null && docker info &> /dev/null; then
+        echo -e "\033[0;32m      ✓ Docker is installed and the engine is running\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ Docker is required and its engine must be running.\033[0m"
+        echo -e "\033[0;36m      Install Docker, start it, then re-run. Verify with: docker info\033[0m"
         exit 1
     fi
 fi

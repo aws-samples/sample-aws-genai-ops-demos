@@ -28,6 +28,8 @@ SERVER=""
 REF="main"
 REPO="https://github.com/aws/tools-for-devops-agent"
 MANIFEST=""
+AGENT_SPACE_ID=""
+AGENT_SPACE_REGION=""
 DESTROY=false
 KEEP_SOURCE=false
 declare -A PARAMS
@@ -39,6 +41,10 @@ while [[ $# -gt 0 ]]; do
         --repo) REPO="$2"; shift 2 ;;
         --manifest) MANIFEST="$2"; shift 2 ;;
         --param) PARAMS["${2%%=*}"]="${2#*=}"; shift 2 ;;
+        # Agent Space to register the server into. With it AND registration.mode: cli, the script
+        # registers + associates the server (allowlisting its tools), mirroring deploy-skill.
+        --agent-space-id) AGENT_SPACE_ID="$2"; shift 2 ;;
+        --agent-space-region) AGENT_SPACE_REGION="$2"; shift 2 ;;
         --destroy) DESTROY=true; shift ;;
         --keep-source) KEEP_SOURCE=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -200,7 +206,10 @@ SPARSE_PATH="mcp/$SERVER"
 TEMP_ROOT=$(mktemp -d -t agent-tools-XXXXXXXX)
 echo ""
 echo -e "${YELLOW}Fetching $SPARSE_PATH @ $REF ...${NC}"
-CLONE_RESULT=$(git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$REF" "$REPO" "$TEMP_ROOT" 2>&1 && git -C "$TEMP_ROOT" sparse-checkout set "$SPARSE_PATH" 2>&1 || echo "FAILED")
+# -c core.autocrlf=false -c core.eol=lf: a Windows builder with core.autocrlf=true would
+# rewrite fetched shell scripts (e.g. a Lambda run.sh handler) to CRLF, and Linux then fails
+# with "cannot execute: required file not found" (the \r in the shebang). Force LF on fetch.
+CLONE_RESULT=$(git -c core.autocrlf=false -c core.eol=lf clone --quiet --depth 1 --filter=blob:none --sparse --branch "$REF" "$REPO" "$TEMP_ROOT" 2>&1 && git -C "$TEMP_ROOT" sparse-checkout set "$SPARSE_PATH" 2>&1 || echo "FAILED")
 SOURCE_DIR="$TEMP_ROOT/$SPARSE_PATH"
 if [[ "$CLONE_RESULT" == *"FAILED"* ]] || [ ! -d "$SOURCE_DIR" ]; then
     echo -e "${RED}      ERROR: Could not fetch '$SPARSE_PATH' at ref '$REF' from $REPO${NC}"
@@ -250,6 +259,29 @@ MAIN_STACK=$(mget deploy.stacks.0)
 # Destroy
 # ---------------------------------------------------------------------------
 if [ "$DESTROY" = true ]; then
+    # De-register from the Agent Space first (mirror of deploy-time registration), so no orphaned
+    # mcpserversigv4 service/association is left behind. Best-effort / idempotent. Only when an
+    # Agent Space was given.
+    if [ -n "$AGENT_SPACE_ID" ]; then
+        REG_NAME=$(mget registration.serviceName); REG_NAME="${REG_NAME:-$SERVER}"
+        REGION_ARGS=(); [ -n "$AGENT_SPACE_REGION" ] && REGION_ARGS=(--region "$AGENT_SPACE_REGION")
+        echo ""; echo -e "${YELLOW}De-registering $REG_NAME from Agent Space $AGENT_SPACE_ID...${NC}"
+        SVC_ID=$(aws devops-agent list-services --no-cli-pager "${REGION_ARGS[@]}" 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); svc=[s for s in d.get('services',[]) if s.get('serviceType')=='mcpserversigv4' and s.get('name')=='$REG_NAME'] or [s for s in d.get('services',[]) if s.get('serviceType')=='mcpserversigv4']; print(svc[0]['serviceId'] if svc else '')" 2>/dev/null)
+        if [ -n "$SVC_ID" ]; then
+            ASSOC_ID=$(aws devops-agent list-associations --agent-space-id "$AGENT_SPACE_ID" --no-cli-pager "${REGION_ARGS[@]}" 2>/dev/null \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); a=[x for x in d.get('associations',[]) if x.get('serviceId')=='$SVC_ID']; print(a[0]['associationId'] if a else '')" 2>/dev/null)
+            if [ -n "$ASSOC_ID" ]; then
+                aws devops-agent disassociate-service --agent-space-id "$AGENT_SPACE_ID" --association-id "$ASSOC_ID" --no-cli-pager "${REGION_ARGS[@]}" >/dev/null 2>&1 || true
+                echo -e "${GREEN}      OK: disassociated $ASSOC_ID${NC}"
+            fi
+            aws devops-agent deregister-service --service-id "$SVC_ID" --no-cli-pager "${REGION_ARGS[@]}" >/dev/null 2>&1 || true
+            echo -e "${GREEN}      OK: deregistered service $SVC_ID${NC}"
+        else
+            echo -e "${GRAY}      (no mcpserversigv4 service registered; nothing to de-register)${NC}"
+        fi
+    fi
+
     [ -n "${M[teardown.command.__len__]+x}" ] || { echo -e "${RED}ERROR: manifest is missing required field 'teardown.command'${NC}"; exit 1; }
     echo ""; echo -e "${YELLOW}Tearing down ($IAC)...${NC}"
     argv_from teardown.command TEARDOWN
@@ -326,22 +358,83 @@ if [ "$NAUX" -gt 0 ]; then
     for ((i=0; i<NAUX; i++)); do echo -e "${YELLOW}    - $(mget deploy.auxiliaryStacks.$i.template) [$(mget deploy.auxiliaryStacks.$i.scope)]${NC}"; done
 fi
 echo ""
-echo -e "${CYAN}  Register with AWS DevOps Agent:${NC}"
-case "$AUTH_METHOD" in
-    sigv4)
-        echo -e "${GRAY}    1. Create/choose an IAM role trusted by aidevops.amazonaws.com with these actions:${NC}"
-        NACT="${M[auth.callerActions.__len__]:-0}"
-        for ((i=0; i<NACT; i++)); do echo -e "${GRAY}         - $(mget auth.callerActions.$i)${NC}"; done
-        echo -e "${GRAY}    2. aws devops-agent register-service --region <agent-space-region> --service mcpserversigv4 \\${NC}"
-        echo -e "${GRAY}         --service-details '{\"mcpserversigv4\":{\"name\":\"$SERVER\",\"endpoint\":\"$ENDPOINT\",${NC}"
-        echo -e "${GRAY}         \"authorizationConfig\":{\"region\":\"$CURRENT_REGION\",\"service\":\"$SIGNING_SERVICE\",\"mcpRoleArn\":\"<role-arn>\"}}}'${NC}"
-        echo -e "${GRAY}    3. Associate the returned serviceId with your Agent Space and allowlist tools.${NC}" ;;
-    oauth-client-credentials)
-        echo -e "${GRAY}    Console -> Capability Providers -> MCP Server -> OAuth Client Credentials.${NC}"
-        echo -e "${GRAY}    Client ID / token URL / scope come from the stack outputs named in the manifest;${NC}"
-        echo -e "${GRAY}    retrieve the client secret with the manifest's clientSecret command.${NC}" ;;
-    *)  echo -e "${GRAY}    Console -> Capability Providers -> MCP Server -> $AUTH_METHOD.${NC}" ;;
-esac
+
+# ---------------------------------------------------------------------------
+# Register with the Agent Space (mirror of deploy-skill). Automatic when: --agent-space-id
+# given, registration.mode is 'cli', auth is sigv4. Else print the manual recipe.
+# ---------------------------------------------------------------------------
+REG_MODE=$(mget registration.mode); REG_MODE="${REG_MODE:-console}"
+REG_NAME=$(mget registration.serviceName); REG_NAME="${REG_NAME:-$SERVER}"
+# Tools to allowlist: manifest registration.tools.readOnly + .mutating.
+TOOLS=()
+NRO="${M[registration.tools.readOnly.__len__]:-0}";  for ((i=0; i<NRO; i++)); do TOOLS+=("$(mget registration.tools.readOnly.$i)"); done
+NMU="${M[registration.tools.mutating.__len__]:-0}";  for ((i=0; i<NMU; i++)); do TOOLS+=("$(mget registration.tools.mutating.$i)"); done
+
+if [ -n "$AGENT_SPACE_ID" ] && [ "$REG_MODE" = "cli" ] && [ "$AUTH_METHOD" = "sigv4" ]; then
+    REGION_ARGS=(); [ -n "$AGENT_SPACE_REGION" ] && REGION_ARGS=(--region "$AGENT_SPACE_REGION")
+    ROLE_OUTPUT=$(mget auth.roleArnOutput)
+    ROLE_ARN=""
+    if [ -n "$ROLE_OUTPUT" ]; then
+        ROLE_ARN=$(aws cloudformation describe-stacks --stack-name "$OUTPUT_STACK" --region "$CURRENT_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='$ROLE_OUTPUT'].OutputValue | [0]" --output text --no-cli-pager 2>/dev/null || echo "None")
+    fi
+    if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
+        echo -e "${RED}      ERROR: auth.roleArnOutput '$ROLE_OUTPUT' not found on stack '$OUTPUT_STACK'; cannot auto-register.${NC}"
+        echo -e "${YELLOW}      Register manually (see the server README) or add CreateDevOpsAgentRole to the deploy.${NC}"; exit 1
+    fi
+    echo -e "${YELLOW}Registering $REG_NAME in Agent Space $AGENT_SPACE_ID...${NC}"
+    # 1. Register (idempotent: reuse an existing mcpserversigv4 of this name).
+    SERVICE_ID=$(aws devops-agent list-services --no-cli-pager "${REGION_ARGS[@]}" 2>/dev/null \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); s=[x for x in d.get('services',[]) if x.get('serviceType')=='mcpserversigv4' and x.get('name')=='$REG_NAME']; print(s[0]['serviceId'] if s else '')" 2>/dev/null)
+    if [ -n "$SERVICE_ID" ]; then
+        echo -e "${GREEN}      OK: reusing registered service $SERVICE_ID${NC}"
+    else
+        DETAILS_FILE="$TEMP_ROOT/mcp-register.json"
+        python3 -c "import json; open('$DETAILS_FILE','w').write(json.dumps({'mcpserversigv4':{'name':'$REG_NAME','endpoint':'$ENDPOINT','authorizationConfig':{'region':'$CURRENT_REGION','service':'$SIGNING_SERVICE','mcpRoleArn':'$ROLE_ARN'}}}))"
+        SERVICE_ID=$(aws devops-agent register-service --service mcpserversigv4 --service-details "file://$DETAILS_FILE" --no-cli-pager "${REGION_ARGS[@]}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('serviceId',''))" 2>/dev/null)
+        if [ -z "$SERVICE_ID" ]; then
+            echo -e "${RED}      ERROR: register-service failed; register manually (see the server README).${NC}"; exit 1
+        fi
+        echo -e "${GREEN}      OK: registered service $SERVICE_ID${NC}"
+    fi
+    # 2. Associate (idempotent), allowlisting the tools.
+    EXISTING_ASSOC=$(aws devops-agent list-associations --agent-space-id "$AGENT_SPACE_ID" --no-cli-pager "${REGION_ARGS[@]}" 2>/dev/null \
+        | python3 -c "import json,sys; a=[x for x in json.load(sys.stdin).get('associations',[]) if x.get('serviceId')=='$SERVICE_ID']; print(a[0]['associationId'] if a else '')" 2>/dev/null)
+    if [ -n "$EXISTING_ASSOC" ]; then
+        echo -e "${GREEN}      OK: already associated ($EXISTING_ASSOC)${NC}"
+    else
+        ASSOC_FILE="$TEMP_ROOT/mcp-associate.json"
+        TOOLS_JSON=$(printf '%s\n' "${TOOLS[@]}" | python3 -c "import json,sys; print(json.dumps([t for t in sys.stdin.read().split('\n') if t]))")
+        python3 -c "import json; open('$ASSOC_FILE','w').write(json.dumps({'agentSpaceId':'$AGENT_SPACE_ID','serviceId':'$SERVICE_ID','configuration':{'mcpserversigv4':{'tools':$TOOLS_JSON}}}))"
+        ASSOC_ID=$(aws devops-agent associate-service --cli-input-json "file://$ASSOC_FILE" --no-cli-pager "${REGION_ARGS[@]}" \
+            | python3 -c "import json,sys; print((json.load(sys.stdin).get('association') or {}).get('associationId',''))" 2>/dev/null)
+        if [ -z "$ASSOC_ID" ]; then
+            echo -e "${RED}      ERROR: associate-service failed; associate manually in the console.${NC}"; exit 1
+        fi
+        echo -e "${GREEN}      OK: associated ($ASSOC_ID); tools: ${TOOLS[*]}${NC}"
+    fi
+    export AGENT_TOOLS_MCP_SERVICE_ID="$SERVICE_ID"
+    echo -e "${CYAN}  MCP server registered and associated with Agent Space $AGENT_SPACE_ID.${NC}"
+else
+    echo -e "${CYAN}  Register with AWS DevOps Agent:${NC}"
+    case "$AUTH_METHOD" in
+        sigv4)
+            echo -e "${GRAY}    1. Create/choose an IAM role trusted by aidevops.amazonaws.com with these actions:${NC}"
+            NACT="${M[auth.callerActions.__len__]:-0}"
+            for ((i=0; i<NACT; i++)); do echo -e "${GRAY}         - $(mget auth.callerActions.$i)${NC}"; done
+            echo -e "${GRAY}    2. aws devops-agent register-service --region <agent-space-region> --service mcpserversigv4 \\${NC}"
+            echo -e "${GRAY}         --service-details '{\"mcpserversigv4\":{\"name\":\"$REG_NAME\",\"endpoint\":\"$ENDPOINT\",${NC}"
+            echo -e "${GRAY}         \"authorizationConfig\":{\"region\":\"$CURRENT_REGION\",\"service\":\"$SIGNING_SERVICE\",\"mcpRoleArn\":\"<role-arn>\"}}}'${NC}"
+            echo -e "${GRAY}    3. Associate the returned serviceId with your Agent Space and allowlist tools.${NC}"
+            echo -e "${GRAY}    (Pass --agent-space-id with registration.mode: cli to do all of this automatically.)${NC}" ;;
+        oauth-client-credentials)
+            echo -e "${GRAY}    Console -> Capability Providers -> MCP Server -> OAuth Client Credentials.${NC}"
+            echo -e "${GRAY}    Client ID / token URL / scope come from the stack outputs named in the manifest;${NC}"
+            echo -e "${GRAY}    retrieve the client secret with the manifest's clientSecret command.${NC}" ;;
+        *)  echo -e "${GRAY}    Console -> Capability Providers -> MCP Server -> $AUTH_METHOD.${NC}" ;;
+    esac
+fi
 echo -e "${CYAN}  Details:  $REPO/tree/$REF/$SPARSE_PATH/README.md${NC}"
 
 [ "$KEEP_SOURCE" = true ] || rm -rf "$TEMP_ROOT"

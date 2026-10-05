@@ -34,6 +34,12 @@ param(
     [string]$Manifest = "",
     # Values for the manifest's declared deploy parameters (substituted as ${Name}).
     [hashtable]$Parameters = @{},
+    # Agent Space to register the server into. When given AND the manifest declares
+    # registration.mode: cli, the script registers + associates the server (and allowlists its
+    # tools) through the devops-agent CLI, mirroring how deploy-skill registers a skill. Without
+    # it, the script prints the manual registration recipe instead.
+    [string]$AgentSpaceId = "",
+    [string]$AgentSpaceRegion = "",
     [switch]$Destroy = $false,
     [switch]$KeepSource = $false
 )
@@ -235,7 +241,10 @@ Write-Host ""
 Write-Host "Fetching $sparsePath @ $Ref ..." -ForegroundColor Yellow
 $prevErrorAction = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-git clone --quiet --depth 1 --filter=blob:none --sparse --branch $Ref $Repo $tempRoot 2>&1 | Out-Null
+# -c core.autocrlf=false -c core.eol=lf: a Windows builder with core.autocrlf=true would
+# rewrite fetched shell scripts (e.g. a Lambda run.sh handler) to CRLF, and Linux then fails
+# with "cannot execute: required file not found" (the \r in the shebang). Force LF on fetch.
+git -c core.autocrlf=false -c core.eol=lf clone --quiet --depth 1 --filter=blob:none --sparse --branch $Ref $Repo $tempRoot 2>&1 | Out-Null
 $cloneExit = $LASTEXITCODE
 if ($cloneExit -eq 0) {
     git -C $tempRoot sparse-checkout set $sparsePath 2>&1 | Out-Null
@@ -309,6 +318,31 @@ $mainStack = @(Get-Optional $m 'deploy.stacks' @()) | Select-Object -First 1
 # Destroy
 # ---------------------------------------------------------------------------
 if ($Destroy) {
+    # De-register from the Agent Space first (mirror of the deploy-time registration), so no
+    # orphaned mcpserversigv4 service/association is left behind. Idempotent and best-effort:
+    # a missing service/association is fine. Only when an Agent Space was given.
+    if (-not [string]::IsNullOrEmpty($AgentSpaceId)) {
+        $regArgs = if ($AgentSpaceRegion) { @("--region", $AgentSpaceRegion) } else { @() }
+        $regName = Get-Optional $m 'registration.serviceName' $Server
+        Write-Host ""
+        Write-Host "De-registering $regName from Agent Space $AgentSpaceId..." -ForegroundColor Yellow
+        $svcList = aws devops-agent list-services --no-cli-pager @regArgs 2>$null | ConvertFrom-Json
+        $svc = $svcList.services | Where-Object { $_.serviceType -eq 'mcpserversigv4' -and $_.name -eq $regName } | Select-Object -First 1
+        if (-not $svc) { $svc = $svcList.services | Where-Object { $_.serviceType -eq 'mcpserversigv4' } | Select-Object -First 1 }
+        if ($svc) {
+            $assocList = aws devops-agent list-associations --agent-space-id $AgentSpaceId --no-cli-pager @regArgs 2>$null | ConvertFrom-Json
+            $assoc = $assocList.associations | Where-Object { $_.serviceId -eq $svc.serviceId } | Select-Object -First 1
+            if ($assoc) {
+                aws devops-agent disassociate-service --agent-space-id $AgentSpaceId --association-id $assoc.associationId --no-cli-pager @regArgs 2>$null | Out-Null
+                Write-Host "      OK: disassociated $($assoc.associationId)" -ForegroundColor Green
+            }
+            aws devops-agent deregister-service --service-id $svc.serviceId --no-cli-pager @regArgs 2>$null | Out-Null
+            Write-Host "      OK: deregistered service $($svc.serviceId)" -ForegroundColor Green
+        } else {
+            Write-Host "      (no mcpserversigv4 service registered; nothing to de-register)" -ForegroundColor Gray
+        }
+    }
+
     $teardown = Get-Required $m 'teardown.command'
     Write-Host ""
     Write-Host "Tearing down ($iac)..." -ForegroundColor Yellow
@@ -405,23 +439,96 @@ if ($aux.Count -gt 0) {
     foreach ($a in $aux) { Write-Host "    - $($a['template']) [$($a['scope'])]" -ForegroundColor Yellow }
 }
 Write-Host ""
-Write-Host "  Register with AWS DevOps Agent:" -ForegroundColor Cyan
-switch ($authMethod) {
-    'sigv4' {
-        Write-Host "    1. Create/choose an IAM role trusted by aidevops.amazonaws.com with these actions:" -ForegroundColor Gray
-        foreach ($a in $callerActions) { Write-Host "         - $a" -ForegroundColor Gray }
-        Write-Host "    2. aws devops-agent register-service --region <agent-space-region> --service mcpserversigv4 \" -ForegroundColor Gray
-        Write-Host "         --service-details '{`"mcpserversigv4`":{`"name`":`"$Server`",`"endpoint`":`"$endpoint`"," -ForegroundColor Gray
-        Write-Host "         `"authorizationConfig`":{`"region`":`"$currentRegion`",`"service`":`"$signingService`",`"mcpRoleArn`":`"<role-arn>`"}}}'" -ForegroundColor Gray
-        Write-Host "    3. Associate the returned serviceId with your Agent Space and allowlist tools." -ForegroundColor Gray
+
+# ---------------------------------------------------------------------------
+# Register with the Agent Space (mirror of deploy-skill's Asset-API registration).
+# Automatic when: an -AgentSpaceId is given, registration.mode is 'cli', and auth is sigv4.
+# Otherwise fall back to printing the manual recipe (console-only auth, or no Agent Space id).
+# ---------------------------------------------------------------------------
+$registrationMode = Get-Optional $m 'registration.mode' 'console'
+$regServiceName = Get-Optional $m 'registration.serviceName' $Server
+# Tools to allowlist on the association: the manifest's readOnly + mutating tool lists.
+$toolsReadOnly = @(Get-Optional $m 'registration.tools.readOnly' @())
+$toolsMutating = @(Get-Optional $m 'registration.tools.mutating' @())
+$allTools = @($toolsReadOnly + $toolsMutating | Where-Object { $_ })
+
+$canAutoRegister = (-not [string]::IsNullOrEmpty($AgentSpaceId)) -and ($registrationMode -eq 'cli') -and ($authMethod -eq 'sigv4')
+
+if ($canAutoRegister) {
+    # The SigV4 role ARN comes from a stack output the manifest names (auth.roleArnOutput).
+    $roleArnOutput = Get-Optional $m 'auth.roleArnOutput'
+    $roleArn = ''
+    if ($roleArnOutput) {
+        $roleArn = aws cloudformation describe-stacks --stack-name $outputStack --region $currentRegion `
+            --query "Stacks[0].Outputs[?OutputKey=='$roleArnOutput'].OutputValue | [0]" --output text --no-cli-pager 2>$null
     }
-    'oauth-client-credentials' {
-        Write-Host "    Console -> Capability Providers -> MCP Server -> OAuth Client Credentials." -ForegroundColor Gray
-        Write-Host "    Client ID / token URL / scope come from the stack outputs named in the manifest;" -ForegroundColor Gray
-        Write-Host "    retrieve the client secret with the manifest's clientSecret command." -ForegroundColor Gray
+    if (-not $roleArn -or $roleArn -eq 'None') {
+        Write-Host "      ERROR: auth.roleArnOutput '$roleArnOutput' not found on stack '$outputStack'; cannot auto-register." -ForegroundColor Red
+        Write-Host "      Register manually (see the server README) or add CreateDevOpsAgentRole to the deploy." -ForegroundColor Yellow
+        exit 1
     }
-    default {
-        Write-Host "    Console -> Capability Providers -> MCP Server -> $authMethod." -ForegroundColor Gray
+    $regArgs = if ($AgentSpaceRegion) { @("--region", $AgentSpaceRegion) } else { @() }
+
+    Write-Host "Registering $regServiceName in Agent Space $AgentSpaceId..." -ForegroundColor Yellow
+    # 1. Register the service (idempotent: reuse an existing mcpserversigv4 of this name).
+    $svcList = aws devops-agent list-services --no-cli-pager @regArgs 2>$null | ConvertFrom-Json
+    $svc = $svcList.services | Where-Object { $_.serviceType -eq 'mcpserversigv4' -and $_.name -eq $regServiceName } | Select-Object -First 1
+    if ($svc) {
+        $serviceId = $svc.serviceId
+        Write-Host "      OK: reusing registered service $serviceId" -ForegroundColor Green
+    } else {
+        $details = @{ mcpserversigv4 = @{ name = $regServiceName; endpoint = $endpoint;
+            authorizationConfig = @{ region = $currentRegion; service = $signingService; mcpRoleArn = $roleArn } } }
+        $detailsFile = Join-Path $tempRoot "mcp-register.json"
+        [IO.File]::WriteAllText($detailsFile, ($details | ConvertTo-Json -Depth 6 -Compress))
+        $reg = aws devops-agent register-service --service mcpserversigv4 --service-details "file://$detailsFile" --no-cli-pager @regArgs | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $reg.serviceId) {
+            Write-Host "      ERROR: register-service failed; register manually (see the server README)." -ForegroundColor Red
+            exit 1
+        }
+        $serviceId = $reg.serviceId
+        Write-Host "      OK: registered service $serviceId" -ForegroundColor Green
+    }
+    # 2. Associate with the Agent Space, allowlisting the tools (idempotent).
+    $assocList = aws devops-agent list-associations --agent-space-id $AgentSpaceId --no-cli-pager @regArgs 2>$null | ConvertFrom-Json
+    $assoc = $assocList.associations | Where-Object { $_.serviceId -eq $serviceId } | Select-Object -First 1
+    if ($assoc) {
+        Write-Host "      OK: already associated ($($assoc.associationId))" -ForegroundColor Green
+    } else {
+        $config = @{ mcpserversigv4 = @{ tools = @($allTools) } }
+        $configFile = Join-Path $tempRoot "mcp-associate.json"
+        $assocReq = @{ agentSpaceId = $AgentSpaceId; serviceId = $serviceId; configuration = $config }
+        [IO.File]::WriteAllText($configFile, ($assocReq | ConvertTo-Json -Depth 6 -Compress))
+        $assocResult = aws devops-agent associate-service --cli-input-json "file://$configFile" --no-cli-pager @regArgs | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or -not $assocResult.association.associationId) {
+            Write-Host "      ERROR: associate-service failed; associate manually in the console." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "      OK: associated ($($assocResult.association.associationId)); tools: $($allTools -join ', ')" -ForegroundColor Green
+    }
+    $global:AGENT_TOOLS_MCP_SERVICE_ID = $serviceId
+    Write-Host "  MCP server registered and associated with Agent Space $AgentSpaceId." -ForegroundColor Cyan
+} else {
+    # Manual fallback — print the recipe (console auth, or no -AgentSpaceId given).
+    Write-Host "  Register with AWS DevOps Agent:" -ForegroundColor Cyan
+    switch ($authMethod) {
+        'sigv4' {
+            Write-Host "    1. Create/choose an IAM role trusted by aidevops.amazonaws.com with these actions:" -ForegroundColor Gray
+            foreach ($a in $callerActions) { Write-Host "         - $a" -ForegroundColor Gray }
+            Write-Host "    2. aws devops-agent register-service --region <agent-space-region> --service mcpserversigv4 \" -ForegroundColor Gray
+            Write-Host "         --service-details '{`"mcpserversigv4`":{`"name`":`"$regServiceName`",`"endpoint`":`"$endpoint`"," -ForegroundColor Gray
+            Write-Host "         `"authorizationConfig`":{`"region`":`"$currentRegion`",`"service`":`"$signingService`",`"mcpRoleArn`":`"<role-arn>`"}}}'" -ForegroundColor Gray
+            Write-Host "    3. Associate the returned serviceId with your Agent Space and allowlist tools." -ForegroundColor Gray
+            Write-Host "    (Pass -AgentSpaceId to this script with registration.mode: cli to do all of this automatically.)" -ForegroundColor Gray
+        }
+        'oauth-client-credentials' {
+            Write-Host "    Console -> Capability Providers -> MCP Server -> OAuth Client Credentials." -ForegroundColor Gray
+            Write-Host "    Client ID / token URL / scope come from the stack outputs named in the manifest;" -ForegroundColor Gray
+            Write-Host "    retrieve the client secret with the manifest's clientSecret command." -ForegroundColor Gray
+        }
+        default {
+            Write-Host "    Console -> Capability Providers -> MCP Server -> $authMethod." -ForegroundColor Gray
+        }
     }
 }
 Write-Host "  Details:  $Repo/tree/$Ref/$sparsePath/README.md" -ForegroundColor Cyan

@@ -8,6 +8,16 @@ Workflows are opt-in: Workspace Configuration, Workflows, Enable, then a new cha
 (setting `kiroAgent.workflows.enabled`; CLI `chat.enableWorkflows`). Launch a recipe by
 asking Kiro in the parent chat, or `/workflow run <name> --<input> "value"` in the CLI.
 
+> **Launch an existing recipe BY PATH — do not re-synthesize it.** When a committed recipe
+> already covers the task (e.g. `devops-agent-demo` below), run THAT recipe with its declared
+> inputs. Do not describe the task to the workflow-creator as a free-form prompt: the creator
+> builds a different one-off workflow that does not know these agents' permission scopes, and
+> can place a scoped agent (e.g. `devops-agent-demo-analyst`, which may only write
+> `lab/scenarios.yaml` and `.kiro/workflow-runs/**`) in a step that must write elsewhere or
+> commit — which fails at runtime, not validation. Re-synthesizing a recipe that already
+> exists is both wasteful and how that failure happens. Reserve free-form creation for tasks
+> with no existing recipe.
+
 ## devops-agent-demo
 
 Builds a demo of one AWS DevOps Agent capability the way

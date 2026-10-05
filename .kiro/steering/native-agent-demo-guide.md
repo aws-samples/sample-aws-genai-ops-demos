@@ -208,12 +208,46 @@ While there, check that the environment does not contradict the scenario: any re
 resembles the thing the scenario removes (an alarm on the same resource, a backup from
 another tool) must be visibly different, or the agent will be right to count it.
 
+**Confirm the injected condition is LIVE in what the agent sees — at the moment it looks.**
+`inject()` returning success is not enough: the condition can be undone before the agent
+reads it (an early auto-revert, a concurrent run, or a redeploy whose idempotent seed step
+recreates the baseline/reverted state over the injection). If the agent reads the reverted
+state it will — correctly for what it sees — report no problem, and the scenario silently
+"passes" while demonstrating nothing. So immediately before asking in Chat, probe and assert
+the environment is actually in the injected state; and treat "the agent found no problem" on
+an inject-scenario as a RED result to investigate (did the inject land? did it revert? did a
+re-seed clobber it?), never as a pass. Inject and the baseline seed must not fight — nothing
+should re-seed between inject and observe.
+
 ### Step 4 — Derive the environment
 
 The smallest environment that can host the chosen scenarios and produce the telemetry the
 agent reads. Nothing more. The environment is the most expensive brick to build, deploy and
 maintain, and it is why a demo costs money per day. If the estimate is high or the deploy
 slow, ask the builder for a ceiling (a fork); otherwise state the estimate and proceed.
+
+**Smallest, but big enough that the injected flaw BITES.** "Smallest" is not "trivially
+tiny": size the environment so each injected condition produces a *visible consequence* the
+agent reports as significant, not a symptom it caveats away. A design/config flaw injected
+into a 2-row table is real but inconsequential — the agent correctly says "negligible at this
+size", which weakens the demo, and for a performance/scale scenario (a broadcast join, disk
+spill, a slow query) tiny data means there is literally no consequence to observe, so the
+agent reports *healthy* and the demo asserts the opposite of its point. Seed enough data /
+scale / activity that the with-capability answer states real impact (cost, spill, latency,
+blast radius). This is the minimum scale at which the flaw bites — often still cheap (a few
+thousand rows, a little traffic), not a production-sized environment. The with/without test
+(hard rule 3) implicitly asks: does the agent call it a *real* problem, or hedge it as trivial?
+
+**Generated service-dialect strings are unverified until a live deploy.** Any SQL/DDL, IAM or
+KMS policy JSON, or service-specific CLI the demo generates (seed scripts, the Lab's inject /
+revert / probe statements) is NOT checked by `cdk synth` or by unit tests with a mocked data
+plane — a mock that only records calls happily accepts invalid grammar (e.g. a non-existent
+column, or `ENCODE AUTO` written as a per-column encoding when it is a table-level default).
+These fail only on the real service. Treat the live deploy as the gate for dialect
+correctness; run every generated statement — including the read-path probes, not just the
+setup DDL — against the real engine before calling a scenario done, and where a cheap
+validator exists (cfn-lint for policy JSON, a dialect parser for SQL) use it offline too. Do
+not rely on an LLM-written dialect string being correct because it looks plausible.
 
 Complete `lab/scenarios.yaml` here: each scenario's `handler` (the inject / revert / probe
 trio you will write in `lab/handlers.py`), the alarm for alarm-driven scenarios, the
@@ -233,7 +267,7 @@ time in the script's banner and in the README. Re-running the script must resume
 | Brick | Needed when | Notes |
 |---|---|---|
 | Agent Space, IAM roles, account association | Always | |
-| Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*`. Give `deploy-skill` the Agent Space id from the stack outputs: it registers the skill through the Asset API and the deploy ends with nothing to upload |
+| Capability acquisition + registration | Always | `deploy-skill.*` / `deploy-mcp.*`. Give **both** the Agent Space id from the stack outputs: `deploy-skill` registers the skill through the Asset API, and `deploy-mcp -AgentSpaceId <id>` (manifest `registration.mode: cli`) registers + associates the MCP server and allowlists its tools. The deploy then ends with nothing to upload or register by hand. Omit the id and `deploy-mcp` only PRINTS the manual console step — the server deploys but the agent cannot reach it until someone registers it |
 | Mock environment | Always | Smallest that hosts the scenarios |
 | **Lab** — inject / rollback / status | Always | Not optional — see below. The demo's own; adapt the reference |
 | Engine — one durable execution per injection | Whenever anything is injectable | Shared mechanism (`shared/devops-agent/lab/`); no state store |
@@ -373,6 +407,13 @@ first and passes its outputs to the others as `--context`; the secret value neve
   (`demonstrates` in `lab/scenarios.yaml`), in the presenter's words, and its
   `withCapability` sentence was **observed in the agent's output on the deployed demo**
   (a Chat review or an investigation per scenario), not inferred from the capability's text.
+  The observation confirmed (a) the environment was actually in the *injected* state when the
+  agent looked, not reverted/re-seeded, and (b) the agent framed the finding as a *real*
+  problem, not "negligible at this size" — a hedged or healthy verdict on an inject-scenario
+  means the environment is undersized or the injection did not land, and is a blocking result.
+- Every generated service-dialect string (seed SQL/DDL, the Lab's inject/revert/probe
+  statements, policy JSON) ran successfully against the real service on the deployed demo —
+  not just through a mocked unit test, which cannot catch invalid grammar.
 - The Lab shows the capability as registered (state from the Agent Space), and a fresh
   deploy leaves nothing to upload or paste.
 - The demo's tests load `lab/scenarios.yaml` and check every `handler` has its trio, every

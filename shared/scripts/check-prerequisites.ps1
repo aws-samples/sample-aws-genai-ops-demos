@@ -9,7 +9,9 @@ param(
     [string]$MinCdkVersion = "",
     [switch]$SkipServiceCheck = $false,
     [switch]$RequireCDK = $false,
-    [switch]$RequireKubectl = $false
+    [switch]$RequireKubectl = $false,
+    [switch]$RequireSAM = $false,
+    [switch]$RequireDocker = $false
 )
 
 Write-Host "=== GenAI Ops Demo Prerequisites Check (Shared Script) ===" -ForegroundColor Cyan
@@ -98,6 +100,40 @@ if ($RequireKubectl) {
         }
     } catch {
         Write-Host "      ERROR: kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Check AWS SAM CLI (if required, e.g. for demos that deploy a SAM-based MCP server)
+if ($RequireSAM) {
+    Write-Host "`nChecking AWS SAM CLI..." -ForegroundColor Yellow
+    if (Get-Command sam -ErrorAction SilentlyContinue) {
+        Write-Host "      OK: AWS SAM CLI installed" -ForegroundColor Green
+    } else {
+        Write-Host "      ERROR: AWS SAM CLI not found." -ForegroundColor Red
+        Write-Host "      Install it: winget install Amazon.SAM-CLI" -ForegroundColor Cyan
+        Write-Host "      Other options: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html" -ForegroundColor Cyan
+        exit 1
+    }
+}
+
+# Check Docker (if required). A SAM app whose build must run in a container
+# (`sam build --use-container`) needs a RUNNING Docker engine — on Windows this is the
+# correct path for a makefile-SAM MCP server (the container is Linux, so the build dodges
+# missing `make` and win32-only wheels). Checks the daemon responds, not just that the CLI
+# is on PATH.
+if ($RequireDocker) {
+    Write-Host "`nChecking Docker..." -ForegroundColor Yellow
+    $dockerOk = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $null = docker info 2>$null
+        $dockerOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($dockerOk) {
+        Write-Host "      OK: Docker is installed and the engine is running" -ForegroundColor Green
+    } else {
+        Write-Host "      ERROR: Docker is required and its engine must be running." -ForegroundColor Red
+        Write-Host "      Install Docker Desktop, start it, then re-run. Verify with: docker info" -ForegroundColor Cyan
         exit 1
     }
 }

@@ -112,24 +112,37 @@ Exports: `$global:AGENT_TOOLS_SKILL_ZIP` / `AGENT_TOOLS_SKILL_ZIP`, `AGENT_TOOLS
 
 ```powershell
 & "..\..\shared\devops-agent\agent-tools\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
-    -Parameters @{ AllowedAccounts = "111111111111" }
+    -Parameters @{ AllowedAccounts = "111111111111" } `
+    -AgentSpaceId $agentSpaceId -AgentSpaceRegion $agentRegion   # auto-register when manifest registration.mode is cli
 ```
 
 ```bash
 ../../shared/devops-agent/agent-tools/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
-    --param AllowedAccounts=111111111111
+    --param AllowedAccounts=111111111111 \
+    --agent-space-id "$AGENT_SPACE_ID" --agent-space-region "$AGENT_REGION"
 ```
 
 1. Sparse-fetches `mcp/<name>` at the ref.
 2. Reads the server's **`mcp-server.yaml`** manifest and runs the deploy command it declares
    (SAM, CDK or CloudFormation; the runner does not care which).
-3. Reads the endpoint URL from the stack output the manifest names, applies the `/mcp` path
-   rule, prints the DevOps Agent registration step for the manifest's auth method.
-4. `-Destroy` / `--destroy` runs the declared teardown and lists what it does not remove.
+3. Reads the endpoint URL from the stack output the manifest names, applies the `/mcp` path rule.
+   Then, mirroring `deploy-skill`: with `-AgentSpaceId`/`--agent-space-id` AND the manifest's
+   `registration.mode: cli` (sigv4), it **registers the server in the Agent Space** —
+   `register-service` (reusing an existing registration if present) → `associate-service`,
+   allowlisting the manifest's `registration.tools`. The sigv4 role ARN comes from the stack
+   output named by `auth.roleArnOutput`. Without an Agent Space id (or for console/other modes)
+   it prints the manual registration step instead. No console step when auto-registered: a
+   deploy script with the Agent Space id leaves the demo ready to use.
+4. `-Destroy` / `--destroy` de-registers from the Agent Space (`disassociate-service` →
+   `deregister-service`) when an Agent Space id is given, then runs the declared teardown and
+   lists what it does not remove.
 
 Exports: `AGENT_TOOLS_MCP_ENDPOINT`, `AGENT_TOOLS_MCP_AUTH_METHOD`,
-`AGENT_TOOLS_MCP_SIGNING_SERVICE`, `AGENT_TOOLS_MCP_STACK`. Needs the toolchain the manifest
-declares (`sam`, `npx`/CDK or the AWS CLI); credentials and region as every shared script.
+`AGENT_TOOLS_MCP_SIGNING_SERVICE`, `AGENT_TOOLS_MCP_STACK`, and `AGENT_TOOLS_MCP_SERVICE_ID`
+(when auto-registered). Needs the toolchain the manifest declares (`sam`, `npx`/CDK or the AWS
+CLI) — a SAM app with a makefile build is built with `sam build --use-container`, which needs
+a running Docker engine (the Linux container carries `make`, so the host does not need it);
+credentials and region as every shared script.
 
 #### The manifest, `mcp-server.yaml`
 
@@ -159,9 +172,15 @@ auth:
   method: sigv4 | oauth-client-credentials | oauth-3lo | api-key | multi-headers
   signingService: lambda | execute-api       # sigv4: differs per HTTP mechanism
   callerActions: [ ... ]                     # IAM actions the DevOps Agent role needs
+  roleArnOutput: DevOpsAgentRoleArn          # sigv4 + registration.mode cli: the stack output
+                                             #   holding the role the agent assumes (mcpRoleArn)
 registration:
-  mode: cli | console | cloudformation
-  tools: { readOnly: [...], mutating: [...] }
+  mode: cli | console | cloudformation       # cli: deploy-mcp auto-registers when given
+                                             #   -AgentSpaceId/--agent-space-id (register ->
+                                             #   associate -> allowlist tools, de-register on
+                                             #   destroy). console/other: it prints the manual step.
+  serviceName: <name>                        # optional; the registered service name (default: server dir name)
+  tools: { readOnly: [...], mutating: [...] }  # both lists are allowlisted on the association
 smokeTest: ["uv", "run", "pytest", "tests/", "-q"]
 teardown:
   command: ["sam", "delete", "..."]
