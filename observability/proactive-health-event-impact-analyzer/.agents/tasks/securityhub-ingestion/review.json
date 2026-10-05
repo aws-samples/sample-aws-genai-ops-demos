@@ -1,0 +1,13 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "nit",
+      "blocking": false,
+      "file": "infrastructure/cdk/lambda/event-router/index.ts",
+      "title": "Exported Router helpers are unused by the tests",
+      "detail": "normalizeFinding and buildExecutionName are exported, but the test deliberately mirrors their logic inline (to avoid resolving the uninstalled @aws-sdk/* imports) and never imports them. The exports are harmless dead API surface. Optional: drop the export keywords or leave as-is."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\umancini\\sviluppi-new\\sample-aws-genai-ops-demos\\observability\\proactive-health-event-impact-analyzer\\.agents\\tasks\\securityhub-ingestion\\review.md"
+}
