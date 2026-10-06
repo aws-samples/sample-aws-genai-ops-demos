@@ -30,6 +30,7 @@ from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create
 from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
 import account_discovery
+from guard import guard_payload
 from actions import get_all_enabled_services, slim_extraction_result
 from workflow_orchestrator import extract_service_lifecycle
 from org_targets import resolve_targets
@@ -116,7 +117,7 @@ def start_run(step: StepContext, spec: dict) -> dict:
     account_discovery.save_resolved_accounts(resolved)  # for the UI (Sources & coverage)
     regions = spec["regions"] or resolved["regions"]
     accounts = [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]]
-    return {
+    return guard_payload({
         "run_id": str(uuid.uuid4()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "function_region": region,
@@ -128,7 +129,7 @@ def start_run(step: StepContext, spec: dict) -> dict:
         # Expected work, so the UI can show determinate progress (#150 item 6)
         "extract_total": len(services) if spec["mode"] in ("full", "extract") else 0,
         "scan_total": len(scan_cells_for(spec, regions, accounts)) if spec["mode"] in ("full", "scan") else 0,
-    }
+    }, name="start-run")
 
 
 @durable_step
@@ -143,48 +144,55 @@ def extract_cell(step: StepContext, service_name: str, refresh_origin: str) -> d
 
 
 @durable_step
-def scan_cell(step: StepContext, cell: dict) -> dict:
-    """Run one scanner in one (account, region); join verdicts against the facts table.
+def scan_cell(step: StepContext, cell: dict, run_id: str) -> dict:
+    """Run one scanner in one (account, region), persist its rows, return bounded facts.
 
     For a spoke account the scanner runs with credentials from the spoke role
     (#144); the facts table is always read with the hub's own credentials.
+
+    This is the write point (issue #225): the cell persists its OWN discovered
+    rows to the inventory table and returns only bounded facts (counts, keys,
+    labels) - the whole-org list never crosses a durable checkpoint. It is also
+    the single owner of needs_attention. If the per-scope write cannot persist
+    (save_scope_inventory raises or returns {"success": False}), that propagates
+    so the cell counts as failed and its scope drops out of scanned_scopes,
+    leaving that scope's previous inventory intact.
     """
     scanner = SCANNERS[cell["label"]]
     session = account_discovery.session_for_account(cell.get("account_id", ""), cell["region"])
     index = account_discovery.LifecycleIndex(region=cell["region"], account_id=cell.get("account_id") or None,
                                              account_name=cell.get("account_name", ""), session=session)
     items = scanner(cell["region"], index)
-    return {
+    needs_attention = sum(1 for i in items if i.get("status") in ("deprecated", "end_of_life"))
+    saved = account_discovery.save_scope_inventory(items, run_id=run_id, region=cell["region"])
+    if isinstance(saved, dict) and saved.get("success") is False:
+        raise RuntimeError(saved.get("error", "save_scope_inventory failed"))
+    return guard_payload({
         "label": cell["label"],
         "region": cell["region"],
         "account_id": index.account_id,
         "service_keys": cell["service_keys"],
-        "items": items,
+        "discovered": len(items),
+        "needs_attention": needs_attention,
         "ok": True,
-    }
+    }, name=f"scan-{cell['label']}")
 
 
 @durable_step
-def reconcile_inventory(step: StepContext, run_id: str, items: List[Dict], scanned_keys: List[str],
-                        scanned_scopes: List[Dict] = None, accounts_failed: List[str] = None) -> dict:
-    """Upsert this run's inventory and reconcile ONLY successfully scanned scopes.
+def reconcile_inventory(step: StepContext, run_id: str, scanned_scopes: List[Dict],
+                        accounts_failed: List[str] = None) -> dict:
+    """Reconcile ONLY successfully scanned scopes from rows READ BACK from the table.
 
-    Before writing, resources are cross-checked with AWS Health (#141) so each
-    row knows which of its resources AWS has already flagged in a notice.
+    No items argument crosses this boundary (issue #225): reconcile_from_table
+    reads the scanned scopes' rows back in bounded pages, runs enrichment once
+    per run over that working set (user tags #164, AWS Health #141, Extended
+    Support cost #142), re-persists the enriched rows and removes stale rows.
     """
-    tags = account_discovery.collect_resource_tags(items, scanned_scopes)  # user tags per resource (#164)
-    health = account_discovery.cross_check_health(items, scanned_scopes)
-    cost = account_discovery.estimate_cost_exposure(items)  # RDS/Aurora Extended Support (#142)
-    result = account_discovery.save_to_dynamodb(
-        items, run_id=run_id, scanned_services=sorted(set(scanned_keys)), scanned_scopes=scanned_scopes,
-    )
-    result["tags"] = tags
-    result["health"] = health
-    result["cost_exposure"] = cost
+    totals = account_discovery.reconcile_from_table(run_id, scanned_scopes or [])
     # Which accounts this run actually covered (for Sources & coverage, #144)
     scoped = {sc.get("account_id", "") for sc in (scanned_scopes or [])}
     account_discovery.record_scan_outcome(sorted(scoped), sorted(set(accounts_failed or []) - scoped))
-    return result
+    return guard_payload(totals, name="reconcile-inventory")
 
 
 @durable_step
@@ -250,7 +258,7 @@ def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summa
             Message="\n".join(lines),
         )
         summary["notified"] = True
-    return summary
+    return guard_payload(summary, name="summarize-and-notify")
 
 
 # ---------------------------------------------------------------------------
@@ -294,15 +302,16 @@ def handler(event: dict, context: DurableContext) -> dict:
         cells = scan_cells_for(spec, run["regions"], run.get("accounts"))
 
         def _scan(ctx: DurableContext, cell: dict, index: int, _all) -> dict:
-            return ctx.step(scan_cell(cell), name=f"scan-{cell['label']}-{cell['account_id']}-{cell['region']}",
+            return ctx.step(scan_cell(cell, run["run_id"]),
+                            name=f"scan-{cell['label']}-{cell['account_id']}-{cell['region']}",
                             config=_SCAN_RETRY)
 
         batch = context.map(cells, _scan, name="scan",
                             config=MapConfig(max_concurrency=SCAN_CONCURRENCY,
                                              completion_config=_TOLERATE_ALL))
-        scan_summary, items, scanned_keys = summarize_scan(cells, batch)
+        scan_summary = summarize_scan(cells, batch)
         reconcile_result = context.step(
-            reconcile_inventory(run["run_id"], items, scanned_keys, scan_summary["scanned_scopes"],
+            reconcile_inventory(run["run_id"], scan_summary["scanned_scopes"],
                                 scan_summary["accounts_failed"]),
             name="reconcile-inventory")
 
@@ -345,26 +354,30 @@ def summarize_extract(services: List[str], batch) -> dict:
     }
 
 
-def summarize_scan(cells: List[Dict], batch):
-    items, scanned_keys, failed_cells, scopes = [], [], [], []
+def summarize_scan(cells: List[Dict], batch) -> dict:
+    """Fold the scan map into BOUNDED facts only (issue #225): counts, scope keys,
+    per-account outcome. No per-resource objects cross this boundary - the rows
+    were written where they were discovered (scan_cell -> save_scope_inventory).
+    items_discovered / needs_attention come from the per-cell bounded counts."""
+    scanned_keys, failed_cells, scopes = [], [], []
+    items_discovered, needs_attention = 0, 0
     for cell, result in zip(cells, _results_by_index(batch, len(cells))):
         if result is not None:
-            items.extend(result["items"])
             scanned_keys.extend(result["service_keys"])
             scopes.append({"account_id": result.get("account_id") or cell.get("account_id", ""),
                            "region": cell["region"], "service_keys": result["service_keys"]})
+            items_discovered += result["discovered"]
+            needs_attention += result["needs_attention"]
         else:
             failed_cells.append(f"{cell['label']}@{cell.get('account_id') or 'hub'}/{cell['region']}")
-    needs_attention = sum(1 for i in items if i.get("status") in ("deprecated", "end_of_life"))
-    summary = {
+    return {
         "cells_total": len(cells),
         "cells_succeeded": len(cells) - len(failed_cells),
         "failed_cells": failed_cells,
-        "items_discovered": len(items),
+        "items_discovered": items_discovered,
         "needs_attention": needs_attention,
         "scanned_service_keys": sorted(set(scanned_keys)),
         "scanned_scopes": scopes,
         "accounts_scanned": sorted({sc["account_id"] for sc in scopes}),
         "accounts_failed": sorted({c.get("account_id", "") for c in cells} - {sc["account_id"] for sc in scopes}),
     }
-    return summary, items, scanned_keys

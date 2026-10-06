@@ -72,8 +72,12 @@ def mocks():
          patch.object(lp.account_discovery, "save_resolved_accounts"), \
          patch.object(lp.account_discovery, "record_scan_outcome"), \
          patch.object(lp.account_discovery, "session_for_account", return_value=None), \
-         patch.object(lp.account_discovery, "save_to_dynamodb",
-                      return_value={"success": True, "items_saved": 1, "stale_removed": 0}) as save, \
+         patch.object(lp.account_discovery, "save_scope_inventory",
+                      return_value={"saved": 1}) as save_scope, \
+         patch.object(lp.account_discovery, "reconcile_from_table",
+                      return_value={"success": True, "items_saved": 1, "stale_removed": 0,
+                                    "tags": {"available": False}, "health": {"available": False},
+                                    "cost_exposure": {"available": False}, "scopes_failed": 0}) as reconcile, \
          patch.object(lp.account_discovery, "collect_resource_tags",
                       return_value={"available": False, "reason": "test", "resources": 0, "tagged": 0, "keys": {}}), \
          patch.object(lp.account_discovery, "cross_check_health",
@@ -84,7 +88,7 @@ def mocks():
          patch.dict(lp.account_discovery.SCANNER_SERVICE_KEYS,
                     {"Lambda": ["lambda"], "EKS": ["eks"]}, clear=True), \
          patch("boto3.client") as boto_client:
-        yield {"save": save, "boto": boto_client}
+        yield {"save_scope": save_scope, "reconcile": reconcile, "boto": boto_client}
 
 
 class TestFullPipeline:
@@ -114,16 +118,22 @@ class TestFullPipeline:
 
     def test_reconciliation_scoped_to_succeeded_scanner_cells(self, mocks):
         _run({"mode": "scan"})
-        kwargs = mocks["save"].call_args.kwargs
-        # EKS scanner failed -> its scope must NOT be reconciled
-        assert kwargs["scanned_services"] == ["lambda"]
-        assert kwargs["run_id"]
-        items = mocks["save"].call_args.args[0]
-        assert items[0]["item_id"] == "inventory#nodejs14.x"
+        # reconcile reads back from the table once, driven by scanned_scopes -
+        # no items argument crosses the boundary (issue #225)
+        assert mocks["reconcile"].call_count == 1
+        args = mocks["reconcile"].call_args.args
+        run_id, scanned_scopes = args[0], args[1]
+        assert run_id
+        service_keys = {k for sc in scanned_scopes for k in sc["service_keys"]}
+        # EKS scanner failed -> its scope must NOT be reconciled; Lambda succeeded
+        assert service_keys == {"lambda"}
+        # the succeeded Lambda cell persisted its own rows via save_scope_inventory
+        assert mocks["save_scope"].called
+        assert mocks["save_scope"].call_args.kwargs["run_id"] == run_id
 
     def test_run_id_is_stable_and_present_in_summary(self, mocks):
         out = _result(_run({"mode": "scan"}))
-        assert out["run_id"] == mocks["save"].call_args.kwargs["run_id"]
+        assert out["run_id"] == mocks["reconcile"].call_args.args[0]
 
 
 class TestModes:
@@ -133,7 +143,8 @@ class TestModes:
         assert out["extract"]["total"] == 3
         assert out["scan"]["cells_total"] == 0
         assert out["inventory"] == {}
-        mocks["save"].assert_not_called()
+        mocks["save_scope"].assert_not_called()
+        mocks["reconcile"].assert_not_called()
         assert not any(n.startswith("scan-") for n in _step_names(res))
 
     def test_scan_mode_skips_extract(self, mocks):

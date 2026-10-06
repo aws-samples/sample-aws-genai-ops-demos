@@ -948,6 +948,173 @@ SCANNER_SERVICE_KEYS = {
 }
 
 
+# Rows read per Query request when reconciling from the table (issue #225).
+# Bounds rows READ PER REQUEST (and so peak page memory), not matches: the
+# Query is on the service_name partition key only and buckets by scope in
+# memory, so a page may contain out-of-scope rows filtered after the read.
+PAGE_SIZE = 100
+
+
+class FactsTableRefusal(Exception):
+    """Raised when an inventory write would target the extraction facts table (#116)."""
+
+    def __init__(self, table_name: str):
+        self.table_name = table_name
+        super().__init__(table_name)
+
+
+def _inventory_table(table_name: str = None, region: str = None):
+    """Resolve the inventory table and REFUSE the facts table (issue #116).
+
+    Returns (table, resolved_table_name). Raises FactsTableRefusal if the
+    resolved name is the LIFECYCLE_TABLE_NAME facts table - callers map that
+    refusal back to their own externally-observable shape."""
+    region = region or REGION
+    table_name = table_name or INVENTORY_TABLE_NAME
+    lifecycle_table_name = os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
+    if table_name == lifecycle_table_name:
+        raise FactsTableRefusal(table_name)
+    table = boto3.resource("dynamodb", region_name=region).Table(table_name)
+    return table, table_name
+
+
+def _facts_table_refusal_result(table_name: str) -> Dict:
+    """The exact facts-table refusal dict (issue #116), shared by every writer
+    so TestFactsTableGuard and callers' early-return contract stay unchanged."""
+    return {
+        "success": False,
+        "error": (
+            f"Refusing to write inventory to the extraction facts table "
+            f"'{table_name}'. Inventory belongs in '{INVENTORY_TABLE_NAME}' (issue #116)."
+        ),
+    }
+
+
+def save_scope_inventory(items: List[Dict], run_id: str, table_name: str = None,
+                         region: str = None) -> Dict:
+    """Upsert ONE scan cell's rows (issue #225): tag with run_id + provenance and
+    put them, trimmed to the row budget. No reconciliation and no enrichment here
+    - stale removal and tags/health/cost run once per RUN in reconcile_from_table.
+
+    Returns bounded facts only: {"saved": int} (never rows, never needs_attention).
+    Refuses the facts table the same way save_to_dynamodb does (returns
+    {"success": False, "error": "...facts table..."})."""
+    try:
+        table, _ = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
+
+    for item in items:
+        item["provenance"] = DISCOVERY_PROVENANCE
+        item["discovery_run_id"] = run_id
+    with table.batch_writer() as batch:
+        for item in items:
+            batch.put_item(Item=_dynamo_safe(fit_row_to_budget(item)))
+    return {"saved": len(items)}
+
+
+def reconcile_from_table(run_id: str, scanned_scopes: List[Dict],
+                         table_name: str = None, region: str = None) -> Dict:
+    """Reconcile the whole run from rows READ BACK from the table (issue #225),
+    never from an items argument. ONE pass per run:
+
+      1. For each service_key present across scanned_scopes, query that service's
+         partition (service_name = PK), paging with Limit=PAGE_SIZE + LastEvaluatedKey,
+         keeping rows whose (account_id, region) is a scanned scope -> working_set;
+         also collect stale item_ids (discovery_run_id != run_id, in a scanned scope).
+      2. Run enrichment ONCE over the whole working_set:
+         collect_resource_tags(working_set, scanned_scopes),
+         cross_check_health(working_set, scanned_scopes),
+         estimate_cost_exposure(working_set)
+         -> each writes its single control row exactly once (unchanged behavior).
+      3. Re-put the enriched working_set rows (fit_row_to_budget + _dynamo_safe).
+      4. Batch-delete the stale keys.
+
+    Returns bounded aggregates only:
+      {"success", "items_saved", "stale_removed", "run_id", "table_name",
+       "tags", "health", "cost_exposure", "scopes_failed"}."""
+    try:
+        table, resolved_name = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
+
+    scanned_scopes = scanned_scopes or []
+    # Which (account, region, service_key) scopes this run reconciles. Identical
+    # to how save_to_dynamodb derives scoped from scanned_scopes.
+    scoped = {(sc["account_id"], sc["region"], k)
+              for sc in scanned_scopes for k in sc.get("service_keys", [])}
+    scanned_services = sorted({k for sc in scanned_scopes for k in sc.get("service_keys", [])})
+
+    def _in_scope(row) -> bool:
+        # Same predicate as save_to_dynamodb: rows without an account_id
+        # (pre-#144 key format) are always reconciled away.
+        if not scoped or not row.get("account_id"):
+            return True
+        return (row.get("account_id"), row.get("region"), row["service_name"]) in scoped
+
+    working_set: List[Dict] = []
+    stale_keys: List[Dict] = []
+    scopes_failed = 0
+    for service_key in scanned_services:
+        try:
+            kwargs = {
+                "KeyConditionExpression": "service_name = :s",
+                "ExpressionAttributeValues": {":s": service_key},
+                "Limit": PAGE_SIZE,
+            }
+            response = table.query(**kwargs)
+            while True:
+                for row in response.get("Items", []):
+                    in_scope = _in_scope(row)
+                    if row.get("discovery_run_id") == run_id:
+                        if in_scope:
+                            working_set.append(row)
+                    elif in_scope:
+                        stale_keys.append({
+                            "service_name": row["service_name"],
+                            "item_id": row["item_id"],
+                        })
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+        except Exception:  # one unreadable service/scope must not abort reconcile
+            scopes_failed += 1
+
+    # Enrichment runs ONCE over the whole working set, never per scope and never
+    # per page: each control row is written exactly once per run (HIGH-1/HIGH-2).
+    tags = collect_resource_tags(working_set, scanned_scopes)
+    health = cross_check_health(working_set, scanned_scopes)
+    cost = estimate_cost_exposure(working_set)
+
+    items_saved = 0
+    try:
+        with table.batch_writer() as batch:
+            for row in working_set:
+                batch.put_item(Item=_dynamo_safe(fit_row_to_budget(row)))
+                items_saved += 1
+    except Exception:
+        scopes_failed += 1
+
+    try:
+        with table.batch_writer() as batch:
+            for key in stale_keys:
+                batch.delete_item(Key=key)
+    except Exception:
+        scopes_failed += 1
+
+    return {
+        "success": True,
+        "items_saved": items_saved,
+        "stale_removed": len(stale_keys),
+        "run_id": run_id,
+        "table_name": resolved_name,
+        "tags": tags,
+        "health": health,
+        "cost_exposure": cost,
+        "scopes_failed": scopes_failed,
+    }
+
+
 def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = None,
                      run_id: str = None, scanned_services: List[str] = None,
                      scanned_scopes: List[Dict] = None) -> Dict:
@@ -982,26 +1149,16 @@ def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = No
     """
     import uuid
 
-    region = region or REGION
-    table_name = table_name or INVENTORY_TABLE_NAME
-
     # Hard guard (issue #116): reconciliation below deletes rows outside the
     # current run, so pointing this at the extraction facts table would destroy
     # deprecation data. A caller passing the lifecycle table is always a bug -
     # refuse rather than corrupt.
-    lifecycle_table_name = os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
-    if table_name == lifecycle_table_name:
-        return {
-            "success": False,
-            "error": (
-                f"Refusing to write inventory to the extraction facts table "
-                f"'{table_name}'. Inventory belongs in '{INVENTORY_TABLE_NAME}' (issue #116)."
-            ),
-        }
+    try:
+        table, table_name = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
 
     run_id = run_id or str(uuid.uuid4())
-    dynamodb = boto3.resource("dynamodb", region_name=region)
-    table = dynamodb.Table(table_name)
 
     try:
         for item in items:
