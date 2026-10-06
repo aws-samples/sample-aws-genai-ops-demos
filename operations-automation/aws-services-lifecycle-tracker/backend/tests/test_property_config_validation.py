@@ -21,20 +21,31 @@ from unittest.mock import MagicMock
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Mock heavy dependencies that are not needed for config validation
-sys.modules['bs4'] = MagicMock()
-sys.modules['boto3'] = MagicMock()
-sys.modules['botocore'] = MagicMock()
-sys.modules['botocore.exceptions'] = MagicMock()
-sys.modules['requests'] = MagicMock()
-sys.modules['aws_utils'] = MagicMock()
-sys.modules['database_reads'] = MagicMock()
-sys.modules['service_filters'] = MagicMock()
+# Mock heavy dependencies that are not needed for config validation.
+# These stubs are installed only for the duration of this module's import of
+# data_extractor and are restored afterwards, so they do not leak into other
+# test modules (replacing real botocore/boto3 in sys.modules would break every
+# test collected after this one in the same process).
+_MOCKED_MODULES = (
+    'bs4', 'boto3', 'botocore', 'botocore.exceptions',
+    'requests', 'aws_utils', 'database_reads', 'service_filters',
+)
+_SAVED_MODULES = {name: sys.modules.get(name) for name in _MOCKED_MODULES}
+for _name in _MOCKED_MODULES:
+    sys.modules[_name] = MagicMock()
+
+from data_extractor import validate_service_config, SERVICE_CONFIG_REQUIRED_FIELDS
+
+# Restore the real modules so subsequent test modules see the genuine
+# botocore/boto3 (and friends) rather than this module's MagicMock stubs.
+for _name, _mod in _SAVED_MODULES.items():
+    if _mod is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _mod
 
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
-
-from data_extractor import validate_service_config, SERVICE_CONFIG_REQUIRED_FIELDS
 
 
 # ---------------------------------------------------------------------------
