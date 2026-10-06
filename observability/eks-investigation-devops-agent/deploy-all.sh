@@ -355,6 +355,36 @@ if [ -n "$FAILURE_SIM_LAMBDA_ROLE_ARN" ] && [ "$FAILURE_SIM_LAMBDA_ROLE_ARN" != 
         --region "$AWS_REGION" >/dev/null 2>&1 || true
     echo "  Failure Simulator Lambda EKS access granted (namespaces: payment-demo, kube-system)."
 fi
+
+# Grant the DevOps Agent Space role read access to the EKS cluster.
+# This is the role the DevOps Agent assumes to investigate the cluster (read pods,
+# logs, events). Without this access entry its kubectl calls stall at the API server
+# and investigations time out with no findings, even though injection and alarms work.
+AGENT_SPACE_ROLE_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "DevOpsAgentEksAgentSpace-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='AgentSpaceRoleArn'].OutputValue" \
+    --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+if [ -n "$AGENT_SPACE_ROLE_ARN" ] && [ "$AGENT_SPACE_ROLE_ARN" != "None" ]; then
+    echo "  Granting EKS access to DevOps Agent Space role ($AGENT_SPACE_ROLE_ARN)..."
+    # Access entries bind to the role's unique id: an entry left over from a previous
+    # deployment of a same-named role no longer matches. Recreate it every time.
+    aws eks delete-access-entry \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$AGENT_SPACE_ROLE_ARN" \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    aws eks create-access-entry \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$AGENT_SPACE_ROLE_ARN" \
+        --type STANDARD \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    aws eks associate-access-policy \
+        --cluster-name "$PROJECT_NAME-$ENVIRONMENT-cluster" \
+        --principal-arn "$AGENT_SPACE_ROLE_ARN" \
+        --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy \
+        --access-scope type=cluster \
+        --region "$AWS_REGION" >/dev/null 2>&1 || true
+    echo "  DevOps Agent Space role EKS access granted (read-only, cluster scope)."
+fi
 echo ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)

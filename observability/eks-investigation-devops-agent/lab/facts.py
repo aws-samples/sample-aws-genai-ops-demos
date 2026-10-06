@@ -29,7 +29,22 @@ def console_host(region: str = REGION) -> str:
 
 
 def console_url(service: str, fragment: str, region: str = REGION) -> str:
+    """Hash-routed console URL (CloudWatch, Lambda, ...): /<service>/home?region=R#<fragment>."""
     return f'{console_host(region)}/{service}/home?region={region}#{fragment}'
+
+
+def eks_console_url(cluster: str, path: str = '', region: str = REGION) -> str:
+    """EKS console URL. The EKS console uses a path-based scheme (no #hash), e.g.
+    /eks/clusters/<cluster>/resources/namespaces/<ns>. The old /eks/home#/clusters/...
+    hash format no longer resolves."""
+    return f'{console_host(region)}/eks/clusters/{cluster}{path}'
+
+
+def eks_pod_console_url(cluster: str, namespace: str, pod: str, region: str = REGION) -> str:
+    """EKS console URL for a single pod's detail page. The pod name is a path segment;
+    namespace and region are query params (the scheme the current EKS console uses)."""
+    return (f'{console_host(region)}/eks/clusters/{cluster}/resources/pods/{pod}'
+            f'?namespace={namespace}&region={region}')
 
 
 def console_link(text: str, href: str) -> Dict[str, str]:

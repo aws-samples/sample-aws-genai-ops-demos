@@ -357,6 +357,36 @@ if ($FailureSimLambdaRoleArn -and $FailureSimLambdaRoleArn -ne "None") {
         --region $AWS_REGION 2>$null | Out-Null
     Write-Host "  Failure Simulator Lambda EKS access granted (namespaces: payment-demo, kube-system)."
 }
+
+# Grant the DevOps Agent Space role read access to the EKS cluster.
+# This is the role the DevOps Agent assumes to investigate the cluster (read pods,
+# logs, events). Without this access entry its kubectl calls stall at the API server
+# and investigations time out with no findings, even though injection and alarms work.
+$AgentSpaceRoleArn = aws cloudformation describe-stacks `
+    --stack-name "DevOpsAgentEksAgentSpace-$AWS_REGION" `
+    --query "Stacks[0].Outputs[?OutputKey=='AgentSpaceRoleArn'].OutputValue" `
+    --output text --region $AWS_REGION 2>$null
+if ($AgentSpaceRoleArn -and $AgentSpaceRoleArn -ne "None") {
+    Write-Host "  Granting EKS access to DevOps Agent Space role ($AgentSpaceRoleArn)..."
+    # Access entries bind to the role's unique id: an entry left over from a previous
+    # deployment of a same-named role no longer matches. Recreate it every time.
+    aws eks delete-access-entry `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $AgentSpaceRoleArn `
+        --region $AWS_REGION 2>$null | Out-Null
+    aws eks create-access-entry `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $AgentSpaceRoleArn `
+        --type STANDARD `
+        --region $AWS_REGION 2>$null | Out-Null
+    aws eks associate-access-policy `
+        --cluster-name "$ProjectName-$Environment-cluster" `
+        --principal-arn $AgentSpaceRoleArn `
+        --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy `
+        --access-scope type=cluster `
+        --region $AWS_REGION 2>$null | Out-Null
+    Write-Host "  DevOps Agent Space role EKS access granted (read-only, cluster scope)."
+}
 Write-Host ""
 
 # Wait for EKS API authentication to propagate (access entries are eventually consistent)

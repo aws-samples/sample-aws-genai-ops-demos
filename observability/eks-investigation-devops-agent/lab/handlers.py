@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, NamedTuple
 
 import boto3
 
-from facts import console_link, console_url, fact, item
+from facts import console_link, console_url, eks_console_url, eks_pod_console_url, fact, item
 
 
 class Handler(NamedTuple):
@@ -141,8 +141,8 @@ def _must(r: Dict[str, Any], what: str) -> None:
         raise RuntimeError(f"{what}: {r['stderr'].strip()}")
 
 
-def _cluster_console(fragment: str = '') -> str:
-    return console_url('eks', f'/clusters/{EKS_CLUSTER_NAME}{fragment}')
+def _cluster_console(path: str = '') -> str:
+    return eks_console_url(EKS_CLUSTER_NAME, path)
 
 
 def _pods_fact(label: str, namespace: str, selector: str) -> Dict[str, Any]:
@@ -153,6 +153,7 @@ def _pods_fact(label: str, namespace: str, selector: str) -> Dict[str, Any]:
         logger.warning('Pod listing failed for %s/%s: %s', namespace, selector, e)
         return fact(label, 'Unreachable', status='warning', detail=str(e))
     items = []
+    first_unhealthy_pod = None
     for pod in pods:
         phase = pod.get('status', {}).get('phase', 'Unknown')
         restarts, ready = 0, True
@@ -164,12 +165,21 @@ def _pods_fact(label: str, namespace: str, selector: str) -> Dict[str, Any]:
                 phase = reason
         healthy = ready and phase == 'Running'
         pending = phase in ('Pending', 'ContainerCreating')
-        items.append(item(pod['metadata']['name'],
+        pod_name = pod['metadata']['name']
+        if not healthy and not pending and first_unhealthy_pod is None:
+            first_unhealthy_pod = pod_name
+        items.append(item(pod_name,
                           status='success' if healthy else 'pending' if pending else 'error',
                           detail=phase + (f', {restarts} restarts' if restarts else '')))
+    # Link straight to the failing pod's console page when one is unhealthy (the demo's whole
+    # point is "click here and see the failure"); otherwise fall back to the namespace view.
+    if first_unhealthy_pod:
+        link_href = eks_pod_console_url(EKS_CLUSTER_NAME, namespace, first_unhealthy_pod)
+    else:
+        link_href = _cluster_console(f'/resources/namespaces/{namespace}')
     return fact(label, items=items, value=None if items else 'No pods',
                 status=None if items else 'error',
-                link=console_link('Console', _cluster_console(f'/pods?namespace={namespace}')))
+                link=console_link('Console', link_href))
 
 
 def _deployment_fact(dep: dict) -> Dict[str, Any]:
@@ -187,7 +197,8 @@ def environment() -> List[Dict[str, Any]]:
     """Facts about the environment as a whole, shown in the Lab header."""
     return [
         fact('Cluster', EKS_CLUSTER_NAME, link=console_link('Console', _cluster_console())),
-        fact('Namespace', NAMESPACE),
+        fact('Namespace', NAMESPACE,
+             link=console_link('Console', _cluster_console(f'/resources/namespaces/{NAMESPACE}'))),
     ]
 
 
