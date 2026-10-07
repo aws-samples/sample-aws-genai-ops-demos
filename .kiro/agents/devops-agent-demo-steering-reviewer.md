@@ -1,8 +1,8 @@
 ---
 name: devops-agent-demo-steering-reviewer
-description: Reviews a native-agent demo against the three steering files (demo guide, Lab UI guide, contributor guide) and the shared-bricks contract, with fresh context. Read-only; writes one review file with a verdict.
-tools: ["read"]
-allowedTools: ["read"]
+description: Reviews a native-agent demo against the three steering files (demo guide, Lab UI guide, contributor guide) and the shared-bricks contract, with fresh context. Does not change the demo; writes only its review and verdict files under .kiro/workflow-runs/.
+tools: ["read", "write"]
+allowedTools: ["read", "write"]
 permissions:
   rules:
     - capability: fs_write
