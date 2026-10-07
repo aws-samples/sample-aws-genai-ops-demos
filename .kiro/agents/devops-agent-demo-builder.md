@@ -5,15 +5,40 @@ tools: ["read", "write", "shell", "web"]
 allowedTools: ["read", "write"]
 permissions:
   rules:
+    # Deny-list model: this build agent works locally on a throwaway branch, so almost
+    # everything it runs is reversible and safe. Rather than enumerate every allowed command
+    # (an endless chase across tools, flag orderings, redirects and shells — PowerShell today,
+    # bash/zsh tomorrow), we DENY the few genuinely dangerous verbs and ALLOW the rest.
+    #
+    # This block is evaluated FIRST (rules are first-match-wins by order) and every pattern is
+    # wrapped in leading+trailing "*" so the verb is caught ANYWHERE in the line — as the
+    # second half of a pipe or chain (`npm run build && git push`), with any redirect
+    # appended, and regardless of surrounding flags. These are the ONLY commands that prompt
+    # the user (effect: ask): PUBLISHING (push / merge / PR) and touching REAL infrastructure
+    # (deploy / destroy / any aws call). Everything else runs silently (allow below) —
+    # including deleting files: the agent works inside the demo folder it is creating, on a
+    # throwaway local branch, so local file operations are reversible via git.
     - capability: shell
-      match: ["npm *", "npx tsc *", "npx cdk synth *", "npx jest *", "npx vite *", "python -m pytest *", "python *", "pip *", "git status *", "git diff *", "git add *", "git commit *", "git log *", "Get-ChildItem *", "Get-Content *", "Select-String *"]
-      effect: allow
-    - capability: shell
-      match: ["git push *", "gh pr *", "gh pr create*", "npx cdk deploy *", "npx cdk destroy *", "npx cdk bootstrap *", "aws *", "*deploy-all*", "*destroy-all*"]
-      effect: deny
+      match:
+        - "*git push*"
+        - "*git merge*"
+        - "*gh pr*"
+        - "*gh release*"
+        - "*git remote*"
+        - "*cdk deploy*"
+        - "*cdk destroy*"
+        - "*cdk bootstrap*"
+        - "*aws *"
+        - "*deploy-all*"
+        - "*destroy-all*"
+      effect: ask
+    # Everything else is allowed, bare / piped / redirected, on any OS: npm/npx/tsc/jest/vite,
+    # python/pytest/pip, cfn-lint, local and read-only git (status/diff/add/commit/log/
+    # checkout/restore/stash), shell inspection, and local file operations (rm, Remove-Item,
+    # mkdir) inside the demo folder.
     - capability: shell
       match: ["*"]
-      effect: ask
+      effect: allow
     - capability: fs_write
       match: ["shared/**", ".kiro/steering/**", ".github/**"]
       effect: deny

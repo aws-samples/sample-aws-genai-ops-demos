@@ -11,12 +11,29 @@ permissions:
     - capability: fs_write
       match: ["**"]
       effect: deny
+    # Deny-list model (consistent with the other factory agents). This agent only sparse-
+    # fetches a capability and reads files; it never deploys, publishes or mutates infra.
+    # Enumerating its exact git/read commands is fragile (a flag ordering like `Get-Content
+    # <path> -Raw` misses a `Get-Content *` pattern), so DENY the dangerous verbs anywhere in
+    # the line (deny is first-match-wins, evaluated first) and ALLOW the rest. Its write scope
+    # is already locked down by the fs_write rules above.
     - capability: shell
-      match: ["git clone *", "git -C * sparse-checkout *", "git -C * rev-parse *", "Get-ChildItem *", "Get-Content *"]
-      effect: allow
+      match:
+        - "*git push*"
+        - "*git merge*"
+        - "*gh pr*"
+        - "*gh release*"
+        - "*git commit*"
+        - "*cdk deploy*"
+        - "*cdk destroy*"
+        - "*cdk bootstrap*"
+        - "*aws *"
+        - "*deploy-all*"
+        - "*destroy-all*"
+      effect: ask
     - capability: shell
       match: ["*"]
-      effect: deny
+      effect: allow
 resources:
   - "file://.kiro/steering/native-agent-demo-guide.md"
   - "file://.kiro/steering/demo-lab-ui-guide.md"

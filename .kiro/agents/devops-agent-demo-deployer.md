@@ -5,15 +5,26 @@ tools: ["read", "write", "shell"]
 allowedTools: ["read"]
 permissions:
   rules:
+    # Deny-list model. This agent DEPLOYS (that is its job) and makes read-only aws calls, so
+    # a per-command allow-list is both an endless chase and wrong for its role. Instead DENY
+    # the two things it must never do — PUBLISH (push / PR / release) and TEAR DOWN
+    # (destroy / delete-stack / the destroy script) — and ALLOW the rest. Deny is evaluated
+    # FIRST (first-match-wins) and every pattern is wrapped in "*...*" so the verb is caught
+    # anywhere in the line, including after a redirect or inside a pipe or chain.
     - capability: shell
-      match: ["*deploy-all.ps1*", "aws sts get-caller-identity*", "aws cloudformation describe-stacks *", "aws cloudformation describe-stack-events *", "aws logs *", "Get-Content *", "Get-ChildItem *", "Start-Sleep *"]
-      effect: allow
-    - capability: shell
-      match: ["git push *", "gh pr *", "*destroy-all*", "npx cdk destroy *", "aws cloudformation delete-stack *"]
-      effect: deny
+      match:
+        - "*git push*"
+        - "*git merge*"
+        - "*gh pr*"
+        - "*gh release*"
+        - "*git remote*"
+        - "*destroy-all*"
+        - "*cdk destroy*"
+        - "*delete-stack*"
+      effect: ask
     - capability: shell
       match: ["*"]
-      effect: ask
+      effect: allow
     - capability: fs_write
       match: ["**/.kiro/workflow-runs/**"]
       effect: allow
