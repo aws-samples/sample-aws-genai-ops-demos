@@ -183,7 +183,14 @@ export default function ChatInterface() {
         messageToSend,
         history,
         mode,
-        paginationRef.current
+        paginationRef.current,
+        // Threaded through so the chat model can answer org/delegated-admin
+        // questions directly instead of guessing (#173 Level 1 follow-up).
+        // Omitted (undefined) if the capabilities probe hasn't resolved
+        // yet or found no Organization at all.
+        capabilities
+          ? { org_id: capabilities.org_id, is_delegated_admin: capabilities.is_delegated_admin }
+          : null
       );
 
       const durationSeconds = Math.max(

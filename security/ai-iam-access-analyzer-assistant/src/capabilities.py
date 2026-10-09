@@ -31,7 +31,9 @@ runs in, taken from ``AWS_REGION`` at cold start):
         {"source": "cloudtrail", "state": "checked", "detail": "..."},
         {"source": "organizations", "state": "checked", "detail": "..."}
       ],
-      "welcome_message": "In <region> I can see external access findings ..."
+      "welcome_message": "In <region> I can see external access findings ...",
+      "org_id": "o-xxxxxxxxxx" | null,
+      "is_delegated_admin": true | false | null
     }
 """
 
@@ -113,6 +115,17 @@ def _probe() -> dict:
         "region": _REGION,
         "coverage": coverage,
         "welcome_message": welcome,
+        # Structured org fields, in addition to the prose already folded
+        # into the "organizations" coverage entry's `detail` string above.
+        # The frontend threads these into each /conversation POST as
+        # `org_context` so the chat model can answer org/delegated-admin
+        # questions directly instead of guessing from tool-result data it
+        # has no business inferring org structure from (see #173 Level 1
+        # follow-up: live testing on 2026-10-09 found the model, with no
+        # access to this fact, confidently guessed the WRONG account as
+        # delegated admin when asked directly).
+        "org_id": org_status.get("org_id"),
+        "is_delegated_admin": org_status.get("is_delegated_admin"),
     }
 
 
@@ -313,7 +326,7 @@ def _probe_org_detection(sh: dict) -> dict:
     org before this probe was written.
     """
     coverage: list = []
-    result = {"in_org": False, "is_delegated_admin": None, "coverage": coverage}
+    result = {"in_org": False, "is_delegated_admin": None, "org_id": None, "coverage": coverage}
 
     try:
         org = organizations_client.describe_organization()["Organization"]
@@ -333,6 +346,7 @@ def _probe_org_detection(sh: dict) -> dict:
 
     result["in_org"] = True
     org_id = org.get("Id", "unknown")
+    result["org_id"] = org_id
 
     # Only meaningful if Security Hub itself is enabled here (sh["enabled"]
     # from _probe_security_hub, run just before this). If SH is off, there

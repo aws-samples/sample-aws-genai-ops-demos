@@ -2027,6 +2027,15 @@ def handler(event, context):
         conversation_history = body.get("history", [])
         mode = body.get("mode", "guided")
         pagination_ctx = body.get("pagination")
+        # Org/delegated-admin facts from the frontend's already-fetched
+        # /capabilities probe (#173 Level 1 follow-up). Threaded in per-turn
+        # rather than re-probed here: org membership is session-stable, the
+        # probe already ran once at chat-open, and re-calling
+        # organizations/securityhub APIs on every turn would both duplicate
+        # that work and risk the API Gateway 29s ceiling for no freshness
+        # gain. Absent/None is treated the same as "not part of an
+        # Organization" — see _get_system_prompt below.
+        org_context = body.get("org_context")
 
         if not user_message:
             return {
@@ -2135,8 +2144,8 @@ def handler(event, context):
             )
         messages.append({"role": "user", "content": [{"text": user_message}]})
 
-        # Select system prompt based on mode
-        system_prompt = _get_system_prompt(mode)
+        # Select system prompt based on mode (+ org context, #173 Level 1)
+        system_prompt = _get_system_prompt(mode, org_context)
 
         # Run conversation with tool orchestration
         response, tool_calls_made, new_pagination, coverage = converse_with_tools(
@@ -2205,10 +2214,86 @@ def handler(event, context):
         }
 
 
-def _get_system_prompt(mode: str) -> str:
-    """Get system prompt adjusted for the user's selected mode."""
+def _get_org_context_block(org_context: dict | None) -> str:
+    """Render the org/delegated-admin facts as a short static-shaped block.
+
+    Appended to the system prompt (#173 Level 1 follow-up) so the model can
+    answer org-structure questions directly instead of guessing from
+    tool-result data it has no basis to infer org structure from. Live
+    testing on 2026-10-09 found the model, with no access to this fact,
+    confidently named the WRONG account as the Security Hub delegated
+    administrator when asked directly — this block exists to prevent that.
+
+    Deliberately a single static block per request, not per-tool-call data,
+    matching the existing MODE: QUICK / MODE: GUIDED suffix pattern below —
+    org membership does not change within a chat session, so this costs
+    nothing against the Bedrock prompt-caching checkpoint beyond what the
+    mode suffix already costs (see the cachePoint comment in
+    converse_with_tools).
+
+    ``org_context`` is the frontend's already-fetched /capabilities probe
+    result (``{"org_id": ..., "is_delegated_admin": ...}``), or None/absent
+    if the probe hasn't resolved yet or found no Organization — both cases
+    render the same "not confirmed" block below, since this function must
+    never claim an organization exists without the probe having said so.
+    """
+    org_id = (org_context or {}).get("org_id")
+    is_admin = (org_context or {}).get("is_delegated_admin")
+
+    if not org_id:
+        return """
+
+ORG CONTEXT:
+This account is not confirmed to be part of an AWS Organization (or that
+check has not completed). Do not claim or guess an Organization ID, a
+delegated-administrator account, or an account count. If asked, say this
+account's org membership was not detected and offer to check the findings
+data's account_id field as the only evidence available."""
+
+    if is_admin is True:
+        return f"""
+
+ORG CONTEXT:
+This account is part of AWS Organization {org_id} and IS the Security Hub
+delegated administrator. Security Hub findings returned by list_findings
+and related tools are therefore aggregated across every member account in
+the organization, not just this one. If asked which account is the
+delegated administrator, or for the organization ID, answer directly from
+this fact — do not guess from which account_id appears most often in
+findings data, and do not say you lack a tool to check this."""
+
+    if is_admin is False:
+        return f"""
+
+ORG CONTEXT:
+This account is part of AWS Organization {org_id} but is NOT the Security
+Hub delegated administrator — a different account holds that role.
+Findings returned by list_findings and related tools may still show
+multiple account_id values (Security Hub member accounts can appear in
+each other's data depending on configuration), but do not claim THIS
+account is the delegated administrator. If asked which account is the
+delegated administrator, say this account is a member, not the admin, and
+that you don't have the specific admin account's ID — don't guess one from
+findings data."""
+
+    # is_admin is None: in the org, but Security Hub is disabled here or the
+    # admin check itself failed — org membership is real, delegated-admin
+    # status is not confirmed either way.
+    return f"""
+
+ORG CONTEXT:
+This account is part of AWS Organization {org_id}, but whether it is the
+Security Hub delegated administrator could not be confirmed (Security Hub
+may be disabled here, or the check failed). Do not guess the
+delegated-administrator account from findings data — say delegated-admin
+status is unconfirmed if asked."""
+
+
+def _get_system_prompt(mode: str, org_context: dict | None = None) -> str:
+    """Get system prompt adjusted for the user's selected mode and org context."""
+    org_block = _get_org_context_block(org_context)
     if mode == "quick":
-        return SYSTEM_PROMPT + """
+        return SYSTEM_PROMPT + org_block + """
 
 MODE: QUICK
 The user is experienced with IAM and AWS security. Adjust your responses:
@@ -2221,7 +2306,7 @@ The user is experienced with IAM and AWS security. Adjust your responses:
 - Skip the "Next Steps" options unless the analysis is ambiguous
 - Assume they know what blast radius, least-privilege, and trust policies mean"""
     else:
-        return SYSTEM_PROMPT + """
+        return SYSTEM_PROMPT + org_block + """
 
 MODE: GUIDED
 The user wants to learn and understand. Adjust your responses:

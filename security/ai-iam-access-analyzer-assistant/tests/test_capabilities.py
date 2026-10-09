@@ -359,6 +359,8 @@ class OrgDetectionNotInOrgTest(_ProbeTestBase):
         self.assertIn("not part of an aws organization", org_entries[0]["detail"].lower())
         # No delegated-admin sentence should appear when not in an org at all.
         self.assertNotIn("delegated administrator", body["welcome_message"].lower())
+        self.assertIsNone(body["org_id"])
+        self.assertIsNone(body["is_delegated_admin"])
 
 
 class OrgDetectionSecurityHubDisabledTest(_ProbeTestBase):
@@ -407,6 +409,11 @@ class OrgDetectionDelegatedAdminTest(_ProbeTestBase):
             body["welcome_message"].lower(),
         )
         self.assertIn(("describe_organization_configuration", {}), sh.calls)
+        # Structured top-level fields, threaded by the frontend into
+        # /conversation as org_context so the chat model doesn't have to
+        # guess (see agent.py's _get_system_prompt(mode, org_context)).
+        self.assertEqual("o-example12345", body["org_id"])
+        self.assertIs(True, body["is_delegated_admin"])
 
 
 class OrgDetectionNotDelegatedAdminTest(_ProbeTestBase):
@@ -430,6 +437,8 @@ class OrgDetectionNotDelegatedAdminTest(_ProbeTestBase):
         self.assertIn("handled by a different account", org_entries[0]["detail"])
         self.assertIn("local to this account only", body["welcome_message"].lower())
         self.assertNotIn("aggregated across every member account", body["welcome_message"].lower())
+        self.assertEqual("o-example12345", body["org_id"])
+        self.assertIs(False, body["is_delegated_admin"])
 
 
 class OrgDetectionAdminCheckFailsTest(_ProbeTestBase):
