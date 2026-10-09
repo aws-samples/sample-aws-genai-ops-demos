@@ -9,6 +9,7 @@ import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -32,6 +33,24 @@ export class EventIngestion extends Construct {
       ? logs.RetentionDays.THREE_MONTHS
       : logs.RetentionDays.TWO_WEEKS;
 
+    const isProduction = props.deployEnvironment === 'production';
+
+    // ─── DynamoDB: Security Hub finding dedup table ───────────────────────────
+    // Dedicated table written ONLY by the Event Router. One item per finding Id
+    // with a 6h TTL, so a given finding starts at most one investigation per
+    // window even across concurrent/duplicate EventBridge deliveries. Mirrors
+    // health-analyzer-task-tokens: PAY_PER_REQUEST, TTL on `ttl`, PITR on,
+    // deletion protection + RETAIN in production and disposable elsewhere.
+    const findingDedupTable = new dynamodb.Table(this, 'SecurityHubFindingDedupTable', {
+      tableName: 'health-analyzer-securityhub-dedup',
+      partitionKey: { name: 'findingId', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'ttl',
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      deletionProtection: isProduction,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
     // Event Router Lambda — parses Health events and starts the workflow.
     //
     // Code is pre-bundled by `npm run bundle` (scripts/bundle-lambdas.js) rather
@@ -47,6 +66,7 @@ export class EventIngestion extends Construct {
       memorySize: 256,
       environment: {
         STATE_MACHINE_ARN: props.stateMachine.stateMachineArn,
+        FINDING_DEDUP_TABLE: findingDedupTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'EventRouterLogs', {
         retention: logRetention,
@@ -86,6 +106,11 @@ export class EventIngestion extends Construct {
     // Grant the router permission to start the state machine
     props.stateMachine.grantStartExecution(this.eventRouter);
 
+    // Least privilege: the Router only ever conditionally PutItem's into the
+    // dedup table (never reads/deletes). Granting the explicit action produces a
+    // table-ARN-scoped statement (not a wildcard resource).
+    findingDedupTable.grant(this.eventRouter, 'dynamodb:PutItem');
+
     // EventBridge rule for AWS Health events
     const healthEventRule = new events.Rule(this, 'HealthEventRule', {
       ruleName: 'health-event-analyzer-capture',
@@ -100,6 +125,44 @@ export class EventIngestion extends Construct {
     });
 
     healthEventRule.addTarget(new targets.LambdaFunction(this.eventRouter, {
+      retryAttempts: 185,
+      maxEventAge: cdk.Duration.hours(24),
+    }));
+
+    // ─── EventBridge rule for AWS Security Hub findings ───────────────────────
+    // Targets the SAME Event Router Lambda as the Health rule. The three leaf
+    // filters below (Severity.Label, Workflow.Status, RecordState) live under
+    // the `findings[]` array, so EventBridge applies them with ANY-ELEMENT
+    // semantics: a batch is admitted if ANY one finding satisfies them, and the
+    // WHOLE batch (including non-qualifying findings) is delivered. This pattern
+    // is therefore only a COARSE batch-admission gate for cost/noise reduction —
+    // the AUTHORITATIVE per-finding gate is re-applied inside the Event Router
+    // (see handleSecurityHubEvent). Net behavior: only NEW/ACTIVE/HIGH/CRITICAL
+    // findings ever start an execution, enforced in the Lambda regardless.
+    //
+    // The `source` + `detail-type` are not array-nested and are always valid.
+    // FR-1a fallback: if `cdk synth`/deploy ever rejects a nested leaf (e.g.
+    // Workflow.Status), drop ONLY that leaf here and keep the rest — the Router
+    // filter still enforces it, so net behavior is unchanged. aws.securityhub
+    // and aws.health are disjoint sources, so this rule never overlaps the
+    // Health rule.
+    const securityHubFindingRule = new events.Rule(this, 'SecurityHubFindingRule', {
+      ruleName: 'health-analyzer-securityhub-capture',
+      description: 'Captures HIGH/CRITICAL AWS Security Hub findings for impact analysis',
+      eventPattern: {
+        source: ['aws.securityhub'],
+        detailType: ['Security Hub Findings - Imported'],
+        detail: {
+          findings: {
+            Severity: { Label: ['HIGH', 'CRITICAL'] },
+            Workflow: { Status: ['NEW'] },
+            RecordState: ['ACTIVE'],
+          },
+        },
+      },
+    });
+
+    securityHubFindingRule.addTarget(new targets.LambdaFunction(this.eventRouter, {
       retryAttempts: 185,
       maxEventAge: cdk.Duration.hours(24),
     }));

@@ -8,6 +8,8 @@
 
 When AWS Health publishes an event — scheduled maintenance, operational issues, or service degradation — this sample solution automatically triggers an AI-powered investigation using AWS DevOps Agent. The agent analyzes your application topology to determine blast radius, identifies affected teams from resource tags, and routes notifications through team-specific channels (email, Slack, MS Teams).
 
+The same pipeline also ingests **AWS Security Hub findings**. HIGH and CRITICAL findings (delivered natively on EventBridge as `Security Hub Findings - Imported`) are correlated against your topology to determine whether — and whom — a security finding actually impacts, reusing the same investigation, OpsItem, and notification path. See [docs/security-hub-integration.md](./docs/security-hub-integration.md).
+
 
 ## Learn More
 
@@ -34,7 +36,9 @@ Experience this demo in an interactive click-through walkthrough:
 ## Architecture
 
 ```
-AWS Health → EventBridge → Event Router (Lambda)
+AWS Health ─────────────┐
+                        ├→ EventBridge → Event Router (Lambda)
+Security Hub Findings ──┘   (HIGH/CRITICAL, deduped, one investigation per finding)
                                     ↓
                             Step Functions
                                     ↓
@@ -71,6 +75,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed component descriptions and
 - AWS CLI v2.34.20+ installed and authenticated (`aws sts get-caller-identity` should work)
 - Node.js 24+ and npm installed (Lambda functions run on Node.js 24)
 - An active [CloudTrail trail](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-create-a-trail-using-the-console-first-time.html) capturing management events in the deployment region
+- *(Optional, for the Security Hub ingestion path)* [AWS Security Hub enabled](https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-settingup.html) in the deployment account and region. When enabled, Security Hub emits `Security Hub Findings - Imported` events to the default EventBridge bus; the stack's rule picks up HIGH/CRITICAL findings. The AWS Health path works without it.
 
 ### Regions
 
@@ -277,6 +282,8 @@ See [docs/multi-account-setup.md](./docs/multi-account-setup.md) for the full mu
 6. **OpsItem Creation**: If impact is detected, an OpsItem is created in AWS Systems Manager OpsCenter with severity, findings, and investigation link
 7. **Notification**: The Notifier Lambda routes alerts to each affected team through their preferred channels, including a link to the OpsItem
 
+**Security Hub findings** follow the same path from step 2 onward. A dedicated EventBridge rule captures `Security Hub Findings - Imported` events; the Event Router filters to HIGH/CRITICAL + NEW + ACTIVE findings, de-dupes on finding ID (via a dedicated DynamoDB table), and starts one investigation per qualifying finding. Because a finding already carries the impacted resource ARNs, the agent correlates those directly with topology and teams. See [docs/security-hub-integration.md](./docs/security-hub-integration.md) for the filter split, dedup behavior, and per-finding fan-out.
+
 ## Estimated Cost
 
 | Service | Monthly Cost | Notes |
@@ -364,7 +371,8 @@ This triggers the full flow: Event Router → Step Functions → DevOps Agent �
 | `events/test-lambda-nodejs20-lifecycle-event.json` | Lambda Node.js 20 planned lifecycle event |
 | `events/test-sfn-deprecation-event.json` | Step Functions deprecation |
 | `events/test-iam-admin-deprecation-event.json` | IAM admin role enforcement |
-| `events/test-security-event.json` | IAM overly permissive policies |
+| `events/test-iam-security-health-event.json` | IAM overly permissive policies (AWS Health event) |
+| `events/test-securityhub-findings-event.json` | Security Hub findings batch (1 CRITICAL + 1 HIGH qualifying, 1 non-qualifying LOW/ARCHIVED) |
 | `events/test-lambda-throttle-event.json` | Lambda throttling |
 | `events/test-stepfunctions-issue-event.json` | Step Functions API errors |
 | `events/test-rds-ca-expiry-event.json` | RDS CA certificate expiry |

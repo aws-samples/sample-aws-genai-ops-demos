@@ -1,0 +1,121 @@
+{
+  "version": "0",
+  "id": "f1e2d3c4-b5a6-7890-1234-abcdef012345",
+  "detail-type": "Security Hub Findings - Imported",
+  "source": "aws.securityhub",
+  "account": "123456789012",
+  "time": "2026-06-15T14:30:00Z",
+  "region": "us-east-1",
+  "resources": [
+    "arn:aws:securityhub:us-east-1:123456789012:hub/default"
+  ],
+  "detail": {
+    "findings": [
+      {
+        "SchemaVersion": "2018-10-08",
+        "Id": "arn:aws:securityhub:us-east-1:123456789012:subscription/aws-foundational-security-best-practices/v/1.0.0/Lambda.5/finding/11111111-aaaa-2222-bbbb-333333333333",
+        "ProductArn": "arn:aws:securityhub:us-east-1::product/aws/securityhub",
+        "ProductName": "Security Hub",
+        "GeneratorId": "aws-foundational-security-best-practices/v/1.0.0/Lambda.5",
+        "AwsAccountId": "123456789012",
+        "Types": [
+          "Software and Configuration Checks/AWS Security Best Practices/Network Reachability"
+        ],
+        "FirstObservedAt": "2026-06-15T14:00:00Z",
+        "CreatedAt": "2026-06-15T14:00:00Z",
+        "UpdatedAt": "2026-06-15T14:30:00Z",
+        "Severity": {
+          "Label": "CRITICAL",
+          "Normalized": 90
+        },
+        "Title": "Lambda function is exposed to the public internet without authentication",
+        "Description": "The Lambda function LookupCIEventsLambdaFunctionName has a function URL configured with AuthType NONE, allowing unauthenticated public invocation. This exposes the function and any downstream resources it accesses to the public internet.",
+        "Workflow": {
+          "Status": "NEW"
+        },
+        "RecordState": "ACTIVE",
+        "Resources": [
+          {
+            "Type": "AwsLambdaFunction",
+            "Id": "arn:aws:lambda:us-east-1:123456789012:function:LookupCIEventsLambdaFunctionName",
+            "Region": "us-east-1",
+            "Tags": {
+              "Team": "platform",
+              "Environment": "production"
+            }
+          }
+        ]
+      },
+      {
+        "SchemaVersion": "2018-10-08",
+        "Id": "arn:aws:securityhub:us-east-1:123456789012:subscription/aws-foundational-security-best-practices/v/1.0.0/EC2.2/finding/22222222-cccc-4444-dddd-555555555555",
+        "ProductArn": "arn:aws:securityhub:us-east-1::product/aws/securityhub",
+        "ProductName": "Security Hub",
+        "GeneratorId": "aws-foundational-security-best-practices/v/1.0.0/EC2.2",
+        "AwsAccountId": "123456789012",
+        "Types": [
+          "Software and Configuration Checks/AWS Security Best Practices"
+        ],
+        "FirstObservedAt": "2026-06-15T13:45:00Z",
+        "CreatedAt": "2026-06-15T13:45:00Z",
+        "UpdatedAt": "2026-06-15T14:30:00Z",
+        "Severity": {
+          "Label": "HIGH",
+          "Normalized": 70
+        },
+        "Title": "Security group allows unrestricted ingress on port 22 (SSH)",
+        "Description": "The default security group attached to the orders-service EC2 instances allows inbound SSH (TCP 22) from 0.0.0.0/0. Restrict SSH access to known administrative CIDR ranges or use Systems Manager Session Manager instead.",
+        "Workflow": {
+          "Status": "NEW"
+        },
+        "RecordState": "ACTIVE",
+        "Resources": [
+          {
+            "Type": "AwsEc2SecurityGroup",
+            "Id": "arn:aws:ec2:us-east-1:123456789012:security-group/sg-0abc1234def567890",
+            "Region": "us-east-1",
+            "Tags": {
+              "Team": "orders",
+              "Environment": "production"
+            }
+          }
+        ]
+      },
+      {
+        "SchemaVersion": "2018-10-08",
+        "Id": "arn:aws:securityhub:us-east-1:123456789012:subscription/aws-foundational-security-best-practices/v/1.0.0/S3.8/finding/33333333-eeee-6666-ffff-777777777777",
+        "ProductArn": "arn:aws:securityhub:us-east-1::product/aws/securityhub",
+        "ProductName": "Security Hub",
+        "GeneratorId": "aws-foundational-security-best-practices/v/1.0.0/S3.8",
+        "AwsAccountId": "123456789012",
+        "Types": [
+          "Software and Configuration Checks/AWS Security Best Practices"
+        ],
+        "FirstObservedAt": "2026-06-10T09:00:00Z",
+        "CreatedAt": "2026-06-10T09:00:00Z",
+        "UpdatedAt": "2026-06-15T14:30:00Z",
+        "Severity": {
+          "Label": "LOW",
+          "Normalized": 10
+        },
+        "Title": "S3 bucket does not have a lifecycle policy configured",
+        "Description": "This non-qualifying LOW/ARCHIVED finding exists so the Event Router per-finding filter can be verified to skip it: it is below the HIGH/CRITICAL severity threshold and its record state is ARCHIVED.",
+        "Workflow": {
+          "Status": "RESOLVED"
+        },
+        "RecordState": "ARCHIVED",
+        "Resources": [
+          {
+            "Type": "AwsS3Bucket",
+            "Id": "arn:aws:s3:::anycompany-archive-logs-123456789012",
+            "Region": "us-east-1",
+            "Tags": {
+              "Team": "data-platform",
+              "Environment": "production"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

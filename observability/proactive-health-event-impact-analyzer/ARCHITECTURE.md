@@ -13,7 +13,11 @@ This sample automates the assessment of AWS Health events by integrating EventBr
 │  ┌─────────────┐     ┌──────────────────┐     ┌──────────────────────┐     │
 │  │ AWS Health  │────▶│   EventBridge    │────▶│   Event Router       │     │
 │  │ Service     │     │   Rules          │     │   (Lambda)           │     │
+│  ├─────────────┤     │  • aws.health    │     │  • Health normalize  │     │
+│  │ AWS Security│────▶│  • aws.securityhub─────▶│  • Finding fan-out   │     │
+│  │ Hub         │     │                  │     │    (1 exec/finding)   │     │
 │  └─────────────┘     └──────────────────┘     └──────────┬───────────┘     │
+│                                              Finding Dedup │ (DynamoDB)      │
 │                                                           │                  │
 │                                                           ▼                  │
 │                                                ┌──────────────────┐          │
@@ -83,7 +87,15 @@ This sample automates the assessment of AWS Health events by integrating EventBr
 |-----------|---------|---------|
 | Health Event Rule | EventBridge | Captures `aws.health` events |
 | Scheduled Change Rule | EventBridge | Captures scheduled maintenance specifically |
-| Event Router | Lambda (Node.js 24) | Normalizes events, starts workflow |
+| Security Hub Finding Rule | EventBridge | Captures HIGH/CRITICAL ASFF findings (`aws.securityhub`, detail-type `Security Hub Findings - Imported`) |
+| Event Router | Lambda (Node.js 24) | Normalizes Health events and Security Hub findings, starts workflow (one execution per finding) |
+| Finding Dedup Table | DynamoDB | De-dups findings by `findingId` (6h TTL, conditional write) |
+
+The Event Router recognizes two disjoint sources. For `aws.securityhub`
+findings it fans a multi-finding event out into one Step Functions execution per
+qualifying finding, applying a per-finding HIGH/CRITICAL + Workflow.Status NEW +
+RecordState ACTIVE filter and a per-finding dedup. See
+[docs/security-hub-integration.md](docs/security-hub-integration.md).
 
 ### Investigation Layer
 
@@ -107,7 +119,8 @@ This sample automates the assessment of AWS Health events by integrating EventBr
 
 ## Data Flow
 
-1. **Ingestion**: AWS Health → EventBridge → Event Router Lambda → Step Functions
+1. **Ingestion (Health)**: AWS Health → EventBridge → Event Router Lambda → Step Functions
+1b. **Ingestion (Security Hub)**: AWS Security Hub → EventBridge (`aws.securityhub`) → Event Router Lambda → per-finding filter + dedup → one Step Functions execution per qualifying finding
 2. **Investigation**: Step Functions → Investigation Trigger → DevOps Agent (webhook)
 3. **Callback**: DevOps Agent → EventBridge → Investigation Callback → Step Functions
 4. **OpsItem**: Step Functions → OpsCenter Creator Lambda → Systems Manager OpsCenter

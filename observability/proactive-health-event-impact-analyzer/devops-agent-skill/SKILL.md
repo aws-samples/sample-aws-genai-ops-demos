@@ -1,10 +1,10 @@
 ---
 name: health-event-impact-assessment
-description: Evaluates AWS Health event impact on application workloads using
-  topology knowledge. Determines blast radius, affected teams, and notification
-  routing. Use this skill when investigating incidents triggered by AWS Health
-  events including scheduled maintenance, operational issues, and service
-  degradation notifications.
+description: Evaluates AWS Health event and AWS Security Hub finding impact on
+  application workloads using topology knowledge. Determines blast radius,
+  affected teams, and notification routing. Use this skill when investigating
+  incidents triggered by AWS Health events (scheduled maintenance, operational
+  issues, service degradation) or by HIGH/CRITICAL AWS Security Hub findings.
 ---
 
 # Health Event Impact Assessment
@@ -12,6 +12,13 @@ description: Evaluates AWS Health event impact on application workloads using
 Use this skill when an investigation is triggered by an AWS Health event. Your goal
 is to assess the impact on workloads in the topology and determine which teams
 need to be notified.
+
+## Which path to run
+
+If the investigation prompt contains the tag `[EVENT_TYPE:securityhub-finding]`,
+run the **Security Hub Finding Impact Assessment** path (see the section of that
+name below). Otherwise, run the **Health Event** path described in Steps 1–6.
+Both paths produce the identical output contract in `## Output Format`.
 
 ## Step 1: Identify Affected Resources
 
@@ -134,6 +141,47 @@ If no match exists, call `createJiraIssue` with:
   - The full `## Summary` section verbatim
   - The full `## Key Findings` section
   - A pointer to the OpsItem ID (from the same investigation)
+
+## Security Hub Finding Impact Assessment
+
+Run this path **only** when the prompt contains `[EVENT_TYPE:securityhub-finding]`.
+It assesses the operational impact of an AWS Security Hub finding on the
+workloads in the topology, then produces the **same** output as the Health path.
+
+The `Maintenance Window:` line in the prompt is **not applicable** to a security
+finding — ignore it. Findings have no maintenance window (the trigger emits
+`Not specified` for this line by design).
+
+The defining difference from the Health path: **the impacted resource ARNs are
+already known** — they are listed in the prompt's `Affected Resources` block
+(one per `Resources[].Id` on the finding). You do **not** need to discover the
+affected resources. Instead:
+
+1. **Start from the given finding ARNs** as the impacted resource set.
+2. **Correlate each ARN with the application topology and owning teams** using
+   the same technique as the Health path's Step 4 (resource tags such as Team,
+   Owner, Department, CostCenter; CloudFormation stack ownership; topology
+   groupings and service boundaries).
+3. **Assess real impact**: is each resource actually part of a monitored
+   workload? What is the blast radius through its dependencies? Who owns it?
+   A finding on a resource that is not in any monitored workload has no
+   operational impact (see "What \"no impact\" looks like" below).
+4. **Assign per-workload severity** using the **same** CRITICAL / HIGH / MEDIUM /
+   LOW scale and the **same** "overall = highest individual workload severity"
+   rule as the Health path's Step 3.
+5. **Produce recommendations and notification routing exactly as the Health
+   path does** (Steps 5 and 4).
+
+Jira ticket tracking: reuse **Step 6 above verbatim** — the same
+`[JIRA_CONFIG:...]` trigger condition, the same MEDIUM+ threshold, the same
+search-before-create de-dup JQL, the `[Health]` summary prefix, and the
+`["aws-health-event", "auto-created"]` labels. The JQL's `text ~ "<eventArn or
+eventTypeCode>"` clause still de-dups correctly because it matches on the
+finding's unique correlation id. Do not introduce new labels or prefixes.
+
+Emit your final response using the **existing** `## Output Format`,
+`### Heading rules`, and `### What "no impact" looks like` sections below
+unchanged. Do not add or rename any section.
 
 ## Output Format
 
