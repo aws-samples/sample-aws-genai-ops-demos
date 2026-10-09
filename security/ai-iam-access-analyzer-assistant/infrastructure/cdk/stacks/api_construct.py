@@ -13,6 +13,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from shared.utils.aws_utils import get_bedrock_model_id
+
 
 class ApiConstruct(Construct):
     """API Gateway with Cognito authorizer and conversation Lambda."""
@@ -44,7 +46,10 @@ class ApiConstruct(Construct):
             memory_size=1024,
             environment={
                 "REPORTS_BUCKET": reports_bucket.bucket_name,
-                "BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                # Region-appropriate CRIS prefix (us./eu./apac./global.) resolved at
+                # synth time, so a deploy outside us-east-1 doesn't ship a Lambda whose
+                # Bedrock calls can never succeed (see #207).
+                "BEDROCK_MODEL_ID": get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0"),
                 "LIST_FINDINGS_FN": tools_functions["list_findings"].function_name,
                 "GET_FINDING_DETAILS_FN": tools_functions["get_finding_details"].function_name,
                 "GENERATE_POLICY_FN": tools_functions["generate_policy"].function_name,
@@ -68,8 +73,17 @@ class ApiConstruct(Construct):
                 ],
                 resources=[
                     "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+                    # All CRIS geo-prefixes get_bedrock_model_id() can resolve to
+                    # (us./eu./apac./global.), so a deploy outside us-east-1 doesn't
+                    # get an AccessDenied on an otherwise-correct model ID (see #207).
                     "arn:aws:bedrock:*::foundation-model/us.anthropic.claude-*",
+                    "arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-*",
+                    "arn:aws:bedrock:*::foundation-model/apac.anthropic.claude-*",
+                    "arn:aws:bedrock:*::foundation-model/global.anthropic.claude-*",
                     "arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-*",
+                    "arn:aws:bedrock:*:*:inference-profile/eu.anthropic.claude-*",
+                    "arn:aws:bedrock:*:*:inference-profile/apac.anthropic.claude-*",
+                    "arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-*",
                 ],
             )
         )

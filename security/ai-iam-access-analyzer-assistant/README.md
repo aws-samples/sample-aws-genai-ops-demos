@@ -95,13 +95,25 @@ chmod +x deploy-all.sh
 ```
 
 The script will:
-1. Install CDK dependencies
-2. Build the React frontend
-3. Deploy CDK infrastructure (Lambda, API Gateway, Cognito, CloudFront, S3)
-4. Configure the frontend with stack outputs
-5. Upload the frontend to S3 and invalidate CloudFront
+1. Build the React frontend
+2. Deploy the CDK stack through the shared `deploy-cdk` script (Lambda, API Gateway, Cognito, CloudFront, S3)
+3. Configure the frontend with stack outputs
+4. Upload the frontend to S3 and invalidate CloudFront
+5. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
+6. Print the [Data sources status](#data-sources-status): what the assistant will be able to see in this region.
 
-After deployment, create a user in the Cognito User Pool and navigate to the CloudFront URL.
+The final "Deployment Complete!" summary prints the CloudFront URL, the demo email, and the demo password — copy them from the terminal to sign in. Re-running the script rotates the demo user's password.
+
+If a demo-user step fails, the script exits with a clear error rather than pretending the demo user was created; the CloudFormation deploy itself is already complete at that point and does not need to be re-run. To create additional users (teammates, service accounts, etc.), use the Cognito console against the printed User Pool ID, or the CLI equivalent:
+
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --user-attributes Name=email_verified,Value=true --message-action SUPPRESS
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --password '<YourPassword>' --permanent
+```
 
 ## Architecture
 
