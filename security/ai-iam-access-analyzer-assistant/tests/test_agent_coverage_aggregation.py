@@ -184,5 +184,94 @@ class MainBedrockLoopCoverageTest(unittest.TestCase):
         self.assertEqual(body["coverage"], aggregated_coverage)
 
 
+class AnsweredFromPriorContextTest(unittest.TestCase):
+    """#183: an empty `coverage` is ambiguous — "nothing was ever checked"
+    (dangerous, possibly fabricated) vs. "I reused data a tool already
+    checked in an earlier turn of this same conversation" (safe, but the
+    #171 signal is otherwise lost). `answered_from_prior_context` makes the
+    second case structurally explicit instead of relying solely on the
+    model's prose to say so.
+    """
+
+    def _fake_bedrock_response(self, text: str) -> dict:
+        return {
+            "output": {
+                "message": {"role": "assistant", "content": [{"text": text}]},
+            },
+            "usage": {"inputTokens": 10, "outputTokens": 20},
+        }
+
+    def _handler_with_mocked_turn(self, message: str, history: list, tool_calls_made, coverage):
+        with patch.object(
+            agent,
+            "converse_with_tools",
+            return_value=(
+                self._fake_bedrock_response("Sure, from the list I already fetched: ..."),
+                tool_calls_made,
+                None,
+                coverage,
+            ),
+        ):
+            event = {
+                "httpMethod": "POST",
+                "body": json.dumps({"message": message, "history": history}),
+            }
+            return json.loads(agent.handler(event, None)["body"])
+
+    def test_flagged_true_when_no_tools_called_but_prior_history_exists(self):
+        """Recitation: this turn called no tools, coverage is empty, but
+        there IS prior conversation history — the classic #183 scenario
+        ("which of those roles are unused?" after an earlier list_findings
+        turn)."""
+        history = [
+            {"role": "user", "content": "what are my active IAM findings?"},
+            {"role": "assistant", "content": "Here are 12 unused roles: ..."},
+        ]
+        body = self._handler_with_mocked_turn(
+            "which of those are unused?", history, tool_calls_made=[], coverage=[]
+        )
+        self.assertTrue(body["answered_from_prior_context"])
+
+    def test_not_flagged_on_the_very_first_turn(self):
+        """No prior history at all -- an empty coverage here is NOT a
+        recitation (there is nothing to recite from); it is just a model
+        response with no tool call, e.g. a greeting or a scope question."""
+        body = self._handler_with_mocked_turn(
+            "what can you help me with?", history=[], tool_calls_made=[], coverage=[]
+        )
+        self.assertFalse(body["answered_from_prior_context"])
+
+    def test_not_flagged_when_a_tool_was_actually_called(self):
+        """Tools were called this turn (even if their coverage happens to be
+        empty, e.g. an `empty` state entry got filtered) -- this is a fresh
+        check, not a recitation, so the flag must stay False."""
+        history = [
+            {"role": "user", "content": "what are my active IAM findings?"},
+            {"role": "assistant", "content": "Here are 12 unused roles: ..."},
+        ]
+        body = self._handler_with_mocked_turn(
+            "check again",
+            history,
+            tool_calls_made=[{"tool": "list_findings", "input_summary": "status: ACTIVE"}],
+            coverage=[],
+        )
+        self.assertFalse(body["answered_from_prior_context"])
+
+    def test_not_flagged_when_coverage_is_genuinely_populated(self):
+        """Tools ran and returned real coverage -- the normal, non-ambiguous
+        case. Flag must be False; the populated `coverage` array is itself
+        the signal."""
+        history = [
+            {"role": "user", "content": "what are my active IAM findings?"},
+        ]
+        body = self._handler_with_mocked_turn(
+            "what are my active IAM findings?",
+            history,
+            tool_calls_made=[{"tool": "list_findings", "input_summary": "status: ACTIVE"}],
+            coverage=[_cov("securityhub", "checked", count=12)],
+        )
+        self.assertFalse(body["answered_from_prior_context"])
+
+
 if __name__ == "__main__":
     unittest.main()

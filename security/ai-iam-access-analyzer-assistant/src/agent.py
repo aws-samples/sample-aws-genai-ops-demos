@@ -140,6 +140,15 @@ COVERAGE HANDLING (do NOT call a posture clean when a source was unavailable):
   tool got a real zero back from a working AWS service, it is honest to say
   "no findings match your filter" — but keep it factual, don't extrapolate
   to a whole-account verdict.
+- ANSWERING FROM PRIOR-TURN DATA (no new tool call this turn): if you answer
+  a follow-up by reusing data a tool already returned earlier in this same
+  conversation — rather than calling a tool again — SAY SO explicitly in
+  your prose, e.g. "From the findings I already pulled, the unused roles
+  are: ..." This turn's "coverage" will be empty (no source was queried
+  THIS turn), which is correct, but without this sentence a reader cannot
+  tell "empty because nothing was checked, ever" apart from "empty because
+  I'm reusing a result you already saw was checked." Never present reused
+  data as if it just came from a fresh check.
 
 PERFORMANCE RULE (CRITICAL — prevents timeouts):
 - The API gateway terminates any single turn at ~29 seconds. Every tool call plus the model round-trips around it consumes real time, so doing too much in one turn causes a timeout that the user sees as a "Failed to fetch" error. Keeping each turn light is the single most important thing you can do for reliability.
@@ -2150,6 +2159,19 @@ def handler(event, context):
             if "text" in block:
                 response_text += block["text"]
 
+        # #183: an empty `coverage` is ambiguous — it means either "nothing was
+        # checked, ever" (dangerous: the model may be fabricating) or "I reused
+        # data a tool already checked earlier this conversation" (safe, but the
+        # #171 safety signal is lost). Flag the second case explicitly whenever
+        # this turn made no tool calls but earlier turns in the same
+        # conversation did, so a reader (and the frontend, eventually) can tell
+        # them apart without relying solely on the model's prose. See the
+        # ANSWERING FROM PRIOR-TURN DATA system-prompt rule for the model-side
+        # half of this fix.
+        answered_from_prior_context = (
+            not tool_calls_made and not coverage and bool(conversation_history)
+        )
+
         return {
             "statusCode": 200,
             "headers": _cors_headers(),
@@ -2160,6 +2182,7 @@ def handler(event, context):
                     "tools_used": tool_calls_made,
                     "pagination": new_pagination,
                     "coverage": coverage,
+                    "answered_from_prior_context": answered_from_prior_context,
                 }
             ),
         }
