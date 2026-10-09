@@ -758,6 +758,20 @@ _TRIAGE_ACCESS_KEYS_INTENT = re.compile(
     r"|"
     # "over-permissioned users" — a common phrasing that maps to this audit.
     r"over[-\s]?permissioned\s+(?:iam\s+)?users?"
+    r"|"
+    # Remediation-intent phrasing — "help me reduce the number of access
+    # keys", "cut down on access keys", "get rid of unused keys". The user
+    # wants to ACT, but the audit is the necessary first step (you can't
+    # reduce/consolidate/clean up what you haven't inventoried), so this
+    # maps to the same tool as the direct audit request. Filed by Ben
+    # (live testing, ~2 weeks before this fix): "i would like to reduce
+    # the number of Access Keys i'm using, help me" hit neither this nor
+    # the educational short-circuit, fell through to a full Bedrock
+    # synthesis round, and timed out past the API Gateway 29s ceiling.
+    r"(?:reduce|cut\s+down(?:\s+on)?|get\s+rid\s+of|eliminate|consolidate|"
+    r"clean\s+up|minimize)\s+"
+    r"(?:(?:the\s+number\s+of|my|our|some\s+of\s+my)\s+)*"
+    r"(?:iam\s+)?access\s+keys?\b"
     r")\b",
     re.IGNORECASE,
 )

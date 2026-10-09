@@ -116,6 +116,45 @@ class TriageIntentTest(unittest.TestCase):
                 msg=f"expected match: {msg!r}",
             )
 
+    def test_matches_remediation_intent_phrasings(self):
+        """Ben filed this via live testing: "i would like to reduce the
+        number of Access Keys i'm using, help me" matched neither this nor
+        the educational regex, fell through to a full Bedrock synthesis
+        round, and timed out past the API Gateway 29s ceiling. The user
+        wants to ACT (reduce/clean up/consolidate), but the audit is the
+        necessary first step, so this phrasing family maps to the same
+        tool as a direct audit request."""
+        for msg in (
+            "i would like to reduce the number of Access Keys i'm using, help me",
+            "help me reduce the number of access keys",
+            "can you help me cut down on access keys",
+            "I want to get rid of unused access keys",
+            "help me eliminate my access keys",
+            "consolidate my IAM access keys",
+            "clean up access keys",
+            "minimize the number of access keys we have",
+        ):
+            self.assertIsNotNone(
+                agent._TRIAGE_ACCESS_KEYS_INTENT.search(msg),
+                msg=f"expected match: {msg!r}",
+            )
+
+    def test_remediation_verbs_require_access_keys_object(self):
+        """The remediation-intent verbs (reduce, minimize, etc.) are shared
+        with other unrelated asks ("reduce the blast radius", "minimize
+        risk") — this pattern must require the "access keys" object, not
+        fire on the verb alone."""
+        for msg in (
+            "reduce the blast radius of this role",
+            "minimize risk in my account",
+            "reduce my attack surface",
+            "help me reduce findings",
+        ):
+            self.assertIsNone(
+                agent._TRIAGE_ACCESS_KEYS_INTENT.search(msg),
+                msg=f"expected NO match: {msg!r}",
+            )
+
     def test_matches_compact_intent_nouns(self):
         for msg in (
             "iam key hygiene",
@@ -401,6 +440,31 @@ class HandlerShortCircuitTest(unittest.TestCase):
 
         invoke.assert_not_called()
         converse.assert_called_once()
+
+    def test_bens_reported_phrasing_short_circuits_instead_of_timing_out(self):
+        """Regression test for Ben's exact filed phrasing: "i would like to
+        reduce the number of Access Keys i'm using, help me". Before this
+        fix, this fell through to Bedrock synthesis and timed out past the
+        API Gateway 29s ceiling (live screenshot evidence). It must now
+        short-circuit exactly like a direct "audit my access keys" ask."""
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(
+                self._event(
+                    "i would like to reduce the number of Access Keys i'm using, help me"
+                ),
+                None,
+            )
+
+        converse.assert_not_called()
+        invoke.assert_called_once()
+        tool_name, tool_input = invoke.call_args.args
+        self.assertEqual(tool_name, "triage_access_keys")
+        self.assertEqual(tool_input, {})
+
+        body = json.loads(response["body"])
+        self.assertEqual(200, response["statusCode"])
+        self.assertEqual(body["tools_used"][0]["tool"], "triage_access_keys")
 
     def test_tool_error_returns_apology_without_fenced_json(self):
         with patch.object(agent, "invoke_tool", return_value={"error": "AccessDenied"}) as invoke, \
