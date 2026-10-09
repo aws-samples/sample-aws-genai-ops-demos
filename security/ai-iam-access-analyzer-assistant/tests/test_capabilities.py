@@ -33,6 +33,8 @@ class FakeSecurityHubClient:
         products_error=None,
         findings_response=None,
         findings_error=None,
+        describe_org_config_response=None,
+        describe_org_config_error=None,
     ):
         self._describe_hub_response = describe_hub_response
         self._describe_hub_error = describe_hub_error
@@ -40,6 +42,8 @@ class FakeSecurityHubClient:
         self._products_error = products_error
         self._findings_response = findings_response or {"Findings": []}
         self._findings_error = findings_error
+        self._describe_org_config_response = describe_org_config_response
+        self._describe_org_config_error = describe_org_config_error
         self.calls = []
         self.exceptions = _SecurityHubExceptions()
 
@@ -60,6 +64,16 @@ class FakeSecurityHubClient:
         if self._findings_error is not None:
             raise self._findings_error
         return self._findings_response
+
+    def describe_organization_configuration(self):
+        self.calls.append(("describe_organization_configuration", {}))
+        if self._describe_org_config_error is not None:
+            raise self._describe_org_config_error
+        return self._describe_org_config_response or {
+            "AutoEnable": True,
+            "AutoEnableStandards": "DEFAULT",
+            "OrganizationConfiguration": {"ConfigurationType": "LOCAL"},
+        }
 
 
 class FakeAccessAnalyzerClient:
@@ -87,21 +101,50 @@ class FakeCloudTrailClient:
         return {"Events": []}
 
 
+class _AWSOrganizationsNotInUseException(Exception):
+    """Stand-in for ``organizations_client.exceptions.AWSOrganizationsNotInUseException``."""
+
+
+class _OrganizationsExceptions:
+    AWSOrganizationsNotInUseException = _AWSOrganizationsNotInUseException
+
+
+class FakeOrganizationsClient:
+    def __init__(self, describe_org_response=None, describe_org_error=None):
+        self._describe_org_response = describe_org_response
+        self._describe_org_error = describe_org_error
+        self.calls = []
+        self.exceptions = _OrganizationsExceptions()
+
+    def describe_organization(self):
+        self.calls.append(("describe_organization", {}))
+        if self._describe_org_error is not None:
+            raise self._describe_org_error
+        return self._describe_org_response or {
+            "Organization": {"Id": "o-example12345"}
+        }
+
+
 class _ProbeTestBase(unittest.TestCase):
     def setUp(self):
         self._orig_sh = capabilities.securityhub_client
         self._orig_aa = capabilities.accessanalyzer_client
         self._orig_ct = capabilities.cloudtrail_client
+        self._orig_org = capabilities.organizations_client
 
     def tearDown(self):
         capabilities.securityhub_client = self._orig_sh
         capabilities.accessanalyzer_client = self._orig_aa
         capabilities.cloudtrail_client = self._orig_ct
+        capabilities.organizations_client = self._orig_org
 
-    def _install(self, sh=None, aa=None, ct=None):
+    def _install(self, sh=None, aa=None, ct=None, org=None):
         capabilities.securityhub_client = sh or FakeSecurityHubClient()
         capabilities.accessanalyzer_client = aa or FakeAccessAnalyzerClient()
         capabilities.cloudtrail_client = ct or FakeCloudTrailClient()
+        capabilities.organizations_client = org or FakeOrganizationsClient(
+            describe_org_error=_AWSOrganizationsNotInUseException("not in an org")
+        )
 
 
 class HandlerShapeTest(_ProbeTestBase):
@@ -303,6 +346,121 @@ class WelcomeFallbackTest(_ProbeTestBase):
         self._install()
         body = json.loads(capabilities.handler({}, None)["body"])
         self.assertTrue(body["welcome_message"].strip())
+
+
+class OrgDetectionNotInOrgTest(_ProbeTestBase):
+    def test_not_in_org_surfaces_single_account_coverage(self):
+        # Default _install() already simulates AWSOrganizationsNotInUseException.
+        self._install()
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("unavailable", org_entries[0]["state"])
+        self.assertIn("not part of an aws organization", org_entries[0]["detail"].lower())
+        # No delegated-admin sentence should appear when not in an org at all.
+        self.assertNotIn("delegated administrator", body["welcome_message"].lower())
+
+
+class OrgDetectionSecurityHubDisabledTest(_ProbeTestBase):
+    def test_in_org_but_sh_disabled_reports_org_without_admin_claim(self):
+        sh = FakeSecurityHubClient(
+            describe_hub_error=_InvalidAccessException("Hub not enabled"),
+        )
+        org = FakeOrganizationsClient()
+        self._install(sh=sh, org=org)
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("checked", org_entries[0]["state"])
+        self.assertIn("o-example12345", org_entries[0]["detail"])
+        self.assertIn("security hub is not enabled", org_entries[0]["detail"].lower())
+        # describe_organization_configuration must NOT be called when SH is off.
+        self.assertNotIn(
+            "describe_organization_configuration",
+            [c[0] for c in sh.calls],
+        )
+        self.assertNotIn("delegated administrator", body["welcome_message"].lower())
+
+
+class OrgDetectionDelegatedAdminTest(_ProbeTestBase):
+    def test_delegated_admin_account_confirmed_via_successful_call(self):
+        sh = FakeSecurityHubClient(
+            products_response={
+                "ProductSubscriptions": [
+                    "arn:aws:securityhub:us-east-1::product/aws/access-analyzer",
+                ]
+            },
+        )
+        org = FakeOrganizationsClient()
+        self._install(sh=sh, org=org)
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("checked", org_entries[0]["state"])
+        self.assertIn("delegated administrator", org_entries[0]["detail"].lower())
+        self.assertIn(
+            "delegated administrator for its aws organization",
+            body["welcome_message"].lower(),
+        )
+        self.assertIn(
+            "aggregated across every member account",
+            body["welcome_message"].lower(),
+        )
+        self.assertIn(("describe_organization_configuration", {}), sh.calls)
+
+
+class OrgDetectionNotDelegatedAdminTest(_ProbeTestBase):
+    def test_member_account_reports_local_only_via_invalid_access(self):
+        sh = FakeSecurityHubClient(
+            products_response={
+                "ProductSubscriptions": [
+                    "arn:aws:securityhub:us-east-1::product/aws/access-analyzer",
+                ]
+            },
+            describe_org_config_error=_InvalidAccessException(
+                "Only the Security Hub administrator account can invoke this operation."
+            ),
+        )
+        org = FakeOrganizationsClient()
+        self._install(sh=sh, org=org)
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("checked", org_entries[0]["state"])
+        self.assertIn("handled by a different account", org_entries[0]["detail"])
+        self.assertIn("local to this account only", body["welcome_message"].lower())
+        self.assertNotIn("aggregated across every member account", body["welcome_message"].lower())
+
+
+class OrgDetectionAdminCheckFailsTest(_ProbeTestBase):
+    def test_unexpected_error_still_reports_org_membership(self):
+        sh = FakeSecurityHubClient(
+            products_response={
+                "ProductSubscriptions": [
+                    "arn:aws:securityhub:us-east-1::product/aws/access-analyzer",
+                ]
+            },
+            describe_org_config_error=RuntimeError("throttled"),
+        )
+        org = FakeOrganizationsClient()
+        self._install(sh=sh, org=org)
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("checked", org_entries[0]["state"])
+        self.assertIn("could not", org_entries[0]["detail"].lower())
+        self.assertIn("o-example12345", org_entries[0]["detail"])
+
+
+class OrgDetectionGenericFailureTest(_ProbeTestBase):
+    def test_describe_organization_unexpected_error_marks_unavailable(self):
+        org = FakeOrganizationsClient(describe_org_error=RuntimeError("boom"))
+        self._install(org=org)
+        body = json.loads(capabilities.handler({}, None)["body"])
+        org_entries = [c for c in body["coverage"] if c["source"] == "organizations"]
+        self.assertEqual(1, len(org_entries))
+        self.assertEqual("unavailable", org_entries[0]["state"])
+        self.assertIn("check failed", org_entries[0]["detail"].lower())
 
 
 if __name__ == "__main__":

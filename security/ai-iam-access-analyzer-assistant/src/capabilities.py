@@ -8,11 +8,17 @@ missing, or CloudTrail isn't reachable, the chat's opening line names the
 gap instead of leading with a hardcoded feature list that the environment
 doesn't support.
 
-The endpoint is intentionally cheap: 3–5 AWS calls in parallel semantics
-(each try/except independent), sub-second in aggregate. Called once when
-the chat opens; the tools themselves still emit per-call coverage on
-every turn, so this probe is the header-level supplement to the per-turn
-signal — not a replacement.
+The endpoint is intentionally cheap: a handful of AWS calls in parallel
+semantics (each try/except independent), sub-second in aggregate. Called
+once when the chat opens; the tools themselves still emit per-call
+coverage on every turn, so this probe is the header-level supplement to
+the per-turn signal — not a replacement.
+
+Also includes a passive, read-only AWS Organizations / Security Hub
+delegated-admin check ("Level 1" of the multi-account work tracked in
+#173) — no spoke roles, no cross-account assume-role, no new
+infrastructure. It only reports what this account can already see about
+its own org membership and Security Hub administrator relationship.
 
 Output shape (illustrative example — actual region is whatever the Lambda
 runs in, taken from ``AWS_REGION`` at cold start):
@@ -22,7 +28,8 @@ runs in, taken from ``AWS_REGION`` at cold start):
       "coverage": [
         {"source": "securityhub", "state": "checked", "detail": "..."},
         {"source": "accessanalyzer", "state": "unavailable", "detail": "..."},
-        {"source": "cloudtrail", "state": "checked", "detail": "..."}
+        {"source": "cloudtrail", "state": "checked", "detail": "..."},
+        {"source": "organizations", "state": "checked", "detail": "..."}
       ],
       "welcome_message": "In <region> I can see external access findings ..."
     }
@@ -54,6 +61,7 @@ _REGION = os.environ.get("AWS_REGION", "us-east-1")
 securityhub_client = boto3.client("securityhub")
 accessanalyzer_client = boto3.client("accessanalyzer")
 cloudtrail_client = boto3.client("cloudtrail")
+organizations_client = boto3.client("organizations")
 
 
 def handler(event, context=None):
@@ -96,7 +104,10 @@ def _probe() -> dict:
     ct_status = _probe_cloudtrail()
     coverage.extend(ct_status["coverage"])
 
-    welcome = _compose_welcome_message(sh_status, aa_status, ct_status)
+    org_status = _probe_org_detection(sh_status)
+    coverage.extend(org_status["coverage"])
+
+    welcome = _compose_welcome_message(sh_status, aa_status, ct_status, org_status)
 
     return {
         "region": _REGION,
@@ -268,6 +279,107 @@ def _probe_cloudtrail() -> dict:
     return result
 
 
+# --------------------------------------------------------------- Organizations
+
+
+def _probe_org_detection(sh: dict) -> dict:
+    """Passive, read-only check for AWS Organizations membership (Level 1).
+
+    This is deliberately NOT the Level 2 hub-and-spoke feature (#173) — no
+    spoke role, no cross-account assume-role, no new infrastructure. It
+    answers one narrow question: is this account part of an AWS
+    Organization, and if Security Hub is enabled here, is this account the
+    Security Hub delegated administrator (which means ``get_findings`` in
+    ``_probe_security_hub`` above is already returning org-aggregated
+    findings, not just this account's own findings — confirmed in practice
+    via live testing against a 5-account org on 2026-10-09, where findings
+    from 7 distinct accounts appeared from a single delegated-admin
+    account's Security Hub query).
+
+    ``describe_organization`` and ``describe_organization_configuration``
+    are both control-plane calls with no resource-level authorization, same
+    shape as the other probes in this module — see the IAM policy comment
+    in ``api_construct.py`` for the ``resources=["*"]`` justification.
+
+    Delegated-admin detection uses ``describe_organization_configuration``
+    rather than ``get_administrator_account`` — per the AWS docs, "Only the
+    Security Hub administrator account can invoke this operation," so a
+    successful call IS the confirmation (not an inference from an empty
+    response), and a failure means this account is a plain member (or SH
+    isn't org-integrated at all). This exact behavior — success only from
+    the delegated admin account, ``InvalidAccessException`` from any other
+    account including the Organizations management account — was verified
+    directly via AWS CLI on 2026-10-09 against this project's own 5-account
+    org before this probe was written.
+    """
+    coverage: list = []
+    result = {"in_org": False, "is_delegated_admin": None, "coverage": coverage}
+
+    try:
+        org = organizations_client.describe_organization()["Organization"]
+    except organizations_client.exceptions.AWSOrganizationsNotInUseException:
+        coverage.append(_cov(
+            "organizations", "unavailable",
+            "this account is not part of an AWS Organization — "
+            "findings and policy reads are limited to this single account",
+        ))
+        return result
+    except Exception as e:
+        coverage.append(_cov(
+            "organizations", "unavailable",
+            f"AWS Organizations check failed: {type(e).__name__}: {e}",
+        ))
+        return result
+
+    result["in_org"] = True
+    org_id = org.get("Id", "unknown")
+
+    # Only meaningful if Security Hub itself is enabled here (sh["enabled"]
+    # from _probe_security_hub, run just before this). If SH is off, there
+    # is nothing to be a delegated admin FOR, so skip the second call
+    # entirely rather than report a misleading "not delegated admin".
+    if not sh.get("enabled"):
+        coverage.append(_cov(
+            "organizations", "checked",
+            f"account is part of AWS Organization {org_id}, but Security "
+            "Hub is not enabled here, so org-wide findings aggregation "
+            "cannot be confirmed",
+        ))
+        return result
+
+    try:
+        # Succeeds ONLY on the delegated admin account itself (AWS docs:
+        # "Only the Security Hub administrator account can invoke this
+        # operation") — a clean, authoritative signal, not an inference.
+        securityhub_client.describe_organization_configuration()
+        result["is_delegated_admin"] = True
+        coverage.append(_cov(
+            "organizations", "checked",
+            f"account is part of AWS Organization {org_id} and is the "
+            "Security Hub delegated administrator — findings from other "
+            "member accounts in the org aggregate here",
+        ))
+    except securityhub_client.exceptions.InvalidAccessException:
+        result["is_delegated_admin"] = False
+        coverage.append(_cov(
+            "organizations", "checked",
+            f"account is part of AWS Organization {org_id}; Security Hub "
+            "delegated administration is handled by a different account, "
+            "so findings here are local to this account only",
+        ))
+    except Exception as e:
+        # Non-fatal — we still know we're in an org, just not the admin
+        # relationship. Report what we have rather than discarding it.
+        coverage.append(_cov(
+            "organizations", "checked",
+            f"account is part of AWS Organization {org_id}; could not "
+            f"determine Security Hub delegated-admin status: "
+            f"{type(e).__name__}: {e}",
+        ))
+
+    return result
+
+
 # --------------------------------------------------------------------- shared
 
 
@@ -275,11 +387,14 @@ def _cov(source: str, state: str, detail: str) -> dict:
     return {"source": source, "state": state, "detail": detail}
 
 
-def _compose_welcome_message(sh: dict, aa: dict, ct: dict) -> str:
+def _compose_welcome_message(sh: dict, aa: dict, ct: dict, org: dict | None = None) -> str:
     """Compose an honest welcome message from the probe results.
 
     Follows Ben's example in #171: name what CAN be seen and what CANNOT,
     with the specific region so a wrong-region deploy is obvious.
+
+    ``org`` is optional (defaults to None) so existing callers/tests that
+    only pass the original three probes keep working unchanged.
     """
     parts: list = []
 
@@ -313,6 +428,25 @@ def _compose_welcome_message(sh: dict, aa: dict, ct: dict) -> str:
             "Analyzer integration is switched off, so findings from Access "
             "Analyzer will not reach this assistant"
         )
+
+    if org and org.get("in_org"):
+        if org.get("is_delegated_admin") is True:
+            parts.append(
+                "this account is the Security Hub delegated administrator "
+                "for its AWS Organization, so the findings above are "
+                "aggregated across every member account, not just this one"
+            )
+        elif org.get("is_delegated_admin") is False:
+            parts.append(
+                "this account is part of an AWS Organization, but a "
+                "different account is the Security Hub delegated "
+                "administrator, so the findings above are local to this "
+                "account only"
+            )
+        # is_delegated_admin is None (SH disabled, or the admin check
+        # itself failed) — org membership alone isn't worth a sentence on
+        # its own; the SH-disabled or SH-error sentences above already
+        # cover why findings are limited.
 
     if aa.get("unused") is None:
         parts.append(
