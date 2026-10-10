@@ -27,6 +27,7 @@ TOOL_FUNCTIONS = {
     "compare_roles": os.environ.get("COMPARE_ROLES_FN"),
     "list_exports": os.environ.get("LIST_EXPORTS_FN"),
     "triage_access_keys": os.environ.get("TRIAGE_ACCESS_KEYS_FN"),
+    "cross_account_iam_context": os.environ.get("CROSS_ACCOUNT_IAM_CONTEXT_FN"),
 }
 
 SYSTEM_PROMPT = """You are an expert IAM security analyst assistant. You help users understand and improve their AWS IAM security posture by:
@@ -278,6 +279,14 @@ You have access to the following tools - use them to answer user questions:
 - compare_roles: Compare 2-5 roles side-by-side on risk, usage, permissions, and trust — with rankings and deletion recommendations
 - list_exports: List previously saved reports with fresh download links, or regenerate a link for a specific file
 - triage_access_keys: Inventory every IAM access key and return a ranked per-key report — priority class, risk flags, and a specific suggested remediation per identity pattern. Use for "audit my access keys", "which keys are stale", "over-permissioned users", "IAM key hygiene".
+- cross_account_iam_context: Read IAM roles and CloudTrail reachability for ONE specific named AWS account in a multi-account environment (#173 Level 2, opt-in — only works if that account has the multi-account spoke role deployed). Requires an explicit account_id every time.
+
+MULTI-ACCOUNT / CROSS-ACCOUNT QUESTIONS (#173 Level 2, opt-in feature):
+When a user asks about IAM or CloudTrail data in an account OTHER than this one — "what roles exist in account 123456789012", "check CloudTrail in our prod account", or similar — you may call cross_account_iam_context, but ONLY with a specific, named account_id.
+- You MUST NOT call cross_account_iam_context in a loop to cover "all accounts", "every account in my org", or "all member accounts" in a single turn. One tool call per turn for this tool, for one named account. Looping risks the API Gateway 29-second ceiling and produces an ambiguous answer if different accounts' data disagrees.
+- If the user asks for an ORG-WIDE view ("findings across my whole organization", "are we compliant everywhere") rather than one specific account, prefer list_findings instead — Security Hub findings already aggregate across every member account automatically when this hub account is the Security Hub delegated administrator (see the organizations coverage source and the welcome message), with no per-account tool call needed at all. Do not reach for cross_account_iam_context just because a question sounds multi-account; it is for IAM/CloudTrail detail in ONE named account specifically, not an org-wide substitute for list_findings.
+- If you do not know which account_id the user means, ASK them. Do NOT guess an account_id from a previous tool result's account_id field (e.g. picking "whichever account had the most findings") — that is a fabrication, not a real answer, and this exact mistake has previously caused the assistant to name the WRONG account when asked about multi-account structure.
+- If cross_account_iam_context returns a coverage entry with state "unavailable" naming the spoke role, tell the user plainly that this account doesn't have the multi-account feature set up (it's opt-in) rather than implying the account was checked and came back clean.
 
 ACCESS KEY TRIAGE:
 When the user asks about IAM access keys — auditing, hygiene, stale keys, over-permissioned users, "which of my keys are risky", or similar — you MUST call the triage_access_keys tool. Do not enumerate keys by reasoning about names or memory; call the tool.
@@ -432,6 +441,43 @@ TOOL_CONFIG = {
                             },
                         },
                         "required": ["entity_arn"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "cross_account_iam_context",
+                "description": (
+                    "Read IAM roles and CloudTrail reachability for ONE specific AWS "
+                    "account, by account_id, in a multi-account environment (#173 Level 2, "
+                    "opt-in). Requires that account to either be this hub account itself, "
+                    "or a member account with the IamAnalyzerAssistantSpokeRole deployed "
+                    "(via the opt-in multi-account StackSet rollout). ALWAYS requires a "
+                    "specific account_id — never call this tool in a loop to cover 'all "
+                    "accounts' or 'every member account' in a single turn; that risks a "
+                    "29-second API Gateway timeout and gives an ambiguous answer if "
+                    "accounts disagree. If the user wants an org-wide view instead of one "
+                    "named account, prefer list_findings — Security Hub findings already "
+                    "aggregate across every member account automatically when this hub is "
+                    "the Security Hub delegated administrator, with no per-account call "
+                    "needed. If you don't know which account_id the user means, ASK them "
+                    "— do not guess an account_id from prior findings data."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "account_id": {
+                                "type": "string",
+                                "description": "The 12-digit AWS account id to read. Required — ask the user if not given.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max IAM roles to return (default: 20, max: 100)",
+                            },
+                        },
+                        "required": ["account_id"],
                     }
                 },
             }

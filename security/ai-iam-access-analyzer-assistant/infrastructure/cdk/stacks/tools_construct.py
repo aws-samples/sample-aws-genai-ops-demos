@@ -284,6 +284,33 @@ class ToolsConstruct(Construct):
             },
         )
 
+        # Cross-account IAM/CloudTrail read (#173 Level 2, opt-in).
+        # SPOKE_ROLE_NAME is passed explicitly rather than relying on the
+        # tool code's hardcoded default matching scan_permissions.py by
+        # coincidence — this is the same single-source-of-truth constant
+        # used by spoke_stack.py and the sts:AssumeRole grant above, so a
+        # future rename only has to happen in one place. Works with no
+        # deploy-time change for the default single-account path: calling
+        # this tool with the hub's own account_id never calls
+        # sts:AssumeRole at all (session_for_account() returns None), so
+        # it functions even if no SpokeStack/OrgStack has ever been
+        # deployed anywhere — only a DIFFERENT account_id requires a
+        # spoke role to actually exist there.
+        self.cross_account_iam_context_fn = lambda_.Function(
+            self,
+            "CrossAccountIamContext",
+            handler="tools.cross_account_iam_context.handler",
+            code=lambda_.Code.from_asset(tools_path),
+            runtime=common_props["runtime"],
+            timeout=common_props["timeout"],
+            memory_size=common_props["memory_size"],
+            role=common_props["role"],
+            environment={
+                **common_props["environment"],
+                "SPOKE_ROLE_NAME": SPOKE_ROLE_NAME,
+            },
+        )
+
         # Expose as dict for the API construct
         self.functions = {
             "list_findings": self.list_findings_fn,
@@ -296,4 +323,5 @@ class ToolsConstruct(Construct):
             "compare_roles": self.compare_roles_fn,
             "list_exports": self.list_exports_fn,
             "triage_access_keys": self.triage_access_keys_fn,
+            "cross_account_iam_context": self.cross_account_iam_context_fn,
         }
