@@ -47,8 +47,21 @@ export interface OrgContext {
   is_delegated_admin: boolean | null;
 }
 
+/**
+ * Guided-tour step pointer, round-tripped exactly like PaginationContext.
+ * The backend returns it after each tour step; the frontend holds it in a
+ * ref and echoes it back on the next request so the backend can advance
+ * the tour deterministically (never looping). `active: false` means the
+ * tour finished — the frontend then clears its ref.
+ */
+export interface TourContext {
+  step: number;
+  active: boolean;
+}
+
 interface ConversationResponse {
   response: string;
+  tour?: TourContext | null;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -70,7 +83,8 @@ export async function sendMessage(
   history: MessageHistory[],
   mode: string = "guided",
   pagination?: PaginationContext | null,
-  orgContext?: OrgContext | null
+  orgContext?: OrgContext | null,
+  tour?: TourContext | null
 ): Promise<ConversationResponse> {
   const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
@@ -99,6 +113,7 @@ export async function sendMessage(
         mode,
         ...(pagination ? { pagination } : {}),
         ...(orgContext ? { org_context: orgContext } : {}),
+        ...(tour ? { tour } : {}),
       }),
     });
   } catch {

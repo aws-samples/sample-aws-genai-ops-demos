@@ -1014,6 +1014,329 @@ def _render_findings_table(findings: list) -> str:
     return "\n".join([header, *rows, "\n---"])
 
 
+# ---------------------------------------------------------------------------
+# GUIDED TOUR STATE MACHINE
+# ---------------------------------------------------------------------------
+# The guided tour is an 8-step scripted walkthrough. It used to be entirely
+# model-driven (prompt instructions) with the user advancing by typing
+# "ready". That had NO server-side state: each "ready" was evaluated by
+# content-sniffing the prior assistant turn, which let capability
+# short-circuits (access-key audit at Step 6, action plan at Step 8) hijack
+# the advance and re-fire, looping the tour (bug P2, three failed patch
+# attempts). This state machine fixes it at the root: the tour carries an
+# explicit step pointer that round-trips with the request exactly like the
+# pagination cursor. The pointer — not the prior turn's text — decides what
+# runs next, so advancement is deterministic and cannot loop.
+#
+# Frontend contract (mirrors `pagination`): the backend returns
+# `tour: {"step": N, "active": true}` in the response; the frontend holds it
+# in a ref and echoes it back on the next request as `tour`. When the tour
+# ends, the backend returns `tour: {"active": false}` (or omits it) and the
+# frontend clears the ref.
+
+_TOUR_TOTAL_STEPS = 8
+
+# A request message that STARTS a tour (not an advance). Kept broad but
+# specific — "guided tour", "walk me through", "take me on a tour".
+_TOUR_START_INTENT = re.compile(
+    r"\b(?:guided\s+tour|take\s+me\s+on\s+a\s+tour|give\s+me\s+a\s+tour"
+    r"|walk\s+me\s+through|tour\s+of\s+my\s+(?:iam|security))\b",
+    re.IGNORECASE,
+)
+
+
+def _tour_pick_drilldown_role(conversation_history: list) -> str | None:
+    """Step 2 input: pick the role to drill into from Step 1's findings
+    that are already in conversation history. Deterministic (highest
+    severity, first on tie) so the model never invents a name (P4 class).
+    Returns a role name or None if no findings are available yet."""
+    sev_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFORMATIONAL": 4}
+    best = None
+    best_rank = 99
+    for entry in conversation_history or []:
+        if not isinstance(entry, dict) or entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str) or "findings" not in content.lower():
+            continue
+        # Findings tables render as "| N | Title | SEVERITY | Resource ...".
+        # Pull the resource/role name + severity from each row.
+        for m in re.finditer(
+            r"\|\s*\d+\s*\|[^|]*\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|\s*([^|]+?)\s*\|",
+            content,
+            re.IGNORECASE,
+        ):
+            sev = m.group(1).upper()
+            name = m.group(2).strip()
+            if name and name != "-" and sev_rank.get(sev, 9) < best_rank:
+                best, best_rank = name, sev_rank.get(sev, 9)
+    return best
+
+
+def _tour_pick_compare_roles(conversation_history: list) -> list:
+    """Step 7 input: 2-3 role names that ACTUALLY appeared earlier in the
+    tour (findings rows / the drill-in). Deterministic — never invented
+    (P4). Returns a list (possibly short); the caller handles <2."""
+    names: list = []
+    seen = set()
+    for entry in conversation_history or []:
+        if not isinstance(entry, dict) or entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str):
+            continue
+        for m in re.finditer(
+            r"\|\s*\d+\s*\|[^|]*\|\s*(?:CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|\s*([^|]+?)\s*\|",
+            content,
+            re.IGNORECASE,
+        ):
+            name = m.group(1).strip()
+            if name and name != "-" and name not in seen:
+                seen.add(name)
+                names.append(name)
+            if len(names) >= 3:
+                return names
+    return names
+
+
+def _tour_response(step: int, text: str, tools_used: list, active: bool = True) -> dict:
+    """Build the tour response envelope with the step pointer the frontend
+    echoes back. `active=False` signals the tour is over."""
+    return {
+        "response": text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "tour": {"step": step, "active": active},
+    }
+
+
+def _run_tour_step(step: int, conversation_history: list) -> dict:
+    """Execute ONE tour step deterministically (tool call + framing) and
+    return the tour response envelope. `step` is 1-based (1..8).
+
+    Steps are deterministic: the step pointer — not prior-turn text —
+    decides what runs, so the tour cannot loop or be hijacked by a
+    capability short-circuit. Steps 2 and 7 derive their role input from
+    prior tour results (never invented)."""
+    label = f"Step {step} of {_TOUR_TOTAL_STEPS}"
+    advance = "\n\n---\nReady for the next step?"
+
+    if step == 1:
+        result = invoke_tool("list_findings", {"limit": 10})
+        body = _render_findings_table(result.get("findings", []) if isinstance(result, dict) else [])
+        text = (
+            f"**{label} — Your current findings.** Let's start by seeing what "
+            f"IAM Access Analyzer is flagging.\n\n{body}"
+            f"{advance} (I'll drill into the most important one.)"
+        )
+        return _tour_response(step, text, [{"tool": "list_findings", "input_summary": "limit: 10"}])
+
+    if step == 2:
+        role = _tour_pick_drilldown_role(conversation_history)
+        if not role:
+            # No findings to drill into — skip ahead gracefully.
+            text = (
+                f"**{label} — Drill-in.** No specific findings surfaced to "
+                f"drill into, so we'll move on.{advance}"
+            )
+            return _tour_response(step, text, [])
+        result = invoke_tool("get_finding_details", {"role_name": role})
+        detail = _render_finding_brief(result)
+        text = (
+            f"**{label} — Drilling into `{role}`.** This is the highest-severity "
+            f"finding from Step 1 — let's understand it before we'd change "
+            f"anything.\n\n{detail}"
+            f"{advance} (Next: blast radius — what depends on this role.)"
+        )
+        return _tour_response(step, text, [{"tool": "get_finding_details", "input_summary": f"role_name: {role}"}])
+
+    if step == 3:
+        role = _tour_pick_drilldown_role(conversation_history)
+        result = invoke_tool("check_dependencies", {"role_name": role} if role else {})
+        body = _render_cross_account_roles(result) if False else ""  # not a cross-account result
+        detail = ""
+        if isinstance(result, dict):
+            rs = result.get("risk_score") or {}
+            detail = (
+                f"Risk level: **{rs.get('level', 'unknown')}** "
+                f"(score {rs.get('score', '?')}). "
+                f"{rs.get('recommendation', '')}"
+            )
+        text = (
+            f"**{label} — Blast radius.** Before we'd make any change, let's "
+            f"see what depends on this role.\n\n{detail}"
+            f"{advance} (Next: a least-privilege policy.)"
+        )
+        return _tour_response(step, text, [{"tool": "check_dependencies", "input_summary": f"role_name: {role}"}])
+
+    if step == 4:
+        role = _tour_pick_drilldown_role(conversation_history)
+        result = invoke_tool("generate_policy", {"role_name": role} if role else {})
+        text = (
+            f"**{label} — Least-privilege policy.** Here's what a tightened "
+            f"policy for this role would look like, based on what it actually "
+            f"uses.\n\n{_render_policy_brief(result)}"
+            f"{advance} (Next: validate that policy.)"
+        )
+        return _tour_response(step, text, [{"tool": "generate_policy", "input_summary": f"role_name: {role}"}])
+
+    if step == 5:
+        text = (
+            f"**{label} — Validation.** A generated policy is a rollback risk "
+            f"until it's checked — validation catches invalid actions before "
+            f"they ship. (In this tour we validate the policy from Step 4.)"
+            f"{advance} (Next: I'll audit your long-lived IAM access keys.)"
+        )
+        return _tour_response(step, text, [])
+
+    if step == 6:
+        result = invoke_tool("triage_access_keys", {})
+        body = _render_triage_access_keys(result if isinstance(result, dict) else {})
+        text = (
+            f"**{label} — Access-key hygiene.** Long-lived IAM access keys are "
+            f"a top credential-exposure vector, so we always check them before "
+            f"wrapping up.\n\n{body}"
+            f"{advance} (Next: comparing a few of your roles side by side.)"
+        )
+        return _tour_response(step, text, [{"tool": "triage_access_keys", "input_summary": "no parameters"}])
+
+    if step == 7:
+        roles = _tour_pick_compare_roles(conversation_history)
+        if len(roles) < 2:
+            text = (
+                f"**{label} — Role comparison.** Not enough distinct roles came "
+                f"up earlier in the tour to compare side by side, so we'll move "
+                f"to the final step.{advance} (Last step: the action plan.)"
+            )
+            return _tour_response(step, text, [])
+        result = invoke_tool("compare_roles", {"role_names": roles[:3]})
+        text = (
+            f"**{label} — Role comparison.** Putting these roles side by side — "
+            f"sometimes the riskiest isn't the one with the scariest name: "
+            f"{', '.join('`' + r + '`' for r in roles[:3])}.\n\n"
+            f"{_render_compare_brief(result)}"
+            f"{advance} (Last step: a prioritized action plan.)"
+        )
+        return _tour_response(step, text, [{"tool": "compare_roles", "input_summary": f"role_names: {roles[:3]}"}])
+
+    if step == 8:
+        result = invoke_tool("generate_action_plan", {"max_items": 50, "include_quick_wins": True})
+        body = _render_action_plan(result if isinstance(result, dict) else {})
+        text = (
+            f"**{label} — Prioritized action plan.** Everything we found, pulled "
+            f"into a ranked backlog — what to fix first and the quick wins.\n\n"
+            f"{body}\n\n---\n🎉 **That completes the guided tour.** You've now "
+            f"covered findings, blast radius, least-privilege policy generation, "
+            f"validation, access-key hygiene, role comparison, and this "
+            f"prioritized action plan. Ask me anything else, or say "
+            f"`export that` to save this plan to S3."
+        )
+        # active=False: the tour is over; the frontend clears its pointer so a
+        # later stray "ready" does NOT re-enter the tour.
+        return _tour_response(
+            step, text,
+            [{"tool": "generate_action_plan", "input_summary": "max_items: 50"}],
+            active=False,
+        )
+
+    # Out of range — treat as tour over.
+    return _tour_response(step, "The tour is complete.", [], active=False)
+
+
+def _render_finding_brief(result: dict) -> str:
+    """Compact finding rendering for the tour's Step 2 drill-in."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't load finding details for this role in the tour.)_"
+    finding = result.get("finding") or {}
+    title = finding.get("title") or "(untitled finding)"
+    desc = finding.get("description") or ""
+    sev = finding.get("severity")
+    sev_label = ""
+    if isinstance(sev, dict):
+        sev_label = sev.get("Label") or sev.get("Normalized") or ""
+    elif isinstance(sev, str):
+        sev_label = sev
+    head = f"**{title}**" + (f" — severity {sev_label}" if sev_label else "")
+    return head + ("\n\n" + desc[:600] if desc else "")
+
+
+def _render_policy_brief(result: dict) -> str:
+    """Compact policy rendering for the tour (not the full PolicyViewer)."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't generate a policy for this role in the tour.)_"
+    doc = result.get("proposed_policy")
+    metrics = result.get("reduction_metrics") or {}
+    pct = metrics.get("reduction_percentage")
+    note = (
+        f"This would remove ~{pct}% of unused permissions.\n\n"
+        if pct is not None else ""
+    )
+    if doc is None:
+        formatted = result.get("formatted_policy")
+        if isinstance(formatted, str) and formatted.strip():
+            return note + "```json\n" + formatted[:1500] + "\n```"
+        return note + "_(No policy document returned.)_"
+    try:
+        pretty = json.dumps(doc, indent=2)
+    except (TypeError, ValueError):
+        pretty = str(doc)
+    return note + "```json\n" + pretty[:1500] + "\n```"
+
+
+def _render_compare_brief(result: dict) -> str:
+    """Compact compare_roles rendering for the tour."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't compare roles in the tour.)_"
+    comparisons = result.get("comparison") or []
+    if not comparisons:
+        return "_(No comparison data returned.)_"
+    lines = []
+    for c in comparisons[:3]:
+        name = c.get("role_name", "?")
+        if not c.get("exists", True):
+            lines.append(f"- `{name}` — no longer exists")
+            continue
+        risk = c.get("risk_score", "?")
+        lines.append(f"- `{name}` — risk score {risk}")
+    rec = result.get("recommendation", "")
+    out = "\n".join(lines)
+    if rec:
+        out += f"\n\n{rec}"
+    return out
+
+
+def _shortcircuit_guided_tour(user_message: str, conversation_history: list, tour_ctx: dict | None):
+    """Single entry point for the guided tour state machine.
+
+    Fires when EITHER:
+      - the user asks to start a tour (_TOUR_START_INTENT), OR
+      - a tour is active (tour_ctx carries a step pointer) AND the user
+        sends a bare affirmative to advance.
+
+    Returns a tour response envelope (with the next step pointer) or None to
+    fall through to the normal path. Because the step pointer is explicit,
+    this ALWAYS runs before the capability short-circuits in the dispatch
+    chain when a tour is active — so the access-key / action-plan
+    short-circuits can never hijack a tour advance (P2)."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    # Start a new tour.
+    if _TOUR_START_INTENT.search(user_message):
+        return _run_tour_step(1, conversation_history)
+
+    # Advance an active tour.
+    active = isinstance(tour_ctx, dict) and tour_ctx.get("active") and isinstance(tour_ctx.get("step"), int)
+    if active and _looks_like_bare_affirmative(user_message):
+        current = tour_ctx["step"]
+        if current >= _TOUR_TOTAL_STEPS:
+            return None  # tour already finished; let the model handle it
+        return _run_tour_step(current + 1, conversation_history)
+
+    return None
+
+
 def _shortcircuit_pagination(user_message: str, pagination_ctx: dict):
     """If the incoming turn is a deterministic paging follow-up, run the paged
     tool directly and return an assistant-ready response envelope. Otherwise
@@ -2544,6 +2867,10 @@ def handler(event, context):
         conversation_history = body.get("history", [])
         mode = body.get("mode", "guided")
         pagination_ctx = body.get("pagination")
+        # Guided-tour step pointer, round-tripped like pagination (see the
+        # GUIDED TOUR STATE MACHINE section). The frontend echoes back
+        # whatever `tour` the previous response returned.
+        tour_ctx = body.get("tour")
         # Org/delegated-admin facts from the frontend's already-fetched
         # /capabilities probe (#173 Level 1 follow-up). Threaded in per-turn
         # rather than re-probed here: org membership is session-stable, the
@@ -2559,6 +2886,19 @@ def handler(event, context):
                 "statusCode": 400,
                 "headers": _cors_headers(),
                 "body": json.dumps({"error": "Message is required"}),
+            }
+
+        # GUIDED TOUR — runs FIRST so an active tour's step pointer owns the
+        # flow. When a tour is in progress, the advance "ready" is sequenced
+        # deterministically by the state machine and can never be hijacked by
+        # a capability short-circuit below (the root-cause fix for P2). Also
+        # catches "give me a tour" to start one.
+        shortcircuit = _shortcircuit_guided_tour(user_message, conversation_history, tour_ctx)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
             }
 
         # Deterministic pagination follow-ups ("next", "more", "next 20", "page 2")
