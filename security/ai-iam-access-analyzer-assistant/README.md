@@ -9,6 +9,7 @@ The AI IAM Access Analyzer Assistant provides a conversational interface for man
 
 Recent hardening improvements observed in real deployments:
 
+- **Optional multi-account visibility.** The assistant can now be made aware of — and, with an opt-in deploy flag, read IAM/CloudTrail data across — an AWS Organization. See [Optional: Multi-Account Visibility](#optional-multi-account-visibility-hub-and-spoke) below. The default single-account deployment is completely unaffected.
 - **IAM access-key triage.** A new tool inventories every IAM access key in the account and returns a prioritized action list with a specific replacement path per identity — SSO federation for humans, IAM roles for services, OIDC federation for CI/CD, or root-key removal. Each row links to the AWS documentation page for the recommended migration pattern.
 - **Downloads no longer depend on STS token lifetime.** Exports and re-issued download links now go through a Cognito-authenticated API Gateway proxy with a prefix allowlist and path-traversal defense. This replaces the previous S3 presigned-URL design, which could issue links with less remaining life than the URL's `ExpiresIn` when the Lambda's own STS token rotated. The legacy `PresignerRole` remains in the CDK stack for one release cycle marked deprecated, and can be removed on the next revision.
 - **More flows short-circuit deterministically.** Pagination (`next 10`, `page 3`), `generate an action plan`, `validate this policy` for a pasted JSON body, `audit my access keys`, `explain what the audit does` (and similar educational questions), and the `generate an action plan and export it` compound all execute server-side in a single turn — no Bedrock round-trip and no risk of hitting the API Gateway 29-second ceiling. The model still handles novel or exploratory questions.
@@ -134,11 +135,14 @@ User → CloudFront → S3 (React)
 | Lambda (export_report) | Persist a generated artifact to S3 and return a Cognito-authenticated download URL |
 | Lambda (list_exports) | List previously-exported artifacts and issue fresh download URLs |
 | Lambda (download) | Cognito-authenticated proxy that serves objects from the reports bucket with a prefix allowlist and path-traversal defense |
+| Lambda (cross_account_iam_context) | Read IAM roles and CloudTrail reachability for one named account — the hub's own account by default, or another account when [multi-account visibility](#optional-multi-account-visibility-hub-and-spoke) is deployed |
 | IAM Role (ToolExecutionRole) | Shared execution role for all tool Lambdas (read-only IAM, Security Hub, CloudTrail, Access Analyzer) |
 | IAM Role (PresignerRole) | Deprecated. Retained in the CDK stack for one release cycle for backwards compatibility; no code path assumes this role anymore. |
 | S3 (Frontend Hosting) | React app static files |
 | S3 (Reports) | Generated policies and reports (optional — see note below) |
 | CloudFront | HTTPS distribution for frontend |
+
+**Note on multi-account resources**: everything in the table above deploys with every install, with no flags needed. The IAM role and CloudFormation StackSet described in [Optional: Multi-Account Visibility](#optional-multi-account-visibility-hub-and-spoke) below are NOT in this table because they are opt-in — they only deploy when `--multi-account` is passed to the deploy script.
 
 **Note on S3 Reports Bucket**: The reports bucket stores exported artifacts (policies, change requests, action plans) for server-side access. If your organization restricts S3 bucket creation, you can remove the `StorageConstruct` from the CDK stack — the tool will gracefully fall back to local browser downloads via the "Save as .md" button. The frontend hosting bucket is required and cannot be removed.
 
@@ -151,6 +155,63 @@ User → CloudFront → S3 (React)
    ```
 3. Ensure the tool Lambda execution role has `s3:PutObject` and `s3:GetObject` on that bucket
 4. Redeploy: `./deploy-all.sh`
+
+## Optional: Multi-Account Visibility (Hub-and-Spoke)
+
+Everything described so far in [What Gets Deployed](#what-gets-deployed) and [Cost](#cost) is the **standard, single-account deployment** — one AWS account, the resources listed there, the cost range shown below. This section describes an *additional*, fully optional layer on top of that baseline, for organizations that manage IAM across an AWS Organization and want this assistant to see more than its own account.
+
+**This is entirely opt-in.** If you deploy with no flags (as shown everywhere else in this README), nothing in this section applies — you get exactly the standard deployment above, unchanged.
+
+### Two levels of multi-account support
+
+#### Level 1: Organization and delegated-admin awareness (no new infrastructure)
+
+Adds **zero new resources** on top of the standard deployment table above. The assistant detects, using read-only `organizations:DescribeOrganization` and `securityhub:DescribeOrganizationConfiguration` calls at session start, whether this account is part of an AWS Organization and whether it is the Security Hub delegated administrator — no new Lambda, no new IAM role, no new stack. When it is the delegated administrator, Security Hub findings (surfaced via `list_findings` and related tools) already aggregate across every member account automatically; the welcome message and a "Data sources" indicator in the chat UI say so explicitly, and the assistant can answer direct questions about the organization structure correctly rather than guessing.
+
+- **Cost:** $0 beyond the baseline Cost table above — these are a couple of extra read-only API calls at session start, not a new billable resource.
+- **Setup:** None. Always on; each check is independently skipped if the deploying account lacks the relevant permission or isn't part of an Organization.
+- **Use case:** Awareness of organization-wide Security Hub coverage without deploying any new infrastructure. Always on, no decision required.
+
+#### Level 2: Cross-account IAM/CloudTrail reads (opt-in deploy flag)
+
+Deploys a read-only IAM role into target accounts (via a CloudFormation StackSet, so no manual per-account setup is needed) so the assistant can read IAM roles and check CloudTrail reachability in one specific, named account at a time — for example, "what roles exist in account 123456789012?"
+
+```bash
+./deploy-all.sh --multi-account --org-targets <ou-id-or-org-root-id>
+```
+
+```powershell
+.\deploy-all.ps1 -MultiAccount -OrgTargets <ou-id-or-org-root-id>
+```
+
+If `--org-targets` is omitted, it defaults to the whole organization's root. The deploy script runs a read-only preflight check first; if this account can roll the spoke role out itself (it is the Organizations management account, or a registered StackSets delegated administrator), the rollout happens automatically. If not, the standard deployment still completes normally, and the exact command for a management-account administrator to run once is printed at the end.
+
+**What this adds beyond the baseline [What Gets Deployed](#what-gets-deployed) table:**
+- One read-only IAM role (`IamAnalyzerAssistantSpokeRole`), deployed to every target account via a CloudFormation StackSet. Its trust policy is scoped to this specific hub account's tool-execution role, not the account broadly, and its permissions are a narrow read-only subset (IAM `Get`/`List` calls plus `cloudtrail:LookupEvents`) — no Security Hub permissions are included, since Level 1 already covers Security Hub aggregation without any cross-account role.
+- An expanded `sts:AssumeRole` permission on the hub's existing tool-execution role (`ToolExecutionRole` in the baseline table), scoped to that specific spoke-role name in any account — it cannot assume any other role.
+- Nothing else from the baseline table changes — no new compute, no networking changes, no database. This feature always requires an explicit account to be named; the assistant will never attempt to loop over every account in an organization within a single request.
+
+**Prerequisites:**
+- AWS Organizations with CloudFormation StackSets trusted access enabled (the deploy script's preflight check verifies this and prints the exact fix if it isn't)
+- Recommended: deploy the hub in your Security Hub delegated administrator account, so Level 1's org-wide findings aggregation applies automatically
+
+**Cost:** The additional IAM role and StackSet have no meaningful cost on their own — they do not appear as new line items beyond the baseline Cost table above. Cross-account API calls (assuming a role, then reading IAM/CloudTrail in that account) are standard AWS API usage with no additional charge beyond what the baseline deployment's own IAM/CloudTrail reads already incur.
+
+### Which option should you choose?
+
+| Your situation | Recommended option |
+|---|---|
+| Single AWS account, not part of an organization | Default deployment. Nothing to change. |
+| Part of an organization, mostly work within one account | **Level 1** — always on, no new infrastructure, no decision required |
+| Occasionally need IAM/CloudTrail detail from a specific other account | **Level 2** — name the account when asking; deploy with `--multi-account` first |
+| Need org-wide findings visibility across every account | **Level 1 alone is sufficient** if this hub is the Security Hub delegated administrator — no Level 2 deploy needed for that specific question |
+
+### Limitations
+
+- Multi-region is not supported — IAM is a global service, but CloudTrail is regional. The assistant only ever reflects the deployment region.
+- This feature does not enable Security Hub, create IAM Access Analyzers, or register a delegated administrator on your behalf — those are organization-wide changes you make deliberately, outside this tool.
+- Cross-account reads always require a specific, named account. There is no "scan every account" mode — this is a deliberate design choice to avoid request timeouts and ambiguous answers when accounts disagree, not a current limitation planned for removal.
+- The spoke role deployed to member accounts is strictly read-only, matching the hub's own permissions model described in the baseline [What Gets Deployed](#what-gets-deployed) table.
 
 ## Configuration
 
