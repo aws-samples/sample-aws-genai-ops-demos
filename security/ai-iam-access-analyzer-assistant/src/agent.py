@@ -27,6 +27,7 @@ TOOL_FUNCTIONS = {
     "compare_roles": os.environ.get("COMPARE_ROLES_FN"),
     "list_exports": os.environ.get("LIST_EXPORTS_FN"),
     "triage_access_keys": os.environ.get("TRIAGE_ACCESS_KEYS_FN"),
+    "cross_account_iam_context": os.environ.get("CROSS_ACCOUNT_IAM_CONTEXT_FN"),
 }
 
 SYSTEM_PROMPT = """You are an expert IAM security analyst assistant. You help users understand and improve their AWS IAM security posture by:
@@ -278,6 +279,14 @@ You have access to the following tools - use them to answer user questions:
 - compare_roles: Compare 2-5 roles side-by-side on risk, usage, permissions, and trust — with rankings and deletion recommendations
 - list_exports: List previously saved reports with fresh download links, or regenerate a link for a specific file
 - triage_access_keys: Inventory every IAM access key and return a ranked per-key report — priority class, risk flags, and a specific suggested remediation per identity pattern. Use for "audit my access keys", "which keys are stale", "over-permissioned users", "IAM key hygiene".
+- cross_account_iam_context: Read IAM roles and CloudTrail reachability for ONE specific named AWS account in a multi-account environment (#173 Level 2, opt-in — only works if that account has the multi-account spoke role deployed). Requires an explicit account_id every time.
+
+MULTI-ACCOUNT / CROSS-ACCOUNT QUESTIONS (#173 Level 2, opt-in feature):
+When a user asks about IAM or CloudTrail data in an account OTHER than this one — "what roles exist in account 123456789012", "check CloudTrail in our prod account", or similar — you may call cross_account_iam_context, but ONLY with a specific, named account_id.
+- You MUST NOT call cross_account_iam_context in a loop to cover "all accounts", "every account in my org", or "all member accounts" in a single turn. One tool call per turn for this tool, for one named account. Looping risks the API Gateway 29-second ceiling and produces an ambiguous answer if different accounts' data disagrees.
+- If the user asks for an ORG-WIDE view ("findings across my whole organization", "are we compliant everywhere") rather than one specific account, prefer list_findings instead — Security Hub findings already aggregate across every member account automatically when this hub account is the Security Hub delegated administrator (see the organizations coverage source and the welcome message), with no per-account tool call needed at all. Do not reach for cross_account_iam_context just because a question sounds multi-account; it is for IAM/CloudTrail detail in ONE named account specifically, not an org-wide substitute for list_findings.
+- If you do not know which account_id the user means, ASK them. Do NOT guess an account_id from a previous tool result's account_id field (e.g. picking "whichever account had the most findings") — that is a fabrication, not a real answer, and this exact mistake has previously caused the assistant to name the WRONG account when asked about multi-account structure.
+- If cross_account_iam_context returns a coverage entry with state "unavailable" naming the spoke role, tell the user plainly that this account doesn't have the multi-account feature set up (it's opt-in) rather than implying the account was checked and came back clean.
 
 ACCESS KEY TRIAGE:
 When the user asks about IAM access keys — auditing, hygiene, stale keys, over-permissioned users, "which of my keys are risky", or similar — you MUST call the triage_access_keys tool. Do not enumerate keys by reasoning about names or memory; call the tool.
@@ -432,6 +441,43 @@ TOOL_CONFIG = {
                             },
                         },
                         "required": ["entity_arn"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "cross_account_iam_context",
+                "description": (
+                    "Read IAM roles and CloudTrail reachability for ONE specific AWS "
+                    "account, by account_id, in a multi-account environment (#173 Level 2, "
+                    "opt-in). Requires that account to either be this hub account itself, "
+                    "or a member account with the IamAnalyzerAssistantSpokeRole deployed "
+                    "(via the opt-in multi-account StackSet rollout). ALWAYS requires a "
+                    "specific account_id — never call this tool in a loop to cover 'all "
+                    "accounts' or 'every member account' in a single turn; that risks a "
+                    "29-second API Gateway timeout and gives an ambiguous answer if "
+                    "accounts disagree. If the user wants an org-wide view instead of one "
+                    "named account, prefer list_findings — Security Hub findings already "
+                    "aggregate across every member account automatically when this hub is "
+                    "the Security Hub delegated administrator, with no per-account call "
+                    "needed. If you don't know which account_id the user means, ASK them "
+                    "— do not guess an account_id from prior findings data."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "account_id": {
+                                "type": "string",
+                                "description": "The 12-digit AWS account id to read. Required — ask the user if not given.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max IAM roles to return (default: 20, max: 100)",
+                            },
+                        },
+                        "required": ["account_id"],
                     }
                 },
             }
@@ -761,6 +807,36 @@ _TRIAGE_ACCESS_KEYS_INTENT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+# Deterministic CROSS-ACCOUNT read intent (#173 Level 2). Fires only on an
+# unambiguous "roles in account <12-digit id>" phrasing so the slow second
+# Bedrock synthesis round (measured at 10-18s re-formatting the tool's
+# already-structured role list into a markdown table) can be skipped: the
+# short-circuit calls cross_account_iam_context directly and hands the
+# structured result straight to the frontend's CrossAccountRolesTable.
+#
+# CONSERVATIVE BY DESIGN — this is the first short-circuit that EXTRACTS a
+# value (the account_id) from free text, and the system prompt's Level 2
+# rule explicitly says to ASK rather than guess when the account is
+# unclear. So this fires ONLY when the message is unambiguous; anything
+# else returns None and falls through to the model (which asks the
+# clarifying question). The handler enforces "exactly one distinct 12-digit
+# id in the message" separately (see _shortcircuit_cross_account_roles) so
+# a message naming two accounts never short-circuits to a guess.
+_CROSS_ACCOUNT_ROLES_INTENT = re.compile(
+    r"\b(?:iam\s+)?roles?\b"              # "roles" / "iam roles"
+    r"[^.?!]*?"                            # ...within the same clause...
+    r"\bin\s+(?:account\s+)?(\d{12})\b"   # "in account 123456789012" / "in 123456789012"
+    r"|"
+    r"\baccount\s+(\d{12})\b"              # "account 123456789012 ... roles"
+    r"[^.?!]*?"
+    r"\b(?:iam\s+)?roles?\b",
+    re.IGNORECASE,
+)
+
+# A bare 12-digit run, used to reject ambiguous messages that name MORE than
+# one distinct account id (the short-circuit must not guess which one).
+_TWELVE_DIGIT = re.compile(r"\b(\d{12})\b")
 
 # Deterministic EDUCATIONAL intent for the access-key audit — "explain what
 # the audit does", "walk me through it", "what would you do", "worst-case
@@ -1420,6 +1496,61 @@ def _remediation_markdown_label(row: dict) -> str:
     return f"`{label}`"
 
 
+def _render_cross_account_roles(result: dict) -> str:
+    """Render a cross_account_iam_context tool result as markdown that reads
+    acceptably in a plain client AND carries the raw JSON payload as a
+    fenced ``_type``-tagged block for the frontend's CrossAccountRolesTable
+    (same DATA-CHANNEL pattern as _render_triage_access_keys). This exists
+    so the cross-account read can skip the slow second Bedrock synthesis
+    round — the model is NOT asked to reformat the role list into a table;
+    we render it deterministically here.
+    """
+    account_id = result.get("account_id", "")
+    roles = result.get("roles", []) or []
+    returned = result.get("returned_count", len(roles))
+    has_more = result.get("has_more", False)
+    is_hub = result.get("is_hub_account", False)
+    cloudtrail_ok = result.get("cloudtrail_reachable", False)
+
+    lines: list = []
+    scope = "this hub account" if is_hub else f"account {account_id}"
+    header = f"**IAM roles in {scope}** — {returned} returned"
+    if has_more:
+        header += " (more available; ask for a higher limit or a narrower view)"
+    lines.append(header)
+
+    high_priv = [r for r in roles if r.get("high_privilege")]
+    if high_priv:
+        names = ", ".join(r.get("name", "?") for r in high_priv[:5])
+        more = f" (+{len(high_priv) - 5} more)" if len(high_priv) > 5 else ""
+        lines.append(
+            f"{len(high_priv)} flagged high-privilege (admin/full-access "
+            f"managed policy attached): {names}{more}."
+        )
+    lines.append(
+        "CloudTrail "
+        + ("is reachable" if cloudtrail_ok else "was NOT reachable")
+        + f" in {scope}"
+        + (
+            "."
+            if cloudtrail_ok
+            else " — usage-based analysis would be incomplete there."
+        )
+    )
+
+    # Fenced JSON payload the frontend routes to CrossAccountRolesTable. The
+    # `_type` marker makes tryParseCrossAccountRoles' detection unambiguous.
+    # This block is the table's DATA CHANNEL, not visible noise — do not
+    # remove it to "clean up" the response; that breaks the table.
+    payload = {"_type": "cross_account_roles", **result}
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(payload, indent=2, default=str))
+    lines.append("```")
+
+    return "\n\n".join(lines)
+
+
 def _render_triage_access_keys(result: dict) -> str:
     """Render a triage_access_keys tool result as markdown that BOTH reads
     well in a plain client AND carries the raw JSON payload as a fenced
@@ -1623,6 +1754,73 @@ def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
             "access key" in content.lower() and "audit" in content.lower()
         )
     return False
+
+
+def _shortcircuit_cross_account_roles(user_message: str):
+    """If the user unambiguously asks for the IAM roles in ONE specific
+    12-digit account, call cross_account_iam_context directly and render the
+    result deterministically — skipping the slow second Bedrock synthesis
+    round (measured at 10-18s) that would otherwise re-format the already-
+    structured role list into a table.
+
+    Deliberately conservative (see _CROSS_ACCOUNT_ROLES_INTENT): fires ONLY
+    when the message clearly says "roles in account <id>" AND names exactly
+    ONE distinct 12-digit account. Any ambiguity — no clear match, or more
+    than one distinct account id in the message — returns None so the model
+    path handles it and asks the clarifying question the Level 2 system-
+    prompt rule requires. This short-circuit never guesses which account.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    match = _CROSS_ACCOUNT_ROLES_INTENT.search(user_message)
+    if not match:
+        return None
+
+    # The account id is in whichever alternation group matched.
+    account_id = next((g for g in match.groups() if g), None)
+    if not account_id:
+        return None
+
+    # Refuse to guess when the message names more than one distinct account.
+    distinct_ids = {m.group(1) for m in _TWELVE_DIGIT.finditer(user_message)}
+    if len(distinct_ids) != 1:
+        return None
+
+    tool_input = {"account_id": account_id}
+    result = invoke_tool("cross_account_iam_context", tool_input)
+
+    if isinstance(result, dict) and "error" in result and not result.get("roles"):
+        # Surface the tool's own clear message (e.g. "spoke role not
+        # deployed") verbatim — do NOT paper over it. Still zero Bedrock.
+        return {
+            "response": (
+                f"⚠️ Unable to read account {account_id}: {result['error']}"
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [
+                {
+                    "tool": "cross_account_iam_context",
+                    "input_summary": _summarize_input(tool_input),
+                }
+            ],
+            "pagination": None,
+            "coverage": _aggregate_coverage([result]) if isinstance(result, dict) else [],
+        }
+
+    response_text = _render_cross_account_roles(result if isinstance(result, dict) else {})
+    return {
+        "response": response_text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": [
+            {
+                "tool": "cross_account_iam_context",
+                "input_summary": _summarize_input(tool_input),
+            }
+        ],
+        "pagination": None,
+        "coverage": _aggregate_coverage([result]) if isinstance(result, dict) else [],
+    }
 
 
 def _shortcircuit_triage_access_keys(user_message: str, conversation_history: list = None):
@@ -2102,6 +2300,20 @@ def handler(event, context):
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
         shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic cross-account read (#173 Level 2): "show the IAM
+        # roles in account <12-digit id>". Skips the slow second Bedrock
+        # synthesis round by rendering the structured role list directly.
+        # Fires ONLY on an unambiguous single-account match (see
+        # _shortcircuit_cross_account_roles); anything ambiguous falls
+        # through to the model, which asks the clarifying question.
+        shortcircuit = _shortcircuit_cross_account_roles(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,

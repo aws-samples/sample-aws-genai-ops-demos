@@ -1,8 +1,37 @@
 #!/bin/bash
 # AI IAM Access Analyzer Assistant — Deployment Script
 # Deploys CDK infrastructure and React frontend
+#
+# Default: single-account deploy, unchanged from before this feature existed.
+# --multi-account: opt-in Level 2 hub-and-spoke (#173). This account becomes
+#   the "hub" — the assistant can read IAM/CloudTrail data in OTHER accounts
+#   of an AWS Organization, one named account_id at a time (never "every
+#   account" in one request — see agent.py's MULTI-ACCOUNT system-prompt
+#   rule). Runs shared/scripts/check-org-access.sh first; when this account
+#   may roll out service-managed StackSets, the Org stack places a read-only
+#   spoke role in every account under --org-targets. Otherwise the hub stack
+#   still deploys (its own account's data is unaffected either way) and the
+#   one command a management-account admin has to run is printed.
+# --org-targets <ids>: comma-separated organization root (r-xxxx) and/or OU
+#   ids to roll the spoke role out to. Default: the whole organization (its
+#   root), same convention as aws-services-lifecycle-tracker's --org-targets.
+#
+# Security Hub findings aggregation does NOT need any of this — that's
+# already solved by Level 1 (#171/#173), which works automatically when this
+# hub account is the Security Hub delegated administrator. --multi-account
+# only matters for IAM/CloudTrail reads in a DIFFERENT account.
 
 set -euo pipefail
+
+MULTI_ACCOUNT=false
+ORG_TARGETS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --multi-account) MULTI_ACCOUNT=true; shift ;;
+        --org-targets) ORG_TARGETS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--multi-account] [--org-targets r-xxxx,ou-xxxx-yyyyyyyy]"; exit 1 ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -88,6 +117,52 @@ check_bedrock_model_access "$REGION" || \
     echo " ⚠ Continuing deploy despite the model-access warning above — the assistant will"$'\n'"   return an access error at runtime until model access is enabled and propagated."
 echo ""
 
+# Multi-account preflight (read-only; exit codes documented in
+# check-org-access.sh). Reused as-is from the hub-and-spoke pattern in
+# operations-automation/aws-services-lifecycle-tracker (#144) — same
+# three prerequisites apply here (list accounts, StackSets trusted
+# access, StackSets rollout permission), so there is no reason to
+# duplicate the check.
+ORG_ROLLOUT=false
+if [ "$MULTI_ACCOUNT" = true ]; then
+    echo "Checking multi-account (organization) access..."
+    if [ -f "$SCRIPT_DIR/../../shared/scripts/check-org-access.sh" ]; then
+        set +e
+        "$SCRIPT_DIR/../../shared/scripts/check-org-access.sh"
+        org_check=$?
+        set -e
+        if [ $org_check -eq 2 ]; then
+            echo "This account cannot list the organization's accounts, so --multi-account is not possible from here."
+            echo "Apply the fix printed above, or deploy without --multi-account."
+            exit 1
+        elif [ $org_check -ne 0 ] && [ $org_check -ne 3 ]; then
+            echo "Multi-account preflight failed."
+            exit 1
+        fi
+        [ $org_check -eq 0 ] && ORG_ROLLOUT=true
+    else
+        echo " ⚠ shared/scripts/check-org-access.sh not found — skipping the preflight check."
+        echo "   Proceeding on the assumption this account can run service-managed StackSets;"
+        echo "   if that's wrong, the Org stack deploy below will fail with a clear CloudFormation error."
+        ORG_ROLLOUT=true
+    fi
+    if [ -z "$ORG_TARGETS" ]; then
+        ORG_TARGETS=$(aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager 2>/dev/null || echo "")
+        if [ -z "$ORG_TARGETS" ]; then
+            echo "Could not determine --org-targets automatically (not in an AWS Organization, or no permission to list roots)."
+            echo "Pass --org-targets r-xxxx or --org-targets ou-xxxx-yyyyyyyy explicitly."
+            exit 1
+        fi
+    fi
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo " ✓ Multi-account enabled. Spoke-role targets: $ORG_TARGETS (rolled out from this account)."
+    else
+        echo " ⚠ Multi-account enabled, but this account cannot roll out the spoke-role StackSet itself."
+        echo "   Targets: $ORG_TARGETS — see the management-account command printed at the end of this run."
+    fi
+    echo ""
+fi
+
 # Step 1: Install CDK dependencies
 echo "[1/5] Installing CDK dependencies..."
 pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
@@ -118,6 +193,18 @@ export PATH="$VIRTUAL_ENV/bin:$PATH"
 export AWS_REGION="$REGION"
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
 npx cdk deploy "IamAnalyzerAssistantStack-$REGION" --require-approval never --outputs-file outputs.json
+
+# Multi-account: roll the spoke role out via StackSet (#173 Level 2). Only
+# when this account can actually run service-managed StackSets itself —
+# otherwise ORG_ROLLOUT is false and the management-account command is
+# printed at the end of this run instead, same as deploying nothing here.
+if [ "$MULTI_ACCOUNT" = true ] && [ "$ORG_ROLLOUT" = true ]; then
+    echo ""
+    echo "Deploying org stack (spoke-role StackSet)..."
+    npx cdk deploy "IamAnalyzerAssistantOrg-$REGION" --require-approval never \
+        --context "orgTargets=$ORG_TARGETS"
+    echo " ✓ Spoke role rolled out to accounts under $ORG_TARGETS."
+fi
 popd > /dev/null
 echo " ✓ Infrastructure deployed."
 
@@ -197,3 +284,19 @@ echo "   Password: $DEMO_PASSWORD"
 echo ""
 echo " (You can create additional users via the Cognito console or CLI)"
 echo ""
+
+if [ "$MULTI_ACCOUNT" = true ]; then
+    echo "Multi-account (#173 Level 2):"
+    echo "  Hub account $ACCOUNT_ID can read IAM/CloudTrail data in accounts under $ORG_TARGETS,"
+    echo "  one named account_id at a time (ask the assistant about a specific account)."
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo "  Spoke role: StackSet IamAnalyzerAssistantOrg-$REGION-SpokeRole (auto-deploys to accounts joining later)."
+        echo "    aws cloudformation list-stack-instances --stack-set-name IamAnalyzerAssistantOrg-$REGION-SpokeRole --region $REGION"
+    else
+        echo "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:"
+        echo "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$REGION --context orgTargets=$ORG_TARGETS --context hubAccountId=$ACCOUNT_ID --require-approval never"
+        echo "  Until then, accounts under $ORG_TARGETS have no spoke role, and cross-account reads will fail with a clear"
+        echo "  'spoke role not deployed' message rather than silently returning no data."
+    fi
+    echo ""
+fi

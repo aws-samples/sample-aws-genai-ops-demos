@@ -17,7 +17,14 @@ import PolicyViewer from "./PolicyViewer";
 import FindingsTable from "./FindingsTable";
 import DependencyGraph from "./DependencyGraph";
 import AccessKeysTable from "./AccessKeysTable";
-import { Message, Finding, DependencyResult, AccessKeysReport } from "../types";
+import CrossAccountRolesTable from "./CrossAccountRolesTable";
+import {
+  Message,
+  Finding,
+  DependencyResult,
+  AccessKeysReport,
+  CrossAccountRolesReport,
+} from "../types";
 
 interface MessageBubbleProps {
   message: Message;
@@ -365,6 +372,10 @@ function AssistantSections({ message }: { message: Message }) {
             return <DependencyGraph key={index} data={section.data} />;
           case "accessKeys":
             return <AccessKeysTable key={index} report={section.report} />;
+          case "crossAccountRoles":
+            return (
+              <CrossAccountRolesTable key={index} report={section.report} />
+            );
           case "text":
           default:
             return (
@@ -425,12 +436,18 @@ interface AccessKeysSection {
   report: AccessKeysReport;
 }
 
+interface CrossAccountRolesSection {
+  type: "crossAccountRoles";
+  report: CrossAccountRolesReport;
+}
+
 type MessageSection =
   | TextSection
   | PolicySection
   | FindingsSection
   | DependenciesSection
-  | AccessKeysSection;
+  | AccessKeysSection
+  | CrossAccountRolesSection;
 
 function parseAssistantMessage(content: string): MessageSection[] {
   const sections: MessageSection[] = [];
@@ -458,8 +475,16 @@ function parseAssistantMessage(content: string): MessageSection[] {
       // payload {keys, summary, coverage, usage_lag_caveat} has no
       // Version/Statement, but a paranoid future refactor of the tool
       // response shape could otherwise trip the policy branch.
-      const accessKeys = tryParseAccessKeysReport(codeContent);
-      if (accessKeys) {
+      const crossAccountRoles = tryParseCrossAccountRoles(codeContent);
+      const accessKeys = crossAccountRoles
+        ? null
+        : tryParseAccessKeysReport(codeContent);
+      if (crossAccountRoles) {
+        sections.push({
+          type: "crossAccountRoles",
+          report: crossAccountRoles,
+        });
+      } else if (accessKeys) {
         sections.push({ type: "accessKeys", report: accessKeys });
       } else if (isPolicyDocument(codeContent)) {
         sections.push({
@@ -539,4 +564,35 @@ function tryParseAccessKeysReport(content: string): AccessKeysReport | null {
     Array.isArray(obj.coverage) &&
     typeof obj.usage_lag_caveat === "string";
   return looksLikeReport ? (obj as unknown as AccessKeysReport) : null;
+}
+
+// tryParseCrossAccountRoles recognizes the cross_account_iam_context
+// short-circuit payload (#173 Level 2) as a fenced JSON block. Accepts
+// either the explicit marker (_type === "cross_account_roles") or the
+// natural shape — roles[] + account_id + cloudtrail_reachable. Returns
+// null for anything else so the caller falls through to the access-keys /
+// policy branches. The shape is structurally distinct from the access-keys
+// report (roles[] vs keys[], no summary/usage_lag_caveat), so even without
+// the _type tag there is no collision.
+function tryParseCrossAccountRoles(
+  content: string
+): CrossAccountRolesReport | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (obj._type === "cross_account_roles") {
+    return obj as unknown as CrossAccountRolesReport;
+  }
+  const looksLikeRoles =
+    Array.isArray(obj.roles) &&
+    typeof obj.account_id === "string" &&
+    typeof obj.cloudtrail_reachable === "boolean";
+  return looksLikeRoles ? (obj as unknown as CrossAccountRolesReport) : null;
 }

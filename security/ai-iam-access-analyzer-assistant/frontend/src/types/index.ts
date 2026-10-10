@@ -221,3 +221,37 @@ export interface AccessKeysReport {
   }>;
   usage_lag_caveat: string;
 }
+
+/**
+ * One IAM role row from a cross-account read (#173 Level 2). Mirrors the
+ * `roles[]` entries returned by the cross_account_iam_context tool.
+ */
+export interface CrossAccountRoleRow {
+  name: string;
+  arn: string;
+  high_privilege: boolean;
+  create_date: string;
+}
+
+/**
+ * Payload the cross_account_iam_context short-circuit embeds as a fenced
+ * ``_type: "cross_account_roles"`` JSON block, rendered by
+ * CrossAccountRolesTable. The structured channel exists so the backend can
+ * skip the slow second Bedrock synthesis round and hand the role list
+ * straight to the table.
+ */
+export interface CrossAccountRolesReport {
+  _type?: "cross_account_roles";
+  account_id: string;
+  is_hub_account: boolean;
+  roles: CrossAccountRoleRow[];
+  returned_count: number;
+  has_more: boolean;
+  cloudtrail_reachable: boolean;
+  coverage: Array<{
+    source: string;
+    state: string; // "checked" | "empty" | "unavailable"
+    detail?: string;
+    count?: number;
+  }>;
+}
