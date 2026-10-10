@@ -25,6 +25,7 @@ the spoke role allows).
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 from botocore.exceptions import ClientError
@@ -188,12 +189,28 @@ def handler(event, context=None):
             if has_more:
                 break
 
-        for role in roles[:limit]:
-            role_name = role["RoleName"]
-            high_privilege = _is_high_privilege(iam_client, role_name)
+        # The high-privilege check does one iam:ListAttachedRolePolicies
+        # call per role. Done sequentially, a full page of roles is that
+        # many round-trips back-to-back, which pushed a single read toward
+        # the API gateway's 29s ceiling (measured ~15-21s for ~20 roles).
+        # Run the per-role checks CONCURRENTLY so total time is roughly the
+        # slowest single call instead of their sum — the same pattern
+        # compare_roles.py already uses. boto3 clients are thread-safe, and
+        # executor.map preserves input order, so the roles list stays in
+        # the same order the paginator returned.
+        selected = roles[:limit]
+        with ThreadPoolExecutor(max_workers=min(len(selected), 8) or 1) as executor:
+            high_privilege_flags = list(
+                executor.map(
+                    lambda r: _is_high_privilege(iam_client, r["RoleName"]),
+                    selected,
+                )
+            )
+
+        for role, high_privilege in zip(selected, high_privilege_flags):
             result["roles"].append(
                 {
-                    "name": role_name,
+                    "name": role["RoleName"],
                     "arn": role["Arn"],
                     "high_privilege": high_privilege,
                     "create_date": str(role.get("CreateDate", "")),
