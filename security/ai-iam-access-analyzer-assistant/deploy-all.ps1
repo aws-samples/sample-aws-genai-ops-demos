@@ -264,7 +264,7 @@ if ($MultiAccount) {
         Write-Host "    aws cloudformation list-stack-instances --stack-set-name IamAnalyzerAssistantOrg-$region-SpokeRole --region $region" -ForegroundColor Gray
     } else {
         Write-Host "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:" -ForegroundColor Yellow
-        Write-Host "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$region --context orgTargets=$OrgTargets --require-approval never" -ForegroundColor Gray
+        Write-Host "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$region --context orgTargets=$OrgTargets --context hubAccountId=$accountId --require-approval never" -ForegroundColor Gray
         Write-Host "  Until then, accounts under $OrgTargets have no spoke role, and cross-account reads will fail with a clear" -ForegroundColor Gray
         Write-Host "  'spoke role not deployed' message rather than silently returning no data." -ForegroundColor Gray
     }

@@ -294,7 +294,7 @@ if [ "$MULTI_ACCOUNT" = true ]; then
         echo "    aws cloudformation list-stack-instances --stack-set-name IamAnalyzerAssistantOrg-$REGION-SpokeRole --region $REGION"
     else
         echo "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:"
-        echo "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$REGION --context orgTargets=$ORG_TARGETS --require-approval never"
+        echo "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$REGION --context orgTargets=$ORG_TARGETS --context hubAccountId=$ACCOUNT_ID --require-approval never"
         echo "  Until then, accounts under $ORG_TARGETS have no spoke role, and cross-account reads will fail with a clear"
         echo "  'spoke role not deployed' message rather than silently returning no data."
     fi
