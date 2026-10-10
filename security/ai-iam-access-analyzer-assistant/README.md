@@ -15,6 +15,7 @@ Recent hardening improvements observed in real deployments:
 - **Coverage contract across every tool.** Every tool surfaces whether each data source (Security Hub, IAM, Access Analyzer, CloudTrail, S3) was checked, empty, or unavailable. The model names unavailable sources in prose rather than describing the posture as "clean" when it could not actually see all the data.
 - **Cloudscape chat surface with dark mode.** The chat UI moved from a hand-rolled implementation to Cloudscape's generative-AI chat pattern (ChatBubble, Avatar, PromptInput, SupportPromptGroup). Model output is rendered through `react-markdown` with `rehype-sanitize` — replacing the earlier regex + `dangerouslySetInnerHTML` path, which was an XSS surface. Full dark-mode support including a bridge for the `@cloudscape-design/chat-components` token layer.
 - **`list_findings` no longer blocks on large accounts.** The first page returns as soon as the API replies; the total finding count is scanned lazily (or not at all, per configuration). Accounts with tens of thousands of findings no longer time out on the very first user prompt.
+- **Access-key audit recognizes remediation-intent phrasing.** "Help me reduce the number of access keys I'm using," "cut down on access keys," and similar phrasings now take the same fast, deterministic path as "audit my access keys" — previously these fell through to a full Bedrock synthesis round and could hit the API Gateway 29-second ceiling.
 
 ## At a Glance
 
