@@ -7,11 +7,34 @@
     This script deploys the complete solution: CDK infrastructure (Lambda, API Gateway,
     Cognito, CloudFront, S3) and builds/deploys the React frontend.
 
+    Default: single-account deploy, unchanged from before this feature existed.
+    -MultiAccount: opt-in Level 2 hub-and-spoke (#173). This account becomes the
+      "hub" — the assistant can read IAM/CloudTrail data in OTHER accounts of an
+      AWS Organization, one named account_id at a time (never "every account" in
+      one request — see agent.py's MULTI-ACCOUNT system-prompt rule). Runs
+      shared/scripts/check-org-access.ps1 first; when this account may roll out
+      service-managed StackSets, the Org stack places a read-only spoke role in
+      every account under -OrgTargets. Otherwise the hub stack still deploys and
+      the one command a management-account admin has to run is printed.
+    -OrgTargets: comma-separated organization root (r-xxxx) and/or OU ids to
+      roll the spoke role out to. Default: the whole organization (its root).
+
+    Security Hub findings aggregation does NOT need any of this — that's
+    already solved by Level 1 (#171/#173), which works automatically when this
+    hub account is the Security Hub delegated administrator. -MultiAccount
+    only matters for IAM/CloudTrail reads in a DIFFERENT account.
+
 .EXAMPLE
     .\deploy-all.ps1
+
+.EXAMPLE
+    .\deploy-all.ps1 -MultiAccount -OrgTargets "ou-xxxx-yyyyyyyy"
 #>
 
-param()
+param(
+    [switch]$MultiAccount,
+    [string]$OrgTargets = ""
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -52,6 +75,48 @@ Write-Host " Region: $region" -ForegroundColor Yellow
 Write-Host " Account: $accountId" -ForegroundColor Yellow
 Write-Host ""
 
+# Multi-account preflight (read-only; exit codes documented in
+# check-org-access.ps1). Reused as-is from the hub-and-spoke pattern in
+# operations-automation/aws-services-lifecycle-tracker (#144).
+$orgRollout = $false
+if ($MultiAccount) {
+    Write-Host "Checking multi-account (organization) access..." -ForegroundColor Cyan
+    $sharedOrgScript = Join-Path $PSScriptRoot "..\..\shared\scripts\check-org-access.ps1"
+    if (Test-Path $sharedOrgScript) {
+        & $sharedOrgScript
+        $orgCheck = $LASTEXITCODE
+        if ($orgCheck -eq 2) {
+            Write-Host "This account cannot list the organization's accounts, so -MultiAccount is not possible from here." -ForegroundColor Red
+            Write-Host "Apply the fix printed above, or deploy without -MultiAccount." -ForegroundColor Yellow
+            exit 1
+        } elseif ($orgCheck -ne 0 -and $orgCheck -ne 3) {
+            Write-Host "Multi-account preflight failed." -ForegroundColor Red
+            exit 1
+        }
+        $orgRollout = ($orgCheck -eq 0)
+    } else {
+        Write-Host " Warning: shared/scripts/check-org-access.ps1 not found - skipping the preflight check." -ForegroundColor Yellow
+        Write-Host "   Proceeding on the assumption this account can run service-managed StackSets;" -ForegroundColor Yellow
+        Write-Host "   if that's wrong, the Org stack deploy below will fail with a clear CloudFormation error." -ForegroundColor Yellow
+        $orgRollout = $true
+    }
+    if ([string]::IsNullOrEmpty($OrgTargets)) {
+        $OrgTargets = aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager 2>$null
+        if ([string]::IsNullOrEmpty($OrgTargets)) {
+            Write-Host "Could not determine -OrgTargets automatically (not in an AWS Organization, or no permission to list roots)." -ForegroundColor Red
+            Write-Host "Pass -OrgTargets r-xxxx or -OrgTargets ou-xxxx-yyyyyyyy explicitly." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    if ($orgRollout) {
+        Write-Host " Multi-account enabled. Spoke-role targets: $OrgTargets (rolled out from this account)." -ForegroundColor Green
+    } else {
+        Write-Host " Multi-account enabled, but this account cannot roll out the spoke-role StackSet itself." -ForegroundColor Yellow
+        Write-Host "   Targets: $OrgTargets - see the management-account command printed at the end of this run." -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
 # Step 1: Install CDK dependencies
 Write-Host "[1/5] Installing CDK dependencies..." -ForegroundColor Cyan
 Push-Location "$PSScriptRoot\infrastructure\cdk"
@@ -90,6 +155,17 @@ try {
     $env:AWS_REGION = $region
     $env:CDK_DEFAULT_ACCOUNT = $accountId
     npx cdk deploy "IamAnalyzerAssistantStack-$region" --require-approval never --outputs-file outputs.json
+
+    # Multi-account: roll the spoke role out via StackSet (#173 Level 2).
+    # Only when this account can actually run service-managed StackSets
+    # itself — otherwise $orgRollout is false and the management-account
+    # command is printed at the end of this run instead.
+    if ($MultiAccount -and $orgRollout) {
+        Write-Host ""
+        Write-Host "Deploying org stack (spoke-role StackSet)..." -ForegroundColor Cyan
+        npx cdk deploy "IamAnalyzerAssistantOrg-$region" --require-approval never --context "orgTargets=$OrgTargets"
+        Write-Host " Spoke role rolled out to accounts under $OrgTargets." -ForegroundColor Green
+    }
 } finally {
     Pop-Location
 }
@@ -178,3 +254,19 @@ Write-Host "   Password: $demoPassword" -ForegroundColor Yellow
 Write-Host ""
 Write-Host " (You can create additional users via the Cognito console or CLI)" -ForegroundColor Yellow
 Write-Host ""
+
+if ($MultiAccount) {
+    Write-Host "Multi-account (#173 Level 2):" -ForegroundColor Cyan
+    Write-Host "  Hub account $accountId can read IAM/CloudTrail data in accounts under $OrgTargets," -ForegroundColor Gray
+    Write-Host "  one named account_id at a time (ask the assistant about a specific account)." -ForegroundColor Gray
+    if ($orgRollout) {
+        Write-Host "  Spoke role: StackSet IamAnalyzerAssistantOrg-$region-SpokeRole (auto-deploys to accounts joining later)." -ForegroundColor Gray
+        Write-Host "    aws cloudformation list-stack-instances --stack-set-name IamAnalyzerAssistantOrg-$region-SpokeRole --region $region" -ForegroundColor Gray
+    } else {
+        Write-Host "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:" -ForegroundColor Yellow
+        Write-Host "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$region --context orgTargets=$OrgTargets --require-approval never" -ForegroundColor Gray
+        Write-Host "  Until then, accounts under $OrgTargets have no spoke role, and cross-account reads will fail with a clear" -ForegroundColor Gray
+        Write-Host "  'spoke role not deployed' message rather than silently returning no data." -ForegroundColor Gray
+    }
+    Write-Host ""
+}
