@@ -1771,14 +1771,22 @@ def _infer_export_content_type(artifact: str) -> tuple:
         except (TypeError, ValueError):
             pass
 
+    # A Change Request document is identified FIRST, before the generic
+    # "blast radius" substring check below. A CR's own risk section quotes
+    # blast-radius context (the CHANGE REQUEST prompt rule requires it), so
+    # "blast radius" appears inside a CR — checking blast_radius first
+    # mislabeled CR exports as blast-radius-*.md in the blast-radius-reports
+    # folder (the artifact was correct, only the name/folder were wrong).
+    # Classify by the document's own identity, which is the more specific
+    # signal, before the substrings it happens to contain.
+    if "change request" in lower or "rollback plan" in lower:
+        return "change_request", "md"
     if "action plan" in lower or "priority score" in lower or "quick wins" in lower:
         return "action_plan", "md"
     if "blast radius" in lower or "impact radius" in lower or "risk_score" in lower:
         return "blast_radius", "md"
     if "comparison" in lower or "compare" in lower and ("most risky" in lower or "safest to delete" in lower):
         return "comparison", "md"
-    if "change request" in lower or "rollback plan" in lower:
-        return "change_request", "md"
     return "report", "md"
 
 

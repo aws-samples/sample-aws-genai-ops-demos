@@ -161,6 +161,28 @@ class ContentTypeInferenceTest(unittest.TestCase):
         ct, fmt = agent._infer_export_content_type(artifact)
         self.assertEqual(ct, "change_request")
 
+    def test_change_request_containing_blast_radius_is_not_misclassified(self):
+        """Regression (P7): a Change Request document quotes blast-radius
+        context in its risk section (the CHANGE REQUEST prompt rule
+        requires it), so the artifact contains the substring 'blast
+        radius'. It must STILL classify as change_request — not
+        blast_radius — so the export lands as change-request-*.md in the
+        change-requests/ folder, not blast-radius-*.md. The classifier
+        must weigh the document's own 'Change Request' identity above the
+        substrings it happens to contain."""
+        artifact = (
+            "# Change Request: Right-size ConsoleAdminAccess\n\n"
+            "## Summary\nReduce ConsoleAdminAccess to least privilege.\n\n"
+            "## Risk / Blast radius\nBlast radius analysis shows 3 "
+            "CloudFormation stacks reference this role; impact radius is "
+            "moderate.\n\n"
+            "## Rollback plan\nRecreate the prior policy from version "
+            "history.\n"
+        )
+        ct, fmt = agent._infer_export_content_type(artifact)
+        self.assertEqual(ct, "change_request")
+        self.assertEqual(fmt, "md")
+
     def test_generic_content_defaults_to_report_md(self):
         artifact = "# IAM Access Analyzer Findings Report\n\n| # | Title | Severity | Resource | Status |\n| 1 | Public access | HIGH | s3:xyz | ACTIVE |"
         ct, fmt = agent._infer_export_content_type(artifact)
