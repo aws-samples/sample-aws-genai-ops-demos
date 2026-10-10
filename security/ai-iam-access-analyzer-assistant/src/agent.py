@@ -198,9 +198,9 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 2: "Let me drill into the most interesting one" (call get_finding_details). CRITICAL: the role_name you pass MUST be copied verbatim from a row in Step 1's actual list_findings result — never a name you characterize as "interesting-sounding" in your own prose. Pick the row with the highest severity (or the first CRITICAL/HIGH row if there's a tie) and bind to ITS exact role name from the tool payload before writing anything about why you're drilling into it.
    - Step 3: "Now let's check the blast radius before we'd make any changes" (call check_dependencies)
    - Step 4: "Here's what a least-privilege policy would look like" (call generate_policy)
-   - Step 5: "Let me validate that policy" (call validate_policy)
+   - Step 5: "Let me validate that policy" (call validate_policy). When you ask "Ready for the next step?" at the end, name what's next so the hand-off is explicit: "Next I'll audit your long-lived IAM access keys. Ready for the next step?"
    - Step 6: "One more surface worth auditing — long-lived IAM access keys. These are the top credential exposure vector in AWS incident reports, so we always cover this before wrapping up." (call triage_access_keys)
-   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles). CRITICAL: the role names you pass MUST be copied verbatim from roles that ACTUALLY APPEARED earlier in THIS tour — the rows in Step 1's list_findings result and/or the role you drilled into at Step 2. NEVER invent, guess, or pattern-match a plausible-sounding role name (e.g. do not reach for a generic `AWSServiceRoleForAmazonEKS` or `ConsoleAdminAccess` unless that exact name was in this tour's data). If fewer than 2 real roles came up in the tour so far, call list_findings first (or compare whatever real roles you do have, even if just 2 from Step 1's rows) — binding to real names only. A comparison of invented roles that then reports "these roles no longer exist" is a demo-breaking error.
+   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles). CRITICAL: the role names you pass MUST be copied verbatim from roles that ACTUALLY APPEARED earlier in THIS tour — the rows in Step 1's list_findings result and/or the role you drilled into at Step 2. NEVER invent, guess, or pattern-match a plausible-sounding role name (e.g. do not reach for a generic `AWSServiceRoleForAmazonEKS` or `ConsoleAdminAccess` unless that exact name was in this tour's data). If fewer than 2 real roles came up in the tour so far, call list_findings first (or compare whatever real roles you do have, even if just 2 from Step 1's rows) — binding to real names only. A comparison of invented roles that then reports "these roles no longer exist" is a demo-breaking error. When you ask "Ready for the next step?" at the end of Step 7, name what's next so the hand-off is explicit: "Last step: I'll pull everything into a prioritized action plan — a remediation backlog of what to fix first. Ready for the next step?"
    - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan). Step 8 is a SINGLE message that contains BOTH the action plan AND the tour-closing recap below — do not split them across two turns, and do not wait for another "ready" before the recap. The user should see the plan and the "tour complete" wrap-up together in this one response.
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
    CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
@@ -1573,6 +1573,24 @@ def _shortcircuit_action_plan(user_message: str, conversation_history: list = No
         }
 
     response_text = _render_action_plan(result if isinstance(result, dict) else {})
+    # When this fired as the guided tour's FINAL step (Step 8, reached via
+    # a tour-advance "ready"), keep the fast deterministic plan BUT land
+    # the tour: a "Step 8" lead-in and the completion recap in the SAME
+    # message (fixes P6 — the recap previously needed an extra "ready").
+    # Step 8 deliberately does NOT end with "Ready for the next step?" —
+    # there is no step 9.
+    if _prior_turn_is_tour_advance(conversation_history):
+        response_text = (
+            "**Step 8 of 8 — Prioritized action plan.** Here's everything "
+            "we found, pulled into a ranked backlog — what to fix first and "
+            "the quick wins.\n\n"
+            + response_text
+            + "\n\n---\n🎉 **That completes the guided tour.** You've now "
+            "covered findings, blast radius, least-privilege policy "
+            "generation, validation, access-key hygiene, role comparison, "
+            "and this prioritized action plan. Ask me anything else, or say "
+            "`export that` to save this plan to S3."
+        )
     return {
         "response": response_text,
         "usage": {"inputTokens": 0, "outputTokens": 0},
@@ -1843,6 +1861,36 @@ def _looks_like_bare_affirmative(user_message: str) -> bool:
     return bool(_BARE_AFFIRMATIVE.match(user_message))
 
 
+# The guided tour's mandated step-advance cadence (system prompt: after
+# each of steps 1-7, 'ask the user "Ready for the next step?"'). Its
+# presence at the END of the prior assistant turn is the authoritative
+# "a tour is mid-flight" signal — it appears ONLY inside the tour, never
+# in a standalone capability answer. We use it so a short-circuit that
+# fires on a tour-advance "ready" can render the result WITH the tour's
+# "Step N" framing (keeping the fast deterministic tool call) instead of
+# a bare capability dump that derails the scripted tour (P2/P6).
+_TOUR_ADVANCE_PROMPT = "ready for the next step?"
+
+
+def _prior_turn_is_tour_advance(conversation_history: list) -> bool:
+    """True when the last assistant turn ended by asking the tour's
+    mandated "Ready for the next step?" — i.e. the user's bare affirmative
+    is advancing a guided-tour step. Looks only at the trailing text so a
+    stray earlier mention doesn't trip it (it's a CLOSING prompt)."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str):
+            return False
+        return _TOUR_ADVANCE_PROMPT in content[-240:].lower()
+    return False
+
+
 def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
     """True when the most recent ASSISTANT message set up the access-key
     audit as the next step — the GUIDED TOUR's Step 6 framing ("One more
@@ -2003,6 +2051,19 @@ def _shortcircuit_triage_access_keys(user_message: str, conversation_history: li
     response_text = _render_triage_access_keys(
         result if isinstance(result, dict) else {}
     )
+    # When this fired as a guided-tour advance (prior turn ended with the
+    # tour's "Ready for the next step?"), keep the fast deterministic tool
+    # call BUT restore the tour framing — a "Step 6" lead-in and the
+    # advance prompt to Step 7 — so the scripted tour isn't derailed by a
+    # bare capability dump (P2). Outside a tour, render bare as before.
+    if _prior_turn_is_tour_advance(conversation_history):
+        response_text = (
+            "**Step 6 of 8 — Access-key hygiene.** Long-lived IAM access "
+            "keys are a top credential-exposure vector, so we always check "
+            "them before wrapping up.\n\n"
+            + response_text
+            + "\n\n---\nReady for the next step? (role comparison)"
+        )
     return {
         "response": response_text,
         "usage": {"inputTokens": 0, "outputTokens": 0},

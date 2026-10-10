@@ -392,6 +392,44 @@ class HandlerShortCircuitTest(unittest.TestCase):
         invoke.assert_called_once()
         self.assertEqual(response["statusCode"], 200)
 
+    def test_tour_advance_adds_step6_framing_and_advance_prompt(self):
+        """Option A (P2 fix): when the access-key short-circuit fires as a
+        guided-tour advance (prior turn ended with the tour's "Ready for
+        the next step?"), it must keep the fast deterministic tool call BUT
+        wrap the result in tour framing — a "Step 6" lead-in and the
+        advance prompt to Step 7 — so the scripted tour isn't derailed by a
+        bare capability dump. The tool still fires (no Bedrock)."""
+        history = [
+            {"role": "user", "content": "ready"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Validated — PASS. Next I'll audit your long-lived IAM "
+                    "access keys. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._tour_event("ready", history), None)
+
+        converse.assert_not_called()  # still fast — no Bedrock
+        invoke.assert_called_once()   # tool still ran
+        text = json.loads(response["body"])["response"]
+        self.assertIn("Step 6", text)                 # tour framing restored
+        self.assertIn("Ready for the next step?", text)  # hands off to Step 7
+        self.assertIn("Reviewed", text)                # the real audit content is still there
+
+    def test_direct_audit_outside_tour_stays_bare_no_tour_framing(self):
+        """A direct "audit my access keys" with NO tour cadence in the
+        prior turn must render BARE — no "Step 6" framing. The framing is
+        tour-only."""
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()), \
+                patch.object(agent, "converse_with_tools"):
+            response = agent.handler(self._event("audit my access keys"), None)
+        text = json.loads(response["body"])["response"]
+        self.assertNotIn("Step 6 of 8", text)
+
     def test_longer_message_starting_with_yes_is_not_treated_as_bare_affirmative(self):
         """"yes, but explain X first" has more content than a bare
         affirmative and must reach the model even with a matching prior
