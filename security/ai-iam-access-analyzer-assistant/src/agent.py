@@ -1704,6 +1704,34 @@ def _shortcircuit_triage_access_keys(user_message: str, conversation_history: li
     }
 
 
+# Deterministic "list my exports" intent (P5). The list_exports tool reads
+# the WHOLE S3 reports bucket, but when this request goes through the model
+# it sometimes answers from its own conversation memory instead of calling
+# the tool — so a file exported in an EARLIER conversation looks "missing"
+# even though the S3 object exists. Short-circuiting guarantees the real
+# bucket is always consulted. Narrow: must mention a list/show verb AND an
+# exports/saved-reports noun.
+_LIST_EXPORTS_INTENT = re.compile(
+    r"\b(?:list|show|see|view|what(?:'s|\s+are)?|which)\b[^.?!]*?"
+    r"\b(?:exports?|exported\s+(?:reports?|files?|artifacts?)"
+    r"|saved\s+(?:reports?|files?|artifacts?|exports?))\b",
+    re.IGNORECASE,
+)
+
+# Deterministic "get me a link for <filename>" intent (P5). Captures the
+# filename so the short-circuit resolves it against S3 (whole-bucket lookup
+# via the tool's get_link action), not conversation memory. Requires a
+# real-looking filename with a known export extension so it never fires on
+# a vague "get me a link".
+_GET_LINK_INTENT = re.compile(
+    r"\b(?:get|give|send|fetch|regenerate|need|want|grab)\b[^.?!]*?"
+    r"\blink\b[^.?!]*?\bfor\b\s+[`\"']?"
+    r"([A-Za-z0-9][\w.\-]+\.(?:md|json|txt|csv))"
+    r"[`\"']?",
+    re.IGNORECASE,
+)
+
+
 # Deterministic "export that" / "save it" follow-ups. Without this
 # short-circuit, some prior-turn contexts (notably a preceding
 # generate_policy) make the model synthesize a plausible-looking presigned
@@ -1832,6 +1860,100 @@ def _extract_artifact_body(artifact: str) -> str:
         except (TypeError, ValueError):
             pass
     return artifact.strip()
+
+
+def _shortcircuit_list_exports(user_message: str):
+    """Deterministically handle "list my exports" and "get me a link for
+    <file>" by invoking list_exports directly (P5).
+
+    The tool reads the whole S3 reports bucket, so this guarantees the
+    answer reflects ALL of the user's exports — not just ones created in
+    the current conversation, which is what the model-driven path returned
+    when it answered from memory instead of calling the tool.
+
+    Returns None (fall through to the model) on anything that isn't a
+    clear list/get-link request, so normal conversation is unaffected.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    # get_link takes priority: a message naming a specific file is a
+    # download request, not a list request.
+    link_match = _GET_LINK_INTENT.search(user_message)
+    if link_match:
+        filename = link_match.group(1)
+        result = invoke_tool("list_exports", {"action": "get_link", "filename": filename})
+        tools_used = [{"tool": "list_exports", "input_summary": f"get_link: {filename}"}]
+        if not isinstance(result, dict) or "error" in result or not result.get("download_url"):
+            detail = (result or {}).get("error", "that file isn't in your S3 exports bucket")
+            return {
+                "response": f"I couldn't find a download for `{filename}` — {detail}.",
+                "usage": {"inputTokens": 0, "outputTokens": 0},
+                "tools_used": tools_used,
+                "pagination": None,
+                "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+            }
+        url = result["download_url"]
+        text = (
+            f"[Download {result.get('filename', filename)}]({url}) "
+            f"*(stored in S3; download works while you're signed in).*"
+        )
+        return {
+            "response": text,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    if not _LIST_EXPORTS_INTENT.search(user_message):
+        return None
+
+    result = invoke_tool("list_exports", {"action": "list"})
+    tools_used = [{"tool": "list_exports", "input_summary": "list"}]
+    if not isinstance(result, dict) or "error" in result:
+        detail = (result or {}).get("error", "the export listing failed")
+        return {
+            "response": f"I couldn't list your exports — {detail}.",
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+        }
+
+    files = result.get("files", [])
+    if not files:
+        return {
+            "response": (
+                result.get("message")
+                or "No exported reports found yet. Generate a policy, action "
+                "plan, or change request, then say `export that`."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    lines = [f"Your saved exports ({len(files)}):", ""]
+    for i, f in enumerate(files, 1):
+        folder = f.get("folder", "")
+        folder_part = f" — _{folder}_" if folder else ""
+        lines.append(
+            f"{i}. `{f.get('filename', '?')}`{folder_part} "
+            f"({f.get('last_modified', 'date unknown')})"
+        )
+    lines.append("")
+    lines.append(
+        "Say `get me a link for <filename>` to download any of these."
+    )
+    return {
+        "response": "\n".join(lines),
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": result.get("coverage", []),
+    }
 
 
 def _shortcircuit_export_followup(user_message: str, history: list):
@@ -2127,6 +2249,20 @@ def handler(event, context):
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
         shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic "list my exports" / "get me a link for <file>":
+        # invoke list_exports directly so the answer reflects the whole S3
+        # bucket, not the model's conversation memory (P5). Runs before the
+        # export-followup short-circuit; the two don't overlap (get_link
+        # requires an explicit filename, export-followup is anchored on
+        # short "export that"-style phrases).
+        shortcircuit = _shortcircuit_list_exports(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
