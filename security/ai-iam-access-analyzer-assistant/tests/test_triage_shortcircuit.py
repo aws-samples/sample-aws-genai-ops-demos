@@ -277,6 +277,67 @@ class HandlerShortCircuitTest(unittest.TestCase):
         invoke.assert_not_called()
         converse.assert_called_once()
 
+    def test_bare_ready_AFTER_the_audit_already_ran_does_not_refire(self):
+        """Regression (P2): once the audit has RUN, its rendered report is
+        now the last assistant turn — and that report is itself full of the
+        words "access key" and "audit". A bare "ready" here means the user
+        is ADVANCING past the audit (guided tour Step 6 -> Step 7), NOT
+        asking to run it again. It must fall through to the model (which
+        advances the tour), not re-fire triage_access_keys.
+
+        Before the fix, _prior_turn_announced_access_key_audit matched the
+        delivered report's own text and re-ran the audit on the next
+        "ready", stalling the tour at Step 6."""
+        delivered_report = (
+            "Reviewed 2 access keys across 2 users. 1 Critical, 1 Cleanup.\n\n"
+            "Safety sequencing: deactivate, monitor, then delete.\n\n"
+            "```json\n"
+            '{"_type": "access_keys_report", "keys": [], "summary": {}, '
+            '"coverage": [], "usage_lag_caveat": "..."}\n'
+            "```\n\n"
+            "Ready for the next step?"
+        )
+        history = [
+            {"role": "user", "content": "take me on a guided tour"},
+            {"role": "assistant", "content": "Step 6: one more surface — long-lived IAM access keys. Ready?"},
+            {"role": "user", "content": "ready"},
+            {"role": "assistant", "content": delivered_report},
+        ]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Step 7: let's compare a few roles..."}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready", history), None)
+
+        # Must NOT re-run the audit; must advance via the model path.
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
+    def test_prior_turn_detector_false_on_delivered_report(self):
+        """Unit-level guard for P2: the detector itself must say 'not an
+        announcement' when handed the delivered audit report."""
+        delivered = (
+            "Reviewed 5 access keys. ```json\n"
+            '{"_type": "access_keys_report"}\n```'
+        )
+        self.assertFalse(
+            agent._prior_turn_announced_access_key_audit(
+                [{"role": "assistant", "content": delivered}]
+            )
+        )
+        # ...but a short ANNOUNCEMENT (no report payload) still returns True.
+        announcement = "One more surface worth auditing — long-lived IAM access keys."
+        self.assertTrue(
+            agent._prior_turn_announced_access_key_audit(
+                [{"role": "assistant", "content": announcement}]
+            )
+        )
+
     def test_bare_ready_with_trailing_politeness_still_short_circuits(self):
         """"yes please", "sure, go ahead", "continue please" -- natural
         phrasings a real tester types instead of a bare "ready" -- must

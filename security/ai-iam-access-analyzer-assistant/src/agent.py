@@ -156,8 +156,7 @@ LARGE RESULT HANDLING:
 - Tools return a limited number of items per call (e.g., 10 findings, top 10 action items) to keep responses fast.
 - When results are limited and the tool returns a known total, say: "Showing 10 of 347 findings" or "Top 10 priorities out of 52 total."
 - If total_matching or total_count is -1, the total is unknown. Say how many findings are shown and offer the next page; never invent or infer a total.
-- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?"
-- For the comprehensive export, call generate_action_plan with max_items=100, then export the full result to S3. The exported file has no size limit.
+- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?" When the user accepts, DO NOT hand-assemble the report yourself — a deterministic path builds the full report (all findings, scored and ranked) and exports it to S3 for you. Just make the offer; the comprehensive report is generated and saved automatically from the real findings data, with no size limit.
 - You can also page through results: "Want me to show the next 10?" and call list_findings with the next_token from the previous result.
 
 CONFIDENTIALITY:
@@ -201,11 +200,11 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 4: "Here's what a least-privilege policy would look like" (call generate_policy)
    - Step 5: "Let me validate that policy" (call validate_policy)
    - Step 6: "One more surface worth auditing — long-lived IAM access keys. These are the top credential exposure vector in AWS incident reports, so we always cover this before wrapping up." (call triage_access_keys)
-   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles that came up earlier in the tour, or the top unused/highest-risk roles if none did)
-   - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan)
+   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles). CRITICAL: the role names you pass MUST be copied verbatim from roles that ACTUALLY APPEARED earlier in THIS tour — the rows in Step 1's list_findings result and/or the role you drilled into at Step 2. NEVER invent, guess, or pattern-match a plausible-sounding role name (e.g. do not reach for a generic `AWSServiceRoleForAmazonEKS` or `ConsoleAdminAccess` unless that exact name was in this tour's data). If fewer than 2 real roles came up in the tour so far, call list_findings first (or compare whatever real roles you do have, even if just 2 from Step 1's rows) — binding to real names only. A comparison of invented roles that then reports "these roles no longer exist" is a demo-breaking error.
+   - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan). Step 8 is a SINGLE message that contains BOTH the action plan AND the tour-closing recap below — do not split them across two turns, and do not wait for another "ready" before the recap. The user should see the plan and the "tour complete" wrap-up together in this one response.
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
    CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
-   TOUR COMPLETION (REQUIRED): Step 8's response MUST end with an explicit closing line that the tour is complete — something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
+   TOUR COMPLETION (REQUIRED): Step 8's response — the SAME message that presents the action plan — MUST end with an explicit closing line that the tour is complete (do NOT make the recap a separate follow-up turn that only appears after another "ready"). Something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -764,6 +763,27 @@ _ACTION_PLAN_AND_EXPORT_INTENT = re.compile(
     r"export\s+the\s+action\s+plan"
     r"|"
     r"save\s+the\s+action\s+plan",
+    re.IGNORECASE,
+)
+
+# Deterministic "comprehensive / full report of ALL findings" intent (P1+P3).
+# This request previously went through the model, which was told (system
+# prompt) to call generate_action_plan(max_items=100) then export — but the
+# model free-wrote the wrapper, producing a short summary instead of the
+# full data, a hallucinated "${new Date().toISOString()}" line, and ~29s
+# latency. Short-circuiting runs generate_action_plan + export_report
+# deterministically (no Bedrock), rendering the real structured output.
+# Narrow: must combine a report/export noun with an "all / full /
+# comprehensive / everything" quantifier so it never catches a normal
+# "show me findings" (which should stay the fast interactive batch).
+_COMPREHENSIVE_REPORT_INTENT = re.compile(
+    r"\b(?:full|comprehensive|complete|entire|all)\b[^.?!]*?"
+    r"\b(?:report|findings?|export|audit)\b"
+    r"|"
+    r"\b(?:report|export)\b[^.?!]*?\b(?:all|every|everything|full set)\b[^.?!]*?"
+    r"\bfindings?\b"
+    r"|"
+    r"\breport\s+(?:of|on|with)\s+all\b",
     re.IGNORECASE,
 )
 
@@ -1388,6 +1408,97 @@ def _shortcircuit_action_plan_and_export(user_message: str):
     }
 
 
+def _shortcircuit_comprehensive_report(user_message: str):
+    """Deterministic "full/comprehensive report of ALL findings" (P1 + P3).
+
+    Runs generate_action_plan(max_items=100) + export_report with NO Bedrock
+    round trips, rendering the real structured output. This replaces the
+    old model-orchestrated path (system prompt told the model to call the
+    tools itself), which produced a short model-written summary instead of
+    the full data, a hallucinated "${new Date().toISOString()}" line, and
+    ~29s latency. Deterministic rendering fixes all three at once.
+
+    Narrow intent (see _COMPREHENSIVE_REPORT_INTENT): a normal "show me
+    findings" stays the fast interactive batch and falls through here.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _COMPREHENSIVE_REPORT_INTENT.search(user_message):
+        return None
+
+    plan_input = {"max_items": 100, "include_quick_wins": True}
+    plan_result = invoke_tool("generate_action_plan", plan_input)
+    plan_tool = {"tool": "generate_action_plan", "input_summary": _summarize_input(plan_input)}
+    if isinstance(plan_result, dict) and "error" in plan_result:
+        return {
+            "response": (
+                "I couldn't build the comprehensive report: "
+                f"{plan_result['error']}. Try again or narrow the scope."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [plan_tool],
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result]),
+        }
+
+    total = plan_result.get("total_findings", plan_result.get("total_items_analyzed", 0))
+    plan_text = _render_action_plan(plan_result if isinstance(plan_result, dict) else {})
+    report_body = _strip_action_plan_footer(plan_text)
+    # Frame it as the comprehensive report rather than an action plan.
+    header = (
+        f"# Comprehensive IAM findings report\n\n"
+        f"Full prioritized analysis across {total} finding"
+        f"{'s' if total != 1 else ''} in this account.\n"
+    )
+    report_body = header + "\n" + report_body
+
+    export_input = {
+        "content": report_body,
+        "content_type": "report",
+        "format": "md",
+    }
+    export_result = invoke_tool("export_report", export_input)
+    tools_used = [
+        plan_tool,
+        {"tool": "export_report", "input_summary": "content_type: report, format: md"},
+    ]
+
+    if isinstance(export_result, dict) and "error" in export_result:
+        note = (
+            f"\n\n---\n⚠️ Export failed: {export_result.get('error')}. "
+            "You can retry with `export that`."
+        )
+        return {
+            "response": report_body + note,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result, export_result]),
+        }
+
+    filename = (export_result or {}).get("filename") or "report.md"
+    url = (export_result or {}).get("download_url") or ""
+    if url:
+        export_line = (
+            f"\n\n---\nSaved: `{filename}` — [Download here]({url}) "
+            f"*(file stored permanently in S3; download works while you're "
+            f"signed in — or say `get me a link for {filename}` any time).*"
+        )
+    else:
+        export_line = (
+            f"\n\n---\nSaved to S3 as `{filename}`. "
+            f"Say `get me a link for {filename}` to download it."
+        )
+
+    return {
+        "response": report_body + export_line,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": _aggregate_coverage([plan_result, export_result]),
+    }
+
+
 def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
     """Same pattern as _prior_turn_announced_access_key_audit: true when the
     most recent assistant turn was clearly setting up the action-plan step
@@ -1750,8 +1861,25 @@ def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
         content = entry.get("content") or ""
         if not isinstance(content, str):
             return False
+        # If the prior assistant turn is the ALREADY-DELIVERED audit (its
+        # rendered report carries the fenced `_type: "access_keys_report"`
+        # payload, or the render's "Reviewed N access keys" headline), then
+        # a bare "ready" is the user ADVANCING past the audit (e.g. guided
+        # tour Step 6 -> Step 7), NOT a request to run it again. The audit
+        # report is itself full of the words "access key" and "audit", so
+        # without this guard the substring check below re-fires the audit on
+        # the next "ready" (P2). Treat a delivered report as "not an
+        # announcement" so the tour advances. Same already-delivered-marker
+        # idea as the action-plan short-circuit.
+        lowered = content.lower()
+        already_delivered = (
+            '"_type": "access_keys_report"' in content
+            or ("reviewed" in lowered and "access key" in lowered)
+        )
+        if already_delivered:
+            return False
         return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
-            "access key" in content.lower() and "audit" in content.lower()
+            "access key" in lowered and "audit" in lowered
         )
     return False
 
@@ -1885,6 +2013,34 @@ def _shortcircuit_triage_access_keys(user_message: str, conversation_history: li
     }
 
 
+# Deterministic "list my exports" intent (P5). The list_exports tool reads
+# the WHOLE S3 reports bucket, but when this request goes through the model
+# it sometimes answers from its own conversation memory instead of calling
+# the tool — so a file exported in an EARLIER conversation looks "missing"
+# even though the S3 object exists. Short-circuiting guarantees the real
+# bucket is always consulted. Narrow: must mention a list/show verb AND an
+# exports/saved-reports noun.
+_LIST_EXPORTS_INTENT = re.compile(
+    r"\b(?:list|show|see|view|what(?:'s|\s+are)?|which)\b[^.?!]*?"
+    r"\b(?:exports?|exported\s+(?:reports?|files?|artifacts?)"
+    r"|saved\s+(?:reports?|files?|artifacts?|exports?))\b",
+    re.IGNORECASE,
+)
+
+# Deterministic "get me a link for <filename>" intent (P5). Captures the
+# filename so the short-circuit resolves it against S3 (whole-bucket lookup
+# via the tool's get_link action), not conversation memory. Requires a
+# real-looking filename with a known export extension so it never fires on
+# a vague "get me a link".
+_GET_LINK_INTENT = re.compile(
+    r"\b(?:get|give|send|fetch|regenerate|need|want|grab)\b[^.?!]*?"
+    r"\blink\b[^.?!]*?\bfor\b\s+[`\"']?"
+    r"([A-Za-z0-9][\w.\-]+\.(?:md|json|txt|csv))"
+    r"[`\"']?",
+    re.IGNORECASE,
+)
+
+
 # Deterministic "export that" / "save it" follow-ups. Without this
 # short-circuit, some prior-turn contexts (notably a preceding
 # generate_policy) make the model synthesize a plausible-looking presigned
@@ -1969,14 +2125,22 @@ def _infer_export_content_type(artifact: str) -> tuple:
         except (TypeError, ValueError):
             pass
 
+    # A Change Request document is identified FIRST, before the generic
+    # "blast radius" substring check below. A CR's own risk section quotes
+    # blast-radius context (the CHANGE REQUEST prompt rule requires it), so
+    # "blast radius" appears inside a CR — checking blast_radius first
+    # mislabeled CR exports as blast-radius-*.md in the blast-radius-reports
+    # folder (the artifact was correct, only the name/folder were wrong).
+    # Classify by the document's own identity, which is the more specific
+    # signal, before the substrings it happens to contain.
+    if "change request" in lower or "rollback plan" in lower:
+        return "change_request", "md"
     if "action plan" in lower or "priority score" in lower or "quick wins" in lower:
         return "action_plan", "md"
     if "blast radius" in lower or "impact radius" in lower or "risk_score" in lower:
         return "blast_radius", "md"
     if "comparison" in lower or "compare" in lower and ("most risky" in lower or "safest to delete" in lower):
         return "comparison", "md"
-    if "change request" in lower or "rollback plan" in lower:
-        return "change_request", "md"
     return "report", "md"
 
 
@@ -2005,6 +2169,100 @@ def _extract_artifact_body(artifact: str) -> str:
         except (TypeError, ValueError):
             pass
     return artifact.strip()
+
+
+def _shortcircuit_list_exports(user_message: str):
+    """Deterministically handle "list my exports" and "get me a link for
+    <file>" by invoking list_exports directly (P5).
+
+    The tool reads the whole S3 reports bucket, so this guarantees the
+    answer reflects ALL of the user's exports — not just ones created in
+    the current conversation, which is what the model-driven path returned
+    when it answered from memory instead of calling the tool.
+
+    Returns None (fall through to the model) on anything that isn't a
+    clear list/get-link request, so normal conversation is unaffected.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    # get_link takes priority: a message naming a specific file is a
+    # download request, not a list request.
+    link_match = _GET_LINK_INTENT.search(user_message)
+    if link_match:
+        filename = link_match.group(1)
+        result = invoke_tool("list_exports", {"action": "get_link", "filename": filename})
+        tools_used = [{"tool": "list_exports", "input_summary": f"get_link: {filename}"}]
+        if not isinstance(result, dict) or "error" in result or not result.get("download_url"):
+            detail = (result or {}).get("error", "that file isn't in your S3 exports bucket")
+            return {
+                "response": f"I couldn't find a download for `{filename}` — {detail}.",
+                "usage": {"inputTokens": 0, "outputTokens": 0},
+                "tools_used": tools_used,
+                "pagination": None,
+                "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+            }
+        url = result["download_url"]
+        text = (
+            f"[Download {result.get('filename', filename)}]({url}) "
+            f"*(stored in S3; download works while you're signed in).*"
+        )
+        return {
+            "response": text,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    if not _LIST_EXPORTS_INTENT.search(user_message):
+        return None
+
+    result = invoke_tool("list_exports", {"action": "list"})
+    tools_used = [{"tool": "list_exports", "input_summary": "list"}]
+    if not isinstance(result, dict) or "error" in result:
+        detail = (result or {}).get("error", "the export listing failed")
+        return {
+            "response": f"I couldn't list your exports — {detail}.",
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+        }
+
+    files = result.get("files", [])
+    if not files:
+        return {
+            "response": (
+                result.get("message")
+                or "No exported reports found yet. Generate a policy, action "
+                "plan, or change request, then say `export that`."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    lines = [f"Your saved exports ({len(files)}):", ""]
+    for i, f in enumerate(files, 1):
+        folder = f.get("folder", "")
+        folder_part = f" — _{folder}_" if folder else ""
+        lines.append(
+            f"{i}. `{f.get('filename', '?')}`{folder_part} "
+            f"({f.get('last_modified', 'date unknown')})"
+        )
+    lines.append("")
+    lines.append(
+        "Say `get me a link for <filename>` to download any of these."
+    )
+    return {
+        "response": "\n".join(lines),
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": result.get("coverage", []),
+    }
 
 
 def _shortcircuit_export_followup(user_message: str, history: list):
@@ -2254,6 +2512,21 @@ def handler(event, context):
                 "body": json.dumps(shortcircuit),
             }
 
+        # Comprehensive "full report of ALL findings" runs
+        # generate_action_plan(max_items=100) + export_report
+        # deterministically (P1+P3). Runs BEFORE the action-plan
+        # short-circuits so an "all findings" report isn't downgraded to a
+        # plain action plan, and so the model never free-writes the report
+        # (which caused the summary-not-data, the hallucinated ${...} line,
+        # and the ~29s latency).
+        shortcircuit = _shortcircuit_comprehensive_report(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
         # Combined "generate an action plan and export it" runs both tools in
         # one deterministic sequence without Bedrock, keeping the turn under
         # the API Gateway 29s ceiling.
@@ -2323,6 +2596,20 @@ def handler(event, context):
         # _shortcircuit_cross_account_roles); anything ambiguous falls
         # through to the model, which asks the clarifying question.
         shortcircuit = _shortcircuit_cross_account_roles(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic "list my exports" / "get me a link for <file>":
+        # invoke list_exports directly so the answer reflects the whole S3
+        # bucket, not the model's conversation memory (P5). Runs before the
+        # export-followup short-circuit; the two don't overlap (get_link
+        # requires an explicit filename, export-followup is anchored on
+        # short "export that"-style phrases).
+        shortcircuit = _shortcircuit_list_exports(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
