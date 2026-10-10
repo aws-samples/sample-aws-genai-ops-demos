@@ -155,8 +155,7 @@ LARGE RESULT HANDLING:
 - Tools return a limited number of items per call (e.g., 10 findings, top 10 action items) to keep responses fast.
 - When results are limited and the tool returns a known total, say: "Showing 10 of 347 findings" or "Top 10 priorities out of 52 total."
 - If total_matching or total_count is -1, the total is unknown. Say how many findings are shown and offer the next page; never invent or infer a total.
-- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?"
-- For the comprehensive export, call generate_action_plan with max_items=100, then export the full result to S3. The exported file has no size limit.
+- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?" When the user accepts, DO NOT hand-assemble the report yourself — a deterministic path builds the full report (all findings, scored and ranked) and exports it to S3 for you. Just make the offer; the comprehensive report is generated and saved automatically from the real findings data, with no size limit.
 - You can also page through results: "Want me to show the next 10?" and call list_findings with the next_token from the previous result.
 
 CONFIDENTIALITY:
@@ -718,6 +717,27 @@ _ACTION_PLAN_AND_EXPORT_INTENT = re.compile(
     r"export\s+the\s+action\s+plan"
     r"|"
     r"save\s+the\s+action\s+plan",
+    re.IGNORECASE,
+)
+
+# Deterministic "comprehensive / full report of ALL findings" intent (P1+P3).
+# This request previously went through the model, which was told (system
+# prompt) to call generate_action_plan(max_items=100) then export — but the
+# model free-wrote the wrapper, producing a short summary instead of the
+# full data, a hallucinated "${new Date().toISOString()}" line, and ~29s
+# latency. Short-circuiting runs generate_action_plan + export_report
+# deterministically (no Bedrock), rendering the real structured output.
+# Narrow: must combine a report/export noun with an "all / full /
+# comprehensive / everything" quantifier so it never catches a normal
+# "show me findings" (which should stay the fast interactive batch).
+_COMPREHENSIVE_REPORT_INTENT = re.compile(
+    r"\b(?:full|comprehensive|complete|entire|all)\b[^.?!]*?"
+    r"\b(?:report|findings?|export|audit)\b"
+    r"|"
+    r"\b(?:report|export)\b[^.?!]*?\b(?:all|every|everything|full set)\b[^.?!]*?"
+    r"\bfindings?\b"
+    r"|"
+    r"\breport\s+(?:of|on|with)\s+all\b",
     re.IGNORECASE,
 )
 
@@ -1305,6 +1325,97 @@ def _shortcircuit_action_plan_and_export(user_message: str):
 
     return {
         "response": plan_body + export_line,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": _aggregate_coverage([plan_result, export_result]),
+    }
+
+
+def _shortcircuit_comprehensive_report(user_message: str):
+    """Deterministic "full/comprehensive report of ALL findings" (P1 + P3).
+
+    Runs generate_action_plan(max_items=100) + export_report with NO Bedrock
+    round trips, rendering the real structured output. This replaces the
+    old model-orchestrated path (system prompt told the model to call the
+    tools itself), which produced a short model-written summary instead of
+    the full data, a hallucinated "${new Date().toISOString()}" line, and
+    ~29s latency. Deterministic rendering fixes all three at once.
+
+    Narrow intent (see _COMPREHENSIVE_REPORT_INTENT): a normal "show me
+    findings" stays the fast interactive batch and falls through here.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _COMPREHENSIVE_REPORT_INTENT.search(user_message):
+        return None
+
+    plan_input = {"max_items": 100, "include_quick_wins": True}
+    plan_result = invoke_tool("generate_action_plan", plan_input)
+    plan_tool = {"tool": "generate_action_plan", "input_summary": _summarize_input(plan_input)}
+    if isinstance(plan_result, dict) and "error" in plan_result:
+        return {
+            "response": (
+                "I couldn't build the comprehensive report: "
+                f"{plan_result['error']}. Try again or narrow the scope."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [plan_tool],
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result]),
+        }
+
+    total = plan_result.get("total_findings", plan_result.get("total_items_analyzed", 0))
+    plan_text = _render_action_plan(plan_result if isinstance(plan_result, dict) else {})
+    report_body = _strip_action_plan_footer(plan_text)
+    # Frame it as the comprehensive report rather than an action plan.
+    header = (
+        f"# Comprehensive IAM findings report\n\n"
+        f"Full prioritized analysis across {total} finding"
+        f"{'s' if total != 1 else ''} in this account.\n"
+    )
+    report_body = header + "\n" + report_body
+
+    export_input = {
+        "content": report_body,
+        "content_type": "report",
+        "format": "md",
+    }
+    export_result = invoke_tool("export_report", export_input)
+    tools_used = [
+        plan_tool,
+        {"tool": "export_report", "input_summary": "content_type: report, format: md"},
+    ]
+
+    if isinstance(export_result, dict) and "error" in export_result:
+        note = (
+            f"\n\n---\n⚠️ Export failed: {export_result.get('error')}. "
+            "You can retry with `export that`."
+        )
+        return {
+            "response": report_body + note,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result, export_result]),
+        }
+
+    filename = (export_result or {}).get("filename") or "report.md"
+    url = (export_result or {}).get("download_url") or ""
+    if url:
+        export_line = (
+            f"\n\n---\nSaved: `{filename}` — [Download here]({url}) "
+            f"*(file stored permanently in S3; download works while you're "
+            f"signed in — or say `get me a link for {filename}` any time).*"
+        )
+    else:
+        export_line = (
+            f"\n\n---\nSaved to S3 as `{filename}`. "
+            f"Say `get me a link for {filename}` to download it."
+        )
+
+    return {
+        "response": report_body + export_line,
         "usage": {"inputTokens": 0, "outputTokens": 0},
         "tools_used": tools_used,
         "pagination": None,
@@ -2187,6 +2298,21 @@ def handler(event, context):
         # next_token and render a table. This keeps the follow-up under the API
         # Gateway 29s ceiling because it does no model round trip.
         shortcircuit = _shortcircuit_pagination(user_message, pagination_ctx)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Comprehensive "full report of ALL findings" runs
+        # generate_action_plan(max_items=100) + export_report
+        # deterministically (P1+P3). Runs BEFORE the action-plan
+        # short-circuits so an "all findings" report isn't downgraded to a
+        # plain action plan, and so the model never free-writes the report
+        # (which caused the summary-not-data, the hallucinated ${...} line,
+        # and the ~29s latency).
+        shortcircuit = _shortcircuit_comprehensive_report(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
