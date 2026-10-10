@@ -1619,8 +1619,25 @@ def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
         content = entry.get("content") or ""
         if not isinstance(content, str):
             return False
+        # If the prior assistant turn is the ALREADY-DELIVERED audit (its
+        # rendered report carries the fenced `_type: "access_keys_report"`
+        # payload, or the render's "Reviewed N access keys" headline), then
+        # a bare "ready" is the user ADVANCING past the audit (e.g. guided
+        # tour Step 6 -> Step 7), NOT a request to run it again. The audit
+        # report is itself full of the words "access key" and "audit", so
+        # without this guard the substring check below re-fires the audit on
+        # the next "ready" (P2). Treat a delivered report as "not an
+        # announcement" so the tour advances. Same already-delivered-marker
+        # idea as the action-plan short-circuit.
+        lowered = content.lower()
+        already_delivered = (
+            '"_type": "access_keys_report"' in content
+            or ("reviewed" in lowered and "access key" in lowered)
+        )
+        if already_delivered:
+            return False
         return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
-            "access key" in content.lower() and "audit" in content.lower()
+            "access key" in lowered and "audit" in lowered
         )
     return False
 
