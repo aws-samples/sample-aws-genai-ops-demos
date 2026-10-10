@@ -11,6 +11,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from .scan_permissions import HUB_TOOL_ROLE_NAME, SPOKE_ROLE_NAME
+
 
 class ToolsConstruct(Construct):
     """Lambda functions implementing the IAM analysis tools."""
@@ -25,10 +27,22 @@ class ToolsConstruct(Construct):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # Shared IAM role for all tool functions (read-only access)
+        # Shared IAM role for all tool functions (read-only access).
+        #
+        # role_name is explicit and fixed (#173 Level 2, hub-and-spoke) so
+        # that each spoke account's trust policy can pin aws:PrincipalArn
+        # to this exact role (see scan_permissions.HUB_TOOL_ROLE_NAME and
+        # spoke_stack.py) without any cross-stack lookup. CDK's default
+        # auto-generated role name is unpredictable at spoke-stack synth
+        # time (spoke stacks synthesize independently, often before this
+        # stack even exists in a fresh account), so a fixed name is
+        # required here, not just convenient. This only matters when
+        # multi-account deploy is opted into; single-account deploys are
+        # unaffected by naming the role explicitly.
         tool_role = iam.Role(
             self,
             "ToolExecutionRole",
+            role_name=HUB_TOOL_ROLE_NAME,
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name(
@@ -122,6 +136,28 @@ class ToolsConstruct(Construct):
         )
 
         self.presigner_role = presigner_role
+
+        # Cross-account spoke-role assumption (#173 Level 2, hub-and-spoke,
+        # opt-in). The specific spoke role ARN depends on which account_id
+        # a user asks about at runtime — it is NOT known at synth time, so
+        # this cannot be scoped to a literal ARN list the way the
+        # presigner grant above is. Scoped instead to the fixed spoke role
+        # NAME across any account/partition, via a wildcard account-id
+        # segment: "arn:*:iam::*:role/IamAnalyzerAssistantSpokeRole". This
+        # still meaningfully narrows the grant — tool_role cannot assume
+        # ANY role in a target account, only one with this exact name,
+        # and the spoke role's OWN trust policy (spoke_stack.py) is the
+        # second half of the guardrail: it only trusts this specific
+        # tool_role ARN back. Granting sts:AssumeRole here has zero effect
+        # on accounts that haven't deployed SpokeStack at all — there is
+        # no role by this name to assume, and the call simply fails.
+        tool_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sts:AssumeRole"],
+                resources=[f"arn:*:iam::*:role/{SPOKE_ROLE_NAME}"],
+            )
+        )
 
         # Path to Lambda source code
         tools_path = str(
