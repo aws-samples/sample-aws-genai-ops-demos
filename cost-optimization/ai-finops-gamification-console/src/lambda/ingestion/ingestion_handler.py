@@ -23,18 +23,23 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb')
 secrets_manager = boto3.client('secretsmanager')
+ses_client = boto3.client('ses')
 
 # Environment variables
 FINDINGS_TABLE = os.environ.get('FINDINGS_TABLE', 'finops-findings')
 LEARNINGS_TABLE = os.environ.get('LEARNINGS_TABLE', 'finops-learnings')
 SCOPING_TABLE = os.environ.get('SCOPING_TABLE', 'finops-scoping')
+TEAMS_TABLE = os.environ.get('TEAMS_TABLE', 'finops-teams')
 SLACK_SECRET_ARN = os.environ.get('SLACK_SECRET_ARN', '')
 SLACK_CHANNEL_ID = os.environ.get('SLACK_CHANNEL_ID', '')
+SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', '')
+WEBSITE_URL = os.environ.get('WEBSITE_URL', '')
 
 # Initialize table objects
 findings_table = dynamodb.Table(FINDINGS_TABLE)
 learnings_table = dynamodb.Table(LEARNINGS_TABLE)
 scoping_table = dynamodb.Table(SCOPING_TABLE)
+teams_table = dynamodb.Table(TEAMS_TABLE)
 
 # Pattern definitions for parsing FinOps Agent reports
 FINDING_PATTERNS = {
@@ -212,15 +217,58 @@ RECOMMENDATION_KEYWORDS = [
     ('unused', ('General', 'waste')),
 ]
 
-# Matches lines like:
+# Independent per-field patterns rather than one whole-line pattern. The
+# Agent's exact phrasing between the title and these anchors has already
+# been observed to vary across reports (resource/region sometimes joined by
+# em-dashes, sometimes comma-separated inside one parenthesized group; extra
+# context sometimes trails after "Effort:", sometimes doesn't). As long as a
+# dollar-per-month figure and an "Effort:" marker are both present, the line
+# can still be parsed - see extract_recommendation_fields() below. Examples
+# actually seen in production reports:
 #   "Stop idle RDS instance — devops-agent-eks-dev-postgres (eu-west-1) — $13.91/month | Effort: Low"
-#   "Migrate EC2 to Graviton — i-07c84273c3f3237b7 t3.medium -> t4g.medium (us-west-2) — $5.78/month (20% savings) | Effort: Very High"
-RECOMMENDATION_LINE_PATTERN = re.compile(
-    r'^(?P<title>.+?)\s*[—-]\s*(?P<resource>.+?)\s*\((?P<region>[a-z0-9-]+)\)\s*[—-]\s*'
-    r'\$(?P<savings>[\d,]+\.?\d*)\s*/\s*month'
-    r'(?:\s*\((?P<extra>[^)]+)\))?\s*\|\s*Effort:\s*(?P<effort>.+?)\s*$',
-    re.IGNORECASE,
-)
+#   "Stop idle RDS instance (devops-agent-eks-dev-postgres, eu-west-1) — $14.43/month | Effort: Low | No activity in 14 days"
+#   "Migrate EC2 to Graviton (i-07c84273c3f3237b7, us-west-2: t3.medium -> t4g.medium) — $5.74/month | Effort: Very High | 20% cost reduction"
+SAVINGS_PER_MONTH_PATTERN = re.compile(r'\$([\d,]+\.?\d*)\s*/\s*month', re.IGNORECASE)
+EFFORT_PATTERN = re.compile(r'Effort:\s*([^|]+)', re.IGNORECASE)
+AWS_REGION_PATTERN = re.compile(r'\b([a-z]{2}(?:-gov)?-[a-z]+-\d)\b', re.IGNORECASE)
+
+
+def extract_recommendation_fields(item_text: str) -> dict | None:
+    """
+    Extract title/resource/region/savings/effort from a single recommendation
+    line, tolerant of the phrasing variations described above. Returns None
+    if the two required anchors (a "$X/month" figure and an "Effort:"
+    marker) are both missing, since those are the only two AWS FinOps Agent
+    seems to include consistently.
+    """
+    savings_match = SAVINGS_PER_MONTH_PATTERN.search(item_text)
+    effort_match = EFFORT_PATTERN.search(item_text)
+    if not savings_match or not effort_match:
+        return None
+
+    region_match = AWS_REGION_PATTERN.search(item_text)
+    region = region_match.group(1) if region_match else ''
+
+    # Title ends at the first '(' or the first ' — ', whichever comes first.
+    candidates = [i for i in (item_text.find('('), item_text.find(' — ')) if i != -1]
+    title_end = min(candidates) if candidates else len(item_text)
+    title = item_text[:title_end].strip(' —-')
+
+    # Everything between the title and the savings figure is treated as the
+    # resource/detail text verbatim (kept as one string rather than trying
+    # to further split resource-id from region, since that inner structure
+    # varies the most between report runs).
+    resource = item_text[title_end:savings_match.start()].strip(' —-')
+
+    return {
+        'title': title,
+        'resource': resource,
+        'region': region,
+        'savingsUsd': savings_match.group(1).replace(',', ''),
+        'extra': '',
+        'effort': effort_match.group(1).strip(),
+        'rawText': item_text,
+    }
 
 
 def classify_recommendation(title: str) -> tuple[str, str]:
@@ -239,10 +287,11 @@ def extract_recommendations_from_blocks(blocks: list) -> list[dict]:
 
     The Agent renders the "Optimization Recommendations" section as a
     `header` block followed by a `rich_text` block containing an ordered
-    `rich_text_list`. Each list item is a single line matching
-    RECOMMENDATION_LINE_PATTERN. Lines that don't match are logged and
-    skipped rather than silently dropped, so format drift is visible in
-    CloudWatch logs.
+    `rich_text_list`. Each list item is a single line parsed field-by-field
+    via extract_recommendation_fields(). Lines with neither of the two
+    required anchors (a "$X/month" figure and an "Effort:" marker) are
+    logged and skipped rather than silently dropped, so format drift is
+    visible in CloudWatch logs.
     """
     recommendations = []
     in_recommendations_section = False
@@ -271,20 +320,12 @@ def extract_recommendations_from_blocks(blocks: list) -> list[dict]:
                 if not item_text:
                     continue
 
-                match = RECOMMENDATION_LINE_PATTERN.match(item_text)
-                if not match:
+                fields = extract_recommendation_fields(item_text)
+                if not fields:
                     logger.warning(f"Could not parse recommendation line: {item_text!r}")
                     continue
 
-                recommendations.append({
-                    'title': match.group('title').strip(),
-                    'resource': match.group('resource').strip(),
-                    'region': match.group('region').strip(),
-                    'savingsUsd': match.group('savings').replace(',', ''),
-                    'extra': (match.group('extra') or '').strip(),
-                    'effort': match.group('effort').strip(),
-                    'rawText': item_text,
-                })
+                recommendations.append(fields)
 
     return recommendations
 
@@ -437,8 +478,8 @@ def parse_finops_report(message: dict) -> list[dict]:
     recommendations = extract_recommendations_from_blocks(blocks)
     if not recommendations:
         # Message had blocks (so it's a real report), but the
-        # "Optimization Recommendations" section wasn't found or its lines
-        # didn't match RECOMMENDATION_LINE_PATTERN. Fall back to the
+        # "Optimization Recommendations" section wasn't found, or none of
+        # its lines contained both required anchors. Fall back to the
         # flattened text so a format change doesn't silently drop findings.
         logger.warning(
             f"No recommendations extracted from blocks for message {message_ts}; "
@@ -532,6 +573,67 @@ def assign_finding_to_team(finding: dict, scoping_rules: list[dict]) -> str | No
             pass
     
     return None
+
+
+def get_team(team_id: str) -> dict | None:
+    """Look up a team's full record, used for notification name + members."""
+    try:
+        response = teams_table.get_item(Key={'teamId': team_id})
+        return response.get('Item')
+    except Exception as e:
+        logger.error(f"Failed to look up team {team_id}: {e}")
+        return None
+
+
+def send_finding_assigned_email(finding: dict, team_name: str, recipient_emails: list[str]) -> None:
+    """
+    Notify a team's members by email that a new finding has been assigned
+    to their scope. Best-effort: failures are logged, never raised, so a
+    notification problem can't break ingestion.
+
+    Requires SES_SENDER_EMAIL to be a verified SES identity in this
+    account/region. While the account is in the SES sandbox, every
+    recipient address must also be verified individually.
+    """
+    if not SES_SENDER_EMAIL:
+        logger.info("SES_SENDER_EMAIL not configured - skipping finding-assigned email")
+        return
+
+    if not recipient_emails:
+        return
+
+    savings = finding.get('estimatedSavingsUsd', 0)
+    finding_link = f"{WEBSITE_URL}/findings/{finding['findingId']}" if WEBSITE_URL else ''
+
+    subject = f"[FinOps] New finding assigned to {team_name}: {finding.get('title', 'Untitled')}"
+    body_lines = [
+        f"A new cost optimization finding has been assigned to {team_name}.",
+        "",
+        f"Title: {finding.get('title', 'Untitled')}",
+        f"Service: {finding.get('service', 'Unknown')}",
+        f"Estimated savings: ${savings}/month",
+        f"Priority: {finding.get('priority', 'unknown')}",
+        "",
+        finding.get('description', ''),
+    ]
+    if finding_link:
+        body_lines += ['', f"View and act on this finding: {finding_link}"]
+    body_text = '\n'.join(body_lines)
+
+    try:
+        ses_client.send_email(
+            Source=SES_SENDER_EMAIL,
+            Destination={'ToAddresses': recipient_emails},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Text': {'Data': body_text}},
+            },
+        )
+        logger.info(f"Sent finding-assigned email to {len(recipient_emails)} recipient(s) for team {team_name}")
+    except ClientError as e:
+        # Most common cause in a fresh deployment: SES sandbox mode and the
+        # sender/recipient identity isn't verified yet. Log and move on.
+        logger.error(f"Failed to send finding-assigned email: {e}")
 
 
 def check_for_similar_learnings(finding: dict) -> list[dict]:
@@ -656,8 +758,10 @@ def handler(event: dict, context) -> dict:
         for finding in findings:
             # Assign to team based on scoping rules
             team_id = assign_finding_to_team(finding, scoping_rules)
+            team = None
             if team_id:
                 finding['assignedTeamId'] = team_id
+                team = get_team(team_id)
             
             # Check for relevant learnings (could enrich the finding)
             learnings = check_for_similar_learnings(finding)
@@ -667,6 +771,13 @@ def handler(event: dict, context) -> dict:
             # Store the finding
             if store_finding(finding):
                 findings_created += 1
+                # Notify the team's members that a new finding landed in
+                # their scope. Best-effort - a notification failure never
+                # affects whether the finding itself was stored.
+                if team:
+                    recipient_emails = [m for m in team.get('members', []) if m]
+                    if recipient_emails:
+                        send_finding_assigned_email(finding, team.get('name', 'your team'), recipient_emails)
             else:
                 findings_skipped += 1
         

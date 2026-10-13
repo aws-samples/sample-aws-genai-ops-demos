@@ -188,6 +188,10 @@ export class FinOpsGamificationStack extends cdk.Stack {
       SCORES_TABLE: scoresTable.tableName,
       USER_POOL_ID: userPool.userPoolId,
       REGION: region,
+      // SES sender must be a verified identity in this account/region.
+      // Left blank at deploy time (same pattern as SLACK_CHANNEL_ID) -
+      // configured post-deployment once you've verified an identity in SES.
+      SES_SENDER_EMAIL: '',
     };
 
     // API Lambda (handles all API routes)
@@ -209,6 +213,14 @@ export class FinOpsGamificationStack extends cdk.Stack {
     learningsTable.grantReadWriteData(apiLambda);
     scoresTable.grantReadWriteData(apiLambda);
 
+    // Allow sending team-assignment notification emails via SES. Scoped to
+    // SendEmail/SendRawEmail only (no identity management, no receiving) -
+    // the sender identity itself must still be verified in SES separately.
+    apiLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+
     // Ingestion Lambda (processes Slack messages)
     const ingestionLambda = new lambda.Function(this, 'IngestionLambda', {
       functionName: `FinOpsIngestion-${region}`,
@@ -229,7 +241,15 @@ export class FinOpsGamificationStack extends cdk.Stack {
     findingsTable.grantReadWriteData(ingestionLambda);
     learningsTable.grantReadData(ingestionLambda);
     scopingTable.grantReadData(ingestionLambda);
+    teamsTable.grantReadData(ingestionLambda);
     slackSecret.grantRead(ingestionLambda);
+
+    // Allow sending team-assignment notification emails via SES (same
+    // scoped permission as the API Lambda - see comment above).
+    ingestionLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
 
     // EventBridge rule for scheduled ingestion
     new events.Rule(this, 'IngestionSchedule', {
@@ -353,6 +373,11 @@ export class FinOpsGamificationStack extends cdk.Stack {
         },
       ],
     });
+
+    // Let notification emails deep-link back to the console
+    const websiteUrl = `https://${distribution.distributionDomainName}`;
+    apiLambda.addEnvironment('WEBSITE_URL', websiteUrl);
+    ingestionLambda.addEnvironment('WEBSITE_URL', websiteUrl);
 
     // Grant CloudFront access to S3
     websiteBucket.addToResourcePolicy(new iam.PolicyStatement({

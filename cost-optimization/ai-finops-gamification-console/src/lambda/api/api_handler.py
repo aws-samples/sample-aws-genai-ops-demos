@@ -13,6 +13,7 @@ from typing import Any
 
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
+from botocore.exceptions import ClientError
 
 # Configure logging
 logger = logging.getLogger()
@@ -20,6 +21,7 @@ logger.setLevel(logging.INFO)
 
 # Initialize DynamoDB
 dynamodb = boto3.resource('dynamodb')
+ses_client = boto3.client('ses')
 
 # Table references from environment
 TEAMS_TABLE = os.environ.get('TEAMS_TABLE', 'finops-teams')
@@ -27,6 +29,8 @@ SCOPING_TABLE = os.environ.get('SCOPING_TABLE', 'finops-scoping')
 FINDINGS_TABLE = os.environ.get('FINDINGS_TABLE', 'finops-findings')
 LEARNINGS_TABLE = os.environ.get('LEARNINGS_TABLE', 'finops-learnings')
 SCORES_TABLE = os.environ.get('SCORES_TABLE', 'finops-scores')
+SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', '')
+WEBSITE_URL = os.environ.get('WEBSITE_URL', '')
 
 # Initialize table objects
 teams_table = dynamodb.Table(TEAMS_TABLE)
@@ -169,6 +173,13 @@ def update_finding(finding_id: str, body: dict, user_info: dict) -> dict:
         return json_response(403, {'error': 'Insufficient permissions'})
     
     try:
+        # Fetch the current item first so we can tell whether this update
+        # actually changes assignedTeamId (vs. re-saving the same team, or
+        # updating an unrelated field like priority/notes/tags) - only a
+        # real change should trigger a new notification email.
+        existing = findings_table.get_item(Key={'findingId': finding_id}).get('Item')
+        previous_team_id = existing.get('assignedTeamId') if existing else None
+
         # Build update expression
         update_parts = []
         attr_values = {}
@@ -199,8 +210,20 @@ def update_finding(finding_id: str, body: dict, user_info: dict) -> dict:
             ExpressionAttributeValues=attr_values,
             ReturnValues='ALL_NEW',
         )
+        updated_finding = response.get('Attributes', {})
+
+        # Notify the newly-assigned team's members, but only if the team
+        # assignment actually changed (not a re-save of the same team, and
+        # not some other field being patched independently).
+        new_team_id = body.get('assignedTeamId')
+        if new_team_id and new_team_id != previous_team_id:
+            team = _get_team_item(new_team_id)
+            if team:
+                recipient_emails = [m for m in team.get('members', []) if m]
+                if recipient_emails:
+                    send_finding_assigned_email(updated_finding, team.get('name', 'your team'), recipient_emails)
         
-        return json_response(200, response.get('Attributes', {}))
+        return json_response(200, updated_finding)
     except Exception as e:
         logger.error(f"Error updating finding {finding_id}: {e}")
         return json_response(500, {'error': 'Failed to update finding'})
@@ -756,6 +779,64 @@ def create_learning_from_finding(finding: dict, body: dict, user_info: dict) -> 
         logger.info(f"Learning created from finding {finding['findingId']}")
     except Exception as e:
         logger.error(f"Error creating learning: {e}")
+
+
+def _get_team_item(team_id: str) -> dict | None:
+    """Internal lookup for a team's raw DynamoDB item (name/members), used by
+    notification code. Distinct from get_team() above, which is a route
+    handler that returns a full API Gateway response envelope."""
+    try:
+        response = teams_table.get_item(Key={'teamId': team_id})
+        return response.get('Item')
+    except Exception as e:
+        logger.error(f"Failed to look up team {team_id}: {e}")
+        return None
+
+
+def send_finding_assigned_email(finding: dict, team_name: str, recipient_emails: list[str]) -> None:
+    """
+    Notify a team's members by email that a finding has been assigned to
+    their scope (manual assignment via the console). Best-effort: failures
+    are logged, never raised, so a notification problem can't break the
+    finding update itself.
+
+    Requires SES_SENDER_EMAIL to be a verified SES identity in this
+    account/region. While the account is in the SES sandbox, every
+    recipient address must also be verified individually.
+    """
+    if not SES_SENDER_EMAIL or not recipient_emails:
+        return
+
+    savings = finding.get('estimatedSavingsUsd', 0)
+    finding_link = f"{WEBSITE_URL}/findings/{finding['findingId']}" if WEBSITE_URL else ''
+
+    subject = f"[FinOps] Finding assigned to {team_name}: {finding.get('title', 'Untitled')}"
+    body_lines = [
+        f"A finding has been assigned to {team_name}.",
+        "",
+        f"Title: {finding.get('title', 'Untitled')}",
+        f"Service: {finding.get('service', 'Unknown')}",
+        f"Estimated savings: ${savings}/month",
+        f"Priority: {finding.get('priority', 'unknown')}",
+    ]
+    if finding_link:
+        body_lines += ['', f"View and act on this finding: {finding_link}"]
+    body_text = '\n'.join(body_lines)
+
+    try:
+        ses_client.send_email(
+            Source=SES_SENDER_EMAIL,
+            Destination={'ToAddresses': recipient_emails},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Text': {'Data': body_text}},
+            },
+        )
+        logger.info(f"Sent finding-assigned email to {len(recipient_emails)} recipient(s) for team {team_name}")
+    except ClientError as e:
+        # Most common cause: SES sandbox mode and the sender/recipient
+        # identity isn't verified yet. Log and move on.
+        logger.error(f"Failed to send finding-assigned email: {e}")
 
 
 def create_learning_from_rejection(finding: dict, body: dict, user_info: dict) -> None:

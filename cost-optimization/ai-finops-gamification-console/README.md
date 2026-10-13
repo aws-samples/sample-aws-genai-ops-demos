@@ -331,6 +331,10 @@ aws dynamodb scan --table-name "finops-findings-$REGION" --max-items 5
 aws events enable-rule --name "finops-ingestion-schedule-$REGION"
 ```
 
+**Important — redeploying the CDK stack resets `SLACK_CHANNEL_ID` and `SES_SENDER_EMAIL`**
+
+These two values are defined in the CDK stack as empty strings and populated afterward via `update-function-configuration` (steps 4 above, and the SES setup below). Unlike the Slack bot token (which lives in a Secrets Manager secret that CloudFormation only sets once at creation and never overwrites on redeploy), Lambda environment variables are a single property that CloudFormation fully replaces on every stack update. Running `cdk deploy` again — including for an unrelated code change — will silently reset both back to empty, breaking ingestion until you re-run steps 3-4 (and the SES steps, if configured) again. There's no CDK-native fix for this without moving to SSM Parameter Store as an out-of-band config source; for now, treat "redeploy" and "reapply post-deployment env vars" as one combined step.
+
 ## Demo Walkthrough
 
 ### 1. Login & Dashboard (2 min)
@@ -423,11 +427,63 @@ PENDING_ACCEPTANCE  ← Human-in-the-loop gate
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SLACK_CHANNEL_ID` | Slack channel for FinOps Agent reports | Required |
-| `INGESTION_SCHEDULE` | EventBridge schedule expression | `rate(1 hour)` |
-| `LEARNING_THRESHOLD` | Confidence threshold for auto-suppression | `0.8` |
+These reflect what the code actually reads (verified against `ingestion_handler.py` and `api_handler.py`), not aspirational config:
+
+| Variable | Lambda(s) | Description | Default |
+|----------|-----------|--------------|---------|
+| `SLACK_CHANNEL_ID` | Ingestion | Slack channel for FinOps Agent reports | `""` — set post-deployment, see "Post-Deployment Setup" |
+| `SLACK_SECRET_ARN` | Ingestion | ARN of the Secrets Manager secret holding the Slack bot token | Set by CDK |
+| `SES_SENDER_EMAIL` | Ingestion, API | Verified SES sender identity used to notify a team's members when a finding is assigned to their scope. No email is sent if unset. | `""` — set post-deployment, see "Enable team-assignment email notifications (optional)" |
+| `WEBSITE_URL` | Ingestion, API | CloudFront URL used to build deep links in notification emails | Set by CDK |
+| `TEAMS_TABLE`, `SCOPING_TABLE`, `FINDINGS_TABLE`, `LEARNINGS_TABLE`, `SCORES_TABLE` | Ingestion, API | DynamoDB table names | Set by CDK |
+| `USER_POOL_ID` | Ingestion, API | Cognito User Pool ID | Set by CDK |
+| `REGION` | Ingestion, API | Deployment region | Set by CDK |
+
+The ingestion schedule interval (`rate(1 hour)`) and the learning loop's rejection-matching logic are not currently configurable via environment variable — the schedule is hardcoded in `infrastructure/cdk/lib/finops-gamification-stack.ts`, and there is no confidence-threshold-based auto-suppression implemented (`check_for_similar_learnings()` surfaces related learnings as context; it does not auto-suppress findings).
+
+### Enable team-assignment email notifications (optional)
+
+When a finding is assigned to a team (automatically at ingestion time via a matching scoping rule, or manually via the finding detail page), the console can email everyone listed in that team's **Members** field. This is off by default (`SES_SENDER_EMAIL` is empty) — with it unset, team assignment still works exactly as before, just silently.
+
+**1. Verify a sender identity in SES**
+
+```bash
+aws ses verify-email-identity --email-address you@example.com
+```
+Check your inbox and click the verification link AWS sends.
+
+**2. If your account is still in the SES sandbox**, verify every recipient too
+
+New AWS accounts start in the SES sandbox, which only allows sending to verified addresses (a safeguard against spam from brand-new accounts). Repeat the same command for each team member's email:
+```bash
+aws ses verify-email-identity --email-address teammate@example.com
+```
+Request production access via the SES console (**Account dashboard → Request production access**) once you're ready to send to arbitrary recipients — approval isn't instant, so for a demo/test setup, verifying each recipient is the fast path.
+
+**3. Set `SES_SENDER_EMAIL` on both Lambdas**
+
+Same "fetch current, merge, push back" pattern as `SLACK_CHANNEL_ID`, applied to both `FinOpsIngestion-<region>` and `FinOpsAPI-<region>`:
+
+```bash
+REGION=us-east-1
+for FUNC in "FinOpsIngestion-$REGION" "FinOpsAPI-$REGION"; do
+  aws lambda get-function-configuration --function-name "$FUNC" \
+    --query 'Environment.Variables' --output json > /tmp/env.json
+  python3 -c "
+import json
+env = json.load(open('/tmp/env.json'))
+env['SES_SENDER_EMAIL'] = 'you@example.com'
+json.dump({'Variables': env}, open('/tmp/env-new.json', 'w'))
+"
+  aws lambda update-function-configuration --function-name "$FUNC" \
+    --environment file:///tmp/env-new.json
+done
+rm -f /tmp/env.json /tmp/env-new.json
+```
+
+**4. Test it**: add a verified recipient's email to a team's **Members** field (console → Teams → edit team → type the email → click **Add** → **Save** — the "Add" click matters, see Troubleshooting below), then either accept/assign a finding to that team via the finding detail page, or trigger ingestion so a new finding auto-routes there. Check CloudWatch logs for `FinOpsIngestion-<region>` or `FinOpsAPI-<region>` for `"Sent finding-assigned email to..."` or an SES error.
+
+**Note**: team "Members" are plain email strings used only for this notification — they are not linked to Cognito user accounts, so adding someone's email here does not grant them console access or affect their RBAC role.
 
 ### Cognito Groups (RBAC)
 
@@ -455,6 +511,16 @@ PENDING_ACCEPTANCE  ← Human-in-the-loop gate
 - Scores are recalculated on finding resolution
 - Check DynamoDB `scores` table for entries
 - Verify Lambda has write permissions
+
+**"Team member email I typed didn't save"**
+- On the Teams page, typing an email into the Members field does not add it by itself — you must click **Add** (or press Enter) to move it into the list before clicking **Save**. Clicking Save directly after typing (without Add) silently discards the input; the team is saved with whatever members were already in the list, e.g. none. Confirm by checking the team's `members` array in DynamoDB (`aws dynamodb get-item --table-name finops-teams-<region> --key '{"teamId":{"S":"<id>"}}'`) or by reopening the team in the edit form and checking that the email appears as a removable token before saving.
+
+**"Team-assignment email never arrived"**
+- Confirm `SES_SENDER_EMAIL` is set on both `FinOpsIngestion-<region>` and `FinOpsAPI-<region>` (empty by default — see "Enable team-assignment email notifications")
+- Confirm the recipient's email is actually saved in the team's `members` list (see previous item — a common cause is the email never having been added)
+- If the account is in the SES sandbox, both the sender and every recipient must be individually verified (`aws ses verify-email-identity`), or the send silently fails with a logged `ClientError`
+- Check the relevant Lambda's CloudWatch logs for `"Sent finding-assigned email to..."` (success) or an SES error message
+- Team assignment must have actually *changed* to trigger a send — re-saving a finding that's already assigned to the same team, or editing an unrelated field, does not re-send the email
 
 ### Logs & Debugging
 ```bash
