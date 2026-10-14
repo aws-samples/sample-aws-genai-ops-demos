@@ -147,6 +147,11 @@ export interface TagsStatus {
 
 export const EMPTY_TARGETS: ScanTargets = { source: 'hub', accounts: [], ou_ids: [], exclude_accounts: [], regions: [] };
 
+// Keep in sync with MAX_SCAN_REGIONS in backend/account_discovery.py: scan cells
+// multiply with accounts x regions x scanners, so this is a deliberate cap.
+export const MAX_REGIONS = 5;
+export interface RegionList { success: boolean; regions?: string[]; deploy_region?: string; error?: string }
+
 export interface DashboardMetrics {
   total_services: number;
   enabled_services: number;
@@ -260,6 +265,9 @@ export const getScanners = async (): Promise<ScanCoverage> => {
 // Store what the next scans should cover (#144). The backend validates ids/regions.
 export const saveScanTargets = async (targets: ScanTargets): Promise<{ success: boolean; error?: string; targets?: ScanTargets }> =>
   invokeAction({ action: 'save_scan_targets', targets });
+
+// Regions enabled for this account (ec2:DescribeRegions on the API function), for the Settings dropdown.
+export const listRegions = async (): Promise<RegionList> => invokeAction({ action: 'list_regions' });
 
 // --- Refresh pipeline (Lambda durable function) -----------------------------
 // The whole refresh (web extraction -> account scan -> reconcile -> notify)

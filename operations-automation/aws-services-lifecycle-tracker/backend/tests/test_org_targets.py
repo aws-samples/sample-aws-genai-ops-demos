@@ -128,3 +128,14 @@ def test_save_targets_rejects_bad_input():
     assert "OU id" in _save({"source": "ou", "ou_ids": ["prod"]})[0]["error"]
     assert "at least one OU" in _save({"source": "ou"})[0]["error"]
     assert "region" in _save({"source": "hub", "regions": ["Frankfurt"]})[0]["error"]
+
+
+def test_save_targets_caps_region_count():
+    import account_discovery
+    six_regions = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
+    out, _ = _save({"source": "hub", "regions": six_regions[:account_discovery.MAX_SCAN_REGIONS]})
+    assert out["success"], out.get("error")
+
+    out, _ = _save({"source": "hub", "regions": six_regions})
+    assert not out["success"]
+    assert str(account_discovery.MAX_SCAN_REGIONS) in out["error"]

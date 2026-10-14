@@ -119,7 +119,7 @@ if [ "$MULTI_ACCOUNT" = true ]; then
         item="{\"service_name\": {\"S\": \"_scan_targets\"}, \"source\": {\"S\": \"organization\"}, \"regions\": {\"L\": $regions_json}}"
     fi
     aws dynamodb put-item --table-name "service-extraction-state" --item "$item" --no-cli-pager
-    echo -e "\033[0;90m      Scan targets set: $ORG_TARGETS in $region (editable later in the UI, Sources & coverage)\033[0m"
+    echo -e "\033[0;90m      Scan targets set: $ORG_TARGETS in $region (shown in the UI under Settings; re-run this script to change it)\033[0m"
 fi
 
 # Deploy API stack (HTTP API + Cognito JWT authorizer)

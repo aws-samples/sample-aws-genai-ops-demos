@@ -10,7 +10,6 @@ import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar'
 import Toggle from '@cloudscape-design/components/toggle';
 import Link from '@cloudscape-design/components/link';
 import { getServices, triggerExtraction, updateServiceConfig, getDashboardMetrics, getScanners, ServiceConfig, DashboardMetrics, ScanCoverage } from '../api';
-import ScanTargetsPanel from '../components/ScanTargetsPanel';
 import { InfoLink } from '../help';
 
 export default function Services() {
@@ -398,14 +397,6 @@ export default function Services() {
                   </>}
           </Box>
         )}
-      />
-
-      <ScanTargetsPanel
-        coverage={coverage}
-        onSaved={(content, ok) => {
-          setFlashbarItems([{ type: ok ? 'success' : 'error', dismissible: true, dismissLabel: 'Dismiss', onDismiss: () => setFlashbarItems([]), content, id: `targets-${Date.now()}` }]);
-          if (ok) getScanners().then(setCoverage).catch(() => undefined);
-        }}
       />
     </SpaceBetween>
   );
