@@ -129,6 +129,8 @@ Hub-and-spoke: the account you deploy into is the **hub**. It lists the organiza
 ./deploy-all.sh --multi-account --org-targets "ou-abcd-11111111,ou-abcd-22222222"
 ```
 
+The account scope is fixed at deploy time: **Settings** in the UI shows it read-only (scope, resolved account count, last-scan numbers); re-run the script with other options to change it.
+
 The scripts first run the shared read-only preflight `shared/scripts/check-org-access` and branch on its result:
 
 | Preflight result | What the script does |
@@ -141,7 +143,7 @@ Prerequisites that only the management account can set: [trusted access for Stac
 
 **What the scan does per account.** Every (account, region, scanner) triple is one durable step; a spoke that cannot be assumed fails only its own cells and is listed in the summary (`accounts_failed`), the rest of the run is unaffected. Inventory rows are keyed `inventory#<account>#<region>#<identifier>` and carry `account_id` / `account_name`; the AWS Health cross-check runs per account with the assumed role (it needs a Business/Enterprise Support plan *in that account*). The hub is always scanned with its own credentials.
 
-**Support plan column.** So that an empty Health badge is never mistaken for "nothing planned", the dashboard's *By account* tab and the Accounts panel show each account's Support tier next to what Health did there ("Health: 26 notices, 51 flagged" or "Health not checked"). No API returns the plan; the tier is inferred the way [AWS documents it](https://aws.amazon.com/blogs/mt/aws-partners-determine-aws-support-plans-in-organization/), from the case severities the account may open (`support:DescribeSeverityLevels`, part of the spoke role): `SubscriptionRequiredException` → Basic, up to `normal` → Developer, up to `urgent` → Business tier (Business, Business Support+), `critical` → Enterprise tier (Enterprise, Enterprise On-Ramp, Unified Operations). Only the two paid tiers can be cross-checked with Health.
+**Support plan column.** So that an empty Health badge is never mistaken for "nothing planned", the dashboard's *By account* tab shows each account's Support tier next to what Health did there ("Health: 26 notices, 51 flagged" or "Health not checked"). No API returns the plan; the tier is inferred the way [AWS documents it](https://aws.amazon.com/blogs/mt/aws-partners-determine-aws-support-plans-in-organization/), from the case severities the account may open (`support:DescribeSeverityLevels`, part of the spoke role): `SubscriptionRequiredException` → Basic, up to `normal` → Developer, up to `urgent` → Business tier (Business, Business Support+), `critical` → Enterprise tier (Enterprise, Enterprise On-Ramp, Unified Operations). Only the two paid tiers can be cross-checked with Health.
 
 **Manual account list** (no Organizations access, or a handful of accounts): deploy the Spoke stack yourself in each account and write the targets row. The Spoke stack needs no `cdk bootstrap`.
 
@@ -152,14 +154,20 @@ cd cdk; npx cdk deploy AWSServicesLifecycleTrackerSpoke-<region> --context hubAc
 aws dynamodb put-item --table-name service-extraction-state --item '{"service_name":{"S":"_scan_targets"},"source":{"S":"manual"},"accounts":{"L":[{"M":{"id":{"S":"222222222222"},"name":{"S":"Account A"}}}]},"regions":{"L":[{"S":"eu-central-1"},{"S":"us-east-1"}]}}'
 ```
 
-`_scan_targets` fields: `source` (`hub` | `manual` | `organization` | `ou`), `accounts` (manual list, also the fallback when Organizations denies access), `ou_ids`, `exclude_accounts`, `regions` (default: the deployment region). The last run's resolved account list (names, OU paths, errors) is stored in the `_scan_accounts` row and shown in the UI under Sources & coverage.
+`_scan_targets` fields: `source` (`hub` | `manual` | `organization` | `ou`), `accounts` (manual list, also the fallback when Organizations denies access), `ou_ids`, `exclude_accounts`, `regions` (default: the deployment region). The last run's resolved account list (names, OU paths, errors) is stored in the `_scan_accounts` row; Settings shows its counts (accounts resolved, covered, unreachable), the dashboard's *By account* tab the per-account detail.
 
 Optional hardening: pass `--context spokeExternalId=<secret>` to both the Pipeline and the Spoke/Org stacks to add an `sts:ExternalId` condition to the spoke trust policy.
 
 **Known limits of the multi-account mode**
 
-- **Multi-region is implemented but not battle-tested.** `regions` in `_scan_targets` fans the scan out per region (one cell per account × region × scanner, rows keyed with the region); our verification ran on a 5-account organization in a single region. Expect it to work; treat a multi-region run as something to check before you trust it.
+- **Multi-region is implemented but not battle-tested.** `regions` in `_scan_targets` fans the scan out per region (one cell per account × region × scanner, rows keyed with the region); our verification ran on a 5-account organization in a single region. Expect it to work; treat a multi-region run as something to check before you trust it. The list is capped at 5 regions (see below).
 - **Basic and Developer Support accounts are scanned, not Health-checked.** The AWS Health API only answers for the Business and Enterprise tiers, and it answers per account, so a spoke on Basic Support gets its resources matched against the catalog but never cross-checked with AWS Health notices. The UI shows this per account (Support plan column, "Health not checked") rather than hiding it; the hub's plan does not extend to spokes. The organizational view of AWS Health (one plan on the management account, `DescribeEventsForOrganization`) would lift this and is the natural follow-up.
+
+### Optional: scan several regions
+
+By default the tracker scans the region it is deployed in (your AWS CLI region: `AWS_REGION` / `aws configure get region`; nothing is hardcoded). To cover more, open **Settings** in the UI (Regions to scan) and pick up to **5** regions from the dropdown; it lists the regions enabled in your account (`ec2:DescribeRegions`, the one extra permission this adds, granted to the API function only; a disabled opt-in region cannot be scanned); an empty list means the deploy region. The list is read at the start of the next refresh (button or schedule), so a change never affects a run in progress. No extra IAM is needed for the scan itself: IAM is account-scoped, so the hub credentials and the `LifecycleTrackerScanRole` spoke role already work against any region's endpoints. Lambda durable functions and Amazon Nova only have to be available in the **deploy** region; a scanned region just needs the scanned services' APIs.
+
+**Why the cap.** Every (account, region, scanner) triple is one durable step, so cost and runtime grow with accounts × regions × scanners: 10 accounts × 5 regions × 11 scanners is already 550 steps per refresh. Five regions keeps a refresh in the minutes, not hours; the Settings dropdown stops at 5 and the save API rejects a longer list (`MAX_SCAN_REGIONS` in `backend/account_discovery.py`, mirrored in the UI). A `_scan_targets` row written by hand (the `put-item` command above) is not capped: the scan fans out over whatever that row holds.
 
 ### Test Your System
 
@@ -463,7 +471,7 @@ Design points:
 Local tests use `aws-durable-execution-sdk-python-testing` (`backend/tests/test_pipeline.py`):
 
 ```bash
-cd backend && pip install -r requirements.txt aws-durable-execution-sdk-python-testing pytest && python -m pytest -q
+cd backend && pip install -r requirements.txt -r tests/requirements-test.txt && python -m pytest -q
 ```
 
 ### The API function

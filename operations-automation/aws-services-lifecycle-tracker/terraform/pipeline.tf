@@ -328,6 +328,23 @@ resource "aws_iam_role_policy" "api_pipeline_control" {
   })
 }
 
+# Settings page: list the regions enabled for this account (dropdown of
+# regions to scan). API function only; mirrors RegionListing in cdk/lib/pipeline-stack.ts.
+resource "aws_iam_role_policy" "api_region_listing" {
+  name = "RegionListing"
+  role = aws_iam_role.api.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "RegionListing"
+      Effect   = "Allow"
+      Action   = ["ec2:DescribeRegions"]
+      Resource = "*"
+    }]
+  })
+}
+
 resource "aws_lambda_function" "api" {
   function_name    = local.api_function_name
   description      = "Lifecycle tracker API: UI actions, refresh pipeline control, weekly schedule entry point"
@@ -358,6 +375,7 @@ resource "aws_lambda_function" "api" {
     aws_iam_role_policy_attachment.api_data_access,
     aws_iam_role_policy_attachment.api_basic,
     aws_iam_role_policy.api_pipeline_control,
+    aws_iam_role_policy.api_region_listing,
   ]
 }
 

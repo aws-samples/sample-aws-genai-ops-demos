@@ -130,7 +130,7 @@ if ($MultiAccount) {
         Write-Host "Failed to write scan targets" -ForegroundColor Red
         exit 1
     }
-    Write-Host "      Scan targets set: $OrgTargets in $region (editable later in the UI, Sources & coverage)" -ForegroundColor Gray
+    Write-Host "      Scan targets set: $OrgTargets in $region (shown in the UI under Settings; re-run this script to change it)" -ForegroundColor Gray
 }
 
 # Deploy API stack (HTTP API + Cognito JWT authorizer)

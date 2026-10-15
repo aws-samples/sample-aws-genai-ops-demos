@@ -183,7 +183,14 @@ export default function ChatInterface() {
         messageToSend,
         history,
         mode,
-        paginationRef.current
+        paginationRef.current,
+        // Threaded through so the chat model can answer org/delegated-admin
+        // questions directly instead of guessing (#173 Level 1 follow-up).
+        // Omitted (undefined) if the capabilities probe hasn't resolved
+        // yet or found no Organization at all.
+        capabilities
+          ? { org_id: capabilities.org_id, is_delegated_admin: capabilities.is_delegated_admin }
+          : null
       );
 
       const durationSeconds = Math.max(
@@ -457,7 +464,8 @@ function announceableText(raw: string): string {
 /**
  * Compact "Data sources" row rendered above the message history.
  *
- * One entry per AWS source (Security Hub, Access Analyzer, CloudTrail),
+ * One entry per AWS source (Security Hub, Access Analyzer, CloudTrail,
+ * Organizations — the last added for #173 Level 1 passive org-detection),
  * rendered as a Cloudscape `StatusIndicator` — `success` when every coverage
  * entry for the source succeeded, `warning` when some succeeded and some
  * failed (typical: external-access analyzer active but unused-access one
@@ -487,6 +495,7 @@ function DataSourcesStatus({ capabilities }: { capabilities: Capabilities }) {
     securityhub: "Security Hub",
     accessanalyzer: "Access Analyzer",
     cloudtrail: "CloudTrail",
+    organizations: "Organizations",
   };
 
   const items = Array.from(bySource.entries()).map(([source, entries]) => {

@@ -67,6 +67,21 @@ export interface Capabilities {
   region: string;
   coverage: CoverageEntry[];
   welcome_message: string;
+  /**
+   * AWS Organization ID, or null when this account is not part of an
+   * Organization (or the check failed). Level 1 passive multi-account
+   * detection (#173) — see capabilities.py's `_probe_org_detection`.
+   */
+  org_id: string | null;
+  /**
+   * Whether this account is the Security Hub delegated administrator for
+   * its Organization — true/false when known, null when Security Hub is
+   * disabled or the check itself failed. Threaded into each /conversation
+   * POST as `org_context` so the chat model can answer org-structure
+   * questions directly instead of guessing from tool-result data it has
+   * no basis to infer org structure from.
+   */
+  is_delegated_admin: boolean | null;
 }
 
 export interface Finding {

@@ -264,9 +264,14 @@ def handle_api_action(action: str, payload: dict) -> dict:
         }
 
     elif action == 'save_scan_targets':
-        # Sources & coverage editor (#144): validate and store the _scan_targets row.
+        # Settings editor (#144): validate and store the _scan_targets row.
         from account_discovery import save_scan_targets
         return save_scan_targets(payload.get('targets') or {})
+
+    elif action == 'list_regions':
+        # Settings page: regions enabled for this account, for the regions dropdown.
+        from account_discovery import list_enabled_regions
+        return list_enabled_regions()
     
     elif action == 'discover_account':
         # Discover actual resources in the customer's AWS account.

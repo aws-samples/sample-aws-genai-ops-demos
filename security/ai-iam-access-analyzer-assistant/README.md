@@ -15,6 +15,7 @@ Recent hardening improvements observed in real deployments:
 - **Coverage contract across every tool.** Every tool surfaces whether each data source (Security Hub, IAM, Access Analyzer, CloudTrail, S3) was checked, empty, or unavailable. The model names unavailable sources in prose rather than describing the posture as "clean" when it could not actually see all the data.
 - **Cloudscape chat surface with dark mode.** The chat UI moved from a hand-rolled implementation to Cloudscape's generative-AI chat pattern (ChatBubble, Avatar, PromptInput, SupportPromptGroup). Model output is rendered through `react-markdown` with `rehype-sanitize` — replacing the earlier regex + `dangerouslySetInnerHTML` path, which was an XSS surface. Full dark-mode support including a bridge for the `@cloudscape-design/chat-components` token layer.
 - **`list_findings` no longer blocks on large accounts.** The first page returns as soon as the API replies; the total finding count is scanned lazily (or not at all, per configuration). Accounts with tens of thousands of findings no longer time out on the very first user prompt.
+- **Passive AWS Organization / Security Hub delegated-admin detection.** The session-start capabilities probe now also reports whether this account is part of an AWS Organization and, if so, whether it's the Security Hub delegated administrator — read-only, no new infrastructure, no cross-account roles. When the account is the delegated admin, the welcome message and chat answers correctly state that findings aggregate across every member account, and the assistant no longer has to guess (or guess wrong) when asked directly which account administers Security Hub for the organization. This is a first, narrow step toward the full multi-account hub-and-spoke feature requested in #173 — it does not add spoke roles, StackSets, or cross-account IAM/CloudTrail reads; those remain unimplemented.
 - **Access-key audit recognizes remediation-intent phrasing.** "Help me reduce the number of access keys I'm using," "cut down on access keys," and similar phrasings now take the same fast, deterministic path as "audit my access keys" — previously these fell through to a full Bedrock synthesis round and could hit the API Gateway 29-second ceiling.
 
 ## At a Glance
@@ -96,13 +97,25 @@ chmod +x deploy-all.sh
 ```
 
 The script will:
-1. Install CDK dependencies
-2. Build the React frontend
-3. Deploy CDK infrastructure (Lambda, API Gateway, Cognito, CloudFront, S3)
-4. Configure the frontend with stack outputs
-5. Upload the frontend to S3 and invalidate CloudFront
+1. Build the React frontend
+2. Deploy the CDK stack through the shared `deploy-cdk` script (Lambda, API Gateway, Cognito, CloudFront, S3)
+3. Configure the frontend with stack outputs
+4. Upload the frontend to S3 and invalidate CloudFront
+5. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
+6. Print the [Data sources status](#data-sources-status): what the assistant will be able to see in this region.
 
-After deployment, create a user in the Cognito User Pool and navigate to the CloudFront URL.
+The final "Deployment Complete!" summary prints the CloudFront URL, the demo email, and the demo password — copy them from the terminal to sign in. Re-running the script rotates the demo user's password.
+
+If a demo-user step fails, the script exits with a clear error rather than pretending the demo user was created; the CloudFormation deploy itself is already complete at that point and does not need to be re-run. To create additional users (teammates, service accounts, etc.), use the Cognito console against the printed User Pool ID, or the CLI equivalent:
+
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --user-attributes Name=email_verified,Value=true --message-action SUPPRESS
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --password '<YourPassword>' --permanent
+```
 
 ## Architecture
 

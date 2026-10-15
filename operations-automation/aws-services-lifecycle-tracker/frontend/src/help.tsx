@@ -5,6 +5,7 @@ import Box from '@cloudscape-design/components/box';
 import HelpPanel from '@cloudscape-design/components/help-panel';
 import Icon from '@cloudscape-design/components/icon';
 import Link from '@cloudscape-design/components/link';
+import { MAX_REGIONS } from './api';
 
 export const HelpContext = createContext<() => void>(() => {});
 
@@ -159,11 +160,25 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
           ['Enabled', 'Disabled services are skipped by Refresh and by the schedule.'],
           ['Account scanner', 'Services with a scanner have their resources listed and matched; "facts only" means the catalog knows the service but nothing is scanned for it.'],
           ['Catalog updated / Updates / Duration / Success rate', 'History of the extraction for that service.'],
-          ['Scan targets', 'Which accounts (single account or an AWS Organizations root or OU) and regions the scan covers; changes apply at the next Refresh.'],
         ]} />
         <h3>Extended Support pricing and AWS Health</h3>
         <p>The footer says whether the Price List API answered for this region and whether the AWS Health cross-check ran (it needs Business Support or higher in the scanned account).</p>
         <GenAiNotice />
+      </>
+    ),
+  },
+  '/settings': {
+    header: 'Settings',
+    content: (
+      <>
+        <p>What the next refresh covers. Nothing here changes your AWS resources.</p>
+        <Dl items={[
+          ['Scan scope', 'Decided when the tracker is deployed: this account only (default), or with -MultiAccount / --multi-account the whole AWS Organization or the OUs given with -OrgTargets. Shown here read-only; re-run the deploy script to change it. Spoke accounts need the LifecycleTrackerScanRole (Org stack StackSet, or the Spoke stack deployed by hand).'],
+          ['AWS services scanned', 'How many services have an account scanner (list and detail on Sources & coverage); a "facts only" service is tracked in the catalog but nothing is scanned for it.'],
+          ['Regions to scan', `The one setting on this page. Pick up to ${MAX_REGIONS} regions among those enabled in this account (the list comes from ec2:DescribeRegions; a disabled opt-in region cannot be scanned). Empty means the region the tracker is deployed in. Every (account, region, scanner) triple is one scan step, so cost and runtime grow with the product.`],
+          ['When it applies', 'Saved regions are read at the start of the next refresh (button or schedule); the current run is not affected.'],
+          ['Last scan', 'Counts from the previous run: accounts covered, accounts unreachable (spoke role missing or not trusting this hub), resources found, accounts the AWS Health cross-check could answer for (Business or Enterprise Support in that account). Per-account detail is on the dashboard, By account tab.'],
+        ]} />
       </>
     ),
   },

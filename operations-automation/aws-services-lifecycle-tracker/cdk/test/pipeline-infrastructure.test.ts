@@ -83,6 +83,16 @@ describe('Pipeline stack', () => {
     });
   });
 
+  test('API function may list enabled regions for the Settings dropdown (ec2:DescribeRegions only)', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({ Sid: 'RegionListing', Action: 'ec2:DescribeRegions', Resource: '*' }),
+        ]),
+      },
+    });
+  });
+
   test('configuration table gets no PutItem/DeleteItem/BatchWriteItem (issue #116 boundary)', () => {
     template.hasResourceProperties('AWS::IAM::ManagedPolicy', {
       PolicyDocument: {
