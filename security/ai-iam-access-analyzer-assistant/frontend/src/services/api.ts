@@ -34,6 +34,19 @@ export interface PaginationContext {
   last_input?: Record<string, unknown>;
 }
 
+/**
+ * Org/delegated-admin facts from the session-start capabilities probe,
+ * threaded into each /conversation POST so the chat model can answer
+ * org-structure questions directly instead of guessing (#173 Level 1).
+ * Omitted entirely when the probe hasn't resolved yet or found no
+ * Organization — the backend treats a missing `org_context` the same as
+ * "not part of an Organization."
+ */
+export interface OrgContext {
+  org_id: string | null;
+  is_delegated_admin: boolean | null;
+}
+
 interface ConversationResponse {
   response: string;
   usage?: {
@@ -56,7 +69,8 @@ export async function sendMessage(
   message: string,
   history: MessageHistory[],
   mode: string = "guided",
-  pagination?: PaginationContext | null
+  pagination?: PaginationContext | null,
+  orgContext?: OrgContext | null
 ): Promise<ConversationResponse> {
   const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
@@ -84,6 +98,7 @@ export async function sendMessage(
         history,
         mode,
         ...(pagination ? { pagination } : {}),
+        ...(orgContext ? { org_context: orgContext } : {}),
       }),
     });
   } catch {

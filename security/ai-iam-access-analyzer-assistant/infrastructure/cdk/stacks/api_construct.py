@@ -96,14 +96,17 @@ class ApiConstruct(Construct):
         # Read-only permissions — mirrors the deploy-time probe's ACL.
         #
         # resources=["*"] is required by the AWS IAM authorization model for
-        # every one of these five actions: they are account-scoped control-plane
+        # every one of these actions: they are account-scoped control-plane
         # calls with no resource-level authorization support. Per the AWS
         # service authorization reference:
         #
-        #   * securityhub:DescribeHub, ListEnabledProductsForImport, GetFindings
-        #     — supported resources column is "-" (none).
+        #   * securityhub:DescribeHub, ListEnabledProductsForImport, GetFindings,
+        #     DescribeOrganizationConfiguration — supported resources column is
+        #     "-" (none).
         #   * access-analyzer:ListAnalyzers — supported resources column is "-".
         #   * cloudtrail:LookupEvents — supported resources column is "-".
+        #   * organizations:DescribeOrganization — supported resources column
+        #     is "-".
         #
         # A caller cannot write, for example, "arn:aws:securityhub:...:hub/xyz"
         # on DescribeHub — the policy would be rejected. The `*` here is the
@@ -111,6 +114,16 @@ class ApiConstruct(Construct):
         # generic W11 warning does not apply to actions that inherently do not
         # accept resource ARNs. See:
         #   https://docs.aws.amazon.com/service-authorization/latest/reference/
+        #
+        # organizations:DescribeOrganization and
+        # securityhub:DescribeOrganizationConfiguration back the Level 1
+        # passive multi-account detection added to capabilities.py (#173
+        # scoping work) — read-only, no spoke roles, no new infrastructure.
+        # DescribeOrganizationConfiguration specifically only succeeds when
+        # called from the Security Hub delegated administrator account
+        # itself (verified via live AWS CLI testing on 2026-10-09); a
+        # non-admin account gets InvalidAccessException, which the probe
+        # treats as "not the delegated admin" rather than an error.
         self.capabilities_fn.add_to_role_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -118,8 +131,10 @@ class ApiConstruct(Construct):
                     "securityhub:DescribeHub",
                     "securityhub:ListEnabledProductsForImport",
                     "securityhub:GetFindings",
+                    "securityhub:DescribeOrganizationConfiguration",
                     "access-analyzer:ListAnalyzers",
                     "cloudtrail:LookupEvents",
+                    "organizations:DescribeOrganization",
                 ],
                 resources=["*"],
             )
