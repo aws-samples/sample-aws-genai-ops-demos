@@ -114,7 +114,7 @@ def start_run(step: StepContext, spec: dict) -> dict:
     # Organizations when it points at the organization or OUs; hub-only otherwise.
     hub = account_discovery._caller_identity().get("account", "")
     resolved = resolve_targets(account_discovery.load_scan_targets(), hub, region)
-    account_discovery.save_resolved_accounts(resolved)  # for the UI (Sources & coverage)
+    account_discovery.save_resolved_accounts(resolved)  # for the UI (Settings)
     regions = spec["regions"] or resolved["regions"]
     accounts = [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]]
     return guard_payload({
@@ -189,7 +189,7 @@ def reconcile_inventory(step: StepContext, run_id: str, scanned_scopes: List[Dic
     Support cost #142), re-persists the enriched rows and removes stale rows.
     """
     totals = account_discovery.reconcile_from_table(run_id, scanned_scopes or [])
-    # Which accounts this run actually covered (for Sources & coverage, #144)
+    # Which accounts this run actually covered (for Settings, #144)
     scoped = {sc.get("account_id", "") for sc in (scanned_scopes or [])}
     account_discovery.record_scan_outcome(sorted(scoped), sorted(set(accounts_failed or []) - scoped))
     return guard_payload(totals, name="reconcile-inventory")

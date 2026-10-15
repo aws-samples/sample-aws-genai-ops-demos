@@ -93,7 +93,6 @@
         "end_of_extended_support_date": "End of extended support date"
       },
       "required_fields": [
-        "name",
         "identifier",
         "engine",
         "version",

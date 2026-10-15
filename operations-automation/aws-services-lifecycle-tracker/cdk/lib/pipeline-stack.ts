@@ -301,6 +301,13 @@ export class PipelineStack extends cdk.Stack {
       ],
       resources: [this.pipelineFunction.functionArn, `${this.pipelineFunction.functionArn}:*`],
     }));
+    this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      // Settings page: list the regions enabled for this account (dropdown of
+      // regions to scan). API function only; the pipeline never needs it.
+      sid: 'RegionListing',
+      actions: ['ec2:DescribeRegions'],
+      resources: ['*'], // DescribeRegions has no resource-level permissions
+    }));
 
     // ------------------------------------------------------------------
     // Schedules (EventBridge Scheduler -> API function)

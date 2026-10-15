@@ -81,7 +81,13 @@ class LifecycleIndex:
         self.account_id = account_id or _caller_identity().get("account", "")
         self.account_name = account_name or ""
         self.session = session
-        dynamodb = boto3.resource("dynamodb", region_name=self.region)
+        # The facts table is single-region, living in the hub's deploy region
+        # (REGION = this Lambda's own AWS_REGION), and the IAM policy grants
+        # access on its fixed ARN. self.region is the SCANNED region, which may
+        # differ (issue #144 multi-region); addressing the table through the
+        # scanned region's endpoint yields AccessDenied on the ARN mismatch.
+        # Always read the facts table in its home region, with the hub's creds.
+        dynamodb = boto3.resource("dynamodb", region_name=REGION)
         self._table = dynamodb.Table(table_name)
         self._cache: Dict[str, Dict[str, Dict]] = {}
 
@@ -233,6 +239,9 @@ def save_resolved_accounts(resolved: Dict) -> None:
 VALID_TARGET_SOURCES = ("hub", "manual", "organization", "ou")
 _ACCOUNT_ID = re.compile(r"^\d{12}$")
 _OU_ID = re.compile(r"^(r-[a-z0-9]{4,32}|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})$")
+# Scan cells multiply with accounts x regions x scanners: keep this a deliberate
+# cap, not a nuisance limit. Mirrored client-side in frontend/src/api.ts (MAX_REGIONS).
+MAX_SCAN_REGIONS = 5
 
 
 def save_scan_targets(targets: Dict) -> Dict:
@@ -264,6 +273,8 @@ def save_scan_targets(targets: Dict) -> Dict:
         if not re.match(r"^[a-z]{2}(-[a-z]+)+-\d$", r):
             return {"success": False, "error": f"'{r}' is not a region code"}
         regions.append(r)
+    if len(set(regions)) > MAX_SCAN_REGIONS:
+        return {"success": False, "error": f"up to {MAX_SCAN_REGIONS} regions allowed: scan cells multiply with accounts and scanners"}
     if source == "ou" and not ou_ids:
         return {"success": False, "error": "source 'ou' needs at least one OU id"}
     if source == "manual" and not accounts:
@@ -297,6 +308,22 @@ def load_scan_targets() -> Dict:
         return {}
     row.pop("service_name", None)
     return {k: (int(v) if isinstance(v, Decimal) else v) for k, v in row.items()}
+
+
+def list_enabled_regions() -> Dict:
+    """Regions enabled for this account (Settings dropdown). describe_regions
+    without AllRegions: a disabled opt-in region cannot be scanned. The EC2
+    client follows the deploy region's partition; on failure the error is
+    reported, never a hardcoded list."""
+    try:
+        from aws_utils import get_region
+        deploy_region = get_region()
+        resp = boto3.client("ec2", region_name=deploy_region).describe_regions()
+        return {"success": True,
+                "regions": sorted(r["RegionName"] for r in resp.get("Regions", [])),
+                "deploy_region": deploy_region}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def console_url(service_key: str, region: str, res: Dict) -> str:
@@ -968,13 +995,21 @@ def _inventory_table(table_name: str = None, region: str = None):
 
     Returns (table, resolved_table_name). Raises FactsTableRefusal if the
     resolved name is the LIFECYCLE_TABLE_NAME facts table - callers map that
-    refusal back to their own externally-observable shape."""
-    region = region or REGION
+    refusal back to their own externally-observable shape.
+
+    The `region` argument is the SCANNED region (callers pass cell["region"]
+    down from a multi-region run, #144) and is NOT the table's region. The
+    demo's own DynamoDB tables (inventory, facts, state) are single-region,
+    living in the hub's deploy region (REGION), and the pipeline role's IAM
+    policy grants access on their fixed ARNs. Addressing them through a scanned
+    region's endpoint (e.g. eu-west-1) yields AccessDenied on the ARN region
+    mismatch. Always bind the table in REGION; `region` is accepted but ignored
+    for endpoint selection so existing callers need no change."""
     table_name = table_name or INVENTORY_TABLE_NAME
     lifecycle_table_name = os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle")
     if table_name == lifecycle_table_name:
         raise FactsTableRefusal(table_name)
-    table = boto3.resource("dynamodb", region_name=region).Table(table_name)
+    table = boto3.resource("dynamodb", region_name=REGION).Table(table_name)
     return table, table_name
 
 

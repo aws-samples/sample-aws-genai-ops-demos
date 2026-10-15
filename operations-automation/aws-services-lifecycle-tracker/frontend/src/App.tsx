@@ -16,7 +16,7 @@ import TagFilterModal from './components/TagFilterModal';
 import { tokenText } from './tag-filter';
 
 // Pages about the catalog and the scan setup, not about your resources
-const TAG_FILTER_FREE_PAGES = ['/catalog', '/services'];
+const TAG_FILTER_FREE_PAGES = ['/catalog', '/services', '/settings'];
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import Dashboard from './pages/Dashboard';
 import Services from './pages/Services';
@@ -25,6 +25,7 @@ import MyResources from './pages/MyResources';
 import Catalog from './pages/Catalog';
 import Timeline from './pages/Timeline';
 import PlanOfAction from './pages/PlanOfAction';
+import Settings from './pages/Settings';
 
 function AppContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -176,6 +177,7 @@ function AppContent() {
                 { type: "link", text: "Sources & coverage", href: "/services" },
               ] },
               { type: "divider" },
+              { type: "link", text: "Settings", href: "/settings" },
               {
                 type: "link",
                 text: "Documentation",
@@ -246,6 +248,7 @@ function AppContent() {
                     <Route path="/deprecations" element={<Navigate to="/catalog" replace />} />
                     <Route path="/timeline" element={<Timeline />} />
                     <Route path="/plan-of-action" element={<PlanOfAction />} />
+                    <Route path="/settings" element={<Settings />} />
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 )}

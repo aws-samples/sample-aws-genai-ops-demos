@@ -308,8 +308,23 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
                     continue
                 
                 identifier = item.get('identifier', item.get('name', ''))
+                # Temporary safety net, not an architecture: when the LLM
+                # extraction emits neither 'identifier' nor 'name' but does give
+                # 'engine' + 'version', derive a key as "<engine-slug>-<version>"
+                # so the row is not silently dropped. This exists only because
+                # the current facts source is LLM-scraped documentation, which
+                # is unreliable per-engine (Aurora MySQL rows carry an
+                # identifier, Aurora PostgreSQL rows do not). It is expected to
+                # be removed once the facts source moves to the AWS Health
+                # version catalog (DescribeServiceLifecycle), whose schema
+                # returns a stable 'version' identifier directly.
                 if not identifier:
-                    errors.append(f"Item missing both 'identifier' and 'name' fields: {item}")
+                    engine = str(item.get('engine', '')).strip().lower().replace(' ', '-')
+                    version = str(item.get('version', '')).strip()
+                    if engine and version:
+                        identifier = f"{engine}-{version}"
+                if not identifier:
+                    errors.append(f"Item missing 'identifier'/'name' and no engine+version to derive one: {item}")
                     continue
 
                 # Backfill the identifier so validation agrees with the key
@@ -393,7 +408,22 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
         # per-service success rate on this value, so gating on stored/updated
         # counts keeps the reported success rate consistent with reality.
         success = (stored_count + updated_count) > 0
-        
+
+        # A service that extracted items but persisted none (success == False)
+        # is reported as failed in the run summary with no clue why, because
+        # per-item skips (validation, missing identifier) and per-item write
+        # errors are only collected in `errors`, never logged. Surface them so
+        # the failing service's cause is visible in CloudWatch without a code
+        # change (e.g. "aurora" failing while other services succeed).
+        if not success or errors:
+            print(
+                f"STORAGE_RESULT service={service_name} success={success} "
+                f"stored={stored_count} updated={updated_count} "
+                f"total_items={len(items)} error_count={len(errors)}"
+            )
+            for err in errors[:10]:
+                print(f"STORAGE_ERROR service={service_name}: {err}")
+
         return {
             'success': success,
             'service_name': service_name,

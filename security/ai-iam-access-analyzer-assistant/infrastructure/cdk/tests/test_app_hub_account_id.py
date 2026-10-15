@@ -57,15 +57,39 @@ class HubAccountIdContextTest(unittest.TestCase):
         actually resolved and assert app.py's defaulting relative to
         THAT, which is the real contract app.py must honor."""
         with tempfile.TemporaryDirectory() as out_dir:
+            # Override cdk.json's `app` command to use THIS package's venv
+            # Python explicitly. cdk.json uses a bare `python3 app.py` (the
+            # deploy path activates the venv first, via the shared
+            # deploy-cdk script, so bare python3 resolves correctly there).
+            # This test subprocess does NOT activate the venv, so without
+            # the override `npx cdk synth` would spawn a system python3 that
+            # lacks aws_cdk. Point --app at the venv interpreter so the
+            # synth is self-contained regardless of the ambient python3.
+            venv_python = _CDK_DIR / ".venv" / "bin" / "python3"
+            app_cmd = f"{venv_python} app.py" if venv_python.exists() else "python3 app.py"
             cmd = [
                 "npx", "cdk", "synth", _STACK,
+                "--app", app_cmd,
                 "--context", f"orgTargets={_OU_ID}",
                 "--output", out_dir,
             ]
             if hub_account_id_context:
                 cmd += ["--context", f"hubAccountId={hub_account_id_context}"]
 
-            env = {**os.environ, "AWS_REGION": "us-east-1"}
+            # The CDK app imports the repo-root `shared` package (upstream
+            # #207 moved shared utilities there), and the deploy path sets
+            # PYTHONPATH=<repo root> via the shared deploy-cdk script. This
+            # synth subprocess must do the same so `import shared...`
+            # resolves. Repo root is four levels up from this cdk dir
+            # (security/<demo>/infrastructure/cdk -> repo root).
+            repo_root = _CDK_DIR.parents[3]
+            env = {
+                **os.environ,
+                "AWS_REGION": "us-east-1",
+                "PYTHONPATH": str(repo_root)
+                + os.pathsep
+                + os.environ.get("PYTHONPATH", ""),
+            }
             result = subprocess.run(
                 cmd, cwd=str(_CDK_DIR), env=env,
                 capture_output=True, text=True, timeout=120,

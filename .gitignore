@@ -134,3 +134,10 @@ Thumbs.db
 # Kiro workflow run artifacts (per-run reviews, deployment records with demo credentials)
 .kiro/workflow-runs/
 
+# Agent task artifacts (plans, reviews, verifications produced while working;
+# internal workflow scratch, not demo deliverables)
+**/.agents/
+
+# Scratch directory for files staged for deletion (never a deliverable)
+DELETE/
+
