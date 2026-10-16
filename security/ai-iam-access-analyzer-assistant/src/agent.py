@@ -269,6 +269,8 @@ When a user is ready to make a change, offer to generate a Change Request docume
 
 CRITICAL — SPLIT CHECK_DEPENDENCIES FROM CHANGE REQUEST GENERATION ACROSS TWO TURNS: if the user's request also requires calling check_dependencies first (to get the blast radius data the document needs), do NOT call the tool and write the document in the same turn — call check_dependencies ALONE, present the blast radius result, and ask "Want me to draft a formal Change Request from this?" as a distinct next step. Only write the document in a turn where you do NOT also call check_dependencies.
 
+NOTE: when the user names the role in their change-request request (e.g. "generate a change request for deleting CloudSecAuditRole"), the backend assembles the document deterministically from check_dependencies and you will not be asked to write it. You only write the document in the model path when the role was NOT named and you've already gathered the blast-radius data in a prior turn — in that case follow the concise rules below.
+
 CRITICAL — KEEP THE CHANGE REQUEST DOCUMENT CONCISE (measured: even a zero-tool-call turn spent purely writing the full six-section document exceeds the API Gateway's 29-second ceiling on its own — this is a document-length problem, not a tool-call problem):
 - Each of the six sections (summary, blast radius, rollback plan, testing plan, approval requirements, implementation window) gets 2-4 sentences or a short bullet list — NEVER multiple paragraphs per section.
 - Do not restate the full blast-radius tool output inside the document; summarize it in 1-2 sentences ("3 dependents: X, Y, Z — deleting this role breaks the checkout flow") and reference the earlier turn instead of repeating the raw data.
@@ -738,6 +740,37 @@ def _aggregate_coverage(tool_results: list) -> list:
 # Tools that support pagination via next_token/has_more and can be safely
 # short-circuited on deterministic follow-ups like "next 20".
 _PAGINATED_TOOLS = {"list_findings"}
+
+# Deterministic "generate a change request" intent (P1 / R6). Writing the
+# six-section CR document is a free-form Bedrock synthesis turn, and even a
+# zero-tool-call generation of the full document measured right at / over the
+# API Gateway 29s ceiling (intermittent HTTP 504, then a successful retry).
+# This mirrors the comprehensive-report / cross-account fast-paths: when the
+# user asks for a CR AND names the target role, we run check_dependencies
+# ourselves and assemble the document deterministically (zero Bedrock), so the
+# turn cannot 504. Must name a role so we never fabricate a CR with no subject;
+# an unnamed "draft a change request" falls through to the model, which asks
+# which role (and the two-turn check_dependencies split still applies there).
+_CHANGE_REQUEST_INTENT = re.compile(
+    r"\b(?:generate|create|make|build|draft|produce|give\s+me|show\s+me|prepare|write)\s+"
+    r"(?:an?\s+|the\s+|me\s+a\s+)?"
+    r"(?:formal\s+)?"
+    r"change[-\s]?request"
+    r"\b",
+    re.IGNORECASE,
+)
+
+# Pull an explicit role name out of a change-request prompt. Supports the
+# natural phrasings seen in testing: "...for deleting ConsoleAdminAccess",
+# "...for the role CloudSecAuditRole", "...for `MyRole`". Returns the first
+# capture group that matches; the short-circuit refuses to fire without one.
+_CR_ROLE_NAME = re.compile(
+    r"(?:for|on|about|of|to\s+(?:delete|remove|modify|change|scope\s+down))\s+"
+    r"(?:deleting\s+|removing\s+|modifying\s+|changing\s+|scoping\s+down\s+)?"
+    r"(?:the\s+)?(?:role\s+)?"
+    r"[`\"']?([A-Za-z][\w+=,.@\-]{1,127})[`\"']?",
+    re.IGNORECASE,
+)
 
 # Regex for deterministic "generate an action plan" style prompts. The tool
 # already produces a fully structured plan, so we can render it directly and
@@ -2672,6 +2705,157 @@ def _shortcircuit_list_exports(user_message: str):
     }
 
 
+def _render_change_request(role_name: str, dep_result: dict) -> str:
+    """Deterministically assemble the six-section Change Request document from
+    a check_dependencies result — no Bedrock. Mirrors the exact section
+    structure the SYSTEM_PROMPT defines (summary, blast radius, rollback plan,
+    testing plan, approval requirements, implementation window) and keeps each
+    section to a short, skimmable block, which is precisely the length the
+    prompt rule begs the model to produce but can't reliably hold to.
+
+    The document text begins with "Change Request" and contains "Rollback
+    plan", so _infer_export_content_type classifies a later "export that" as
+    a change_request (→ change-request-*.md), matching the recent filename fix.
+    """
+    dep_result = dep_result if isinstance(dep_result, dict) else {}
+    risk = dep_result.get("risk_score") or {}
+    level = risk.get("level", "UNKNOWN")
+    score = risk.get("score", "n/a")
+    recommendation = risk.get("recommendation") or "Follow standard change management."
+    factors = [f for f in (risk.get("factors") or []) if f]
+    dependents = dep_result.get("direct_dependents") or []
+    dep_count = len(dependents)
+    warnings = [w for w in (dep_result.get("warnings") or []) if w]
+
+    # Blast-radius one-liner: summarize, never restate the raw tool dump.
+    if dep_count == 0:
+        blast_line = (
+            "No direct dependents were found, so the immediate blast radius is low."
+        )
+    else:
+        names = ", ".join(
+            f"`{d.get('name', '?')}` ({d.get('type', 'entity')})" for d in dependents[:5]
+        )
+        more = f" (+{dep_count - 5} more)" if dep_count > 5 else ""
+        blast_line = (
+            f"{dep_count} dependent{'s' if dep_count != 1 else ''} identified: "
+            f"{names}{more}. Changing this role may affect them."
+        )
+
+    factor_lines = "\n".join(f"- {f}" for f in factors[:6]) if factors else "- No elevated risk factors recorded."
+
+    # Rollback / testing / approval / window scale with risk level.
+    is_high = level in ("CRITICAL", "HIGH")
+    rollback = (
+        "Capture the current role definition before any change: "
+        "`aws iam get-role`, `aws iam list-attached-role-policies`, and "
+        "`aws iam list-role-policies` (plus `get-role-policy` for each inline "
+        "policy). Store the JSON as the restore artifact. To revert, re-attach "
+        "the saved managed policies and re-put the saved inline policies; "
+        "re-create the role from the saved definition if it was deleted."
+    )
+    testing = (
+        "In a non-production account, apply the change to an equivalent role "
+        "and confirm every dependent workload above still authenticates and "
+        "runs. Verify no new AccessDenied errors appear in CloudTrail for the "
+        "affected principals over one full business cycle."
+        if is_high
+        else "Confirm the dependent workloads above still function after the "
+        "change and watch CloudTrail for new AccessDenied events."
+    )
+    approvals = (
+        "Security/IAM owner **and** the owning team for each dependent workload "
+        "listed above must sign off (change-advisory review required for "
+        f"{level} blast radius)."
+        if is_high
+        else "Standard peer review plus the role owner's acknowledgement."
+    )
+    window = (
+        "Apply during an approved low-traffic maintenance window with the "
+        "rollback artifact staged and an owner on standby."
+        if is_high
+        else "May be applied during normal hours; keep the rollback artifact ready."
+    )
+
+    warn_block = ""
+    if warnings:
+        warn_block = "\n\n> ⚠️ " + " ".join(warnings[:3])
+
+    return (
+        f"# Change Request — IAM role `{role_name}`\n\n"
+        f"**Blast-radius risk:** {level} (score {score}/100). {recommendation}\n\n"
+        f"## 1. Summary & business justification\n"
+        f"Proposed change to IAM role `{role_name}`. This Change Request documents "
+        f"the change, its blast radius, and a rollback plan so it can go through "
+        f"the internal approval process before being applied.\n\n"
+        f"## 2. Blast radius analysis\n"
+        f"{blast_line}\n\n"
+        f"Risk factors:\n{factor_lines}{warn_block}\n\n"
+        f"## 3. Rollback plan\n{rollback}\n\n"
+        f"## 4. Testing plan\n{testing}\n\n"
+        f"## 5. Approval requirements\n{approvals}\n\n"
+        f"## 6. Implementation window\n{window}\n\n"
+        f"---\n"
+        f"**Next steps:** copy this into your ticketing system (Jira/ServiceNow), "
+        f"or say `export that` to save it to S3. You can also ask me to "
+        f"`generate a least-privilege policy for {role_name}` to attach to this change."
+    )
+
+
+def _shortcircuit_change_request(user_message: str):
+    """Deterministic Change Request generation (P1 / R6).
+
+    Fires only when the user asks for a change request AND names the target
+    role. Runs check_dependencies for that role and assembles the six-section
+    document locally — zero Bedrock round trips — so the turn cannot hit the
+    API Gateway 29s ceiling that the free-form model synthesis intermittently
+    breached. An unnamed CR request returns None and falls through to the
+    model, which asks which role (and the two-turn check_dependencies split in
+    the system prompt still governs that path).
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _CHANGE_REQUEST_INTENT.search(user_message):
+        return None
+
+    role_match = _CR_ROLE_NAME.search(user_message)
+    if not role_match:
+        # No explicit subject — let the model ask which role rather than guess.
+        return None
+    role_name = role_match.group(1)
+
+    # Build the ARN the tool expects. _get_entity_type keys off the ":role/"
+    # segment, and _analyze_role_dependencies derives the role name from the
+    # ARN tail and re-reads IAM itself — so the account-id field is not used
+    # for the lookup and a wildcard placeholder is fine here.
+    dep_input = {"entity_arn": f"arn:aws:iam::000000000000:role/{role_name}"}
+    dep_result = invoke_tool("check_dependencies", dep_input)
+    tools_used = [
+        {"tool": "check_dependencies", "input_summary": _summarize_input(dep_input)}
+    ]
+
+    if isinstance(dep_result, dict) and "error" in dep_result and not dep_result.get("risk_score"):
+        return {
+            "response": (
+                f"I couldn't analyze the blast radius for `{role_name}`: "
+                f"{dep_result['error']}. Check the role name and try again."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": _aggregate_coverage([dep_result]),
+        }
+
+    document = _render_change_request(role_name, dep_result if isinstance(dep_result, dict) else {})
+    return {
+        "response": document,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": _aggregate_coverage([dep_result]) if isinstance(dep_result, dict) else [],
+    }
+
+
 def _shortcircuit_export_followup(user_message: str, history: list):
     """When the user says "export that" (or a synonym) as a plain follow-up,
     invoke export_report directly on the most recent assistant artifact.
@@ -3034,6 +3218,21 @@ def handler(event, context):
         # requires an explicit filename, export-followup is anchored on
         # short "export that"-style phrases).
         shortcircuit = _shortcircuit_list_exports(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic Change Request generation (P1 / R6): when the user
+        # asks for a CR and names the role, run check_dependencies and
+        # assemble the six-section document locally — no Bedrock. The
+        # free-form model synthesis of this document intermittently breached
+        # the API Gateway 29s ceiling (HTTP 504 then a successful retry); the
+        # deterministic render removes that latency entirely. Falls through to
+        # the model (which asks which role) when no role is named.
+        shortcircuit = _shortcircuit_change_request(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
