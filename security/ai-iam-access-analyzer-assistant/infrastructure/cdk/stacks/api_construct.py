@@ -60,6 +60,7 @@ class ApiConstruct(Construct):
                 "COMPARE_ROLES_FN": tools_functions["compare_roles"].function_name,
                 "LIST_EXPORTS_FN": tools_functions["list_exports"].function_name,
                 "TRIAGE_ACCESS_KEYS_FN": tools_functions["triage_access_keys"].function_name,
+                "CROSS_ACCOUNT_IAM_CONTEXT_FN": tools_functions["cross_account_iam_context"].function_name,
             },
         )
 

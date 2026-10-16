@@ -316,6 +316,67 @@ class HandlerShortCircuitTest(unittest.TestCase):
         invoke.assert_not_called()
         converse.assert_called_once()
 
+    def test_bare_ready_AFTER_the_audit_already_ran_does_not_refire(self):
+        """Regression (P2): once the audit has RUN, its rendered report is
+        now the last assistant turn — and that report is itself full of the
+        words "access key" and "audit". A bare "ready" here means the user
+        is ADVANCING past the audit (guided tour Step 6 -> Step 7), NOT
+        asking to run it again. It must fall through to the model (which
+        advances the tour), not re-fire triage_access_keys.
+
+        Before the fix, _prior_turn_announced_access_key_audit matched the
+        delivered report's own text and re-ran the audit on the next
+        "ready", stalling the tour at Step 6."""
+        delivered_report = (
+            "Reviewed 2 access keys across 2 users. 1 Critical, 1 Cleanup.\n\n"
+            "Safety sequencing: deactivate, monitor, then delete.\n\n"
+            "```json\n"
+            '{"_type": "access_keys_report", "keys": [], "summary": {}, '
+            '"coverage": [], "usage_lag_caveat": "..."}\n'
+            "```\n\n"
+            "Ready for the next step?"
+        )
+        history = [
+            {"role": "user", "content": "take me on a guided tour"},
+            {"role": "assistant", "content": "Step 6: one more surface — long-lived IAM access keys. Ready?"},
+            {"role": "user", "content": "ready"},
+            {"role": "assistant", "content": delivered_report},
+        ]
+        fake_response = {
+            "output": {"message": {"content": [{"text": "Step 7: let's compare a few roles..."}]}},
+            "usage": {"inputTokens": 5, "outputTokens": 6},
+        }
+        with patch.object(agent, "invoke_tool") as invoke, \
+                patch.object(
+                    agent, "converse_with_tools",
+                    return_value=(fake_response, [], None, []),
+                ) as converse:
+            agent.handler(self._tour_event("ready", history), None)
+
+        # Must NOT re-run the audit; must advance via the model path.
+        invoke.assert_not_called()
+        converse.assert_called_once()
+
+    def test_prior_turn_detector_false_on_delivered_report(self):
+        """Unit-level guard for P2: the detector itself must say 'not an
+        announcement' when handed the delivered audit report."""
+        delivered = (
+            "Reviewed 5 access keys. ```json\n"
+            '{"_type": "access_keys_report"}\n```'
+        )
+        self.assertFalse(
+            agent._prior_turn_announced_access_key_audit(
+                [{"role": "assistant", "content": delivered}]
+            )
+        )
+        # ...but a short ANNOUNCEMENT (no report payload) still returns True.
+        announcement = "One more surface worth auditing — long-lived IAM access keys."
+        self.assertTrue(
+            agent._prior_turn_announced_access_key_audit(
+                [{"role": "assistant", "content": announcement}]
+            )
+        )
+
     def test_bare_ready_with_trailing_politeness_still_short_circuits(self):
         """"yes please", "sure, go ahead", "continue please" -- natural
         phrasings a real tester types instead of a bare "ready" -- must
@@ -369,6 +430,44 @@ class HandlerShortCircuitTest(unittest.TestCase):
         converse.assert_not_called()
         invoke.assert_called_once()
         self.assertEqual(response["statusCode"], 200)
+
+    def test_tour_advance_adds_step6_framing_and_advance_prompt(self):
+        """Option A (P2 fix): when the access-key short-circuit fires as a
+        guided-tour advance (prior turn ended with the tour's "Ready for
+        the next step?"), it must keep the fast deterministic tool call BUT
+        wrap the result in tour framing — a "Step 6" lead-in and the
+        advance prompt to Step 7 — so the scripted tour isn't derailed by a
+        bare capability dump. The tool still fires (no Bedrock)."""
+        history = [
+            {"role": "user", "content": "ready"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Validated — PASS. Next I'll audit your long-lived IAM "
+                    "access keys. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._tour_event("ready", history), None)
+
+        converse.assert_not_called()  # still fast — no Bedrock
+        invoke.assert_called_once()   # tool still ran
+        text = json.loads(response["body"])["response"]
+        self.assertIn("Step 6", text)                 # tour framing restored
+        self.assertIn("Ready for the next step?", text)  # hands off to Step 7
+        self.assertIn("Reviewed", text)                # the real audit content is still there
+
+    def test_direct_audit_outside_tour_stays_bare_no_tour_framing(self):
+        """A direct "audit my access keys" with NO tour cadence in the
+        prior turn must render BARE — no "Step 6" framing. The framing is
+        tour-only."""
+        with patch.object(agent, "invoke_tool", return_value=_sample_triage_result()), \
+                patch.object(agent, "converse_with_tools"):
+            response = agent.handler(self._event("audit my access keys"), None)
+        text = json.loads(response["body"])["response"]
+        self.assertNotIn("Step 6 of 8", text)
 
     def test_longer_message_starting_with_yes_is_not_treated_as_bare_affirmative(self):
         """"yes, but explain X first" has more content than a bare

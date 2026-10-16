@@ -21,6 +21,7 @@ import {
   getCapabilities,
   ApiTimeoutError,
   PaginationContext,
+  TourContext,
 } from "../services/api";
 import { Capabilities, CoverageEntry, Message } from "../types";
 
@@ -108,6 +109,10 @@ export default function ChatInterface() {
   // Use a ref so the current pagination cursor is read synchronously on the
   // next send, without a re-render round trip.
   const paginationRef = useRef<PaginationContext | null>(null);
+  // Guided-tour step pointer, round-tripped like paginationRef: the backend
+  // returns `tour` after each step, we echo it back next turn so the tour
+  // advances deterministically. Cleared when the backend marks it inactive.
+  const tourRef = useRef<TourContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
@@ -190,7 +195,10 @@ export default function ChatInterface() {
         // yet or found no Organization at all.
         capabilities
           ? { org_id: capabilities.org_id, is_delegated_admin: capabilities.is_delegated_admin }
-          : null
+          : null,
+        // Guided-tour step pointer — echoed back so the backend advances
+        // the tour deterministically (never loops).
+        tourRef.current
       );
 
       const durationSeconds = Math.max(
@@ -202,6 +210,12 @@ export default function ChatInterface() {
       // Clear it when the server did not return one so a later, unrelated turn
       // doesn't accidentally continue paging the wrong list.
       paginationRef.current = response.pagination ?? null;
+
+      // Persist the guided-tour step pointer the same way. When the backend
+      // marks the tour inactive (step 8 done) or returns none, clear it so a
+      // later stray "ready" doesn't re-enter a finished tour.
+      tourRef.current =
+        response.tour && response.tour.active ? response.tour : null;
 
       // Track session activity
       if (response.tools_used && response.tools_used.length > 0) {
@@ -266,6 +280,7 @@ export default function ChatInterface() {
     setMessages([buildWelcomeMessage(capabilities)]);
     setSessionActivity([]);
     paginationRef.current = null;
+    tourRef.current = null;
     setLiveAnnouncement("");
     setIsAtBottom(true);
   };

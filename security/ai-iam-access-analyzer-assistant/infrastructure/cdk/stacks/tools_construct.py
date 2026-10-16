@@ -11,6 +11,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from .scan_permissions import HUB_TOOL_ROLE_NAME, SPOKE_ROLE_NAME
+
 
 class ToolsConstruct(Construct):
     """Lambda functions implementing the IAM analysis tools."""
@@ -25,10 +27,22 @@ class ToolsConstruct(Construct):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # Shared IAM role for all tool functions (read-only access)
+        # Shared IAM role for all tool functions (read-only access).
+        #
+        # role_name is explicit and fixed (#173 Level 2, hub-and-spoke) so
+        # that each spoke account's trust policy can pin aws:PrincipalArn
+        # to this exact role (see scan_permissions.HUB_TOOL_ROLE_NAME and
+        # spoke_stack.py) without any cross-stack lookup. CDK's default
+        # auto-generated role name is unpredictable at spoke-stack synth
+        # time (spoke stacks synthesize independently, often before this
+        # stack even exists in a fresh account), so a fixed name is
+        # required here, not just convenient. This only matters when
+        # multi-account deploy is opted into; single-account deploys are
+        # unaffected by naming the role explicitly.
         tool_role = iam.Role(
             self,
             "ToolExecutionRole",
+            role_name=HUB_TOOL_ROLE_NAME,
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name(
@@ -122,6 +136,28 @@ class ToolsConstruct(Construct):
         )
 
         self.presigner_role = presigner_role
+
+        # Cross-account spoke-role assumption (#173 Level 2, hub-and-spoke,
+        # opt-in). The specific spoke role ARN depends on which account_id
+        # a user asks about at runtime — it is NOT known at synth time, so
+        # this cannot be scoped to a literal ARN list the way the
+        # presigner grant above is. Scoped instead to the fixed spoke role
+        # NAME across any account/partition, via a wildcard account-id
+        # segment: "arn:*:iam::*:role/IamAnalyzerAssistantSpokeRole". This
+        # still meaningfully narrows the grant — tool_role cannot assume
+        # ANY role in a target account, only one with this exact name,
+        # and the spoke role's OWN trust policy (spoke_stack.py) is the
+        # second half of the guardrail: it only trusts this specific
+        # tool_role ARN back. Granting sts:AssumeRole here has zero effect
+        # on accounts that haven't deployed SpokeStack at all — there is
+        # no role by this name to assume, and the call simply fails.
+        tool_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sts:AssumeRole"],
+                resources=[f"arn:*:iam::*:role/{SPOKE_ROLE_NAME}"],
+            )
+        )
 
         # Path to Lambda source code
         tools_path = str(
@@ -248,6 +284,33 @@ class ToolsConstruct(Construct):
             },
         )
 
+        # Cross-account IAM/CloudTrail read (#173 Level 2, opt-in).
+        # SPOKE_ROLE_NAME is passed explicitly rather than relying on the
+        # tool code's hardcoded default matching scan_permissions.py by
+        # coincidence — this is the same single-source-of-truth constant
+        # used by spoke_stack.py and the sts:AssumeRole grant above, so a
+        # future rename only has to happen in one place. Works with no
+        # deploy-time change for the default single-account path: calling
+        # this tool with the hub's own account_id never calls
+        # sts:AssumeRole at all (session_for_account() returns None), so
+        # it functions even if no SpokeStack/OrgStack has ever been
+        # deployed anywhere — only a DIFFERENT account_id requires a
+        # spoke role to actually exist there.
+        self.cross_account_iam_context_fn = lambda_.Function(
+            self,
+            "CrossAccountIamContext",
+            handler="tools.cross_account_iam_context.handler",
+            code=lambda_.Code.from_asset(tools_path),
+            runtime=common_props["runtime"],
+            timeout=common_props["timeout"],
+            memory_size=common_props["memory_size"],
+            role=common_props["role"],
+            environment={
+                **common_props["environment"],
+                "SPOKE_ROLE_NAME": SPOKE_ROLE_NAME,
+            },
+        )
+
         # Expose as dict for the API construct
         self.functions = {
             "list_findings": self.list_findings_fn,
@@ -260,4 +323,5 @@ class ToolsConstruct(Construct):
             "compare_roles": self.compare_roles_fn,
             "list_exports": self.list_exports_fn,
             "triage_access_keys": self.triage_access_keys_fn,
+            "cross_account_iam_context": self.cross_account_iam_context_fn,
         }

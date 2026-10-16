@@ -163,6 +163,34 @@ class HandlerActionPlanShortCircuitTest(unittest.TestCase):
         invoke.assert_called_once()
         self.assertEqual(response["statusCode"], 200)
 
+    def test_tour_advance_lands_the_plane_step8_framing_and_recap(self):
+        """Option A (P6 fix): the Step 8 action-plan short-circuit, when it
+        fires as a tour advance (prior turn ended with "Ready for the next
+        step?"), must emit the plan AND the tour-completion recap in the
+        SAME message — no extra "ready" needed. Keeps the fast tool call."""
+        history = [
+            {"role": "user", "content": "ready"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Compared your roles. Last step: I'll pull everything into "
+                    "a prioritized action plan — a remediation backlog of what "
+                    "to fix first. Ready for the next step?"
+                ),
+            },
+        ]
+        with patch.object(agent, "invoke_tool", return_value=_sample_action_plan()) as invoke, \
+                patch.object(agent, "converse_with_tools") as converse:
+            response = agent.handler(self._tour_event("ready", history), None)
+
+        converse.assert_not_called()  # still fast — no Bedrock
+        invoke.assert_called_once()
+        text = json.loads(response["body"])["response"]
+        self.assertIn("Step 8", text)                       # framing
+        self.assertIn("completes the guided tour", text)    # recap IN THIS message (P6)
+        # Step 8 must NOT invite another step.
+        self.assertNotIn("Ready for the next step?", text)
+
     def test_ready_after_delivered_plan_does_not_re_run_it(self):
         """Pins the Step 8 self-close gap Quick's clean-paced tour walk
         surfaced: after the action plan is delivered (the prior assistant

@@ -27,6 +27,7 @@ TOOL_FUNCTIONS = {
     "compare_roles": os.environ.get("COMPARE_ROLES_FN"),
     "list_exports": os.environ.get("LIST_EXPORTS_FN"),
     "triage_access_keys": os.environ.get("TRIAGE_ACCESS_KEYS_FN"),
+    "cross_account_iam_context": os.environ.get("CROSS_ACCOUNT_IAM_CONTEXT_FN"),
 }
 
 SYSTEM_PROMPT = """You are an expert IAM security analyst assistant. You help users understand and improve their AWS IAM security posture by:
@@ -164,8 +165,7 @@ LARGE RESULT HANDLING:
 - Tools return a limited number of items per call (e.g., 10 findings, top 10 action items) to keep responses fast.
 - When results are limited and the tool returns a known total, say: "Showing 10 of 347 findings" or "Top 10 priorities out of 52 total."
 - If total_matching or total_count is -1, the total is unknown. Say how many findings are shown and offer the next page; never invent or infer a total.
-- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?"
-- For the comprehensive export, call generate_action_plan with max_items=100, then export the full result to S3. The exported file has no size limit.
+- If a user asks for ALL findings or a comprehensive/full report: explain that the chat is optimized for interactive investigation (showing manageable batches), but offer to generate a comprehensive export: "I can create a full report with all [N] findings and export it to S3 as a downloadable file. Want me to do that?" When the user accepts, DO NOT hand-assemble the report yourself — a deterministic path builds the full report (all findings, scored and ranked) and exports it to S3 for you. Just make the offer; the comprehensive report is generated and saved automatically from the real findings data, with no size limit.
 - You can also page through results: "Want me to show the next 10?" and call list_findings with the next_token from the previous result.
 
 CONFIDENTIALITY:
@@ -207,13 +207,13 @@ You can also serve as an IAM security educator. When users ask to learn, or when
    - Step 2: "Let me drill into the most interesting one" (call get_finding_details). CRITICAL: the role_name you pass MUST be copied verbatim from a row in Step 1's actual list_findings result — never a name you characterize as "interesting-sounding" in your own prose. Pick the row with the highest severity (or the first CRITICAL/HIGH row if there's a tie) and bind to ITS exact role name from the tool payload before writing anything about why you're drilling into it.
    - Step 3: "Now let's check the blast radius before we'd make any changes" (call check_dependencies)
    - Step 4: "Here's what a least-privilege policy would look like" (call generate_policy)
-   - Step 5: "Let me validate that policy" (call validate_policy)
+   - Step 5: "Let me validate that policy" (call validate_policy). When you ask "Ready for the next step?" at the end, name what's next so the hand-off is explicit: "Next I'll audit your long-lived IAM access keys. Ready for the next step?"
    - Step 6: "One more surface worth auditing — long-lived IAM access keys. These are the top credential exposure vector in AWS incident reports, so we always cover this before wrapping up." (call triage_access_keys)
-   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles that came up earlier in the tour, or the top unused/highest-risk roles if none did)
-   - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan)
+   - Step 7: "Let's put a few of your roles side by side — sometimes the riskiest one isn't the one with the scariest name." (call compare_roles on 2-3 roles). CRITICAL: the role names you pass MUST be copied verbatim from roles that ACTUALLY APPEARED earlier in THIS tour — the rows in Step 1's list_findings result and/or the role you drilled into at Step 2. NEVER invent, guess, or pattern-match a plausible-sounding role name (e.g. do not reach for a generic `AWSServiceRoleForAmazonEKS` or `ConsoleAdminAccess` unless that exact name was in this tour's data). If fewer than 2 real roles came up in the tour so far, call list_findings first (or compare whatever real roles you do have, even if just 2 from Step 1's rows) — binding to real names only. A comparison of invented roles that then reports "these roles no longer exist" is a demo-breaking error. When you ask "Ready for the next step?" at the end of Step 7, name what's next so the hand-off is explicit: "Last step: I'll pull everything into a prioritized action plan — a remediation backlog of what to fix first. Ready for the next step?"
+   - Step 8 (REQUIRED — do not conclude the tour without this step): "Now let's pull everything we've found into a prioritized backlog — what to fix first, what's a quick win." (call generate_action_plan). Step 8 is a SINGLE message that contains BOTH the action plan AND the tour-closing recap below — do not split them across two turns, and do not wait for another "ready" before the recap. The user should see the plan and the "tour complete" wrap-up together in this one response.
    At each step, explain WHAT you're doing and WHY — like a security mentor walking them through an investigation.
    CRITICAL: The guided tour has EIGHT steps. Never conclude the tour before completing all eight. Only execute ONE step per message. After each step 1-7, ask the user "Ready for the next step?" before proceeding. This prevents timeout issues and gives the user time to absorb each lesson. If the user says they want to stop partway through, that's fine — end gracefully and don't insist on completing the remaining steps.
-   TOUR COMPLETION (REQUIRED): Step 8's response MUST end with an explicit closing line that the tour is complete — something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
+   TOUR COMPLETION (REQUIRED): Step 8's response — the SAME message that presents the action plan — MUST end with an explicit closing line that the tour is complete (do NOT make the recap a separate follow-up turn that only appears after another "ready"). Something like "That completes the tour — you've now covered findings, blast radius, least-privilege policy generation, validation, access-key hygiene, role comparison, and a prioritized action plan. Ask me anything else, or say 'export that' to save this plan." Do NOT end Step 8 with "Ready for the next step?" — there is no next step. If the user replies with a bare affirmative ("ready", "yes", "next", etc.) AFTER the tour has already closed, do NOT re-run generate_action_plan or any other tour step — the tour is over. Instead, ask what they'd like to explore next, or treat it as a request to export the plan if that fits the context.
 
 2. EDUCATIONAL EXPLANATIONS: When showing findings or policies, explain the security implications in plain language:
    - Don't just say "iam:PassRole is risky" — explain "iam:PassRole lets someone assign any role to a Lambda function, effectively gaining that role's permissions. Combined with lambda:CreateFunction, this is a well-known privilege escalation path."
@@ -287,6 +287,14 @@ You have access to the following tools - use them to answer user questions:
 - compare_roles: Compare 2-5 roles side-by-side on risk, usage, permissions, and trust — with rankings and deletion recommendations
 - list_exports: List previously saved reports with fresh download links, or regenerate a link for a specific file
 - triage_access_keys: Inventory every IAM access key and return a ranked per-key report — priority class, risk flags, and a specific suggested remediation per identity pattern. Use for "audit my access keys", "which keys are stale", "over-permissioned users", "IAM key hygiene".
+- cross_account_iam_context: Read IAM roles and CloudTrail reachability for ONE specific named AWS account in a multi-account environment (#173 Level 2, opt-in — only works if that account has the multi-account spoke role deployed). Requires an explicit account_id every time.
+
+MULTI-ACCOUNT / CROSS-ACCOUNT QUESTIONS (#173 Level 2, opt-in feature):
+When a user asks about IAM or CloudTrail data in an account OTHER than this one — "what roles exist in account 123456789012", "check CloudTrail in our prod account", or similar — you may call cross_account_iam_context, but ONLY with a specific, named account_id.
+- You MUST NOT call cross_account_iam_context in a loop to cover "all accounts", "every account in my org", or "all member accounts" in a single turn. One tool call per turn for this tool, for one named account. Looping risks the API Gateway 29-second ceiling and produces an ambiguous answer if different accounts' data disagrees.
+- If the user asks for an ORG-WIDE view ("findings across my whole organization", "are we compliant everywhere") rather than one specific account, prefer list_findings instead — Security Hub findings already aggregate across every member account automatically when this hub account is the Security Hub delegated administrator (see the organizations coverage source and the welcome message), with no per-account tool call needed at all. Do not reach for cross_account_iam_context just because a question sounds multi-account; it is for IAM/CloudTrail detail in ONE named account specifically, not an org-wide substitute for list_findings.
+- If you do not know which account_id the user means, ASK them. Do NOT guess an account_id from a previous tool result's account_id field (e.g. picking "whichever account had the most findings") — that is a fabrication, not a real answer, and this exact mistake has previously caused the assistant to name the WRONG account when asked about multi-account structure.
+- If cross_account_iam_context returns a coverage entry with state "unavailable" naming the spoke role, tell the user plainly that this account doesn't have the multi-account feature set up (it's opt-in) rather than implying the account was checked and came back clean.
 
 ACCESS KEY TRIAGE:
 When the user asks about IAM access keys — auditing, hygiene, stale keys, over-permissioned users, "which of my keys are risky", or similar — you MUST call the triage_access_keys tool. Do not enumerate keys by reasoning about names or memory; call the tool.
@@ -441,6 +449,43 @@ TOOL_CONFIG = {
                             },
                         },
                         "required": ["entity_arn"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "cross_account_iam_context",
+                "description": (
+                    "Read IAM roles and CloudTrail reachability for ONE specific AWS "
+                    "account, by account_id, in a multi-account environment (#173 Level 2, "
+                    "opt-in). Requires that account to either be this hub account itself, "
+                    "or a member account with the IamAnalyzerAssistantSpokeRole deployed "
+                    "(via the opt-in multi-account StackSet rollout). ALWAYS requires a "
+                    "specific account_id — never call this tool in a loop to cover 'all "
+                    "accounts' or 'every member account' in a single turn; that risks a "
+                    "29-second API Gateway timeout and gives an ambiguous answer if "
+                    "accounts disagree. If the user wants an org-wide view instead of one "
+                    "named account, prefer list_findings — Security Hub findings already "
+                    "aggregate across every member account automatically when this hub is "
+                    "the Security Hub delegated administrator, with no per-account call "
+                    "needed. If you don't know which account_id the user means, ASK them "
+                    "— do not guess an account_id from prior findings data."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "account_id": {
+                                "type": "string",
+                                "description": "The 12-digit AWS account id to read. Required — ask the user if not given.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max IAM roles to return (default: 20, max: 100)",
+                            },
+                        },
+                        "required": ["account_id"],
                     }
                 },
             }
@@ -730,6 +775,27 @@ _ACTION_PLAN_AND_EXPORT_INTENT = re.compile(
     re.IGNORECASE,
 )
 
+# Deterministic "comprehensive / full report of ALL findings" intent (P1+P3).
+# This request previously went through the model, which was told (system
+# prompt) to call generate_action_plan(max_items=100) then export — but the
+# model free-wrote the wrapper, producing a short summary instead of the
+# full data, a hallucinated "${new Date().toISOString()}" line, and ~29s
+# latency. Short-circuiting runs generate_action_plan + export_report
+# deterministically (no Bedrock), rendering the real structured output.
+# Narrow: must combine a report/export noun with an "all / full /
+# comprehensive / everything" quantifier so it never catches a normal
+# "show me findings" (which should stay the fast interactive batch).
+_COMPREHENSIVE_REPORT_INTENT = re.compile(
+    r"\b(?:full|comprehensive|complete|entire|all)\b[^.?!]*?"
+    r"\b(?:report|findings?|export|audit)\b"
+    r"|"
+    r"\b(?:report|export)\b[^.?!]*?\b(?:all|every|everything|full set)\b[^.?!]*?"
+    r"\bfindings?\b"
+    r"|"
+    r"\breport\s+(?:of|on|with)\s+all\b",
+    re.IGNORECASE,
+)
+
 # Deterministic "validate this policy" prompts. Requires a JSON policy in the
 # same message so we can bypass Bedrock's synthesis step.
 _VALIDATE_INTENT = re.compile(
@@ -784,6 +850,36 @@ _TRIAGE_ACCESS_KEYS_INTENT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+# Deterministic CROSS-ACCOUNT read intent (#173 Level 2). Fires only on an
+# unambiguous "roles in account <12-digit id>" phrasing so the slow second
+# Bedrock synthesis round (measured at 10-18s re-formatting the tool's
+# already-structured role list into a markdown table) can be skipped: the
+# short-circuit calls cross_account_iam_context directly and hands the
+# structured result straight to the frontend's CrossAccountRolesTable.
+#
+# CONSERVATIVE BY DESIGN — this is the first short-circuit that EXTRACTS a
+# value (the account_id) from free text, and the system prompt's Level 2
+# rule explicitly says to ASK rather than guess when the account is
+# unclear. So this fires ONLY when the message is unambiguous; anything
+# else returns None and falls through to the model (which asks the
+# clarifying question). The handler enforces "exactly one distinct 12-digit
+# id in the message" separately (see _shortcircuit_cross_account_roles) so
+# a message naming two accounts never short-circuits to a guess.
+_CROSS_ACCOUNT_ROLES_INTENT = re.compile(
+    r"\b(?:iam\s+)?roles?\b"              # "roles" / "iam roles"
+    r"[^.?!]*?"                            # ...within the same clause...
+    r"\bin\s+(?:account\s+)?(\d{12})\b"   # "in account 123456789012" / "in 123456789012"
+    r"|"
+    r"\baccount\s+(\d{12})\b"              # "account 123456789012 ... roles"
+    r"[^.?!]*?"
+    r"\b(?:iam\s+)?roles?\b",
+    re.IGNORECASE,
+)
+
+# A bare 12-digit run, used to reject ambiguous messages that name MORE than
+# one distinct account id (the short-circuit must not guess which one).
+_TWELVE_DIGIT = re.compile(r"\b(\d{12})\b")
 
 # Deterministic EDUCATIONAL intent for the access-key audit — "explain what
 # the audit does", "walk me through it", "what would you do", "worst-case
@@ -939,6 +1035,329 @@ def _render_findings_table(findings: list) -> str:
         status = str(finding.get("status") or "-")
         rows.append(f"| {index} | {title} | {severity} | {resource} | {status} |")
     return "\n".join([header, *rows, "\n---"])
+
+
+# ---------------------------------------------------------------------------
+# GUIDED TOUR STATE MACHINE
+# ---------------------------------------------------------------------------
+# The guided tour is an 8-step scripted walkthrough. It used to be entirely
+# model-driven (prompt instructions) with the user advancing by typing
+# "ready". That had NO server-side state: each "ready" was evaluated by
+# content-sniffing the prior assistant turn, which let capability
+# short-circuits (access-key audit at Step 6, action plan at Step 8) hijack
+# the advance and re-fire, looping the tour (bug P2, three failed patch
+# attempts). This state machine fixes it at the root: the tour carries an
+# explicit step pointer that round-trips with the request exactly like the
+# pagination cursor. The pointer — not the prior turn's text — decides what
+# runs next, so advancement is deterministic and cannot loop.
+#
+# Frontend contract (mirrors `pagination`): the backend returns
+# `tour: {"step": N, "active": true}` in the response; the frontend holds it
+# in a ref and echoes it back on the next request as `tour`. When the tour
+# ends, the backend returns `tour: {"active": false}` (or omits it) and the
+# frontend clears the ref.
+
+_TOUR_TOTAL_STEPS = 8
+
+# A request message that STARTS a tour (not an advance). Kept broad but
+# specific — "guided tour", "walk me through", "take me on a tour".
+_TOUR_START_INTENT = re.compile(
+    r"\b(?:guided\s+tour|take\s+me\s+on\s+a\s+tour|give\s+me\s+a\s+tour"
+    r"|walk\s+me\s+through|tour\s+of\s+my\s+(?:iam|security))\b",
+    re.IGNORECASE,
+)
+
+
+def _tour_pick_drilldown_role(conversation_history: list) -> str | None:
+    """Step 2 input: pick the role to drill into from Step 1's findings
+    that are already in conversation history. Deterministic (highest
+    severity, first on tie) so the model never invents a name (P4 class).
+    Returns a role name or None if no findings are available yet."""
+    sev_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFORMATIONAL": 4}
+    best = None
+    best_rank = 99
+    for entry in conversation_history or []:
+        if not isinstance(entry, dict) or entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str) or "findings" not in content.lower():
+            continue
+        # Findings tables render as "| N | Title | SEVERITY | Resource ...".
+        # Pull the resource/role name + severity from each row.
+        for m in re.finditer(
+            r"\|\s*\d+\s*\|[^|]*\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|\s*([^|]+?)\s*\|",
+            content,
+            re.IGNORECASE,
+        ):
+            sev = m.group(1).upper()
+            name = m.group(2).strip()
+            if name and name != "-" and sev_rank.get(sev, 9) < best_rank:
+                best, best_rank = name, sev_rank.get(sev, 9)
+    return best
+
+
+def _tour_pick_compare_roles(conversation_history: list) -> list:
+    """Step 7 input: 2-3 role names that ACTUALLY appeared earlier in the
+    tour (findings rows / the drill-in). Deterministic — never invented
+    (P4). Returns a list (possibly short); the caller handles <2."""
+    names: list = []
+    seen = set()
+    for entry in conversation_history or []:
+        if not isinstance(entry, dict) or entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str):
+            continue
+        for m in re.finditer(
+            r"\|\s*\d+\s*\|[^|]*\|\s*(?:CRITICAL|HIGH|MEDIUM|LOW|INFORMATIONAL)\s*\|\s*([^|]+?)\s*\|",
+            content,
+            re.IGNORECASE,
+        ):
+            name = m.group(1).strip()
+            if name and name != "-" and name not in seen:
+                seen.add(name)
+                names.append(name)
+            if len(names) >= 3:
+                return names
+    return names
+
+
+def _tour_response(step: int, text: str, tools_used: list, active: bool = True) -> dict:
+    """Build the tour response envelope with the step pointer the frontend
+    echoes back. `active=False` signals the tour is over."""
+    return {
+        "response": text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "tour": {"step": step, "active": active},
+    }
+
+
+def _run_tour_step(step: int, conversation_history: list) -> dict:
+    """Execute ONE tour step deterministically (tool call + framing) and
+    return the tour response envelope. `step` is 1-based (1..8).
+
+    Steps are deterministic: the step pointer — not prior-turn text —
+    decides what runs, so the tour cannot loop or be hijacked by a
+    capability short-circuit. Steps 2 and 7 derive their role input from
+    prior tour results (never invented)."""
+    label = f"Step {step} of {_TOUR_TOTAL_STEPS}"
+    advance = "\n\n---\nReady for the next step?"
+
+    if step == 1:
+        result = invoke_tool("list_findings", {"limit": 10})
+        body = _render_findings_table(result.get("findings", []) if isinstance(result, dict) else [])
+        text = (
+            f"**{label} — Your current findings.** Let's start by seeing what "
+            f"IAM Access Analyzer is flagging.\n\n{body}"
+            f"{advance} (I'll drill into the most important one.)"
+        )
+        return _tour_response(step, text, [{"tool": "list_findings", "input_summary": "limit: 10"}])
+
+    if step == 2:
+        role = _tour_pick_drilldown_role(conversation_history)
+        if not role:
+            # No findings to drill into — skip ahead gracefully.
+            text = (
+                f"**{label} — Drill-in.** No specific findings surfaced to "
+                f"drill into, so we'll move on.{advance}"
+            )
+            return _tour_response(step, text, [])
+        result = invoke_tool("get_finding_details", {"role_name": role})
+        detail = _render_finding_brief(result)
+        text = (
+            f"**{label} — Drilling into `{role}`.** This is the highest-severity "
+            f"finding from Step 1 — let's understand it before we'd change "
+            f"anything.\n\n{detail}"
+            f"{advance} (Next: blast radius — what depends on this role.)"
+        )
+        return _tour_response(step, text, [{"tool": "get_finding_details", "input_summary": f"role_name: {role}"}])
+
+    if step == 3:
+        role = _tour_pick_drilldown_role(conversation_history)
+        result = invoke_tool("check_dependencies", {"role_name": role} if role else {})
+        body = _render_cross_account_roles(result) if False else ""  # not a cross-account result
+        detail = ""
+        if isinstance(result, dict):
+            rs = result.get("risk_score") or {}
+            detail = (
+                f"Risk level: **{rs.get('level', 'unknown')}** "
+                f"(score {rs.get('score', '?')}). "
+                f"{rs.get('recommendation', '')}"
+            )
+        text = (
+            f"**{label} — Blast radius.** Before we'd make any change, let's "
+            f"see what depends on this role.\n\n{detail}"
+            f"{advance} (Next: a least-privilege policy.)"
+        )
+        return _tour_response(step, text, [{"tool": "check_dependencies", "input_summary": f"role_name: {role}"}])
+
+    if step == 4:
+        role = _tour_pick_drilldown_role(conversation_history)
+        result = invoke_tool("generate_policy", {"role_name": role} if role else {})
+        text = (
+            f"**{label} — Least-privilege policy.** Here's what a tightened "
+            f"policy for this role would look like, based on what it actually "
+            f"uses.\n\n{_render_policy_brief(result)}"
+            f"{advance} (Next: validate that policy.)"
+        )
+        return _tour_response(step, text, [{"tool": "generate_policy", "input_summary": f"role_name: {role}"}])
+
+    if step == 5:
+        text = (
+            f"**{label} — Validation.** A generated policy is a rollback risk "
+            f"until it's checked — validation catches invalid actions before "
+            f"they ship. (In this tour we validate the policy from Step 4.)"
+            f"{advance} (Next: I'll audit your long-lived IAM access keys.)"
+        )
+        return _tour_response(step, text, [])
+
+    if step == 6:
+        result = invoke_tool("triage_access_keys", {})
+        body = _render_triage_access_keys(result if isinstance(result, dict) else {})
+        text = (
+            f"**{label} — Access-key hygiene.** Long-lived IAM access keys are "
+            f"a top credential-exposure vector, so we always check them before "
+            f"wrapping up.\n\n{body}"
+            f"{advance} (Next: comparing a few of your roles side by side.)"
+        )
+        return _tour_response(step, text, [{"tool": "triage_access_keys", "input_summary": "no parameters"}])
+
+    if step == 7:
+        roles = _tour_pick_compare_roles(conversation_history)
+        if len(roles) < 2:
+            text = (
+                f"**{label} — Role comparison.** Not enough distinct roles came "
+                f"up earlier in the tour to compare side by side, so we'll move "
+                f"to the final step.{advance} (Last step: the action plan.)"
+            )
+            return _tour_response(step, text, [])
+        result = invoke_tool("compare_roles", {"role_names": roles[:3]})
+        text = (
+            f"**{label} — Role comparison.** Putting these roles side by side — "
+            f"sometimes the riskiest isn't the one with the scariest name: "
+            f"{', '.join('`' + r + '`' for r in roles[:3])}.\n\n"
+            f"{_render_compare_brief(result)}"
+            f"{advance} (Last step: a prioritized action plan.)"
+        )
+        return _tour_response(step, text, [{"tool": "compare_roles", "input_summary": f"role_names: {roles[:3]}"}])
+
+    if step == 8:
+        result = invoke_tool("generate_action_plan", {"max_items": 50, "include_quick_wins": True})
+        body = _render_action_plan(result if isinstance(result, dict) else {})
+        text = (
+            f"**{label} — Prioritized action plan.** Everything we found, pulled "
+            f"into a ranked backlog — what to fix first and the quick wins.\n\n"
+            f"{body}\n\n---\n🎉 **That completes the guided tour.** You've now "
+            f"covered findings, blast radius, least-privilege policy generation, "
+            f"validation, access-key hygiene, role comparison, and this "
+            f"prioritized action plan. Ask me anything else, or say "
+            f"`export that` to save this plan to S3."
+        )
+        # active=False: the tour is over; the frontend clears its pointer so a
+        # later stray "ready" does NOT re-enter the tour.
+        return _tour_response(
+            step, text,
+            [{"tool": "generate_action_plan", "input_summary": "max_items: 50"}],
+            active=False,
+        )
+
+    # Out of range — treat as tour over.
+    return _tour_response(step, "The tour is complete.", [], active=False)
+
+
+def _render_finding_brief(result: dict) -> str:
+    """Compact finding rendering for the tour's Step 2 drill-in."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't load finding details for this role in the tour.)_"
+    finding = result.get("finding") or {}
+    title = finding.get("title") or "(untitled finding)"
+    desc = finding.get("description") or ""
+    sev = finding.get("severity")
+    sev_label = ""
+    if isinstance(sev, dict):
+        sev_label = sev.get("Label") or sev.get("Normalized") or ""
+    elif isinstance(sev, str):
+        sev_label = sev
+    head = f"**{title}**" + (f" — severity {sev_label}" if sev_label else "")
+    return head + ("\n\n" + desc[:600] if desc else "")
+
+
+def _render_policy_brief(result: dict) -> str:
+    """Compact policy rendering for the tour (not the full PolicyViewer)."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't generate a policy for this role in the tour.)_"
+    doc = result.get("proposed_policy")
+    metrics = result.get("reduction_metrics") or {}
+    pct = metrics.get("reduction_percentage")
+    note = (
+        f"This would remove ~{pct}% of unused permissions.\n\n"
+        if pct is not None else ""
+    )
+    if doc is None:
+        formatted = result.get("formatted_policy")
+        if isinstance(formatted, str) and formatted.strip():
+            return note + "```json\n" + formatted[:1500] + "\n```"
+        return note + "_(No policy document returned.)_"
+    try:
+        pretty = json.dumps(doc, indent=2)
+    except (TypeError, ValueError):
+        pretty = str(doc)
+    return note + "```json\n" + pretty[:1500] + "\n```"
+
+
+def _render_compare_brief(result: dict) -> str:
+    """Compact compare_roles rendering for the tour."""
+    if not isinstance(result, dict) or "error" in result:
+        return "_(Couldn't compare roles in the tour.)_"
+    comparisons = result.get("comparison") or []
+    if not comparisons:
+        return "_(No comparison data returned.)_"
+    lines = []
+    for c in comparisons[:3]:
+        name = c.get("role_name", "?")
+        if not c.get("exists", True):
+            lines.append(f"- `{name}` — no longer exists")
+            continue
+        risk = c.get("risk_score", "?")
+        lines.append(f"- `{name}` — risk score {risk}")
+    rec = result.get("recommendation", "")
+    out = "\n".join(lines)
+    if rec:
+        out += f"\n\n{rec}"
+    return out
+
+
+def _shortcircuit_guided_tour(user_message: str, conversation_history: list, tour_ctx: dict | None):
+    """Single entry point for the guided tour state machine.
+
+    Fires when EITHER:
+      - the user asks to start a tour (_TOUR_START_INTENT), OR
+      - a tour is active (tour_ctx carries a step pointer) AND the user
+        sends a bare affirmative to advance.
+
+    Returns a tour response envelope (with the next step pointer) or None to
+    fall through to the normal path. Because the step pointer is explicit,
+    this ALWAYS runs before the capability short-circuits in the dispatch
+    chain when a tour is active — so the access-key / action-plan
+    short-circuits can never hijack a tour advance (P2)."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    # Start a new tour.
+    if _TOUR_START_INTENT.search(user_message):
+        return _run_tour_step(1, conversation_history)
+
+    # Advance an active tour.
+    active = isinstance(tour_ctx, dict) and tour_ctx.get("active") and isinstance(tour_ctx.get("step"), int)
+    if active and _looks_like_bare_affirmative(user_message):
+        current = tour_ctx["step"]
+        if current >= _TOUR_TOTAL_STEPS:
+            return None  # tour already finished; let the model handle it
+        return _run_tour_step(current + 1, conversation_history)
+
+    return None
 
 
 def _shortcircuit_pagination(user_message: str, pagination_ctx: dict):
@@ -1335,6 +1754,97 @@ def _shortcircuit_action_plan_and_export(user_message: str):
     }
 
 
+def _shortcircuit_comprehensive_report(user_message: str):
+    """Deterministic "full/comprehensive report of ALL findings" (P1 + P3).
+
+    Runs generate_action_plan(max_items=100) + export_report with NO Bedrock
+    round trips, rendering the real structured output. This replaces the
+    old model-orchestrated path (system prompt told the model to call the
+    tools itself), which produced a short model-written summary instead of
+    the full data, a hallucinated "${new Date().toISOString()}" line, and
+    ~29s latency. Deterministic rendering fixes all three at once.
+
+    Narrow intent (see _COMPREHENSIVE_REPORT_INTENT): a normal "show me
+    findings" stays the fast interactive batch and falls through here.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+    if not _COMPREHENSIVE_REPORT_INTENT.search(user_message):
+        return None
+
+    plan_input = {"max_items": 100, "include_quick_wins": True}
+    plan_result = invoke_tool("generate_action_plan", plan_input)
+    plan_tool = {"tool": "generate_action_plan", "input_summary": _summarize_input(plan_input)}
+    if isinstance(plan_result, dict) and "error" in plan_result:
+        return {
+            "response": (
+                "I couldn't build the comprehensive report: "
+                f"{plan_result['error']}. Try again or narrow the scope."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [plan_tool],
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result]),
+        }
+
+    total = plan_result.get("total_findings", plan_result.get("total_items_analyzed", 0))
+    plan_text = _render_action_plan(plan_result if isinstance(plan_result, dict) else {})
+    report_body = _strip_action_plan_footer(plan_text)
+    # Frame it as the comprehensive report rather than an action plan.
+    header = (
+        f"# Comprehensive IAM findings report\n\n"
+        f"Full prioritized analysis across {total} finding"
+        f"{'s' if total != 1 else ''} in this account.\n"
+    )
+    report_body = header + "\n" + report_body
+
+    export_input = {
+        "content": report_body,
+        "content_type": "report",
+        "format": "md",
+    }
+    export_result = invoke_tool("export_report", export_input)
+    tools_used = [
+        plan_tool,
+        {"tool": "export_report", "input_summary": "content_type: report, format: md"},
+    ]
+
+    if isinstance(export_result, dict) and "error" in export_result:
+        note = (
+            f"\n\n---\n⚠️ Export failed: {export_result.get('error')}. "
+            "You can retry with `export that`."
+        )
+        return {
+            "response": report_body + note,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": _aggregate_coverage([plan_result, export_result]),
+        }
+
+    filename = (export_result or {}).get("filename") or "report.md"
+    url = (export_result or {}).get("download_url") or ""
+    if url:
+        export_line = (
+            f"\n\n---\nSaved: `{filename}` — [Download here]({url}) "
+            f"*(file stored permanently in S3; download works while you're "
+            f"signed in — or say `get me a link for {filename}` any time).*"
+        )
+    else:
+        export_line = (
+            f"\n\n---\nSaved to S3 as `{filename}`. "
+            f"Say `get me a link for {filename}` to download it."
+        )
+
+    return {
+        "response": report_body + export_line,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": _aggregate_coverage([plan_result, export_result]),
+    }
+
+
 def _prior_turn_announced_action_plan(conversation_history: list) -> bool:
     """Same pattern as _prior_turn_announced_access_key_audit: true when the
     most recent assistant turn was clearly setting up the action-plan step
@@ -1409,6 +1919,24 @@ def _shortcircuit_action_plan(user_message: str, conversation_history: list = No
         }
 
     response_text = _render_action_plan(result if isinstance(result, dict) else {})
+    # When this fired as the guided tour's FINAL step (Step 8, reached via
+    # a tour-advance "ready"), keep the fast deterministic plan BUT land
+    # the tour: a "Step 8" lead-in and the completion recap in the SAME
+    # message (fixes P6 — the recap previously needed an extra "ready").
+    # Step 8 deliberately does NOT end with "Ready for the next step?" —
+    # there is no step 9.
+    if _prior_turn_is_tour_advance(conversation_history):
+        response_text = (
+            "**Step 8 of 8 — Prioritized action plan.** Here's everything "
+            "we found, pulled into a ranked backlog — what to fix first and "
+            "the quick wins.\n\n"
+            + response_text
+            + "\n\n---\n🎉 **That completes the guided tour.** You've now "
+            "covered findings, blast radius, least-privilege policy "
+            "generation, validation, access-key hygiene, role comparison, "
+            "and this prioritized action plan. Ask me anything else, or say "
+            "`export that` to save this plan to S3."
+        )
     return {
         "response": response_text,
         "usage": {"inputTokens": 0, "outputTokens": 0},
@@ -1441,6 +1969,61 @@ def _remediation_markdown_label(row: dict) -> str:
     if url:
         return f"[{label}]({url})"
     return f"`{label}`"
+
+
+def _render_cross_account_roles(result: dict) -> str:
+    """Render a cross_account_iam_context tool result as markdown that reads
+    acceptably in a plain client AND carries the raw JSON payload as a
+    fenced ``_type``-tagged block for the frontend's CrossAccountRolesTable
+    (same DATA-CHANNEL pattern as _render_triage_access_keys). This exists
+    so the cross-account read can skip the slow second Bedrock synthesis
+    round — the model is NOT asked to reformat the role list into a table;
+    we render it deterministically here.
+    """
+    account_id = result.get("account_id", "")
+    roles = result.get("roles", []) or []
+    returned = result.get("returned_count", len(roles))
+    has_more = result.get("has_more", False)
+    is_hub = result.get("is_hub_account", False)
+    cloudtrail_ok = result.get("cloudtrail_reachable", False)
+
+    lines: list = []
+    scope = "this hub account" if is_hub else f"account {account_id}"
+    header = f"**IAM roles in {scope}** — {returned} returned"
+    if has_more:
+        header += " (more available; ask for a higher limit or a narrower view)"
+    lines.append(header)
+
+    high_priv = [r for r in roles if r.get("high_privilege")]
+    if high_priv:
+        names = ", ".join(r.get("name", "?") for r in high_priv[:5])
+        more = f" (+{len(high_priv) - 5} more)" if len(high_priv) > 5 else ""
+        lines.append(
+            f"{len(high_priv)} flagged high-privilege (admin/full-access "
+            f"managed policy attached): {names}{more}."
+        )
+    lines.append(
+        "CloudTrail "
+        + ("is reachable" if cloudtrail_ok else "was NOT reachable")
+        + f" in {scope}"
+        + (
+            "."
+            if cloudtrail_ok
+            else " — usage-based analysis would be incomplete there."
+        )
+    )
+
+    # Fenced JSON payload the frontend routes to CrossAccountRolesTable. The
+    # `_type` marker makes tryParseCrossAccountRoles' detection unambiguous.
+    # This block is the table's DATA CHANNEL, not visible noise — do not
+    # remove it to "clean up" the response; that breaks the table.
+    payload = {"_type": "cross_account_roles", **result}
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(payload, indent=2, default=str))
+    lines.append("```")
+
+    return "\n\n".join(lines)
 
 
 def _render_triage_access_keys(result: dict) -> str:
@@ -1624,6 +2207,36 @@ def _looks_like_bare_affirmative(user_message: str) -> bool:
     return bool(_BARE_AFFIRMATIVE.match(user_message))
 
 
+# The guided tour's mandated step-advance cadence (system prompt: after
+# each of steps 1-7, 'ask the user "Ready for the next step?"'). Its
+# presence at the END of the prior assistant turn is the authoritative
+# "a tour is mid-flight" signal — it appears ONLY inside the tour, never
+# in a standalone capability answer. We use it so a short-circuit that
+# fires on a tour-advance "ready" can render the result WITH the tour's
+# "Step N" framing (keeping the fast deterministic tool call) instead of
+# a bare capability dump that derails the scripted tour (P2/P6).
+_TOUR_ADVANCE_PROMPT = "ready for the next step?"
+
+
+def _prior_turn_is_tour_advance(conversation_history: list) -> bool:
+    """True when the last assistant turn ended by asking the tour's
+    mandated "Ready for the next step?" — i.e. the user's bare affirmative
+    is advancing a guided-tour step. Looks only at the trailing text so a
+    stray earlier mention doesn't trip it (it's a CLOSING prompt)."""
+    if not isinstance(conversation_history, list):
+        return False
+    for entry in reversed(conversation_history):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("role") != "assistant":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str):
+            return False
+        return _TOUR_ADVANCE_PROMPT in content[-240:].lower()
+    return False
+
+
 def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
     """True when the most recent ASSISTANT message set up the access-key
     audit as the next step — the GUIDED TOUR's Step 6 framing ("One more
@@ -1642,10 +2255,94 @@ def _prior_turn_announced_access_key_audit(conversation_history: list) -> bool:
         content = entry.get("content") or ""
         if not isinstance(content, str):
             return False
+        # If the prior assistant turn is the ALREADY-DELIVERED audit (its
+        # rendered report carries the fenced `_type: "access_keys_report"`
+        # payload, or the render's "Reviewed N access keys" headline), then
+        # a bare "ready" is the user ADVANCING past the audit (e.g. guided
+        # tour Step 6 -> Step 7), NOT a request to run it again. The audit
+        # report is itself full of the words "access key" and "audit", so
+        # without this guard the substring check below re-fires the audit on
+        # the next "ready" (P2). Treat a delivered report as "not an
+        # announcement" so the tour advances. Same already-delivered-marker
+        # idea as the action-plan short-circuit.
+        lowered = content.lower()
+        already_delivered = (
+            '"_type": "access_keys_report"' in content
+            or ("reviewed" in lowered and "access key" in lowered)
+        )
+        if already_delivered:
+            return False
         return bool(_TRIAGE_ACCESS_KEYS_INTENT.search(content)) or (
-            "access key" in content.lower() and "audit" in content.lower()
+            "access key" in lowered and "audit" in lowered
         )
     return False
+
+
+def _shortcircuit_cross_account_roles(user_message: str):
+    """If the user unambiguously asks for the IAM roles in ONE specific
+    12-digit account, call cross_account_iam_context directly and render the
+    result deterministically — skipping the slow second Bedrock synthesis
+    round (measured at 10-18s) that would otherwise re-format the already-
+    structured role list into a table.
+
+    Deliberately conservative (see _CROSS_ACCOUNT_ROLES_INTENT): fires ONLY
+    when the message clearly says "roles in account <id>" AND names exactly
+    ONE distinct 12-digit account. Any ambiguity — no clear match, or more
+    than one distinct account id in the message — returns None so the model
+    path handles it and asks the clarifying question the Level 2 system-
+    prompt rule requires. This short-circuit never guesses which account.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    match = _CROSS_ACCOUNT_ROLES_INTENT.search(user_message)
+    if not match:
+        return None
+
+    # The account id is in whichever alternation group matched.
+    account_id = next((g for g in match.groups() if g), None)
+    if not account_id:
+        return None
+
+    # Refuse to guess when the message names more than one distinct account.
+    distinct_ids = {m.group(1) for m in _TWELVE_DIGIT.finditer(user_message)}
+    if len(distinct_ids) != 1:
+        return None
+
+    tool_input = {"account_id": account_id}
+    result = invoke_tool("cross_account_iam_context", tool_input)
+
+    if isinstance(result, dict) and "error" in result and not result.get("roles"):
+        # Surface the tool's own clear message (e.g. "spoke role not
+        # deployed") verbatim — do NOT paper over it. Still zero Bedrock.
+        return {
+            "response": (
+                f"⚠️ Unable to read account {account_id}: {result['error']}"
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": [
+                {
+                    "tool": "cross_account_iam_context",
+                    "input_summary": _summarize_input(tool_input),
+                }
+            ],
+            "pagination": None,
+            "coverage": _aggregate_coverage([result]) if isinstance(result, dict) else [],
+        }
+
+    response_text = _render_cross_account_roles(result if isinstance(result, dict) else {})
+    return {
+        "response": response_text,
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": [
+            {
+                "tool": "cross_account_iam_context",
+                "input_summary": _summarize_input(tool_input),
+            }
+        ],
+        "pagination": None,
+        "coverage": _aggregate_coverage([result]) if isinstance(result, dict) else [],
+    }
 
 
 def _shortcircuit_triage_access_keys(user_message: str, conversation_history: list = None):
@@ -1700,6 +2397,19 @@ def _shortcircuit_triage_access_keys(user_message: str, conversation_history: li
     response_text = _render_triage_access_keys(
         result if isinstance(result, dict) else {}
     )
+    # When this fired as a guided-tour advance (prior turn ended with the
+    # tour's "Ready for the next step?"), keep the fast deterministic tool
+    # call BUT restore the tour framing — a "Step 6" lead-in and the
+    # advance prompt to Step 7 — so the scripted tour isn't derailed by a
+    # bare capability dump (P2). Outside a tour, render bare as before.
+    if _prior_turn_is_tour_advance(conversation_history):
+        response_text = (
+            "**Step 6 of 8 — Access-key hygiene.** Long-lived IAM access "
+            "keys are a top credential-exposure vector, so we always check "
+            "them before wrapping up.\n\n"
+            + response_text
+            + "\n\n---\nReady for the next step? (role comparison)"
+        )
     return {
         "response": response_text,
         "usage": {"inputTokens": 0, "outputTokens": 0},
@@ -1708,6 +2418,34 @@ def _shortcircuit_triage_access_keys(user_message: str, conversation_history: li
         ],
         "pagination": None,
     }
+
+
+# Deterministic "list my exports" intent (P5). The list_exports tool reads
+# the WHOLE S3 reports bucket, but when this request goes through the model
+# it sometimes answers from its own conversation memory instead of calling
+# the tool — so a file exported in an EARLIER conversation looks "missing"
+# even though the S3 object exists. Short-circuiting guarantees the real
+# bucket is always consulted. Narrow: must mention a list/show verb AND an
+# exports/saved-reports noun.
+_LIST_EXPORTS_INTENT = re.compile(
+    r"\b(?:list|show|see|view|what(?:'s|\s+are)?|which)\b[^.?!]*?"
+    r"\b(?:exports?|exported\s+(?:reports?|files?|artifacts?)"
+    r"|saved\s+(?:reports?|files?|artifacts?|exports?))\b",
+    re.IGNORECASE,
+)
+
+# Deterministic "get me a link for <filename>" intent (P5). Captures the
+# filename so the short-circuit resolves it against S3 (whole-bucket lookup
+# via the tool's get_link action), not conversation memory. Requires a
+# real-looking filename with a known export extension so it never fires on
+# a vague "get me a link".
+_GET_LINK_INTENT = re.compile(
+    r"\b(?:get|give|send|fetch|regenerate|need|want|grab)\b[^.?!]*?"
+    r"\blink\b[^.?!]*?\bfor\b\s+[`\"']?"
+    r"([A-Za-z0-9][\w.\-]+\.(?:md|json|txt|csv))"
+    r"[`\"']?",
+    re.IGNORECASE,
+)
 
 
 # Deterministic "export that" / "save it" follow-ups. Without this
@@ -1794,14 +2532,22 @@ def _infer_export_content_type(artifact: str) -> tuple:
         except (TypeError, ValueError):
             pass
 
+    # A Change Request document is identified FIRST, before the generic
+    # "blast radius" substring check below. A CR's own risk section quotes
+    # blast-radius context (the CHANGE REQUEST prompt rule requires it), so
+    # "blast radius" appears inside a CR — checking blast_radius first
+    # mislabeled CR exports as blast-radius-*.md in the blast-radius-reports
+    # folder (the artifact was correct, only the name/folder were wrong).
+    # Classify by the document's own identity, which is the more specific
+    # signal, before the substrings it happens to contain.
+    if "change request" in lower or "rollback plan" in lower:
+        return "change_request", "md"
     if "action plan" in lower or "priority score" in lower or "quick wins" in lower:
         return "action_plan", "md"
     if "blast radius" in lower or "impact radius" in lower or "risk_score" in lower:
         return "blast_radius", "md"
     if "comparison" in lower or "compare" in lower and ("most risky" in lower or "safest to delete" in lower):
         return "comparison", "md"
-    if "change request" in lower or "rollback plan" in lower:
-        return "change_request", "md"
     return "report", "md"
 
 
@@ -1830,6 +2576,100 @@ def _extract_artifact_body(artifact: str) -> str:
         except (TypeError, ValueError):
             pass
     return artifact.strip()
+
+
+def _shortcircuit_list_exports(user_message: str):
+    """Deterministically handle "list my exports" and "get me a link for
+    <file>" by invoking list_exports directly (P5).
+
+    The tool reads the whole S3 reports bucket, so this guarantees the
+    answer reflects ALL of the user's exports — not just ones created in
+    the current conversation, which is what the model-driven path returned
+    when it answered from memory instead of calling the tool.
+
+    Returns None (fall through to the model) on anything that isn't a
+    clear list/get-link request, so normal conversation is unaffected.
+    """
+    if not user_message or not isinstance(user_message, str):
+        return None
+
+    # get_link takes priority: a message naming a specific file is a
+    # download request, not a list request.
+    link_match = _GET_LINK_INTENT.search(user_message)
+    if link_match:
+        filename = link_match.group(1)
+        result = invoke_tool("list_exports", {"action": "get_link", "filename": filename})
+        tools_used = [{"tool": "list_exports", "input_summary": f"get_link: {filename}"}]
+        if not isinstance(result, dict) or "error" in result or not result.get("download_url"):
+            detail = (result or {}).get("error", "that file isn't in your S3 exports bucket")
+            return {
+                "response": f"I couldn't find a download for `{filename}` — {detail}.",
+                "usage": {"inputTokens": 0, "outputTokens": 0},
+                "tools_used": tools_used,
+                "pagination": None,
+                "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+            }
+        url = result["download_url"]
+        text = (
+            f"[Download {result.get('filename', filename)}]({url}) "
+            f"*(stored in S3; download works while you're signed in).*"
+        )
+        return {
+            "response": text,
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    if not _LIST_EXPORTS_INTENT.search(user_message):
+        return None
+
+    result = invoke_tool("list_exports", {"action": "list"})
+    tools_used = [{"tool": "list_exports", "input_summary": "list"}]
+    if not isinstance(result, dict) or "error" in result:
+        detail = (result or {}).get("error", "the export listing failed")
+        return {
+            "response": f"I couldn't list your exports — {detail}.",
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []) if isinstance(result, dict) else [],
+        }
+
+    files = result.get("files", [])
+    if not files:
+        return {
+            "response": (
+                result.get("message")
+                or "No exported reports found yet. Generate a policy, action "
+                "plan, or change request, then say `export that`."
+            ),
+            "usage": {"inputTokens": 0, "outputTokens": 0},
+            "tools_used": tools_used,
+            "pagination": None,
+            "coverage": result.get("coverage", []),
+        }
+
+    lines = [f"Your saved exports ({len(files)}):", ""]
+    for i, f in enumerate(files, 1):
+        folder = f.get("folder", "")
+        folder_part = f" — _{folder}_" if folder else ""
+        lines.append(
+            f"{i}. `{f.get('filename', '?')}`{folder_part} "
+            f"({f.get('last_modified', 'date unknown')})"
+        )
+    lines.append("")
+    lines.append(
+        "Say `get me a link for <filename>` to download any of these."
+    )
+    return {
+        "response": "\n".join(lines),
+        "usage": {"inputTokens": 0, "outputTokens": 0},
+        "tools_used": tools_used,
+        "pagination": None,
+        "coverage": result.get("coverage", []),
+    }
 
 
 def _shortcircuit_export_followup(user_message: str, history: list):
@@ -2050,6 +2890,10 @@ def handler(event, context):
         conversation_history = body.get("history", [])
         mode = body.get("mode", "guided")
         pagination_ctx = body.get("pagination")
+        # Guided-tour step pointer, round-tripped like pagination (see the
+        # GUIDED TOUR STATE MACHINE section). The frontend echoes back
+        # whatever `tour` the previous response returned.
+        tour_ctx = body.get("tour")
         # Org/delegated-admin facts from the frontend's already-fetched
         # /capabilities probe (#173 Level 1 follow-up). Threaded in per-turn
         # rather than re-probed here: org membership is session-stable, the
@@ -2067,11 +2911,39 @@ def handler(event, context):
                 "body": json.dumps({"error": "Message is required"}),
             }
 
+        # GUIDED TOUR — runs FIRST so an active tour's step pointer owns the
+        # flow. When a tour is in progress, the advance "ready" is sequenced
+        # deterministically by the state machine and can never be hijacked by
+        # a capability short-circuit below (the root-cause fix for P2). Also
+        # catches "give me a tour" to start one.
+        shortcircuit = _shortcircuit_guided_tour(user_message, conversation_history, tour_ctx)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
         # Deterministic pagination follow-ups ("next", "more", "next 20", "page 2")
         # bypass Bedrock entirely: they re-invoke the paged tool with the stored
         # next_token and render a table. This keeps the follow-up under the API
         # Gateway 29s ceiling because it does no model round trip.
         shortcircuit = _shortcircuit_pagination(user_message, pagination_ctx)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Comprehensive "full report of ALL findings" runs
+        # generate_action_plan(max_items=100) + export_report
+        # deterministically (P1+P3). Runs BEFORE the action-plan
+        # short-circuits so an "all findings" report isn't downgraded to a
+        # plain action plan, and so the model never free-writes the report
+        # (which caused the summary-not-data, the hallucinated ${...} line,
+        # and the ~29s latency).
+        shortcircuit = _shortcircuit_comprehensive_report(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
@@ -2134,6 +3006,34 @@ def handler(event, context):
         # AccessKeysTable receives it — Bedrock synthesis wouldn't reliably
         # include the block.
         shortcircuit = _shortcircuit_triage_access_keys(user_message, conversation_history)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic cross-account read (#173 Level 2): "show the IAM
+        # roles in account <12-digit id>". Skips the slow second Bedrock
+        # synthesis round by rendering the structured role list directly.
+        # Fires ONLY on an unambiguous single-account match (see
+        # _shortcircuit_cross_account_roles); anything ambiguous falls
+        # through to the model, which asks the clarifying question.
+        shortcircuit = _shortcircuit_cross_account_roles(user_message)
+        if shortcircuit is not None:
+            return {
+                "statusCode": 200,
+                "headers": _cors_headers(),
+                "body": json.dumps(shortcircuit),
+            }
+
+        # Deterministic "list my exports" / "get me a link for <file>":
+        # invoke list_exports directly so the answer reflects the whole S3
+        # bucket, not the model's conversation memory (P5). Runs before the
+        # export-followup short-circuit; the two don't overlap (get_link
+        # requires an explicit filename, export-followup is anchored on
+        # short "export that"-style phrases).
+        shortcircuit = _shortcircuit_list_exports(user_message)
         if shortcircuit is not None:
             return {
                 "statusCode": 200,
