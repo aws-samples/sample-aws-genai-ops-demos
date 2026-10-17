@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# CDK outputs
+cdk.out/
+cdk.out*/
+
+# Build outputs
+frontend/dist/
+*.js.map
+
+# Environment files (generated at deployment)
+frontend/.env.local
+frontend/.env.production.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
