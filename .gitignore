@@ -6,6 +6,13 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 
+# Exception: the IAM Security Assistant frontend MUST ship its lockfile so a
+# clean checkout installs the exact, working dependency tree. Without it,
+# `npm install` can resolve a layout where the Cloudscape chat-components
+# subpath imports and the react-markdown/remark/rehype packages don't type-
+# resolve, failing `tsc && vite build` on a fresh clone (TS2307/TS7031).
+!security/ai-iam-access-analyzer-assistant/frontend/package-lock.json
+
 # Build outputs
 dist/
 build/
