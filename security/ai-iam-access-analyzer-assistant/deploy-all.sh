@@ -297,10 +297,26 @@ fi
 # Step 1: Build frontend
 echo "[1/4] Building React frontend..."
 pushd "$SCRIPT_DIR/frontend" > /dev/null
-if [ ! -d "node_modules" ]; then
+# Deterministic install from the committed lockfile. `npm ci` wipes any stale
+# node_modules and installs the EXACT pinned tree, so a clean checkout (and a
+# box with a partial/outdated node_modules) both get the same working deps.
+# The old `if [ ! -d node_modules ]` guard skipped install whenever a stale
+# node_modules existed, which is how the Cloudscape/react-markdown imports
+# ended up unresolved and the build failed. Fall back to `npm install` only if
+# no lockfile is present (shouldn't happen now that it's committed).
+if [ -f package-lock.json ]; then
+    npm ci
+else
+    echo " ⚠ No package-lock.json found — falling back to 'npm install'. Commit the lockfile for reproducible builds." >&2
     npm install
 fi
-npm run build
+# set -euo pipefail (top of script) already aborts on a non-zero build, so a
+# failed `tsc && vite build` can no longer print "Frontend built." and deploy
+# a stale/empty bundle. Make the intent explicit for future readers.
+if ! npm run build; then
+    echo "ERROR: frontend build failed — aborting deploy (not uploading a broken bundle)." >&2
+    exit 1
+fi
 popd > /dev/null
 echo " ✓ Frontend built."
 
@@ -362,7 +378,13 @@ echo "[4/4] Uploading frontend to S3..."
 
 # Rebuild with production env vars
 pushd "$SCRIPT_DIR/frontend" > /dev/null
-npm run build
+# Abort before the S3 sync if this production rebuild fails — otherwise a
+# broken/stale dist/ would be published to the live bucket and served to
+# users with no error surfaced.
+if ! npm run build; then
+    echo "ERROR: frontend production rebuild failed — aborting before S3 upload (not publishing a broken bundle)." >&2
+    exit 1
+fi
 aws s3 sync dist/ "s3://$FRONTEND_BUCKET" --delete --region "$REGION"
 popd > /dev/null
 
