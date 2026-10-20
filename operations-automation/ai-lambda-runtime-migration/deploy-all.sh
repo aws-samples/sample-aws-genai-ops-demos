@@ -141,7 +141,7 @@ if [ -z "$api_url" ] || [ "$api_url" == "None" ]; then
     exit 1
 fi
 
-if [ -z "$user_pool_id" ] || [ -z "$user_pool_client_id" ]; then
+if [ -z "$user_pool_id" ] || [ "$user_pool_id" == "None" ] || [ -z "$user_pool_client_id" ] || [ "$user_pool_client_id" == "None" ]; then
     echo -e "\033[0;31mFailed to get Cognito config from stack outputs\033[0m"
     exit 1
 fi

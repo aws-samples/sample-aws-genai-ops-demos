@@ -131,12 +131,12 @@ $apiUrl = aws cloudformation describe-stacks --stack-name $apiStackName --query 
 $userPoolId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
 $userPoolClientId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
 
-if ([string]::IsNullOrEmpty($apiUrl)) {
+if ([string]::IsNullOrEmpty($apiUrl) -or $apiUrl -eq "None") {
     Write-Host "Failed to get API URL from stack outputs" -ForegroundColor Red
     exit 1
 }
 
-if ([string]::IsNullOrEmpty($userPoolId) -or [string]::IsNullOrEmpty($userPoolClientId)) {
+if ([string]::IsNullOrEmpty($userPoolId) -or $userPoolId -eq "None" -or [string]::IsNullOrEmpty($userPoolClientId) -or $userPoolClientId -eq "None") {
     Write-Host "Failed to get Cognito config from stack outputs" -ForegroundColor Red
     exit 1
 }
