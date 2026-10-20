@@ -77,7 +77,7 @@ from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create
 from aws_durable_execution_sdk_python.types import WaitForCallbackContext
 
 from aws_utils import get_region, get_transform_region  # staged copy of shared/utils/aws_utils.py
-from common import results_by_index, DIFF_SUMMARY_MAX_CHARS, FAILURE_DETAIL_MAX_CHARS
+from common import results_by_index, error_code, DIFF_SUMMARY_MAX_CHARS, FAILURE_DETAIL_MAX_CHARS
 import inventory
 import discover
 import transform_runtimes
@@ -985,7 +985,7 @@ def _run_batch(event: dict, context: DurableContext) -> dict:
             transformed = {"ok": False, "status": "FAILED", "failure_code": "TIMED_OUT"}
             ctx.step(settle_timed_out(resolved), name=f"settle-{index}")
         except CallbackError as exc:                       # submitter exhausted / external failure
-            ctx.logger.error("transform-%d: %s", index, exc)
+            ctx.logger.error("transform-%d failed: %s", index, error_code(exc))
             transformed = {"ok": False, "status": "FAILED", "failure_code": "TRANSFORM_FAILED",
                            "detail": str(exc)[:FAILURE_DETAIL_MAX_CHARS]}
             ctx.step(settle_failed(resolved, transformed["detail"]),

@@ -28,7 +28,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
-from common import DIFF_SUMMARY_MAX_CHARS
+from common import DIFF_SUMMARY_MAX_CHARS, error_code
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _read_result(job_id: str):
             Bucket=BUCKET_NAME, Key=f"migrations/{job_id}/result.json")
         return json.loads(obj["Body"].read())
     except Exception as exc:  # absent/unreadable result => derive from build state
-        logger.info("no result.json for job %s: %s", job_id, exc)
+        logger.info("no result.json for job %s: %s", job_id, error_code(exc))
         return None
 
 
@@ -221,7 +221,7 @@ def _complete_callback(callback_id: str, build_id: str, payload: dict) -> bool:
         logger.error("callback send failed for build %s callback %s: %s", build_id, callback_id, code)
         raise
     except BotoCoreError as exc:
-        logger.error("callback send failed for build %s callback %s: %s", build_id, callback_id, exc)
+        logger.error("callback send failed for build %s callback %s: %s", build_id, callback_id, error_code(exc))
         raise
 
 

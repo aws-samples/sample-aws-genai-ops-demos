@@ -20,7 +20,7 @@ from urllib.request import urlopen
 import boto3
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
-from common import convert_floats, extract_region, extract_function_name
+from common import convert_floats, extract_region, extract_function_name, error_code
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ def _read_text(extract_path: str, rel_path: str) -> Optional[str]:
         with open(os.path.join(extract_path, rel_path), "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     except Exception as exc:  # an unreadable file is skipped, not fatal
-        logger.warning("could not read %s: %s", rel_path, exc)
+        logger.warning("could not read %s: %s", rel_path, error_code(exc))
         return None
 
 

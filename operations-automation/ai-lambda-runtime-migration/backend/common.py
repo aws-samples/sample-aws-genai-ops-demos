@@ -9,6 +9,19 @@ from decimal import Decimal
 from typing import Any, List
 
 from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
+from botocore.exceptions import ClientError
+
+
+def error_code(exc: Exception) -> str:
+    """The AWS error code of a failed call, or the exception class name.
+
+    Log lines carry this instead of the exception itself: a botocore error
+    message can echo request parameters, and the session behind the call may
+    hold assumed-role credentials, so a raw exception never reaches a log.
+    """
+    if isinstance(exc, ClientError):
+        return (exc.response.get("Error") or {}).get("Code") or exc.__class__.__name__
+    return exc.__class__.__name__
 
 # Caps on free-text fields stored on the mig# item or carried in the build
 # callback payload, so one verbose diff or stack trace cannot bloat a row.

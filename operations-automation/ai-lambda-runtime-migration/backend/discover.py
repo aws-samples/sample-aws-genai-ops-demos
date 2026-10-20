@@ -29,7 +29,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
-from common import convert_floats, extract_region, extract_function_name
+from common import convert_floats, extract_region, extract_function_name, error_code as _error_code
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -244,7 +244,7 @@ def query_trusted_advisor(session: boto3.session.Session, region: str) -> Dict[s
             msg = "AWS Business/Enterprise Support plan required for Trusted Advisor access."
             logger.warning(msg)
             return {"functions": [], "message": msg}
-        logger.error("Trusted Advisor ClientError: %s", e)
+        logger.error("Trusted Advisor call failed: %s", error_code)
         raise
 
     flagged = response.get("result", {}).get("flaggedResources", [])
@@ -295,18 +295,6 @@ def query_trusted_advisor(session: boto3.session.Session, region: str) -> Dict[s
 # ---------------------------------------------------------------------------
 # Enrichment — Lambda API + CloudWatch
 # ---------------------------------------------------------------------------
-
-def _error_code(exc: Exception) -> str:
-    """The AWS error code of a failed call, or the exception class name.
-
-    Log lines carry this instead of the exception itself: a botocore error
-    message can echo request parameters, and the session behind the call may
-    hold assumed-role credentials, so the raw exception never reaches a log.
-    """
-    if isinstance(exc, ClientError):
-        return (exc.response.get("Error") or {}).get("Code") or exc.__class__.__name__
-    return exc.__class__.__name__
-
 
 def enrich_function(session: boto3.session.Session, function_arn: str, default_region: str) -> Dict[str, Any]:
     """Enrich a function with Lambda config, tags, and CloudWatch metrics.
