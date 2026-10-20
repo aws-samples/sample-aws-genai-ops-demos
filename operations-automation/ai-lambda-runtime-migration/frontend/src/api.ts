@@ -170,66 +170,30 @@ export const getStats = async (): Promise<{ rollups: RollupRecord[] }> => {
   return { rollups: result.rollups || [] };
 };
 
-// --- Settings (Git access + code-behind detection method) ------------------
-// Non-secret configuration for the migration phase: which Git platform the
-// build pushes the upgrade branch to, and how the tool detects each function's
-// source repo.
-// The token VALUE is never captured, sent, or stored — only the NAME/ARN of a
-// Secrets Manager secret (secretRef) the tool reads server-side.
-
-export type GitPlatform = 'github' | 'gitlab' | 'bitbucket' | 'codecommit';
-export type DetectionMethod = 'tag' | 'ai';
+// --- Settings (repository detection) ---------------------------------------
+// The only configuration the migration reads: the tag keys that name each
+// function's CodeCommit repository and source branch (migrate.resolve_and_verify).
+// No credential is involved: the build authenticates to CodeCommit with its
+// IAM role.
 
 interface GitSettings {
-  platform: GitPlatform;
-  host?: string;
-  org?: string;
-  secretRef?: string;        // name/ARN of a Secrets Manager secret — never a token
-  detectionMethod: DetectionMethod;
-  repoTag?: string;          // tag key whose value is the source repository
-  branchTag?: string;        // optional tag key whose value is the release branch
+  repoTag?: string;          // tag key whose value is the CodeCommit repository name
+  branchTag?: string;        // optional tag key whose value is the source branch
   updated_at?: string;
 }
 
-// Read the stored non-secret settings. Returns {} (as a partial) when unset.
+// Read the stored settings. Returns {} (as a partial) when unset.
 export const getSettings = async (): Promise<{ settings: Partial<GitSettings> }> => {
   const result = await invokeAction({ action: 'get_settings' });
   return { settings: result.settings || {} };
 };
 
-// Persist the non-secret settings. The backend whitelists the fields it stores;
-// no token value is ever included in the payload.
+// Persist the settings. The backend whitelists the fields it stores.
 export const saveSettings = async (
   settings: GitSettings,
 ): Promise<{ settings: Partial<GitSettings>; saved: boolean }> => {
   const result = await invokeAction({ action: 'put_settings', settings });
   return { settings: result.settings || {}, saved: !!result.saved };
-};
-
-// One function's resolved source repository, as returned by the AI detection
-// playground. `repository` is null when the resolver could not resolve it with
-// confidence — that function is sent to review, never guessed.
-export interface RepoResolution {
-  function_arn: string;
-  function_name: string;
-  runtime?: string;
-  region?: string;
-  account_id?: string;
-  account_name?: string;
-  repository: string | null;
-  confidence: number;       // 0..1
-  evidence: string[];
-}
-
-// Run the read-only AI code-behind detection playground: the backend picks up
-// to 3 random inventory functions and, for each, asks Nova to infer the source
-// repository with a confidence score and evidence. Nothing is written and no
-// pull request is opened.
-export const resolveReposDemo = async (
-  prompt: string,
-): Promise<{ results: RepoResolution[] }> => {
-  const result = await invokeAction({ action: 'resolve_repos_demo', prompt });
-  return { results: result.results || [] };
 };
 
 // --- Refresh pipeline (Lambda durable function) -----------------------------

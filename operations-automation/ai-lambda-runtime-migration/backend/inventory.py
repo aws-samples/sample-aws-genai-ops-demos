@@ -53,43 +53,41 @@ def scan_inventory(prefix: str = "fn#") -> list:
     return decimals_to_native(items)
 
 
-# One row holds the demo's non-secret Git/detection configuration. It lives in
-# the same table behind a dedicated key prefix, so the inventory scan (prefix
-# "fn#") and the rollup read (prefix "rollup#") never see it.
+# One row holds the demo's repository-detection configuration. It lives in the
+# same table behind a dedicated key prefix, so the inventory scan (prefix "fn#")
+# and the rollup read (prefix "rollup#") never see it.
 SETTINGS_KEY = "settings#git"
 
-# The ONLY keys ever persisted. A token VALUE is never among them: the form
-# captures the NAME/ARN of a Secrets Manager secret (secretRef), never the
-# secret itself, so no credential ever reaches this table.
+# The ONLY keys ever persisted, and exactly the keys the migration reads
+# (migrate.resolve_and_verify). Nothing else is stored, so no credential ever
+# reaches this table.
 #
-# repoTag  = the resource tag key whose value is the source repository.
-# branchTag = an OPTIONAL resource tag key whose value is the release branch.
-SETTINGS_ALLOWED = ("platform", "host", "org", "secretRef", "detectionMethod",
-                    "repoTag", "branchTag")
+# repoTag   = the resource tag key whose value is the CodeCommit repository name.
+# branchTag = an OPTIONAL resource tag key whose value is the source branch.
+SETTINGS_ALLOWED = ("repoTag", "branchTag")
 
 
 def read_settings() -> dict:
-    """The stored non-secret Git/detection config, or {} when unset.
+    """The stored repository-detection config, or {} when unset.
 
-    An absent row is an empty dict so callers render / apply defaults. No token
-    value is ever stored here, so none is ever returned.
+    An absent row is an empty dict so callers render / apply defaults (repoTag
+    falls back to "source-repo", branchTag to the repository's default branch).
     """
     resp = table().get_item(Key={"item_key": SETTINGS_KEY})
     return decimals_to_native(resp.get("Item")) or {}
 
 
-def resolve_repo_from_tags(tags, repo_tag, branch_tag, org=None):
+def resolve_repo_from_tags(tags, repo_tag, branch_tag):
     """Resolve a function's source repository + branch from its resource tags.
 
     Pure and side-effect free (no AWS, no I/O): the single source of truth for
-    how the two configured tags combine, used by the API playground and by the
-    migration orchestrator. Never raises — a non-dict `tags`, a missing key, or
-    a non-string value all degrade to None.
+    how the two configured tags combine, used by the migration orchestrator.
+    Never raises — a non-dict `tags`, a missing key, or a non-string value all
+    degrade to None.
 
     - repository: value of tags[repo_tag] when present and non-empty, else None.
-      When `org` is a non-empty string and the resolved value has no "/" (no
-      owner prefix), the value is prefixed as "{org}/{value}". A value that
-      already contains "/" is left as is.
+      The value is the CodeCommit repository name as is; nothing is prepended
+      (a CodeCommit name cannot contain "/").
     - branch: value of tags[branch_tag] when branch_tag is set and present with
       a non-empty value, else None.
 
@@ -102,10 +100,7 @@ def resolve_repo_from_tags(tags, repo_tag, branch_tag, org=None):
     if raw_repo is not None:
         value = str(raw_repo).strip()
         if value:
-            if org and str(org).strip() and "/" not in value:
-                repository = f"{str(org).strip()}/{value}"
-            else:
-                repository = value
+            repository = value
 
     branch = None
     if branch_tag:

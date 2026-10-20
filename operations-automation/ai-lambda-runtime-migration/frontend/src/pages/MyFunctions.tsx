@@ -756,7 +756,7 @@ export default function MyFunctions() {
           action={<Button onClick={() => navigate('/settings')}>Open Settings</Button>}
         >
           Migrate will look for a <Box variant="code" display="inline">{DEFAULT_REPO_TAG}</Box> tag on each function
-          to find its repository. Set your Git platform and tag names in Settings to change that. Scanning
+          to find its CodeCommit repository. Set the tag names in Settings to change that. Scanning
           does not need any settings.
         </Alert>
       )}

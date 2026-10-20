@@ -296,10 +296,15 @@ export default function HowItWorksPage() {
 
         <Section id="git-hosts" title="Other git hosts">
           <Box variant="p">
-            This demo targets AWS CodeCommit. GitLab, GitHub and Bitbucket differ only in how the build
-            authenticates (the secret named by <Box variant="code">secretRef</Box> in Settings) and in the
+            This demo targets AWS CodeCommit: the build authenticates with its IAM role, and the repository
+            is looked up in the function's account and region. GitLab, GitHub and Bitbucket differ only in
+            how the build authenticates (a token the build would read from AWS Secrets Manager) and in the
             branch link; the flow itself is a plain <Box variant="code">git clone</Box> and{' '}
             <Box variant="code">git push</Box> of one branch.
+          </Box>
+          <Box variant="p">
+            The repository tag and the optional branch tag on the Settings page are the only configuration
+            the migration reads.
           </Box>
         </Section>
       </SpaceBetween>

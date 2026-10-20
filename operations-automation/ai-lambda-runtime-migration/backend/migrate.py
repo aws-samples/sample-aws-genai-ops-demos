@@ -580,8 +580,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     settings = inventory.read_settings()
     repo_tag = settings.get("repoTag") or "source-repo"
     branch_tag = settings.get("branchTag")
-    org = settings.get("org")
-    resolved = inventory.resolve_repo_from_tags(fn_item.get("tags"), repo_tag, branch_tag, org)
+    resolved = inventory.resolve_repo_from_tags(fn_item.get("tags"), repo_tag, branch_tag)
     repo_name = resolved.get("repository")
     branch = resolved.get("branch")
 

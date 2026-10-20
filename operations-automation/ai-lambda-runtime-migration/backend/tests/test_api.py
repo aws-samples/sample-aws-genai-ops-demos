@@ -213,18 +213,23 @@ class _SettingsTable:
         return {"Item": self.item} if self.item is not None else {}
 
 
+def test_settings_allowed_is_exactly_what_the_migration_reads():
+    # The whitelist and the read path (migrate.resolve_and_verify) name the same
+    # keys, so nothing is stored that no migration ever reads.
+    assert inventory.SETTINGS_ALLOWED == ("repoTag", "branchTag")
+
+
 def test_put_settings_whitelists_and_strips_secret(monkeypatch):
     table = _SettingsTable()
     monkeypatch.setattr(api, "_table", lambda: table)
 
     resp = api.handler({"action": "put_settings", "settings": {
+        "repoTag": "Git:Repository",
+        "branchTag": "git:branch",
+        # Not settings fields: dropped like any unknown key.
         "platform": "gitlab",
-        "host": "https://gitlab.example.com",
         "org": "acme",
         "secretRef": "my-git-token-secret",
-        "detectionMethod": "tag",
-        # Not a settings field (removed): dropped like any unknown key.
-        "removedRepoTagField": "source-repo",
         # These must NEVER be persisted:
         "token": "should-be-dropped",
         "tokenValue": "should-be-dropped",
@@ -235,22 +240,21 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
     written = table.put_item_arg
     assert written["item_key"] == inventory.SETTINGS_KEY
     # Only the whitelisted keys (plus item_key/updated_at) are written.
-    assert written["platform"] == "gitlab"
-    assert written["secretRef"] == "my-git-token-secret"
-    assert "removedRepoTagField" not in written
+    assert written["repoTag"] == "Git:Repository"
+    assert written["branchTag"] == "git:branch"
     assert "updated_at" in written
-    for forbidden in ("token", "tokenValue", "unknown"):
+    for forbidden in ("platform", "org", "secretRef", "token", "tokenValue", "unknown"):
         assert forbidden not in written
         assert forbidden not in resp["settings"]
 
 
 def test_get_settings_returns_stored_item(monkeypatch):
-    stored = {"item_key": inventory.SETTINGS_KEY, "platform": "github", "org": "acme",
-              "detectionMethod": "tag", "repoTag": "source-repo"}
+    stored = {"item_key": inventory.SETTINGS_KEY, "repoTag": "source-repo",
+              "branchTag": "git-branch"}
     monkeypatch.setattr(inventory, "table", lambda: _SettingsTable(item=stored))
     resp = api.handler({"action": "get_settings"})
-    assert resp["settings"]["platform"] == "github"
     assert resp["settings"]["repoTag"] == "source-repo"
+    assert resp["settings"]["branchTag"] == "git-branch"
 
 
 def test_get_settings_empty_when_absent(monkeypatch):
@@ -259,38 +263,24 @@ def test_get_settings_empty_when_absent(monkeypatch):
     assert resp["settings"] == {}
 
 
-def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
+def test_put_settings_omits_absent_branch_tag(monkeypatch):
+    # The UI sends no branchTag when the field is blank; nothing is written for it.
     table = _SettingsTable()
     monkeypatch.setattr(api, "_table", lambda: table)
 
-    resp = api.handler({"action": "put_settings", "settings": {
-        "platform": "github",
-        "org": "acme",
-        "detectionMethod": "tag",
-        "repoTag": "Git:Repository",
-        "branchTag": "git:branch",
-        # Not a settings field (removed): dropped like any unknown key.
-        "removedRepoTagField": "source-repo",
-        # Must NEVER be persisted:
-        "token": "should-be-dropped",
-    }})
+    resp = api.handler({"action": "put_settings", "settings": {"repoTag": "Git:Repository"}})
 
     assert resp["saved"] is True
     written = table.put_item_arg
     assert written["repoTag"] == "Git:Repository"
-    assert written["branchTag"] == "git:branch"
-    assert "removedRepoTagField" not in written
-    assert resp["settings"]["repoTag"] == "Git:Repository"
-    assert resp["settings"]["branchTag"] == "git:branch"
-    assert "token" not in written
-    assert "token" not in resp["settings"]
+    assert "branchTag" not in written
+    assert resp["settings"] == {"repoTag": "Git:Repository"}
 
 
 def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
     # A stored attribute that is not a settings field is returned as-is and
     # never promoted to repoTag; the UI falls back to its default tag.
-    stored = {"item_key": inventory.SETTINGS_KEY, "platform": "github", "org": "acme",
-              "detectionMethod": "tag", "removedRepoTagField": "source-repo"}
+    stored = {"item_key": inventory.SETTINGS_KEY, "removedRepoTagField": "source-repo"}
     table = _SettingsTable(item=stored)
     monkeypatch.setattr(inventory, "table", lambda: table)
     resp = api.handler({"action": "get_settings"})
@@ -299,15 +289,18 @@ def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
     assert table.put_item_arg is None
 
 
-def test_resolve_repo_from_tags_repo_only_prepends_org():
-    # Short slug gets the org prefix.
+def test_resolve_repo_from_tags_repo_value_used_as_is():
+    # The tag value is the CodeCommit repository name; nothing is prepended.
     assert inventory.resolve_repo_from_tags(
-        {"Git:Repository": "payments-service"}, "Git:Repository", None, org="my-org"
-    ) == {"repository": "my-org/payments-service", "branch": None}
-    # A value already containing "/" is NOT re-prefixed.
+        {"Git:Repository": "payments-service"}, "Git:Repository", None
+    ) == {"repository": "payments-service", "branch": None}
+    # Surrounding whitespace is trimmed; an empty value resolves to None.
     assert inventory.resolve_repo_from_tags(
-        {"Git:Repository": "acme/payments"}, "Git:Repository", None, org="my-org"
-    ) == {"repository": "acme/payments", "branch": None}
+        {"Git:Repository": "  payments-service "}, "Git:Repository", None
+    ) == {"repository": "payments-service", "branch": None}
+    assert inventory.resolve_repo_from_tags(
+        {"Git:Repository": "   "}, "Git:Repository", None
+    ) == {"repository": None, "branch": None}
 
 
 def test_resolve_repo_from_tags_missing_and_branch():
@@ -317,9 +310,9 @@ def test_resolve_repo_from_tags_missing_and_branch():
     ) == {"repository": None, "branch": None}
     # Repo + branch present -> both resolved.
     assert inventory.resolve_repo_from_tags(
-        {"Git:Repository": "acme/payments", "git:branch": "release"},
+        {"Git:Repository": "payments", "git:branch": "release"},
         "Git:Repository", "git:branch"
-    ) == {"repository": "acme/payments", "branch": "release"}
+    ) == {"repository": "payments", "branch": "release"}
     # tags=None and a non-dict tags do not raise and resolve to all-None.
     assert inventory.resolve_repo_from_tags(None, "Git:Repository", "git:branch") == {
         "repository": None, "branch": None}
@@ -346,11 +339,9 @@ def test_progress_discover_single_cell_shows_derived_total():
     assert discover_phase["running"] == ["hub-us-east-1"]
 
 
-# --- AI code-behind detection playground (resolve_repos_demo) --------------
-#
-# Read-only action: picks up to 3 random inventory functions and asks Nova to
-# resolve each one's source repository. Bedrock is mocked (no real AWS call);
-# the inventory scan is monkeypatched the same way the other action tests do.
+# ---------------------------------------------------------------------------
+# Migration surface (Phase 2): POST /migrate, GET /migrate/{arn+}, merge
+# ---------------------------------------------------------------------------
 
 def _fn_rows(n):
     """n function inventory rows (fn# prefix), as inventory.scan_inventory returns them."""
@@ -362,95 +353,6 @@ def _fn_rows(n):
         for i in range(n)
     ]
 
-
-class _FakeBedrock:
-    """A bedrock-runtime stand-in whose converse returns a canned toolUse block.
-
-    When `raises` is True, converse raises so the per-function graceful fallback
-    is exercised."""
-    def __init__(self, raises=False):
-        self.raises = raises
-        self.calls = 0
-
-    def converse(self, **_kwargs):
-        self.calls += 1
-        if self.raises:
-            raise RuntimeError("Bedrock unavailable")
-        return {"output": {"message": {"content": [
-            {"toolUse": {"input": {
-                "repository": "acme/orders-service",
-                "confidence": 0.91,
-                "evidence": ["Function name prefix matches the repo",
-                             "service tag resolves to one repo in the org"],
-            }}}
-        ]}}}
-
-
-def _patch_bedrock(monkeypatch, fake):
-    """Route api.boto3.client('bedrock-runtime', ...) to `fake`; other clients
-    are never built in this action, so return the fake for any name."""
-    monkeypatch.setattr(api.boto3, "client", lambda *_a, **_k: fake)
-
-
-def test_resolve_repos_demo_registered():
-    assert "resolve_repos_demo" in api._ACTIONS
-
-
-def test_resolve_repos_demo_normal_three_results(monkeypatch):
-    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(5))
-    monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
-    fake = _FakeBedrock()
-    _patch_bedrock(monkeypatch, fake)
-
-    resp = api.handler({"action": "resolve_repos_demo", "prompt": "repos named after the service"})
-    results = resp["results"]
-    assert len(results) == 3
-    assert fake.calls == 3  # one Bedrock call per picked function
-    for r in results:
-        assert r["repository"] == "acme/orders-service"
-        assert r["confidence"] == 0.91
-        assert isinstance(r["evidence"], list) and r["evidence"]
-        # function_name derived from the arn (segment after :function:).
-        assert r["function_name"] == r["function_arn"].split(":")[6]
-        assert r["runtime"] == "python3.9"
-
-
-def test_resolve_repos_demo_per_function_fallback_on_converse_error(monkeypatch):
-    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(3))
-    monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
-    _patch_bedrock(monkeypatch, _FakeBedrock(raises=True))
-
-    # Must NOT raise; every function degrades gracefully.
-    resp = api.handler({"action": "resolve_repos_demo", "prompt": "x"})
-    results = resp["results"]
-    assert len(results) == 3
-    for r in results:
-        assert r["repository"] is None
-        assert r["confidence"] == 0.0
-        assert len(r["evidence"]) == 1
-
-
-def test_resolve_repos_demo_fewer_than_three_rows(monkeypatch):
-    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(2))
-    monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
-    _patch_bedrock(monkeypatch, _FakeBedrock())
-
-    resp = api.handler({"action": "resolve_repos_demo", "prompt": "x"})
-    assert len(resp["results"]) == 2
-
-
-def test_resolve_repos_demo_zero_rows_returns_empty(monkeypatch):
-    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": [])
-    monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
-    _patch_bedrock(monkeypatch, _FakeBedrock())
-
-    resp = api.handler({"action": "resolve_repos_demo", "prompt": "x"})
-    assert resp == {"results": []}
-
-
-# ---------------------------------------------------------------------------
-# Migration surface (Phase 2): POST /migrate, GET /migrate/{arn+}, merge
-# ---------------------------------------------------------------------------
 
 _MIG_FN_ARN = "arn:aws:lambda:eu-west-3:111:function:fn-0"
 

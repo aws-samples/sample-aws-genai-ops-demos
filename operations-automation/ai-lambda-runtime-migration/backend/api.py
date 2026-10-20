@@ -17,7 +17,6 @@ function, so its role carries the permissions the UI needs.
 import json
 import logging
 import os
-import random
 import re
 import time
 import urllib.parse
@@ -30,7 +29,6 @@ from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
 from common import sanitize_execution_name, transform_has_branch, decimals_to_native as _decimals_to_native
 from inventory import table as _table  # the one DynamoDB Table accessor (reads live in inventory.py)
 from pipeline import normalize_spec, SpecValidationError
-from model_id import model_id as _model_id
 import discover
 import inventory
 import org_accounts
@@ -822,28 +820,25 @@ def get_stats(_body: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Settings (Git access + code-behind detection method)
+# Settings (repository detection: the tag keys the migration reads)
 # ---------------------------------------------------------------------------
 
 # The settings row key, whitelist and read live in inventory.py (shared with the
 # migration orchestrator); only the write stays here.
 
 def get_settings(_body: dict) -> dict:
-    """Return the stored non-secret Git/detection config, or {} when unset.
+    """Return the stored repository-detection config, or {} when unset.
 
     Never 404s: an absent item is an empty object so the UI renders defaults.
-    No token value is ever stored here, so none is ever returned.
     """
     return {"settings": inventory.read_settings()}
 
 
 def put_settings(body: dict) -> dict:
-    """Persist ONLY the whitelisted non-secret fields.
+    """Persist ONLY the whitelisted fields.
 
-    Token VALUES are never accepted or stored: anything outside
-    inventory.SETTINGS_ALLOWED (e.g. a stray `token`/`tokenValue`) is dropped
-    before the write. Only the NAME/ARN of a Secrets Manager secret (secretRef)
-    is kept; the secret itself is read server-side when a migration needs it.
+    Anything outside inventory.SETTINGS_ALLOWED (e.g. a stray `token`) is
+    dropped before the write, so the table never holds a credential.
     """
     incoming = body.get("settings") or {}
     allowed = {k: str(incoming[k]) for k in inventory.SETTINGS_ALLOWED if incoming.get(k) is not None}
@@ -853,186 +848,11 @@ def put_settings(body: dict) -> dict:
     return {"settings": allowed, "saved": True}
 
 
-# ---------------------------------------------------------------------------
-# AI code-behind detection playground (read-only Settings demo)
-# ---------------------------------------------------------------------------
-#
-# A deployed Lambda carries no native attribute pointing to its source
-# repository, so the AI resolver infers it from the function's tags, name, and
-# runtime plus the operator's description of how their repositories are
-# organized. This action picks up to 3 random functions from the existing
-# inventory and asks Nova to resolve a repository + confidence + evidence for
-# each. It is STRICTLY read-only: no DynamoDB write, no UpdateFunctionConfiguration,
-# no pull request. The Bedrock call mirrors assess.assess_with_ai /
-# discover.prioritize_with_bedrock (converse + constrained-decoding toolConfig),
-# and degrades gracefully PER FUNCTION so the action never raises.
-
-# One tool, called once per picked function (mirrors assess.py's one-function
-# -per-call shape; avoids dynamic score_N keys).
-_RESOLVE_TOOL_CONFIG = {
-    "tools": [{
-        "toolSpec": {
-            "name": "submit_repository",
-            "description": "Submit the inferred source repository for one Lambda function",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {
-                    "repository": {
-                        "type": "string",
-                        "description": "owner/repo of the source repository, or an empty string "
-                                       "if it cannot be resolved with confidence",
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence from 0.0 to 1.0 that repository is correct; use a "
-                                       "low value and an empty repository when the signal is weak",
-                    },
-                    "evidence": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Short phrases citing the signals used (tags, name tokens, Git "
-                                       "organization search). Explain a low score too.",
-                    },
-                },
-                "required": ["repository", "confidence", "evidence"],
-            }},
-        }
-    }]
-}
-
-_RESOLVE_SYSTEM_PROMPT = """You are a Lambda source-repository resolver.
-Your job is to infer which Git repository holds a deployed Lambda function's source code.
-A deployed Lambda has no native attribute naming its repository, so you reason from the
-function's name, runtime, tags, account, region, and the operator's description of how their
-repositories are organized.
-You MUST use the submit_repository tool to return your answer. DO NOT respond with plain text.
-When the signal is weak, return an EMPTY repository and a LOW confidence rather than guessing.
-Never invent a repository name."""
-
-
-def _resolve_one_repo(bedrock, fn_row: dict, prompt: str) -> dict:
-    """Ask Nova to resolve the source repository for ONE function.
-
-    Returns {"repository": str|None, "confidence": float(0..1), "evidence": [str]}.
-    On ANY exception or a missing toolUse block, degrades gracefully to a
-    null/zero result with one explanatory evidence string — never raises
-    (mirrors discover.fallback_priorities, per function)."""
-    fallback = {
-        "repository": None,
-        "confidence": 0.0,
-        "evidence": ["Repository resolution was unavailable for this function."],
-    }
-    try:
-        fn_prompt = f"""## Function to resolve:
-- Name: {fn_row.get('function_name', '')}
-- Runtime: {fn_row.get('runtime', '')}
-- Account: {fn_row.get('account_id', '')}
-- Region: {fn_row.get('region', '')}
-- Tags: {json.dumps(fn_row.get('tags', {}) or {}, default=str)}
-
-## How the operator's repositories are organized:
-{prompt or '(no description provided)'}
-
-## Instructions:
-- Resolve the owner/repo of the Git repository that holds this function's source.
-- Cite the signals you used as short evidence phrases.
-- If the signal is weak, return an EMPTY repository and a LOW confidence, and say why.
-- You MUST use the submit_repository tool. DO NOT respond with plain text."""
-
-        response = bedrock.converse(
-            modelId=_model_id(),
-            system=[{"text": _RESOLVE_SYSTEM_PROMPT}],
-            messages=[{"role": "user", "content": [{"text": fn_prompt}]}],
-            inferenceConfig={"temperature": 0},
-            toolConfig=_RESOLVE_TOOL_CONFIG,
-        )
-        content = response.get("output", {}).get("message", {}).get("content", [])
-        for block in content:
-            if "toolUse" in block:
-                tool_input = block["toolUse"].get("input", {}) or {}
-                repo = tool_input.get("repository")
-                repo = repo.strip() if isinstance(repo, str) else None
-                repo = repo or None
-                try:
-                    conf = float(tool_input.get("confidence", 0.0))
-                except (TypeError, ValueError):
-                    conf = 0.0
-                conf = max(0.0, min(1.0, conf))
-                raw_ev = tool_input.get("evidence") or []
-                evidence = [str(e) for e in raw_ev if str(e).strip()] if isinstance(raw_ev, list) else []
-                if not evidence:
-                    evidence = ["No evidence returned for this function."]
-                return {"repository": repo, "confidence": conf, "evidence": evidence}
-        # No toolUse block — degrade gracefully.
-        return dict(fallback)
-    except Exception:
-        return dict(fallback)
-
-
-def resolve_repos_demo(body: dict) -> dict:
-    """Read-only AI playground: resolve source repositories for sample functions.
-
-    Picks up to `count` (default 3, clamped 1..3) random functions from the
-    existing inventory and asks Nova to infer each one's source repository,
-    confidence, and evidence. Nothing is written and no pull request is opened.
-    Per-function Bedrock failures degrade gracefully; the action never raises.
-    """
-    prompt = str(body.get("prompt") or "")
-    try:
-        count = int(body.get("count", 3))
-    except (TypeError, ValueError):
-        count = 3
-    count = max(1, min(3, count))
-
-    rows = _fill_hub_display(inventory.scan_inventory(prefix="fn#"))
-    if not rows:
-        return {"results": []}
-
-    picked = random.sample(rows, min(count, len(rows)))
-
-    # One Bedrock client for the whole batch (at most 3 calls, demo scale). If
-    # constructing the client itself fails, every picked function degrades to
-    # the per-function fallback via _resolve_one_repo(None, ...).
-    try:
-        bedrock = boto3.client("bedrock-runtime", region_name=get_region())
-    except Exception:
-        bedrock = None
-
-    results = []
-    for row in picked:
-        function_arn = row.get("function_arn", "")
-        parts = function_arn.split(":")
-        function_name = parts[6] if len(parts) >= 7 else function_arn
-        fn_row = {**row, "function_name": function_name}
-        if bedrock is None:
-            resolution = {
-                "repository": None,
-                "confidence": 0.0,
-                "evidence": ["Repository resolution was unavailable for this function."],
-            }
-        else:
-            resolution = _resolve_one_repo(bedrock, fn_row, prompt)
-        results.append({
-            "function_arn": function_arn,
-            "function_name": function_name,
-            "runtime": row.get("runtime", ""),
-            "region": row.get("region", ""),
-            "account_id": row.get("account_id", ""),
-            "account_name": row.get("account_name", ""),
-            "repository": resolution["repository"],
-            "confidence": resolution["confidence"],
-            "evidence": resolution["evidence"],
-        })
-
-    return _decimals_to_native({"results": results})
-
-
 _ACTIONS = {
     "list_functions": list_functions,
     "get_stats": get_stats,
     "get_settings": get_settings,
     "put_settings": put_settings,
-    "resolve_repos_demo": resolve_repos_demo,
 }
 
 
