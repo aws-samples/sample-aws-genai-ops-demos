@@ -8,6 +8,7 @@ This repository contains deployable code samples demonstrating how generative AI
 |-----------|--------|-------------|------------|
 | AI-Powered Security Posture with Prowler + DevOps Agent | Security | Continuous Prowler scans with Nova-generated remediation playbooks and AWS DevOps Agent incident dispatch, surfaced in a React dashboard | [security/prowler-security-findings-agent/](security/prowler-security-findings-agent/README.md) |
 | AI-Powered Graviton Migration Assessment | Cost Optimization | Get comprehensive migration assessment with cost analysis and ready-to-use migration artifacts for any codebase | [cost-optimization/ai-graviton-migration-assessment/](cost-optimization/ai-graviton-migration-assessment/README.md) |
+| AI Dataset Training Audit | Operations Automation | Pre-flight validation for LLM fine-tuning datasets: seven checks (schema, duplicates, PII via Comprehend, viability, cost) producing a GO/NO-GO/GO-WITH-FIXES verdict and 0–100 quality score before any GPU spend | [operations-automation/ai-dataset-training-audit/](operations-automation/ai-dataset-training-audit/README.md) |
 | AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Operations Automation | Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
 | AI Password Reset Chatbot | Operations Automation | Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
@@ -33,6 +34,7 @@ cost-optimization/
 ├── ai-graviton-migration-assessment/
 └── aws-genai-cost-optimization-mcp-server/
 operations-automation/
+├── ai-dataset-training-audit/
 ├── ai-documentation-generation/
 ├── ai-lambda-runtime-migration/
 ├── ai-legacy-system-browser-automation/

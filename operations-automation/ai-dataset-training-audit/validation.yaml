@@ -1,0 +1,33 @@
+# validation.yaml — AI Dataset Training Audit (DART)
+#
+# The demo-validation workflow reads this file to deploy, verify, and tear the
+# demo down in a test account. See .kiro/steering/contributor-guide.md
+# ("Demo Validation (validation.yaml)") for the full schema.
+#
+# The CDK path is the validated path. <region> is substituted by the workflow
+# with the ambient region before running.
+
+# The demo's own CDK deploy command, run from the demo folder.
+deploy_command: ["./deploy-all.sh"]
+
+# Teardown. The stack is named explicitly so destroy targets exactly the stack
+# in `stacks`. `-c aws:cdk:bundling-stacks=[]` skips the DockerImageAsset build
+# on the destroy re-synth, so destroy needs no Docker daemon or AWS image build.
+destroy_command: ["npx", "-y", "cdk", "destroy", "DatasetTrainingAudit-<region>", "--force", "--no-cli-pager", "-c", "aws:cdk:bundling-stacks=[]"]
+
+# This demo uses cdk/, not the default infrastructure/cdk/.
+destroy_subdir: "cdk"
+
+# CloudFormation stack to confirm deployed, then confirm gone.
+stacks:
+  - "DatasetTrainingAudit-<region>"
+
+# Deterministic deploy/destroy check: functional success depends on manually
+# enabled Bedrock model access, which CI cannot drive.
+verify: "deterministic"
+
+notes: >
+  Requires Amazon Bedrock model access (the configured Claude Sonnet model
+  enabled in the account/region) and Amazon Comprehend DetectPiiEntities
+  availability. The CDK and Terraform paths cannot both be deployed into the
+  same account+region.
