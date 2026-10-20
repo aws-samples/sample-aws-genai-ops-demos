@@ -8,6 +8,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 // The CodeBuild role scopes its git permissions to exactly the fixture repo.
 import { FIXTURE_REPO_NAME } from './mock-fixture-stack';
+import { getTransformRegion } from '../../../../shared/utils/aws-utils';
 
 export interface TransformStackProps extends cdk.StackProps {
   /** Name of the existing migration-artifacts bucket (DataStack.bucket). */
@@ -131,15 +132,14 @@ export class TransformStack extends cdk.Stack {
       // The build tries AWS Transform in the DEPLOY region first and only uses
       // TRANSFORM_FALLBACK_REGION if atx reports the deploy region is not a
       // Transform region (there is no way to query Transform availability ahead
-      // of time — see the buildspec). The default eu-central-1 is the EU
-      // Transform control-plane region and routes Bedrock inference back to
-      // eu-west-3, keeping data in-region; the orchestrator overrides it per the
-      // deploy region's geo.
+      // of time — see the buildspec).
       environmentVariables: {
         REPOSITORY_URL: { value: '' },
         TARGET_RUNTIME: { value: '' },
         TRANSFORM_NAME: { value: '' },
-        TRANSFORM_FALLBACK_REGION: { value: 'eu-central-1' },
+        // Default only: the orchestrator passes the resolved fallback on every
+        // start-build. Same helper, same geo mapping as the Python side.
+        TRANSFORM_FALLBACK_REGION: { value: getTransformRegion(this.region) },
         JOB_ID: { value: '' },
         OUTPUT_BUCKET: { value: props.bucketName },
       },

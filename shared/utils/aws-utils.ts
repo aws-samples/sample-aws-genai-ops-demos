@@ -57,21 +57,10 @@ export function getAccountId(): string | null {
 }
 
 /**
- * AWS Transform CUSTOM (code transformation, the `atx custom` product) regions,
- * per the AWS Transform user guide "Supported Regions". The guide also lists
- * Asia Pacific (Singapore) "VMware agents only" and South America (Sao Paulo)
- * "Mainframe modernization agents only" -- OTHER Transform products, NOT custom
- * code transformation, so they are deliberately excluded here.
- *
- * WHY A HARDCODED LIST (a deliberate exception, not laziness): Transform
- * availability cannot be detected at runtime. The AWS CLI has no `transform`
- * service, and no transform/transform-custom/atx service id is published in SSM
- * global-infrastructure. The only component that knows is the `atx` CLI, which
- * we install inside CodeBuild at migration time and refuse to force as a
- * deploy/setup prerequisite just to probe a region. So the set is stated here,
- * taken verbatim from the user guide. The staleness risk is contained: this
- * list only chooses a FALLBACK; the migration build always tries the actual
- * deploy region first and lets atx accept or reject it.
+ * AWS Transform CUSTOM (code transformation, the `atx custom` product) regions.
+ * Static on purpose: Transform availability cannot be probed at runtime, and the
+ * list only picks a FALLBACK (the deploy region is always tried first). See
+ * shared/utils/aws_utils.py TRANSFORM_REGIONS for the rationale and the source.
  *
  * Mirrors aws_utils.py TRANSFORM_REGIONS -- keep in sync.
  */

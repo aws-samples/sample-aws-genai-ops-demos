@@ -66,13 +66,14 @@ phases:
       # AWS Transform custom is not offered in every region, and there is NO way
       # to query its region availability ahead of time: the AWS CLI has no
       # transform service, and `transform-custom` is not published in SSM
-      # global-infrastructure. So we do NOT keep a static region list — we let
-      # atx itself be the source of truth. Attempt the deploy region (AWS_REGION)
-      # FIRST; only if atx rejects it as not-a-Transform-region do we retry once
-      # in a geo fallback (TRANSFORM_FALLBACK_REGION, derived at start-build from
-      # the deploy region's partition/geo so Bedrock inference stays in-geo).
-      # This is self-correcting: when AWS adds Transform to the deploy region,
-      # the first attempt simply succeeds and the fallback is never used.
+      # global-infrastructure. A static list can only pick the fallback; the
+      # deploy region is still tried first, with atx as the source of truth.
+      # Attempt the deploy region (AWS_REGION) FIRST; only if atx rejects it as
+      # not-a-Transform-region do we retry once in a geo fallback
+      # (TRANSFORM_FALLBACK_REGION, derived at start-build from the deploy
+      # region's geo so Bedrock inference stays in-geo). This is self-correcting:
+      # when AWS adds Transform to the deploy region, the first attempt simply
+      # succeeds and the fallback is never used.
       #
       # atx has been observed to EXIT 0 even on a hard failure (unresolvable
       # endpoint, config validation), so success is decided by scanning the log,
