@@ -114,7 +114,7 @@ if ($MultiAccount -and $orgRollout) {
     $orgStackName = "LambdaRuntimeMigrationOrg-$region"
     Write-Host "`nDeploying org stack (spoke role StackSet)..." -ForegroundColor Yellow
     Write-Host "      (Service-managed StackSet placing the read-only LambdaRuntimeMigrationScanRole in every account under $OrgTargets)" -ForegroundColor Gray
-    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -CdkContext @("multiAccount=true", "orgTargets=$OrgTargets", "hubAccountId=$hubAccount")
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -CdkContext @("orgTargets=$OrgTargets", "hubAccountId=$hubAccount")
     if ($LASTEXITCODE -ne 0) { Write-Host "Org stack deployment failed" -ForegroundColor Red; exit 1 }
 }
 
@@ -183,7 +183,7 @@ if ($MultiAccount) {
         Write-Host "     aws cloudformation list-stack-instances --stack-set-name ai-lambda-runtime-migration-spoke --region $region" -ForegroundColor White
     } else {
         Write-Host "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:" -ForegroundColor Yellow
-        Write-Host "     cd cdk; npx cdk deploy LambdaRuntimeMigrationOrg-$region --context multiAccount=true --context orgTargets=$OrgTargets --context hubAccountId=$hubAccount --require-approval never" -ForegroundColor White
+        Write-Host "     cd cdk; npx cdk deploy LambdaRuntimeMigrationOrg-$region --context orgTargets=$OrgTargets --context hubAccountId=$hubAccount --require-approval never" -ForegroundColor White
         Write-Host "     (or register this account as a StackSets delegated administrator, see the preflight output above, and re-run with -MultiAccount)" -ForegroundColor DarkGray
         Write-Host "  Until then, member accounts are reported as failed in each scan; the hub itself is scanned normally." -ForegroundColor Gray
     }

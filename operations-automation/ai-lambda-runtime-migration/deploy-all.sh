@@ -121,7 +121,7 @@ if [ "$MULTI_ACCOUNT" = true ] && [ "$ORG_ROLLOUT" = true ]; then
     org_stack="LambdaRuntimeMigrationOrg-$region"
     echo -e "\n\033[0;33mDeploying org stack (spoke role StackSet)...\033[0m"
     echo -e "\033[0;90m      (Service-managed StackSet placing the read-only LambdaRuntimeMigrationScanRole in every account under $ORG_TARGETS)\033[0m"
-    ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$org_stack" --skip-bootstrap --cdk-context "multiAccount=true" --cdk-context "orgTargets=$ORG_TARGETS" --cdk-context "hubAccountId=$hub_account"
+    ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$org_stack" --skip-bootstrap --cdk-context "orgTargets=$ORG_TARGETS" --cdk-context "hubAccountId=$hub_account"
 fi
 
 # Deploy API stack (HTTP API + Cognito JWT authorizer)
@@ -186,7 +186,7 @@ if [ "$MULTI_ACCOUNT" = true ]; then
         echo -e "     aws cloudformation list-stack-instances --stack-set-name ai-lambda-runtime-migration-spoke --region $region"
     else
         echo -e "\033[0;33m  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:\033[0m"
-        echo -e "     cd cdk && npx cdk deploy LambdaRuntimeMigrationOrg-$region --context multiAccount=true --context orgTargets=$ORG_TARGETS --context hubAccountId=$hub_account --require-approval never"
+        echo -e "     cd cdk && npx cdk deploy LambdaRuntimeMigrationOrg-$region --context orgTargets=$ORG_TARGETS --context hubAccountId=$hub_account --require-approval never"
         echo -e "\033[0;90m     (or register this account as a StackSets delegated administrator, see the preflight output above, and re-run with --multi-account)\033[0m"
         echo -e "\033[0;90m  Until then, member accounts are reported as failed in each scan; the hub itself is scanned normally.\033[0m"
     fi

@@ -22,11 +22,6 @@ const env = {
   region: region,
 };
 
-// Opt-in multi-account scope (single-account is the default). When set, the
-// pipeline role is granted cross-account assume-role + Organizations reads.
-const multiAccount = app.node.tryGetContext('multiAccount') === true
-  || app.node.tryGetContext('multiAccount') === 'true';
-
 // Optional confused-deputy guard for the multi-account scan (design §5): the
 // same value must be given to the hub (Pipeline stack) and to every spoke.
 //   --context spokeExternalId=<opaque string>
@@ -57,7 +52,6 @@ const pipelineStack = new PipelineStack(app, `LambdaRuntimeMigrationPipeline-${r
   env,
   table: dataStack.table,
   bucketName: dataStack.bucket.bucketName,
-  multiAccount,
   spokeExternalId,
   transform,
   description: 'AI Lambda Runtime Migration Pipeline: Lambda durable function discovering and assessing deprecated-runtime Lambda functions (uksb-do9bhieqqh)(tag:lambda-runtime-migration,operations-automation)',

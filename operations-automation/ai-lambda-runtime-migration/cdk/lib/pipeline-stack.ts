@@ -12,10 +12,6 @@ import * as path from 'path';
 export interface PipelineStackProps extends cdk.StackProps {
   table: dynamodb.ITable;
   bucketName: string;
-  /** Still accepted from app.ts, but no longer gates anything in this stack:
-   *  multi-account vs single-account is decided at runtime (org_accounts.py),
-   *  and the org-read + spoke-assume grants are attached unconditionally. */
-  multiAccount?: boolean;
   /** Fixed name of the read-only spoke role (opt-in multi-account scope, Phase 2 rollout). */
   spokeRoleName?: string;
   /** Optional sts:ExternalId presented when assuming spoke roles. */
@@ -227,13 +223,13 @@ export class PipelineStack extends cdk.Stack {
     this.pipelineFunction.role!.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicDurableExecutionRolePolicy'),
     );
-    // Multi-account grants are attached UNCONDITIONALLY (design §5): assume the
-    // fixed-name read-only spoke role in member accounts and read account lists
-    // from Organizations. These are decided at runtime (org_accounts.py always
+    // Multi-account grants are attached unconditionally: assume the fixed-name
+    // read-only spoke role in member accounts and read account lists from
+    // Organizations. Scope is decided at runtime (org_accounts.py always
     // attempts ListAccounts and degrades to the hub when it cannot read an org),
     // so a plain single-account deploy already carries them. They are harmless
-    // there — no org to list, no spoke roles to assume — and keeping them off
-    // the multiAccount flag is what makes the scan durable across redeploys.
+    // there (no org to list, no spoke roles to assume) and a synth-time flag
+    // would only make the grants drift from what the scan tries at runtime.
     this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
       sid: 'HubAndSpokeScan',
       actions: ['sts:AssumeRole'],
