@@ -43,7 +43,7 @@ interface MigrationTallies {
   runFailed: number;      // transform / push / timeout
   runNoChanges: number;   // AWS Transform ran and found nothing to change
   runBranchReady: number; // the upgrade branch is pushed
-  runLegacy: number;      // any status this build does not know
+  runUnknown: number;      // any status this build does not know
 }
 
 export function tallyMigrationRuns(rows: MigrationFunction[]): MigrationTallies {
@@ -62,7 +62,7 @@ export function tallyMigrationRuns(rows: MigrationFunction[]): MigrationTallies 
   let runFailed = 0;
   let runNoChanges = 0;
   let runBranchReady = 0;
-  let runLegacy = 0;
+  let runUnknown = 0;
   let notStarted = 0;   // active backlog with NO migration run at all
   for (const r of rows) {
     if (isActiveBacklog(r)) {
@@ -87,8 +87,8 @@ export function tallyMigrationRuns(rows: MigrationFunction[]): MigrationTallies 
     // Unknown-value guard: a status this build does not know is counted apart
     // so the pages can say so, never as a run status this build knows, and never
     // throws; it leaves once the function is migrated again.
-    else runLegacy += 1;
+    else runUnknown += 1;
   }
   return { red, yellow, active, migrated, notStarted,
-           runInFlight, runRejected, runFailed, runNoChanges, runBranchReady, runLegacy };
+           runInFlight, runRejected, runFailed, runNoChanges, runBranchReady, runUnknown };
 }

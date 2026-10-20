@@ -840,7 +840,7 @@ def test_put_rollup_writes_rollup_prefixed_item(monkeypatch):
 # --- migration-run matching (the ONE rule shared by the API and the rollup) --
 
 _RUN_KEYS = ("run_not_started", "run_in_progress", "run_rejected", "run_failed",
-             "run_no_changes", "run_branches_ready", "run_legacy")
+             "run_no_changes", "run_branches_ready", "run_unknown")
 
 
 def _mig_item(arn, status, account="111", region="us-east-1"):
@@ -907,7 +907,7 @@ def test_build_rollup_counts_migration_run_axis():
     assert rollup["run_failed"] == 1
     assert rollup["run_no_changes"] == 1
     assert rollup["run_branches_ready"] == 1
-    assert rollup["run_legacy"] == 1
+    assert rollup["run_unknown"] == 1
     assert rollup["migrated_total"] == 1
     assert rollup["total_active"] == 8
     assert sum(rollup[k] for k in _RUN_KEYS) == rollup["total_active"]
@@ -939,5 +939,5 @@ def test_build_rollup_not_started_only_counts_active_backlog():
 def test_build_rollup_unknown_status_counts_apart():
     rows = [_fn_row(arn="a"), _mig_item("a", "SOME_UNKNOWN_STATUS")]
     rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
-    assert rollup["run_legacy"] == 1
+    assert rollup["run_unknown"] == 1
     assert rollup["run_not_started"] == 0

@@ -1038,7 +1038,7 @@ def list_discovered_arns(session: boto3.session.Session, scopes: List[dict]) -> 
 # ---------------------------------------------------------------------------
 
 # mig# enum value -> rollup run_* key. Any value not listed here, including one
-# a newer writer may add, counts as run_legacy.
+# a newer writer may add, counts as run_unknown.
 _RUN_BUCKETS = {
     "NOT_STARTED": "run_not_started",
     "QUEUED": "run_in_progress",
@@ -1055,7 +1055,7 @@ def _run_bucket(mig: Optional[dict]) -> str:
     No item at all means nobody has tried to migrate it: run_not_started."""
     if mig is None:
         return "run_not_started"
-    return _RUN_BUCKETS.get(str(mig.get("migration_status", "")), "run_legacy")
+    return _RUN_BUCKETS.get(str(mig.get("migration_status", "")), "run_unknown")
 
 
 def build_rollup(run: dict, disc_summary: dict,
@@ -1073,11 +1073,11 @@ def build_rollup(run: dict, disc_summary: dict,
       - migrated_total: rows with migration_status == 'MIGRATED' (inferred-green).
       - by_runtime / by_account: active backlog grouped by runtime / account.
       - run_not_started / run_in_progress / run_rejected / run_failed /
-        run_no_changes / run_branches_ready / run_legacy: the ACTIVE backlog
+        run_no_changes / run_branches_ready / run_unknown: the ACTIVE backlog
         partitioned by the migration-run axis (the mig# enum). No item or
         NOT_STARTED -> run_not_started; QUEUED | IN_PROGRESS -> run_in_progress;
         BRANCH_READY -> run_branches_ready; anything this build does not know
-        -> run_legacy. The seven keys always sum
+        -> run_unknown. The seven keys always sum
         to total_active. Callers passing fn# rows only get run_* = 0 except
         run_not_started == total_active.
 
@@ -1091,7 +1091,7 @@ def build_rollup(run: dict, disc_summary: dict,
     by_account: Dict[str, int] = {}
     run_counts = {"run_not_started": 0, "run_in_progress": 0, "run_rejected": 0,
                   "run_failed": 0, "run_no_changes": 0, "run_branches_ready": 0,
-                  "run_legacy": 0}
+                  "run_unknown": 0}
     fn_rows = [r for r in inventory_rows if str(r.get("item_key", "")).startswith("fn#")]
     mig_by_arn = index_migration_runs(inventory_rows)
     for row in fn_rows:

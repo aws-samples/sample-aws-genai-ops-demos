@@ -145,7 +145,9 @@ function MigrationPipelineChart({ functions }: { functions: MigrationFunction[] 
     return <Box color="text-body-secondary" textAlign="center" padding="l">{CHART_I18N.empty}</Box>;
   }
 
-  const legacy = tallies.runLegacy;
+  // Unknown-value guard: a status this build does not know is counted apart and
+  // named here, so the bars above still sum to the active backlog.
+  const unknown = tallies.runUnknown;
   return (
     <SpaceBetween size="s">
       <BarChart
@@ -170,9 +172,9 @@ function MigrationPipelineChart({ functions }: { functions: MigrationFunction[] 
         statusType="finished"
         empty={CHART_I18N.empty}
       />
-      {legacy > 0 && (
+      {unknown > 0 && (
         <Box variant="small" color="text-body-secondary">
-          {`${legacy} function${legacy === 1 ? '' : 's'} carry a migration status from an earlier version of this demo`}
+          {`${unknown} function${unknown === 1 ? '' : 's'} carry a migration status this build does not recognise`}
         </Box>
       )}
     </SpaceBetween>

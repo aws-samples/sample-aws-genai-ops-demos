@@ -113,7 +113,7 @@ export interface RollupRecord {
   run_failed?: number;
   run_no_changes?: number;
   run_branches_ready?: number;   // BRANCH_READY: upgrade branch pushed, awaiting merge
-  run_legacy?: number;           // any status this build does not know
+  run_unknown?: number;           // any status this build does not know
 }
 
 // --- Transport -------------------------------------------------------------
