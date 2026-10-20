@@ -28,6 +28,7 @@ from aws_durable_execution_sdk_python.exceptions import (
 )
 
 import common
+import inventory
 import migrate
 import transform_runtimes
 from common import sanitize_execution_name, transform_has_branch
@@ -142,10 +143,10 @@ _PY_FN = {
 
 def _patch_common(monkeypatch, fn_item=_PY_FN, settings=None, table=None):
     settings = settings if settings is not None else {}
-    monkeypatch.setattr(migrate.api, "_scan_inventory",
+    monkeypatch.setattr(inventory, "scan_inventory",
                         lambda prefix="fn#": [fn_item] if fn_item is not None else [])
-    monkeypatch.setattr(migrate.api, "get_settings", lambda _b: {"settings": settings})
-    monkeypatch.setattr(migrate.api, "resolve_repo_from_tags", migrate.api.resolve_repo_from_tags)
+    monkeypatch.setattr(inventory, "read_settings", lambda: settings)
+    monkeypatch.setattr(inventory, "resolve_repo_from_tags", inventory.resolve_repo_from_tags)
     tbl = table if table is not None else _FakeTable()
     monkeypatch.setattr(migrate, "_table", lambda: tbl)
     monkeypatch.setattr(migrate, "get_region", lambda: "eu-west-3")
@@ -1235,7 +1236,7 @@ def _batch_harness(monkeypatch, rejected=(), build_ids=None):
     tbl = _FakeTable()
     monkeypatch.setattr(migrate, "_table", lambda: tbl)
     monkeypatch.setattr(migrate, "get_region", lambda: "eu-west-3")
-    monkeypatch.setattr(migrate.api, "_scan_inventory", lambda prefix="fn#": [])
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": [])
     monkeypatch.setattr(migrate, "PROJECT_NAME", "migrate-project")
     monkeypatch.setattr(migrate, "_transform_fallback_region", lambda: "eu-central-1")
 

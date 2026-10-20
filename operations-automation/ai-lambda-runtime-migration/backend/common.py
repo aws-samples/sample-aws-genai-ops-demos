@@ -27,6 +27,18 @@ def convert_floats(obj: Any) -> Any:
     return obj
 
 
+def decimals_to_native(obj: Any) -> Any:
+    """The inverse of convert_floats for rows read back: a whole-number Decimal
+    becomes int, any other Decimal float, recursively through dicts and lists."""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj == int(obj) else float(obj)
+    if isinstance(obj, dict):
+        return {k: decimals_to_native(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [decimals_to_native(v) for v in obj]
+    return obj
+
+
 def extract_region(arn: str, default: str) -> str:
     """Region segment of an ARN, or `default` when the ARN has none."""
     parts = arn.split(":")

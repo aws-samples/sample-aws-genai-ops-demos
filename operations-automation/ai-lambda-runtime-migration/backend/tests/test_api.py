@@ -9,6 +9,7 @@ import pytest
 
 import api
 import common
+import inventory
 from tests.test_migrate import TRANSFORM_HAS_BRANCH_CASES
 
 
@@ -149,7 +150,7 @@ def test_get_stats_returns_only_rollup_rows_ordered(monkeypatch):
     class _Table:
         def scan(self, **_kwargs):
             return {"Items": _inventory_with_rollups()}
-    monkeypatch.setattr(api, "_table", lambda: _Table())
+    monkeypatch.setattr(inventory, "table", lambda: _Table())
 
     resp = api.handler({"action": "get_stats"})
     rollups = resp["rollups"]
@@ -163,7 +164,7 @@ def test_list_functions_excludes_rollup_rows(monkeypatch):
     class _Table:
         def scan(self, **_kwargs):
             return {"Items": _inventory_with_rollups()}
-    monkeypatch.setattr(api, "_table", lambda: _Table())
+    monkeypatch.setattr(inventory, "table", lambda: _Table())
 
     resp = api.handler({"action": "list_functions"})
     keys = {f["item_key"] for f in resp["functions"]}
@@ -183,7 +184,7 @@ def test_list_functions_resolves_hub_account_for_display(monkeypatch):
                 {"item_key": "fn#222#us-east-1#arn:spoke", "function_arn": "arn:spoke",
                  "region": "us-east-1", "runtime": "python3.8", "account_id": "222", "account_name": "Spoke"},
             ]}
-    monkeypatch.setattr(api, "_table", lambda: _Table())
+    monkeypatch.setattr(inventory, "table", lambda: _Table())
     monkeypatch.setattr(api.discover, "_caller_account", lambda _region: "999999999999")
 
     resp = api.handler({"action": "list_functions"})
@@ -232,7 +233,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
 
     assert resp["saved"] is True
     written = table.put_item_arg
-    assert written["item_key"] == api.SETTINGS_KEY
+    assert written["item_key"] == inventory.SETTINGS_KEY
     # Only the whitelisted keys (plus item_key/updated_at) are written.
     assert written["platform"] == "gitlab"
     assert written["secretRef"] == "my-git-token-secret"
@@ -244,16 +245,16 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
 
 
 def test_get_settings_returns_stored_item(monkeypatch):
-    stored = {"item_key": api.SETTINGS_KEY, "platform": "github", "org": "acme",
+    stored = {"item_key": inventory.SETTINGS_KEY, "platform": "github", "org": "acme",
               "detectionMethod": "tag", "repoTag": "source-repo"}
-    monkeypatch.setattr(api, "_table", lambda: _SettingsTable(item=stored))
+    monkeypatch.setattr(inventory, "table", lambda: _SettingsTable(item=stored))
     resp = api.handler({"action": "get_settings"})
     assert resp["settings"]["platform"] == "github"
     assert resp["settings"]["repoTag"] == "source-repo"
 
 
 def test_get_settings_empty_when_absent(monkeypatch):
-    monkeypatch.setattr(api, "_table", lambda: _SettingsTable(item=None))
+    monkeypatch.setattr(inventory, "table", lambda: _SettingsTable(item=None))
     resp = api.handler({"action": "get_settings"})
     assert resp["settings"] == {}
 
@@ -288,10 +289,10 @@ def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
 def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
     # A stored attribute that is not a settings field is returned as-is and
     # never promoted to repoTag; the UI falls back to its default tag.
-    stored = {"item_key": api.SETTINGS_KEY, "platform": "github", "org": "acme",
+    stored = {"item_key": inventory.SETTINGS_KEY, "platform": "github", "org": "acme",
               "detectionMethod": "tag", "repoTagKey": "source-repo"}
     table = _SettingsTable(item=stored)
-    monkeypatch.setattr(api, "_table", lambda: table)
+    monkeypatch.setattr(inventory, "table", lambda: table)
     resp = api.handler({"action": "get_settings"})
     assert resp["settings"].get("repoTag") is None
     # The stored row is untouched (nothing written back).
@@ -300,29 +301,29 @@ def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
 
 def test_resolve_repo_from_tags_repo_only_prepends_org():
     # Short slug gets the org prefix.
-    assert api.resolve_repo_from_tags(
+    assert inventory.resolve_repo_from_tags(
         {"Git:Repository": "payments-service"}, "Git:Repository", None, org="my-org"
     ) == {"repository": "my-org/payments-service", "branch": None}
     # A value already containing "/" is NOT re-prefixed.
-    assert api.resolve_repo_from_tags(
+    assert inventory.resolve_repo_from_tags(
         {"Git:Repository": "acme/payments"}, "Git:Repository", None, org="my-org"
     ) == {"repository": "acme/payments", "branch": None}
 
 
 def test_resolve_repo_from_tags_missing_and_branch():
     # Missing repo tag -> repository None.
-    assert api.resolve_repo_from_tags(
+    assert inventory.resolve_repo_from_tags(
         {"other": "x"}, "Git:Repository", "git:branch"
     ) == {"repository": None, "branch": None}
     # Repo + branch present -> both resolved.
-    assert api.resolve_repo_from_tags(
+    assert inventory.resolve_repo_from_tags(
         {"Git:Repository": "acme/payments", "git:branch": "release"},
         "Git:Repository", "git:branch"
     ) == {"repository": "acme/payments", "branch": "release"}
     # tags=None and a non-dict tags do not raise and resolve to all-None.
-    assert api.resolve_repo_from_tags(None, "Git:Repository", "git:branch") == {
+    assert inventory.resolve_repo_from_tags(None, "Git:Repository", "git:branch") == {
         "repository": None, "branch": None}
-    assert api.resolve_repo_from_tags("not-a-dict", "Git:Repository", "git:branch") == {
+    assert inventory.resolve_repo_from_tags("not-a-dict", "Git:Repository", "git:branch") == {
         "repository": None, "branch": None}
 
 
@@ -352,7 +353,7 @@ def test_progress_discover_single_cell_shows_derived_total():
 # the inventory scan is monkeypatched the same way the other action tests do.
 
 def _fn_rows(n):
-    """n function inventory rows (fn# prefix), as _scan_inventory returns them."""
+    """n function inventory rows (fn# prefix), as inventory.scan_inventory returns them."""
     return [
         {"item_key": f"fn#111#eu-west-3#arn:aws:lambda:eu-west-3:111:function:fn-{i}",
          "function_arn": f"arn:aws:lambda:eu-west-3:111:function:fn-{i}",
@@ -396,7 +397,7 @@ def test_resolve_repos_demo_registered():
 
 
 def test_resolve_repos_demo_normal_three_results(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": _fn_rows(5))
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(5))
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     fake = _FakeBedrock()
     _patch_bedrock(monkeypatch, fake)
@@ -415,7 +416,7 @@ def test_resolve_repos_demo_normal_three_results(monkeypatch):
 
 
 def test_resolve_repos_demo_per_function_fallback_on_converse_error(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": _fn_rows(3))
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(3))
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     _patch_bedrock(monkeypatch, _FakeBedrock(raises=True))
 
@@ -430,7 +431,7 @@ def test_resolve_repos_demo_per_function_fallback_on_converse_error(monkeypatch)
 
 
 def test_resolve_repos_demo_fewer_than_three_rows(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": _fn_rows(2))
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": _fn_rows(2))
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     _patch_bedrock(monkeypatch, _FakeBedrock())
 
@@ -439,7 +440,7 @@ def test_resolve_repos_demo_fewer_than_three_rows(monkeypatch):
 
 
 def test_resolve_repos_demo_zero_rows_returns_empty(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": [])
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": [])
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     _patch_bedrock(monkeypatch, _FakeBedrock())
 
@@ -476,7 +477,7 @@ def test_start_migration_400_malformed_arn(monkeypatch):
 def test_start_migration_404_unknown_function(monkeypatch):
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN",
                         "arn:aws:lambda:eu-west-3:111:function:mig:live")
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": [])
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": [])
     resp = api.handler(_http_event("POST", "/migrate", body={"function_arn": _MIG_FN_ARN}))
     assert resp["statusCode"] == 404
     assert json.loads(resp["body"])["error"] == "unknown function"
@@ -485,7 +486,7 @@ def test_start_migration_404_unknown_function(monkeypatch):
 def test_start_migration_202_invokes_orchestrator(monkeypatch):
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN",
                         "arn:aws:lambda:eu-west-3:111:function:mig:live")
-    monkeypatch.setattr(api, "_scan_inventory", _fn_only)
+    monkeypatch.setattr(inventory, "scan_inventory", _fn_only)
 
     captured = {}
 
@@ -509,7 +510,7 @@ def test_start_migration_202_invokes_orchestrator(monkeypatch):
 
 
 def test_migration_status_not_started_when_no_mig_item(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", _fn_only)
+    monkeypatch.setattr(inventory, "scan_inventory", _fn_only)
 
     class _Table:
         def get_item(self, Key):
@@ -524,7 +525,7 @@ def test_migration_status_not_started_when_no_mig_item(monkeypatch):
 
 
 def test_migration_status_returns_mig_item(monkeypatch):
-    monkeypatch.setattr(api, "_scan_inventory", _fn_only)
+    monkeypatch.setattr(inventory, "scan_inventory", _fn_only)
 
     class _Table:
         def get_item(self, Key):
@@ -558,7 +559,7 @@ def test_list_functions_merges_migration_run_without_touching_fn_status(monkeypa
             return [mig_row]
         return [fn_row, mig_row]
 
-    monkeypatch.setattr(api, "_scan_inventory", _scan)
+    monkeypatch.setattr(inventory, "scan_inventory", _scan)
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     resp = api.handler({"action": "list_functions"})
     row = resp["functions"][0]
@@ -582,7 +583,7 @@ def test_list_functions_passes_unknown_status_through(monkeypatch):
     def _scan(prefix="fn#"):
         return [fn_row] if prefix == "fn#" else [mig_row]
 
-    monkeypatch.setattr(api, "_scan_inventory", _scan)
+    monkeypatch.setattr(inventory, "scan_inventory", _scan)
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     row = api.handler({"action": "list_functions"})["functions"][0]
     assert row["migration_run_status"] == "SOME_UNKNOWN_STATUS"
@@ -599,7 +600,7 @@ def test_list_functions_matches_mig_item_on_latest_qualified_arn(monkeypatch):
     def _scan(prefix="fn#"):
         return [fn_row] if prefix == "fn#" else [mig_row]
 
-    monkeypatch.setattr(api, "_scan_inventory", _scan)
+    monkeypatch.setattr(inventory, "scan_inventory", _scan)
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     row = api.handler({"action": "list_functions"})["functions"][0]
     assert row["migration_run_status"] == "BRANCH_READY"
@@ -609,7 +610,7 @@ def test_list_functions_defaults_migration_run_not_started(monkeypatch):
     def _scan(prefix="fn#"):
         return _fn_rows(1) if prefix == "fn#" else []
 
-    monkeypatch.setattr(api, "_scan_inventory", _scan)
+    monkeypatch.setattr(inventory, "scan_inventory", _scan)
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     resp = api.handler({"action": "list_functions"})
     assert resp["functions"][0]["migration_run_status"] == "NOT_STARTED"
@@ -722,7 +723,7 @@ def test_start_migration_batch_validation_empty(monkeypatch):
 
 def test_start_migration_batch_all_unknown_404(monkeypatch):
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN", _mig_env())
-    monkeypatch.setattr(api, "_scan_inventory", lambda prefix="fn#": [])
+    monkeypatch.setattr(inventory, "scan_inventory", lambda prefix="fn#": [])
     resp = api.handler(_http_event("POST", "/migrate-batch",
                                    body={"function_arns": [_MIG_FN_ARN]}))
     assert resp["statusCode"] == 404
@@ -731,7 +732,7 @@ def test_start_migration_batch_all_unknown_404(monkeypatch):
 
 def test_start_migration_batch_some_unknown_skipped_and_single_invoke(monkeypatch):
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN", _mig_env())
-    monkeypatch.setattr(api, "_scan_inventory", _fn_only)  # only fn-0 is known
+    monkeypatch.setattr(inventory, "scan_inventory", _fn_only)  # only fn-0 is known
 
     captured = {}
     calls = {"n": 0}
@@ -762,7 +763,7 @@ def test_start_migration_batch_some_unknown_skipped_and_single_invoke(monkeypatc
 def test_start_migration_batch_ignores_unknown_request_key(monkeypatch):
     # A request key this build does not know is neither validated nor forwarded.
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN", _mig_env())
-    monkeypatch.setattr(api, "_scan_inventory", _fn_only)
+    monkeypatch.setattr(inventory, "scan_inventory", _fn_only)
     captured = {}
 
     class _FakeLambda:

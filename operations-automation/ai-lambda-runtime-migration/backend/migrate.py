@@ -78,7 +78,7 @@ from aws_durable_execution_sdk_python.types import WaitForCallbackContext
 
 from aws_utils import get_region, get_transform_region  # staged copy of shared/utils/aws_utils.py
 from common import results_by_index, DIFF_SUMMARY_MAX_CHARS, FAILURE_DETAIL_MAX_CHARS
-import api
+import inventory
 import discover
 import transform_runtimes
 
@@ -515,7 +515,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
 
     # Read the fn# item to recover account/region and tags/runtime/assessment.
     fn_item = None
-    scan = api._scan_inventory("fn#")
+    scan = inventory.scan_inventory("fn#")
     for row in scan:
         if discover.canonical_arn(row.get("function_arn", "")) == canonical:
             fn_item = row
@@ -566,7 +566,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
         return {"ok": False, "mig_key": mig_key, "failure_code": code}
 
     if fn_item is None:
-        # Should be unreachable (api.start_migration 404s first), but be safe.
+        # Should be unreachable (the API's start_migration 404s first), but be safe.
         return _fail("SOURCE_NOT_FOUND", "No function row for this ARN.")
 
     runtime = fn_item.get("runtime", "") or ""
@@ -577,11 +577,11 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     family = transform_runtimes._family(runtime)
 
     # Resolve repo + branch from the fn# item's tags and the stored Settings.
-    settings = api.get_settings({})["settings"]
+    settings = inventory.read_settings()
     repo_tag = settings.get("repoTag") or "source-repo"
     branch_tag = settings.get("branchTag")
     org = settings.get("org")
-    resolved = api.resolve_repo_from_tags(fn_item.get("tags"), repo_tag, branch_tag, org)
+    resolved = inventory.resolve_repo_from_tags(fn_item.get("tags"), repo_tag, branch_tag, org)
     repo_name = resolved.get("repository")
     branch = resolved.get("branch")
 
@@ -707,7 +707,7 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
     #    durable checkpoint.
     canonical = resolved["function_arn"]
     fn_item = {}
-    for row in api._scan_inventory("fn#"):
+    for row in inventory.scan_inventory("fn#"):
         if discover.canonical_arn(row.get("function_arn", "")) == canonical:
             fn_item = row
             break
@@ -946,7 +946,7 @@ def _run_batch(event: dict, context: DurableContext) -> dict:
             deduped.append(a)
     arns = deduped
     # Plain execution metadata, deterministic across replays (not in the payload:
-    # Invoke returns the ARN, api.py never sends it).
+    # Invoke returns the ARN, the API Lambda never sends it).
     execution_arn = context.execution_context.durable_execution_arn
 
     # --- batch identity (mints id, applies cap, writes migbatch# index) ---

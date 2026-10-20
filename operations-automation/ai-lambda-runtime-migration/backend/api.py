@@ -14,7 +14,6 @@ The browser holds no AWS credentials: everything reaches AWS through this
 function, so its role carries the permissions the UI needs.
 """
 
-import decimal
 import json
 import logging
 import os
@@ -28,20 +27,20 @@ from typing import Optional
 import boto3
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
-from common import sanitize_execution_name, transform_has_branch
+from common import sanitize_execution_name, transform_has_branch, decimals_to_native as _decimals_to_native
+from inventory import table as _table  # the one DynamoDB Table accessor (reads live in inventory.py)
 from pipeline import normalize_spec, SpecValidationError
 from model_id import model_id as _model_id
 import discover
+import inventory
 import org_accounts
 
 logger = logging.getLogger(__name__)
 
 PIPELINE_FUNCTION_ARN = os.environ.get("PIPELINE_FUNCTION_ARN")  # qualified (alias) ARN
 MIGRATE_FUNCTION_ARN = os.environ.get("MIGRATE_FUNCTION_ARN")   # qualified (alias) ARN, Phase 2
-TABLE_NAME = os.environ.get("TABLE_NAME", "lambda-runtime-migration")
 
 _lambda = None
-_ddb = None
 
 
 def _lambda_client():
@@ -49,13 +48,6 @@ def _lambda_client():
     if _lambda is None:
         _lambda = boto3.client("lambda", region_name=get_region())
     return _lambda
-
-
-def _table():
-    global _ddb
-    if _ddb is None:
-        _ddb = boto3.resource("dynamodb", region_name=get_region())
-    return _ddb.Table(TABLE_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +248,7 @@ _LAMBDA_ARN_RE = re.compile(
 
 def _find_fn_row(canonical: str):
     """The fn# inventory row whose canonical ARN matches, or None."""
-    for row in _scan_inventory("fn#"):
+    for row in inventory.scan_inventory("fn#"):
         if discover.canonical_arn(row.get("function_arn", "")) == canonical:
             return row
     return None
@@ -720,37 +712,6 @@ def migration_run_status(execution_arn: str) -> tuple:
 # UI actions router
 # ---------------------------------------------------------------------------
 
-def _decimals_to_native(obj):
-    if isinstance(obj, decimal.Decimal):
-        return int(obj) if obj == int(obj) else float(obj)
-    if isinstance(obj, dict):
-        return {k: _decimals_to_native(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_decimals_to_native(v) for v in obj]
-    return obj
-
-
-def _scan_inventory(prefix: str = "fn#") -> list:
-    """Scan the table, keeping only item_key rows under `prefix`.
-
-    The table now holds two kinds of rows: function rows ('fn#...') and the
-    immutable per-scan rollup series ('rollup#...'). Callers pass the prefix they
-    want so rollup rows never leak into the functions table / metrics, and
-    get_stats can reuse the same raw scan for the 'rollup#' rows. Pass prefix=''
-    for the whole table.
-    """
-    table = _table()
-    items, kwargs = [], {}
-    while True:
-        resp = table.scan(**kwargs)
-        items.extend(r for r in resp.get("Items", [])
-                     if not prefix or str(r.get("item_key", "")).startswith(prefix))
-        if "LastEvaluatedKey" not in resp:
-            break
-        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-    return _decimals_to_native(items)
-
-
 def _matches_scope(row: dict, scope: dict) -> bool:
     accounts = scope.get("accounts") or []
     if accounts:
@@ -821,7 +782,7 @@ def _merge_migration_runs(rows: list) -> list:
     so it is surfaced under migration_run_* and NEVER overwrites fn#'s own
     migration_status. A function with no mig# item defaults to NOT_STARTED. One
     extra table scan per inventory load (acceptable at demo volume)."""
-    mig_by_arn = discover.index_migration_runs(_scan_inventory("mig#"))
+    mig_by_arn = discover.index_migration_runs(inventory.scan_inventory("mig#"))
     for row in rows:
         mig = discover.migration_run_for(row, mig_by_arn)
         row["migration_run_status"] = (mig or {}).get("migration_status", "NOT_STARTED")
@@ -841,7 +802,7 @@ def _merge_migration_runs(rows: list) -> list:
 def list_functions(body: dict) -> dict:
     """Scoped inventory read for the home table."""
     scope = body.get("scope") or {}
-    rows = [r for r in _scan_inventory() if _matches_scope(r, scope)]
+    rows = [r for r in inventory.scan_inventory() if _matches_scope(r, scope)]
     rows = _fill_hub_display(rows)
     rows = _merge_migration_runs(rows)
     rows.sort(key=lambda r: r.get("priority_score", 0), reverse=True)
@@ -855,7 +816,7 @@ def get_stats(_body: dict) -> dict:
     rollup_at (so the UI draws a left-to-right time series), and returns decimals
     as native numbers. Reuses the same raw scan as the functions read.
     """
-    rollups = _scan_inventory(prefix="rollup#")
+    rollups = inventory.scan_inventory(prefix="rollup#")
     rollups.sort(key=lambda r: r.get("rollup_at") or "")
     return {"rollups": rollups}
 
@@ -864,60 +825,8 @@ def get_stats(_body: dict) -> dict:
 # Settings (Git access + code-behind detection method)
 # ---------------------------------------------------------------------------
 
-# One row holds the demo's non-secret Git/detection configuration. It lives in
-# the same table behind a dedicated key prefix, so the inventory scan (prefix
-# "fn#") and the rollup read (prefix "rollup#") never see it.
-SETTINGS_KEY = "settings#git"
-
-# The ONLY keys ever persisted. A token VALUE is never among them: the form
-# captures the NAME/ARN of a Secrets Manager secret (secretRef), never the
-# secret itself, so no credential ever reaches this table.
-#
-# repoTag  = the resource tag key whose value is the source repository.
-# branchTag = an OPTIONAL resource tag key whose value is the release branch.
-_SETTINGS_ALLOWED = ("platform", "host", "org", "secretRef", "detectionMethod",
-                     "repoTag", "branchTag")
-
-
-def resolve_repo_from_tags(tags, repo_tag, branch_tag, org=None):
-    """Resolve a function's source repository + branch from its resource tags.
-
-    Pure and side-effect free (no AWS, no I/O): the single source of truth for
-    how the two configured tags combine, so it can be unit-tested in isolation
-    and reused by the future migration phase. Never raises — a non-dict `tags`,
-    a missing key, or a non-string value all degrade to None.
-
-    - repository: value of tags[repo_tag] when present and non-empty, else None.
-      When `org` is a non-empty string and the resolved value has no "/" (no
-      owner prefix), the value is prefixed as "{org}/{value}". A value that
-      already contains "/" is left as is.
-    - branch: value of tags[branch_tag] when branch_tag is set and present with
-      a non-empty value, else None.
-
-    Returns {"repository": str|None, "branch": str|None}.
-    """
-    safe_tags = tags if isinstance(tags, dict) else {}
-
-    repository = None
-    raw_repo = safe_tags.get(repo_tag) if repo_tag else None
-    if raw_repo is not None:
-        value = str(raw_repo).strip()
-        if value:
-            if org and str(org).strip() and "/" not in value:
-                repository = f"{str(org).strip()}/{value}"
-            else:
-                repository = value
-
-    branch = None
-    if branch_tag:
-        raw_branch = safe_tags.get(branch_tag)
-        if raw_branch is not None:
-            value = str(raw_branch).strip()
-            if value:
-                branch = value
-
-    return {"repository": repository, "branch": branch}
-
+# The settings row key, whitelist and read live in inventory.py (shared with the
+# migration orchestrator); only the write stays here.
 
 def get_settings(_body: dict) -> dict:
     """Return the stored non-secret Git/detection config, or {} when unset.
@@ -925,22 +834,20 @@ def get_settings(_body: dict) -> dict:
     Never 404s: an absent item is an empty object so the UI renders defaults.
     No token value is ever stored here, so none is ever returned.
     """
-    resp = _table().get_item(Key={"item_key": SETTINGS_KEY})
-    settings = _decimals_to_native(resp.get("Item")) or {}
-    return {"settings": settings}
+    return {"settings": inventory.read_settings()}
 
 
 def put_settings(body: dict) -> dict:
     """Persist ONLY the whitelisted non-secret fields.
 
-    Token VALUES are never accepted or stored: anything outside _SETTINGS_ALLOWED
-    (e.g. a stray `token`/`tokenValue`) is dropped before the write. Only the
-    NAME/ARN of a Secrets Manager secret (secretRef) is kept; the tool reads the
-    secret server-side with its task role in the future migration phase.
+    Token VALUES are never accepted or stored: anything outside
+    inventory.SETTINGS_ALLOWED (e.g. a stray `token`/`tokenValue`) is dropped
+    before the write. Only the NAME/ARN of a Secrets Manager secret (secretRef)
+    is kept; the secret itself is read server-side when a migration needs it.
     """
     incoming = body.get("settings") or {}
-    allowed = {k: str(incoming[k]) for k in _SETTINGS_ALLOWED if incoming.get(k) is not None}
-    item = {"item_key": SETTINGS_KEY, **allowed,
+    allowed = {k: str(incoming[k]) for k in inventory.SETTINGS_ALLOWED if incoming.get(k) is not None}
+    item = {"item_key": inventory.SETTINGS_KEY, **allowed,
             "updated_at": datetime.now(timezone.utc).isoformat()}
     _table().put_item(Item=item)
     return {"settings": allowed, "saved": True}
@@ -1077,7 +984,7 @@ def resolve_repos_demo(body: dict) -> dict:
         count = 3
     count = max(1, min(3, count))
 
-    rows = _fill_hub_display(_scan_inventory(prefix="fn#"))
+    rows = _fill_hub_display(inventory.scan_inventory(prefix="fn#"))
     if not rows:
         return {"results": []}
 
