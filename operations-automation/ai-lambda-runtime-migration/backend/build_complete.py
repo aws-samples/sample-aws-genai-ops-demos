@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+
 logger = logging.getLogger(__name__)
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "lambda-runtime-migration")
@@ -42,12 +44,8 @@ _CALLBACK_GONE_CODES = ("ResourceNotFoundException", "CallbackTimeoutException",
 _CALLBACK_TRANSIENT_CODES = ("TooManyRequestsException", "ServiceException")
 
 
-def _region() -> str:
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
-
-
 def _table():
-    return boto3.resource("dynamodb", region_name=_region()).Table(TABLE_NAME)
+    return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
 
 def _now() -> str:
@@ -69,7 +67,7 @@ def _read_result(job_id: str):
     if not job_id or not BUCKET_NAME:
         return None
     try:
-        obj = boto3.client("s3", region_name=_region()).get_object(
+        obj = boto3.client("s3", region_name=get_region()).get_object(
             Bucket=BUCKET_NAME, Key=f"migrations/{job_id}/result.json")
         return json.loads(obj["Body"].read())
     except Exception as exc:  # noqa: BLE001 - absent/unreadable result => derive from build state
@@ -206,7 +204,7 @@ def _complete_callback(callback_id: str, build_id: str, payload: dict) -> bool:
     """SendDurableExecutionCallbackSuccess with the result payload. Exhaustive
     over ClientError codes (see the module docstring); True when sent."""
     try:
-        boto3.client("lambda", region_name=_region()).send_durable_execution_callback_success(
+        boto3.client("lambda", region_name=get_region()).send_durable_execution_callback_success(
             CallbackId=callback_id, Result=json.dumps(payload).encode("utf-8"))
         return True
     except ClientError as exc:

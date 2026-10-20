@@ -114,7 +114,7 @@ def _fake_bedrock(monkeypatch, responses):
         return item() if callable(item) else item
     fake.converse.side_effect = converse
     monkeypatch.setattr(discover.boto3, "client", lambda *a, **k: fake)
-    monkeypatch.setattr(discover, "_own_region", lambda: "us-east-1")
+    monkeypatch.setattr(discover, "get_region", lambda: "us-east-1")
     monkeypatch.setattr(discover, "_model_id", lambda: "model")
     return fake
 

@@ -20,6 +20,7 @@ from urllib.request import urlopen
 
 import boto3
 
+from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ def assess_with_ai(session: boto3.session.Session, region: str, function_arn: st
     function's region is irrelevant here — use hub credentials + the deploy
     region so the endpoint and the profile prefix always match.
     """
-    bedrock = boto3.client("bedrock-runtime", region_name=_own_region())
+    bedrock = boto3.client("bedrock-runtime", region_name=get_region())
 
     tool_config = {
         "tools": [{
@@ -293,17 +294,6 @@ Your findings are handed to an automated upgrade agent (AWS Transform) as adviso
 # Step entry point (called inside a durable step, per function)
 # ---------------------------------------------------------------------------
 
-def _own_region() -> str:
-    """The Lambda's own region = where the single inventory DynamoDB table lives.
-
-    Reuses the shared region detection (shared/utils/aws_utils.py, staged into
-    the Lambda bundle). In Lambda the env vars are always set, so get_region
-    returns before its aws-CLI fallback is ever reached.
-    """
-    from aws_utils import get_region  # staged copy, Lambda bundle
-    return get_region()
-
-
 def _table(session: boto3.session.Session = None):
     """The inventory table ALWAYS lives in the hub account's deploy region.
 
@@ -313,7 +303,7 @@ def _table(session: boto3.session.Session = None):
     Lambda's own credentials + own region for every table access. (Matches
     discover._table.)
     """
-    return boto3.resource("dynamodb", region_name=_own_region()).Table(TABLE_NAME)
+    return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
 
 def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:

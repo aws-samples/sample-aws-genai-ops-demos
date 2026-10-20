@@ -38,6 +38,7 @@ from aws_durable_execution_sdk_python.config import Duration, MapConfig, Complet
 from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create_retry_strategy
 from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
+from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
 import discover
 import assess
 import support
@@ -65,13 +66,6 @@ class SpecValidationError(ValueError):
         self.field = field
         self.reason = reason
         super().__init__(f"{field}: {reason}")
-
-
-def _own_region() -> str:
-    """Reuses the shared region detection (shared/utils/aws_utils.py, staged into
-    the Lambda bundle as aws_utils.py); env vars are always set in Lambda."""
-    from aws_utils import get_region  # staged copy, Lambda bundle
-    return get_region()
 
 
 def normalize_spec(event: dict) -> dict:
@@ -188,7 +182,7 @@ def start_run(step: StepContext, spec: dict) -> dict:
     The ONLY place uuid.uuid4() and datetime.now() are called.
     """
     import uuid
-    own_region = _own_region()
+    own_region = get_region()
     # Trusted Advisor's deprecated-runtime check is ACCOUNT-WIDE: one call per
     # account returns functions across every region, so there is no region
     # fan-out. One discover cell per account is enough — keyed by the deploy
@@ -238,7 +232,7 @@ def discover_scope_step(step: StepContext, cell: dict, run_id: str, when: str) -
 @durable_step
 def list_discovered_step(step: StepContext, scopes: List[dict]) -> List[dict]:
     """Read back the active rows for the scanned scopes (bounded identifiers)."""
-    region = scopes[0]["region"] if scopes else _own_region()
+    region = scopes[0]["region"] if scopes else get_region()
     session = discover.session_for_account("", region)
     return discover.list_discovered_arns(session, scopes)
 

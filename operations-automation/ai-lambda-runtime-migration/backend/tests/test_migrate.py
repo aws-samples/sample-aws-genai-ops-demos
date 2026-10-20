@@ -146,7 +146,7 @@ def _patch_common(monkeypatch, fn_item=_PY_FN, settings=None, table=None):
     monkeypatch.setattr(migrate.api, "resolve_repo_from_tags", migrate.api.resolve_repo_from_tags)
     tbl = table if table is not None else _FakeTable()
     monkeypatch.setattr(migrate, "_table", lambda: tbl)
-    monkeypatch.setattr(migrate, "_own_region", lambda: "eu-west-3")
+    monkeypatch.setattr(migrate, "get_region", lambda: "eu-west-3")
     return tbl
 
 
@@ -177,7 +177,7 @@ def test_repository_url_eu_west_3():
 
 
 def test_repository_url_defaults_region(monkeypatch):
-    monkeypatch.setattr(migrate, "_own_region", lambda: "us-east-1")
+    monkeypatch.setattr(migrate, "get_region", lambda: "us-east-1")
     assert "us-east-1" in repository_url("repo")
 
 
@@ -1251,7 +1251,7 @@ def _batch_harness(monkeypatch, rejected=(), build_ids=None):
     monkeypatch.setattr(migrate.discover, "canonical_arn", lambda a: a)
     tbl = _FakeTable()
     monkeypatch.setattr(migrate, "_table", lambda: tbl)
-    monkeypatch.setattr(migrate, "_own_region", lambda: "eu-west-3")
+    monkeypatch.setattr(migrate, "get_region", lambda: "eu-west-3")
     monkeypatch.setattr(migrate.api, "_scan_inventory", lambda prefix="fn#": [])
     monkeypatch.setattr(migrate, "PROJECT_NAME", "migrate-project")
     monkeypatch.setattr(migrate, "_transform_fallback_region", lambda: "eu-central-1")

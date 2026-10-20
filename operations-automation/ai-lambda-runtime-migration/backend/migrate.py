@@ -77,6 +77,7 @@ from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create
 from aws_durable_execution_sdk_python.types import WaitForCallbackContext
 from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
+from aws_utils import get_region, get_transform_region  # staged copy of shared/utils/aws_utils.py
 import api
 import discover
 import transform_runtimes
@@ -147,30 +148,19 @@ MAX_CONTEXT = 4000
 _ADVISORY_HEADER = "Phase 1 assessment (advisory):"
 
 
-def _own_region() -> str:
-    """The Lambda's own region (staged aws_utils.py). Mirrors discover._own_region."""
-    from aws_utils import get_region  # staged copy, Lambda bundle
-    return get_region()
-
-
-def _region() -> str:
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
-
-
 def _transform_fallback_region() -> str:
     """The AWS Transform control-plane region for this deploy region, from the
-    shared helper (staged aws_utils.py). Used as the build's fallback only — the
-    build tries the deploy region first. Mirrors the _own_region staged import."""
-    from aws_utils import get_transform_region  # staged copy, Lambda bundle
-    return get_transform_region(_own_region())
+    shared helper (staged aws_utils.py). Used as the build's fallback only: the
+    build tries the deploy region first."""
+    return get_transform_region(get_region())
 
 
 def _table():
     """The single inventory table in the Lambda's own region.
 
     The orchestrator may read a function in any region, but the one table lives
-    in the deploy region — mirrors assess._table / discover._table."""
-    return boto3.resource("dynamodb", region_name=_region()).Table(TABLE_NAME)
+    in the deploy region (same rule as assess._table / discover._table)."""
+    return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +191,7 @@ def repository_url(repo_name: str, region: str = None) -> str:
     region. The orchestrator derives this instead of importing the mock stack's
     clone-URL output, so it stays independent of the opt-in mock stack.
     """
-    region = region or _own_region()
+    region = region or get_region()
     return f"https://git-codecommit.{region}.amazonaws.com/v1/repos/{repo_name}"
 
 
@@ -573,7 +563,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     # account/region come from the fn# item (legacy hub rows may still carry an
     # empty account_id), so the mig# key byte-matches what the GET path composes.
     account_id = (fn_item or {}).get("account_id", "") or ""
-    region = (fn_item or {}).get("region", "") or _own_region()
+    region = (fn_item or {}).get("region", "") or get_region()
     mig_key = _mig_key(account_id, region, canonical)
 
     # Duplicate-writer guard (issue #116): a live QUEUED / IN_PROGRESS mig# item
@@ -764,7 +754,7 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
         resolved["transform_name"], resolved.get("build_command", ""), additional,
         resolved.get("validation_commands", ""))
     s3_key = f"migrations/{job_id}/transform-config.yaml"
-    boto3.client("s3", region_name=_region()).put_object(
+    boto3.client("s3", region_name=get_region()).put_object(
         Bucket=BUCKET_NAME, Key=s3_key, Body=yaml_text.encode("utf-8"),
         ContentType="text/yaml")
 
@@ -795,7 +785,7 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
         # Both CodeBuild phases are bounded here (queue time is NOT covered by
         # the build timeout); the callback timeout and the staleness window
         # derive from these two numbers.
-        resp = boto3.client("codebuild", region_name=_region()).start_build(
+        resp = boto3.client("codebuild", region_name=get_region()).start_build(
             projectName=PROJECT_NAME,
             environmentVariablesOverride=env_override,
             timeoutInMinutesOverride=BUILD_TIMEOUT_MINUTES,

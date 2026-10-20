@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
+from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -510,7 +511,7 @@ def prioritize_with_bedrock(session: boto3.session.Session, region: str, functio
     # CRIS profile resolved for the deploy region, and a spoke role has no
     # Bedrock access. Prioritization only reasons over metadata, so the
     # scanned region is irrelevant here. One client for every batch.
-    bedrock = boto3.client("bedrock-runtime", region_name=_own_region())
+    bedrock = boto3.client("bedrock-runtime", region_name=get_region())
 
     system_prompt = """You are ordering a Lambda runtime migration backlog for operators.
 Each function already has a rule-based base score; you only fine-tune it with a small adjustment.
@@ -624,17 +625,6 @@ Return 0 when nothing in the metadata justifies a change.
 # DynamoDB access (called inside steps)
 # ---------------------------------------------------------------------------
 
-def _own_region() -> str:
-    """The Lambda's own region = where the single inventory DynamoDB table lives.
-
-    Reuses the shared region detection (shared/utils/aws_utils.py, staged into
-    the Lambda bundle as aws_utils.py). In Lambda the env vars are always set, so
-    get_region returns before its aws-CLI fallback is ever reached.
-    """
-    from aws_utils import get_region  # staged copy, Lambda bundle
-    return get_region()
-
-
 def _table(session: boto3.session.Session = None):
     """The inventory table ALWAYS lives in the hub account, in the deploy region.
 
@@ -645,7 +635,7 @@ def _table(session: boto3.session.Session = None):
     credentials + own region for every table access, regardless of which
     (account, region) is being scanned.
     """
-    return boto3.resource("dynamodb", region_name=_own_region()).Table(TABLE_NAME)
+    return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
 
 def read_scope_inventory(session: boto3.session.Session, account_id: str, region: str) -> List[dict]:

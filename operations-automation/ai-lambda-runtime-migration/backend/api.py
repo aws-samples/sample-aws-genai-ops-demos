@@ -24,6 +24,7 @@ from typing import Optional
 
 import boto3
 
+from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
 from pipeline import normalize_spec, SpecValidationError
 from model_id import model_id as _model_id
 import discover
@@ -39,34 +40,17 @@ _lambda = None
 _ddb = None
 
 
-def _region() -> str:
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
-
-
-def _own_region() -> str:
-    """The Lambda's own region — where Bedrock is invoked for repository resolution.
-
-    Mirrors discover._own_region / assess._own_region: the model id (_model_id)
-    is a CRIS inference profile resolved for the deploy region, so the
-    bedrock-runtime endpoint must be the deploy region too. Reuses the shared
-    region detection (staged aws_utils.py); in Lambda the env vars are always
-    set, so get_region returns before its aws-CLI fallback is ever reached.
-    """
-    from aws_utils import get_region  # staged copy, Lambda bundle
-    return get_region()
-
-
 def _lambda_client():
     global _lambda
     if _lambda is None:
-        _lambda = boto3.client("lambda", region_name=_region())
+        _lambda = boto3.client("lambda", region_name=get_region())
     return _lambda
 
 
 def _table():
     global _ddb
     if _ddb is None:
-        _ddb = boto3.resource("dynamodb", region_name=_region())
+        _ddb = boto3.resource("dynamodb", region_name=get_region())
     return _ddb.Table(TABLE_NAME)
 
 
@@ -310,7 +294,7 @@ def start_migration(body: dict) -> tuple:
         return {"error": "unknown function"}, 404
 
     account_id = fn_row.get("account_id", "") or ""
-    region = fn_row.get("region", "") or _region()
+    region = fn_row.get("region", "") or get_region()
     mig_item_key = f"mig#{account_id}#{region}#{canonical}"
 
     name = _sanitize_migration_name(canonical)
@@ -381,7 +365,7 @@ def migration_status(arn: str) -> tuple:
     if fn_row is None:
         return {"migration_status": "NOT_STARTED"}, 200
     account_id = fn_row.get("account_id", "") or ""
-    region = fn_row.get("region", "") or _region()
+    region = fn_row.get("region", "") or get_region()
     mig_key = f"mig#{account_id}#{region}#{canonical}"
     resp = _table().get_item(Key={"item_key": mig_key})
     item = resp.get("Item")
@@ -815,7 +799,7 @@ def _hub_account() -> tuple:
     real account instead of '-' in the meantime. Best effort: an unavailable STS
     call leaves rows as-is.
     """
-    region = _region()
+    region = get_region()
     account_id = discover._caller_account(region)
     if not account_id:
         return "", ""
@@ -1133,7 +1117,7 @@ def resolve_repos_demo(body: dict) -> dict:
     # constructing the client itself fails, every picked function degrades to
     # the per-function fallback via _resolve_one_repo(None, ...).
     try:
-        bedrock = boto3.client("bedrock-runtime", region_name=_own_region())
+        bedrock = boto3.client("bedrock-runtime", region_name=get_region())
     except Exception:
         bedrock = None
 
