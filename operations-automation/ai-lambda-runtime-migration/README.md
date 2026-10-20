@@ -19,11 +19,7 @@ A React dashboard built with the Cloudscape Design System provides the inventory
 
 ## Architecture
 
-An editable draw.io diagram is available at [img/architecture.drawio](img/architecture.drawio).
-
-![Architecture Diagram](img/architecture.drawio.svg)
-
-The browser holds no AWS credentials. The React SPA calls an HTTP API protected by a Cognito JWT authorizer; the API Lambda starts (or adopts) the durable **Refresh** execution and reads the inventory. The durable pipeline Lambda performs the 5-step org-wide discovery and assessment, with each step checkpointed so a mid-run failure resumes rather than restarts. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+The browser holds no AWS credentials. The React SPA calls an HTTP API protected by a Cognito JWT authorizer; the API Lambda starts (or adopts) the durable scan execution and reads the inventory. The durable pipeline Lambda runs the org-wide discovery and assessment as checkpointed steps, so a mid-run failure resumes rather than restarts; a separate durable function runs each migration (resolve, AWS Transform in CodeBuild, push the upgrade branch). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Prerequisites
 
@@ -31,7 +27,7 @@ The browser holds no AWS credentials. The React SPA calls an HTTP API protected 
 - Node.js 20+
 - Python 3.13+
 - AWS CDK 2.1030.0+
-- AWS Business or Enterprise Support plan in **each account you scan** (required for Trusted Advisor API access). Accounts on Basic/Developer Support are skipped and reported as "not checked" — see [The Refresh Pipeline](#the-refresh-pipeline-durable-5-step-discover--assess)
+- AWS Business or Enterprise Support plan in **each account you scan** (required for Trusted Advisor API access). Accounts on Basic/Developer Support are skipped and reported as "not checked" — see [The scan pipeline](#the-scan-pipeline-durable-5-step-discover--assess)
 - AWS credentials configured with permissions for CloudFormation, Lambda, S3, DynamoDB, Cognito, API Gateway, Bedrock, and IAM
 - Amazon Bedrock access to Amazon Nova enabled in your target region ([Model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html))
 
@@ -78,13 +74,13 @@ aws cognito-idp admin-set-user-password \
 
 1. Open the CloudFront URL from the deployment output
 2. Sign in with the credentials you just created
-3. Click **Scan functions** to run the 5-step durable pipeline; watch the per-step progress as the durable execution advances
+3. Click **Discover** to run the durable discover + assess pipeline; watch the per-step progress as the durable execution advances
 4. Filter the inventory by account, region, or tag and sort by urgency
 5. Select functions and click **Migrate** (requires the optional Transform build plane, see below); each function ends as *Branch ready* with a link to the pushed upgrade branch, *No changes*, *Rejected* or *Failed*. The **How it works** page explains every step, status and code.
 
-## The Refresh Pipeline (durable 5-step Discover + Assess)
+## The scan pipeline (durable 5-step Discover + Assess)
 
-A single **Refresh** runs as one Lambda durable execution with five checkpointed steps. The dashboard renders these exact step labels as it polls the execution history:
+A single **Discover** runs as one Lambda durable execution with five checkpointed steps. The dashboard renders these exact step labels as it polls the execution history:
 
 1. **Determine the accounts to scan** — resolve the scope into concrete accounts. Any explicit accounts in the refresh scope win; otherwise AWS Organizations is queried for the active member accounts. The hub account is always included and scanned with its own credentials; member accounts are reached through the read-only spoke role. A standalone account (or one that cannot read Organizations) degrades cleanly to the hub alone.
 2. **Check each account's AWS Support tier** — one unit per account. Trusted Advisor requires a Business or Enterprise Support plan, so each account's tier is inferred first (as the ceiling of the severities it can open). Accounts on Basic/Developer/unknown tiers are **not dropped**: they skip discovery and are reported as "not checked" (surfaced as a counter on the My Functions hero, never a list).
@@ -145,7 +141,7 @@ All stack IDs include the region suffix for multi-region deployment support.
 |-------|---------|---------------|--------------|
 | `LambdaRuntimeMigrationData-{region}` | State storage | DynamoDB inventory table, S3 bucket | None |
 | `LambdaRuntimeMigrationAuth-{region}` | Authentication | Cognito User Pool + app client | None |
-| `LambdaRuntimeMigrationPipeline-{region}` | 5-step Discover + Assess | Lambda durable function, API Lambda, hub pipeline IAM role (always carries the org-read + spoke-assume grants) | Data |
+| `LambdaRuntimeMigrationPipeline-{region}` | Discover + Assess (5 steps) | Lambda durable function, API Lambda, hub pipeline IAM role (always carries the org-read + spoke-assume grants) | Data |
 | `LambdaRuntimeMigrationApi-{region}` | HTTP API | API Gateway HTTP API, Cognito JWT authorizer | Auth, Pipeline |
 | `LambdaRuntimeMigrationFrontend-{region}` | Dashboard | CloudFront distribution, S3 website bucket | Auth, Api |
 
@@ -160,7 +156,7 @@ The React dashboard calls the HTTP API with the Cognito **ID token** — the bro
 | Surface | Description |
 |---------|-------------|
 | **My Functions** | Labelled summary strip (including an "N accounts not checked" counter when any account was skipped for Support tier) plus a sortable, property-filtered inventory table ranked by urgency |
-| **Refresh steps** | Per-step view of the 5-step durable pipeline (determine accounts → check Support tier → discover → assess → summarize) driven by the execution history |
+| **Scan steps** | Per-step view of the 5-step durable pipeline (determine accounts → check Support tier → discover → assess → summarize) driven by the execution history |
 | **Migration steps** | Collapsible card for the latest migration batch (prepare → resolve → transform); expands on Migrate, collapses once the builds are running, persists across navigation and reloads (`GET /migrate-runs`), refreshes every 30 s |
 | **Activity log** | Scans and migration batches interleaved newest-first, one line per batch ("Migration · 2 selected, 1 rejected, 1 branch ready") |
 | **How it works** | Reference page: scan steps, migration steps, function statuses, rejection/failure codes, where the data comes from |
@@ -227,7 +223,6 @@ ai-lambda-runtime-migration/
 │   ├── index.html
 │   ├── package.json
 │   └── vite.config.ts
-├── img/                                # Architecture diagrams
 └── scripts/
     ├── build-frontend.ps1 / .sh         # Build frontend with Vite env injection
     ├── deploy-mock.ps1 / .sh            # Deploy / destroy the Mock fixture stack
@@ -280,9 +275,9 @@ npx cdk destroy "LambdaRuntimeMigrationData-$region" --no-cli-pager
 
 ### Discover + Assess, then AWS Transform to a pushed branch
 
-The scan delivers the scoped inventory: a durable Refresh that discovers and assesses deprecated-runtime functions with Nova, so a team can see what is deprecated, how risky it is, and what to migrate first. **Migrate** is a direct action on the selected rows: each function ends as *Branch ready* (an upgrade branch pushed to its repository), *No changes*, *Rejected* or *Failed*. `main` is never written and no pull request is opened by the demo.
+The scan delivers the scoped inventory: a durable Discover run that discovers and assesses deprecated-runtime functions with Nova, so a team can see what is deprecated, how risky it is, and what to migrate first. **Migrate** is a direct action on the selected rows: each function ends as *Branch ready* (an upgrade branch pushed to its repository), *No changes*, *Rejected* or *Failed*. `main` is never written and no pull request is opened by the demo.
 
-The migration engine is [AWS Transform](https://aws.amazon.com/transform/), which provides managed, validated code transformation. AWS Transform's `additionalPlanContext` parameter is written as directives: upgrade this one function (named with its handler and runtime) to the target and leave the rest of the repository untouched, then the non-empty findings from Discover + Assess (deprecated APIs, breaking changes, dependency issues, migration risks) as advisory. The target is the assessed one when it is valid for the family and newer than the source runtime, otherwise the family default. The runtime family picks one of three AWS Transform [managed transformations](https://docs.aws.amazon.com/transform/latest/userguide/transform-aws-customs.html) (the map lives in `backend/transform_runtimes.py`; any other runtime is rejected with `RUNTIME_UNSUPPORTED`):
+The migration engine is [AWS Transform](https://aws.amazon.com/transform/), which provides managed, validated code transformation. AWS Transform's `additionalPlanContext` parameter is written as directives: upgrade this one function (named with its handler and runtime) to the target and leave the rest of the repository untouched, then the non-empty findings from Discover + Assess (deprecated APIs, breaking changes, dependency issues, migration risks) as advisory. The target runtime is fixed per language family by the managed transformation. The runtime family picks one of three AWS Transform [managed transformations](https://docs.aws.amazon.com/transform/latest/userguide/transform-aws-customs.html) (the map lives in `backend/transform_runtimes.py`; any other runtime is rejected with `RUNTIME_UNSUPPORTED`):
 
 - `AWS/lambda-nodejs-runtime-upgrade` — Lambda-specific Node.js runtime upgrade (default target nodejs24.x)
 - `AWS/dotnet-lambda-upgrade` — Lambda-specific .NET upgrade (.NET Core 3.1 / 6 / 8 → .NET 10; default target dotnet10)

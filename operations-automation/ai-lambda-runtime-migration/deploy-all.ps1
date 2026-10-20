@@ -172,7 +172,7 @@ Write-Host ""
 Write-Host "     aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin@example.com --password ""YourSecurePassword123!"" --permanent --no-cli-pager" -ForegroundColor White
 Write-Host ""
 Write-Host "     (The username is the email address; replace it and the password with your own values)" -ForegroundColor DarkGray
-Write-Host "  2. Sign in at the Dashboard URL above and click Scan functions to run the first discover + assess pipeline" -ForegroundColor Gray
+Write-Host "  2. Sign in at the Dashboard URL above and click Discover to run the first discover + assess pipeline" -ForegroundColor Gray
 Write-Host "     The hub always scans whatever organization it can read at runtime; a standalone account scans itself." -ForegroundColor DarkGray
 if ($MultiAccount) {
     $hubAccount = aws sts get-caller-identity --query Account --output text --no-cli-pager

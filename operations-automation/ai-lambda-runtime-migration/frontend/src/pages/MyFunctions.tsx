@@ -1,6 +1,6 @@
 // Home = the org-wide inventory of deprecated-runtime Lambda functions.
 // Inventory-first: a thin labelled summary strip over a PropertyFilter table.
-// "Scan functions" discovers the whole org and starts/polls the durable
+// "Discover" runs the whole org and starts/polls the durable
 // Discover + Assess run; the operator narrows the results in the table's
 // PropertyFilter (region, tags), ticks the rows to migrate, and clicks
 // "Migrate (N)": one batch durable execution resolves each repository, runs AWS
@@ -912,12 +912,14 @@ export default function MyFunctions() {
             counter={firstLoad ? undefined : shown === sorted.length ? `(${shown})` : `(${shown} of ${sorted.length})`}
             actions={
               <SpaceBetween size="xs" direction="horizontal" alignItems="center">
-                {/* Migrate does one thing: for each selected function, resolve the
-                    repository, run AWS Transform and push the upgrade branch. */}
-                <Button variant="primary" loading={migrating} disabled={selected.length === 0} onClick={() => migrate(selected)}>
+                {/* Discover (primary) runs the org-wide discover + assess scan.
+                    Migrate resolves each selected function's repository, runs AWS
+                    Transform and pushes the upgrade branch. Neither carries an
+                    icon, so the pair reads consistently. */}
+                <Button variant="primary" loading={running} onClick={rescan}>Discover</Button>
+                <Button loading={migrating} disabled={selected.length === 0} onClick={() => migrate(selected)}>
                   Migrate{selected.length ? ` (${selected.length})` : ''}
                 </Button>
-                <Button iconName="refresh" loading={running} onClick={rescan}>Scan functions</Button>
               </SpaceBetween>
             }
           >
@@ -937,8 +939,8 @@ export default function MyFunctions() {
           <Box textAlign="center" padding="l" color="text-body-secondary">
             <SpaceBetween size="xs">
               <Box variant="strong">No deprecated-runtime functions found</Box>
-              <Box variant="p">Scan functions to discover deprecated runtimes across the org.</Box>
-              <Button iconName="refresh" onClick={rescan}>Scan functions</Button>
+              <Box variant="p">Discover deprecated runtimes across the org.</Box>
+              <Button variant="primary" onClick={rescan}>Discover</Button>
             </SpaceBetween>
           </Box>
         }

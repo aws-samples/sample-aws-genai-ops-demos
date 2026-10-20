@@ -219,11 +219,11 @@ export default function HowItWorksPage() {
           </TextContent>
         </Container>
 
-        <Section id="scan-steps" title="Scan steps" description="What “Scan functions” does, in the order the Steps card shows. Each row is one durable step of the scan execution.">
+        <Section id="scan-steps" title="Scan steps" description="What Discover does, in the order the Steps card shows. Each row is one durable step of the scan execution.">
           <Table variant="embedded" wrapLines items={SCAN_STEPS} columnDefinitions={STEP_COLUMNS} trackBy="durableStep" ariaLabels={{ tableLabel: 'Scan steps' }} />
         </Section>
 
-        <Section id="migration-steps" title="Migration steps" description="What “Migrate” does for each selected function, in the order the Steps card shows.">
+        <Section id="migration-steps" title="Migration steps" description="What Migrate does for each selected function, in the order the Steps card shows.">
           <SpaceBetween size="m">
             <Table variant="embedded" wrapLines items={MIGRATION_STEPS} columnDefinitions={STEP_COLUMNS} trackBy="durableStep" ariaLabels={{ tableLabel: 'Migration steps' }} />
             <Box variant="p">

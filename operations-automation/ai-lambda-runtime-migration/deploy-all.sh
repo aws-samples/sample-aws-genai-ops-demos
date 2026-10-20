@@ -175,7 +175,7 @@ echo ""
 echo -e "     aws cognito-idp admin-set-user-password --user-pool-id $user_pool_id --username admin@example.com --password \"YourSecurePassword123!\" --permanent --no-cli-pager"
 echo ""
 echo -e "\033[0;90m     (The username is the email address; replace it and the password with your own values)\033[0m"
-echo -e "\033[0;90m  2. Sign in at the Dashboard URL above and click Scan functions to run the first discover + assess pipeline\033[0m"
+echo -e "\033[0;90m  2. Sign in at the Dashboard URL above and click Discover to run the first discover + assess pipeline\033[0m"
 echo -e "\033[0;90m     The hub always scans whatever organization it can read at runtime; a standalone account scans itself.\033[0m"
 if [ "$MULTI_ACCOUNT" = true ]; then
     hub_account=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
