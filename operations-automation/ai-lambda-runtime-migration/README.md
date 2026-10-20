@@ -114,7 +114,7 @@ Per-account Support tier is always reported. An account without Business/Enterpr
 
 ## Migrating a function (AWS Transform)
 
-The optional **Transform** build plane (`scripts/deploy-transform.ps1` / `.sh`, opt-in via `--context transform=true`) runs an [AWS Transform](https://docs.aws.amazon.com/transform/latest/userguide/) managed runtime-upgrade transformation against a function's source repository inside AWS CodeBuild. A migration is one durable execution with three steps per batch, shown live in a collapsible **Migration steps** card on My functions:
+The optional **Transform** build plane (opt-in via `scripts/deploy-transform.ps1` / `.sh`) runs an [AWS Transform](https://docs.aws.amazon.com/transform/latest/userguide/) managed runtime-upgrade transformation against a function's source repository inside AWS CodeBuild. A migration is one durable execution with three steps per batch, shown live in a collapsible **Migration steps** card on My functions:
 
 1. **Prepare the migration batch** — mint the batch id, apply the 50-function per-run cap (extra selections are reported, never silently dropped).
 2. **Resolve source repositories** — read each function's repository (and optional branch) tag configured in Settings, verify the repository and branch exist, use the family's target runtime. A function that cannot be resolved is **Rejected** with a code (no repository tag, repository or branch not found, unsupported runtime, access denied, already in progress).
@@ -159,7 +159,6 @@ The React dashboard calls the HTTP API with the Cognito **ID token** — the bro
 
 | Surface | Description |
 |---------|-------------|
-| **Scope banner** | Sticky banner showing the active account/region/tag scope |
 | **My Functions** | Labelled summary strip (including an "N accounts not checked" counter when any account was skipped for Support tier) plus a sortable, property-filtered inventory table ranked by urgency |
 | **Refresh steps** | Per-step view of the 5-step durable pipeline (determine accounts → check Support tier → discover → assess → summarize) driven by the execution history |
 | **Migration steps** | Collapsible card for the latest migration batch (prepare → resolve → transform); expands on Migrate, collapses once the builds are running, persists across navigation and reloads (`GET /migrate-runs`), refreshes every 30 s |
@@ -172,24 +171,42 @@ Each data point is labeled with its source (Trusted Advisor, Lambda API, CloudWa
 
 ```
 ai-lambda-runtime-migration/
-├── backend/                            # Python Lambda bundle (one bundle, two handlers)
+├── README.md
+├── ARCHITECTURE.md                     # Architecture and design notes
+├── deploy-all.ps1                      # Deployment script (PowerShell)
+├── deploy-all.sh                       # Deployment script (Bash)
+├── validation.yaml                     # Demo validation contract
+├── backend/                            # Python Lambda bundle (one bundle, four handlers)
+│   ├── api.py                          # Plain API handler (UI actions, scan + migration control)
 │   ├── pipeline.py                     # Durable discover + assess handler
 │   ├── migrate.py                      # Durable migration orchestrator (resolve, AWS Transform callback)
 │   ├── build_complete.py               # CodeBuild completion handler (writes Branch ready / No changes / Failed)
-│   ├── api.py                          # Plain API handler (UI actions, refresh + migration control)
-│   ├── discover.py                     # Discovery + enrichment + prioritization
+│   ├── discover.py                     # Discovery + enrichment + prioritization + per-scan rollup
 │   ├── assess.py                       # Code download + AI assessment
+│   ├── inventory.py                    # Table reads shared by api and migrate (scan, settings, tag resolver)
+│   ├── common.py                       # Pure helpers shared by more than one module
+│   ├── org_accounts.py                 # AWS Organizations account enumeration
+│   ├── support.py                      # Support tier detection
+│   ├── model_id.py                     # Bedrock model id resolution (CRIS prefix)
+│   ├── transform_runtimes.py           # Runtime family -> AWS Transform target reference data
 │   ├── requirements.txt
 │   └── tests/                          # pytest suite (durable test runners)
-├── cdk/                                # CDK TypeScript infrastructure (5 stacks)
+├── cdk/                                # CDK TypeScript infrastructure (9 stacks: 7 deployed by default + Spoke/Org for multi-account)
 │   ├── bin/app.ts                      # Entry point with solution adoption tracking
+│   ├── buildspec/
+│   │   └── transform-migrate.buildspec.yml  # CodeBuild steps: clone, run AWS Transform, push the upgrade branch
 │   ├── lib/
 │   │   ├── data-stack.ts               # DynamoDB inventory table + S3
 │   │   ├── auth-stack.ts               # Cognito User Pool + app client
-│   │   ├── pipeline-stack.ts           # Lambda durable function + API Lambda
+│   │   ├── pipeline-stack.ts           # Lambda durable functions + API Lambda
 │   │   ├── api-stack.ts                # HTTP API + Cognito JWT authorizer
-│   │   ├── scan-permissions.ts         # Shared scan/read IAM statements
-│   │   └── frontend-stack.ts           # CloudFront + S3 website
+│   │   ├── frontend-stack.ts           # CloudFront + S3 website
+│   │   ├── transform-stack.ts          # Optional: CodeBuild project for AWS Transform (deploy-transform)
+│   │   ├── mock-fixture-stack.ts       # Optional: fixture repo + three deprecated-runtime functions (deploy-mock)
+│   │   ├── spoke-stack.ts              # Multi-account: read-only role in each member account
+│   │   ├── org-stack.ts                # Multi-account: StackSet rolling the Spoke stack out
+│   │   └── scan-permissions.ts         # Shared scan/read IAM statements (hub + spoke)
+│   ├── mock-fixtures/                  # Sources of the mock fixture functions (dotnet, nodejs, python)
 │   ├── cdk.json
 │   ├── package.json
 │   └── tsconfig.json
@@ -197,23 +214,24 @@ ai-lambda-runtime-migration/
 │   ├── src/
 │   │   ├── main.tsx
 │   │   ├── App.tsx
+│   │   ├── AuthModal.tsx
+│   │   ├── SplitPanelContext.tsx
 │   │   ├── api.ts                       # HTTP API client (Cognito ID token)
 │   │   ├── auth.ts                      # Cognito authentication
-│   │   ├── tag-filter.ts
 │   │   ├── constants.ts                 # Status labels / indicators + rejection & failure code help (single source)
 │   │   ├── console-links.ts             # Partition-aware console deep links (Lambda, CodeCommit branch)
-│   │   ├── components/                  # TagFilterModal, TagFilterProvider, RefreshSteps, MigrationSteps, ScanLog
+│   │   ├── migration-tallies.ts         # Deprecation state + migration-run tallies
+│   │   ├── tag-filter.ts
+│   │   ├── components/                  # ScanSteps, MigrationSteps, ScanLog, steps-common, charts/
 │   │   └── pages/                       # MyFunctions, ScanLogPage, StatisticsPage, HowItWorksPage, SettingsPage
 │   ├── index.html
 │   ├── package.json
 │   └── vite.config.ts
 ├── img/                                # Architecture diagrams
-├── scripts/
-│   └── build-frontend.ps1 / .sh         # Build frontend with Vite env injection
-├── deploy-all.ps1                      # Deployment script (PowerShell)
-├── deploy-all.sh                       # Deployment script (Bash)
-├── validation.yaml                     # Demo validation contract
-└── README.md
+└── scripts/
+    ├── build-frontend.ps1 / .sh         # Build frontend with Vite env injection
+    ├── deploy-mock.ps1 / .sh            # Deploy / destroy the Mock fixture stack
+    └── deploy-transform.ps1 / .sh       # Deploy / destroy the Transform stack and upload the buildspec
 ```
 
 ## Cost Estimate
