@@ -224,7 +224,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
         "secretRef": "my-git-token-secret",
         "detectionMethod": "tag",
         # Not a settings field (removed): dropped like any unknown key.
-        "repoTagKey": "source-repo",
+        "removedRepoTagField": "source-repo",
         # These must NEVER be persisted:
         "token": "should-be-dropped",
         "tokenValue": "should-be-dropped",
@@ -237,7 +237,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
     # Only the whitelisted keys (plus item_key/updated_at) are written.
     assert written["platform"] == "gitlab"
     assert written["secretRef"] == "my-git-token-secret"
-    assert "repoTagKey" not in written
+    assert "removedRepoTagField" not in written
     assert "updated_at" in written
     for forbidden in ("token", "tokenValue", "unknown"):
         assert forbidden not in written
@@ -270,7 +270,7 @@ def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
         "repoTag": "Git:Repository",
         "branchTag": "git:branch",
         # Not a settings field (removed): dropped like any unknown key.
-        "repoTagKey": "source-repo",
+        "removedRepoTagField": "source-repo",
         # Must NEVER be persisted:
         "token": "should-be-dropped",
     }})
@@ -279,7 +279,7 @@ def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
     written = table.put_item_arg
     assert written["repoTag"] == "Git:Repository"
     assert written["branchTag"] == "git:branch"
-    assert "repoTagKey" not in written
+    assert "removedRepoTagField" not in written
     assert resp["settings"]["repoTag"] == "Git:Repository"
     assert resp["settings"]["branchTag"] == "git:branch"
     assert "token" not in written
@@ -290,7 +290,7 @@ def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
     # A stored attribute that is not a settings field is returned as-is and
     # never promoted to repoTag; the UI falls back to its default tag.
     stored = {"item_key": inventory.SETTINGS_KEY, "platform": "github", "org": "acme",
-              "detectionMethod": "tag", "repoTagKey": "source-repo"}
+              "detectionMethod": "tag", "removedRepoTagField": "source-repo"}
     table = _SettingsTable(item=stored)
     monkeypatch.setattr(inventory, "table", lambda: table)
     resp = api.handler({"action": "get_settings"})

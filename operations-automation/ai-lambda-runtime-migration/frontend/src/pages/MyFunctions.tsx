@@ -627,7 +627,7 @@ export default function MyFunctions() {
   // account. The hub's rows now carry its real account id (resolved for display
   // by the API), so "has an account id" is no longer the single-vs-multi signal
   // — count DISTINCT account ids instead, so a single-account scan stays single.
-  const multiAccount = useMemo(() => new Set(rows.map((r) => r.account_id).filter(Boolean)).size > 1, [rows]);
+  const multipleAccounts = useMemo(() => new Set(rows.map((r) => r.account_id).filter(Boolean)).size > 1, [rows]);
   const accounts = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rows) if (r.account_id) m.set(r.account_id, r.account_name || r.account_id);
@@ -673,9 +673,9 @@ export default function MyFunctions() {
       operators: ['=', '!='].map((operator) => ({ operator, format: migrationRunLabel })) },
     { key: 'migration_complexity', propertyLabel: 'Complexity', groupValuesLabel: 'Complexities',
       operators: ['=', '!='].map((operator) => ({ operator, format: complexityLabel })) },
-    ...(multiAccount ? [{ key: 'account_id', propertyLabel: 'Account', groupValuesLabel: 'Accounts', operators: ['=', '!='] } as PropertyFilterProps.FilteringProperty] : []),
+    ...(multipleAccounts ? [{ key: 'account_id', propertyLabel: 'Account', groupValuesLabel: 'Accounts', operators: ['=', '!='] } as PropertyFilterProps.FilteringProperty] : []),
     ...tagKeyInfos.map((k) => ({ key: `${TAG_PROP}${k.key}`, propertyLabel: `Tag ${k.key}`, groupValuesLabel: `${k.key} values`, operators: ['=', '!='], group: 'tags' } as PropertyFilterProps.FilteringProperty)),
-  ], [multiAccount, tagKeyInfos]);
+  ], [multipleAccounts, tagKeyInfos]);
   const filteringOptions: PropertyFilterProps.FilteringOption[] = useMemo(() => [
     ...regions.map((v) => ({ propertyKey: 'region', value: v })),
     ...runtimes.map((v) => ({ propertyKey: 'runtime', value: v })),
@@ -685,9 +685,9 @@ export default function MyFunctions() {
     { propertyKey: 'alert_status', value: 'Green', label: 'Resolved' },
     ...runStatuses.map((v) => ({ propertyKey: 'migration_run_status', value: v, label: migrationRunLabel(v) })),
     ...complexities.map((v) => ({ propertyKey: 'migration_complexity', value: v, label: complexityLabel(v) })),
-    ...(multiAccount ? accounts.map((a) => ({ propertyKey: 'account_id', value: a.id, label: a.name })) : []),
+    ...(multipleAccounts ? accounts.map((a) => ({ propertyKey: 'account_id', value: a.id, label: a.name })) : []),
     ...tagKeyInfos.flatMap((k) => tagValues(rows, k.key).map((v) => ({ propertyKey: `${TAG_PROP}${k.key}`, value: v.value, label: `${v.value} (${v.resources})` }))),
-  ], [rows, regions, runtimes, runStatuses, complexities, accounts, multiAccount, tagKeyInfos]);
+  ], [rows, regions, runtimes, runStatuses, complexities, accounts, multipleAccounts, tagKeyInfos]);
 
   const { items, filteredItemsCount, collectionProps, propertyFilterProps, paginationProps } = useCollection(sorted, {
     propertyFiltering: { filteringProperties, filteringFunction: matchQuery },
@@ -734,7 +734,7 @@ export default function MyFunctions() {
   // are an icon dot plus a short number; text KPIs pass their own width.
   const kpi = (value: ReactNode, width = '4ch'): ReactNode =>
     firstLoad ? <Skeleton width={width} /> : value;
-  const inScopeDetail = `across ${multiAccount ? accounts.length : 1} ${multiAccount && accounts.length !== 1 ? 'accounts' : 'account'}, ${regions.length} ${regions.length === 1 ? 'region' : 'regions'}`;
+  const inScopeDetail = `across ${multipleAccounts ? accounts.length : 1} ${multipleAccounts && accounts.length !== 1 ? 'accounts' : 'account'}, ${regions.length} ${regions.length === 1 ? 'region' : 'regions'}`;
   // Accounts skipped because their Support tier (Basic/Developer) is ineligible
   // for Trusted Advisor. A COUNTER, never a list — the list could be huge.
   const notChecked = latestSummary?.accounts_not_checked?.length ?? 0;
@@ -947,7 +947,7 @@ export default function MyFunctions() {
             id: 'function', header: 'Function', sortingField: 'function_arn',
             cell: (f) => <Button variant="inline-link" onClick={() => openDrawer(f)}>{funcName(f.function_arn)}</Button>,
           },
-          ...(multiAccount ? [{
+          ...(multipleAccounts ? [{
             id: 'accountId', header: 'Account ID', sortingField: 'account_id',
             cell: (f: MigrationFunction) => f.account_id
               ? <Box>{f.account_id}</Box>

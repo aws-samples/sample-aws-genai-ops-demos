@@ -335,7 +335,7 @@ def test_discover_scope_writes_priority_base_and_adjustment(monkeypatch):
         ":s": 80, ":l": "CRITICAL", ":r": "prod tag", ":b": 72, ":a": 8}
 
 
-def test_discover_scope_keys_functions_under_their_own_region(monkeypatch):
+def test_discover_scope_keys_functions_under_the_function_region(monkeypatch):
     """TA is account-wide: one call returns functions across several regions.
     Each function must be keyed under its OWN region, not the cell region."""
     arn_use1 = "arn:aws:lambda:us-east-1:111:function:a"
