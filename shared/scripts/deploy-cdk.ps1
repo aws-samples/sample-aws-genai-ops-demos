@@ -147,16 +147,19 @@ try {
         Write-Host "      OK: CDK bootstrap is up to date" -ForegroundColor Green
     }
 
-    # Deploy or destroy stack
+    # Deploy or destroy stack. Context is forwarded to both: a stack that the
+    # app only instantiates under a context key must see it on destroy too.
+    $contextArgs = @()
+    foreach ($kv in $CdkContext) { if ($kv) { $contextArgs += @("--context", $kv) } }
     if ($DestroyStack) {
         Write-Host ""
         Write-Host "Destroying CDK stack..." -ForegroundColor Yellow
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         if ([string]::IsNullOrEmpty($StackName)) {
-            npx -y cdk destroy --force --no-cli-pager 2>$null
+            npx -y cdk destroy --force --no-cli-pager @contextArgs 2>$null
         } else {
-            npx -y cdk destroy $StackName --force --no-cli-pager 2>$null
+            npx -y cdk destroy $StackName --force --no-cli-pager @contextArgs 2>$null
         }
         $cdkExitCode = $LASTEXITCODE
         $ErrorActionPreference = $prevErrorAction
@@ -170,8 +173,6 @@ try {
         Write-Host "Deploying CDK stack..." -ForegroundColor Yellow
         $prevErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        $contextArgs = @()
-        foreach ($kv in $CdkContext) { if ($kv) { $contextArgs += @("--context", $kv) } }
         if ([string]::IsNullOrEmpty($StackName)) {
             npx -y cdk deploy --require-approval never --no-cli-pager @contextArgs 2>$null
         } else {
