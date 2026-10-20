@@ -5,7 +5,7 @@
  */
 import type { MigrationBatchSummary, MigrationRunStatus } from './api';
 
-export type StatusIndicatorType = 'success' | 'error' | 'warning' | 'info' | 'stopped' | 'pending' | 'in-progress' | 'loading' | 'not-started';
+type StatusIndicatorType = 'success' | 'error' | 'warning' | 'info' | 'stopped' | 'pending' | 'in-progress' | 'loading' | 'not-started';
 
 export interface StatusConfig {
   label: string;
@@ -21,10 +21,6 @@ export const MIGRATION_STATUS: Record<string, StatusConfig> = {
   SKIPPED:    { label: 'Skipped',    type: 'stopped' },
   MIGRATED:   { label: 'Migrated',   type: 'success' },
 };
-
-export function getStatusConfig(status: string): StatusConfig {
-  return MIGRATION_STATUS[status] || { label: status, type: 'info' };
-}
 
 // Migration-run axis (the mig# item enum, merged onto rows as
 // migration_run_status). Single source for the table, drawer, hero, Activity
@@ -123,28 +119,4 @@ export const migrationSummaryLine = (s: MigrationBatchSummary): string => {
   if (s.no_changes) segments.push(`${s.no_changes} no changes`);
   if (s.failed) segments.push(`${s.failed} failed`);
   return segments.join(', ');
-};
-
-/**
- * Trusted Advisor alert status badge colors.
- */
-export const ALERT_STATUS: Record<string, { label: string; color: string }> = {
-  red:    { label: 'Red',    color: 'severity-high' },
-  yellow: { label: 'Yellow', color: 'severity-low' },
-  green:  { label: 'Green',  color: 'severity-neutral' },
-};
-
-export function getAlertConfig(alertStatus: string): { label: string; color: string } {
-  return ALERT_STATUS[alertStatus.toLowerCase()] || { label: alertStatus || '—', color: 'grey' };
-}
-
-/**
- * Priority label badge colors.
- */
-export const PRIORITY_COLORS: Record<string, string> = {
-  CRITICAL: 'severity-critical',
-  HIGH:     'severity-high',
-  MEDIUM:   'severity-medium',
-  LOW:      'severity-low',
-  INACTIVE: 'severity-neutral',
 };

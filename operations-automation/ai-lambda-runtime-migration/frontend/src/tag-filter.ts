@@ -11,9 +11,9 @@
 // with this key"; (not tagged) means "without it".
 import type { MigrationFunction } from './api';
 
-export interface TagFilter { key: string; values: string[] }
+interface TagFilter { key: string; values: string[] }
 
-export const NOT_TAGGED = '(not tagged)';
+const NOT_TAGGED = '(not tagged)';
 
 // ---- matching ----
 
@@ -26,7 +26,7 @@ export const matchesTags = (tags: Record<string, string> | undefined, filters: T
 
 // ---- suggestions: the tags present on the loaded rows, ranked ----
 
-export interface TagKeyInfo { key: string; resources: number; distinct: number }
+interface TagKeyInfo { key: string; resources: number; distinct: number }
 
 export const tagKeys = (rows: MigrationFunction[]): TagKeyInfo[] => {
   const count = new Map<string, { resources: number; values: Set<string> }>();

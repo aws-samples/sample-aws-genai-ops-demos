@@ -9,7 +9,7 @@ const consoleDnsSuffix = (region: string): string => {
   return 'aws.amazon.com';
 };
 
-export const consoleHost = (region: string): string => `https://${region}.console.${consoleDnsSuffix(region)}`;
+const consoleHost = (region: string): string => `https://${region}.console.${consoleDnsSuffix(region)}`;
 
 const funcName = (arn: string): string => arn.match(/function:(.+)/)?.[1] || arn;
 

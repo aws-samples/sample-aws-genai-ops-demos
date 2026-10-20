@@ -15,7 +15,7 @@ export const isActiveBacklog = (f: MigrationFunction): boolean => {
   return !f.resolved_at && (alert === 'red' || alert === 'yellow');
 };
 
-export interface MigrationTallies {
+interface MigrationTallies {
   // Deprecation axis (active rows only for red / yellow / active).
   red: number;
   yellow: number;

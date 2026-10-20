@@ -21,7 +21,7 @@ const apiUrl: string = ((import.meta as any).env?.VITE_API_URL || '').replace(/\
 // 'MIGRATED' is the only status written automatically this phase (inferred when
 // Trusted Advisor stops reporting a function); the rest are reserved for the
 // future AWS Transform phase.
-export type MigrationStatus = 'DISCOVERED' | 'ASSESSED' | 'SKIPPED' | 'MIGRATED';
+type MigrationStatus = 'DISCOVERED' | 'ASSESSED' | 'SKIPPED' | 'MIGRATED';
 
 // Phase-2 migration-run axis (the mig# item enum), distinct from the Phase-1
 // migration_status above. A function with no mig# item reads as NOT_STARTED.
@@ -90,13 +90,6 @@ export interface MigrationFunction {
   [key: string]: unknown;
 }
 
-export interface MetricsSummary {
-  total: number;
-  deprecated: number;
-  by_runtime: Record<string, number>;
-  by_status: Record<string, number>;
-}
-
 // One immutable per-scan rollup row (key 'rollup#<rollup_at>'). The series is
 // the measurement history the Statistics charts draw (FEAT-002). Each run
 // appends exactly one of these; the backend never mutates an existing row.
@@ -121,11 +114,6 @@ export interface RollupRecord {
   run_no_changes?: number;
   run_branches_ready?: number;   // BRANCH_READY: upgrade branch pushed, awaiting merge
   run_legacy?: number;           // REHEARSED | PR_OPENED | unknown (D8)
-}
-
-export interface RegionList {
-  regions?: string[];
-  error?: string;
 }
 
 // --- Transport -------------------------------------------------------------
@@ -164,7 +152,7 @@ const callApi = async (method: 'GET' | 'POST', path: string, body?: unknown): Pr
 };
 
 // Router action (POST /actions). Payload shape: { action, ...params }.
-export const invokeAction = async (payload: Record<string, unknown>): Promise<any> => callApi('POST', '/actions', payload);
+const invokeAction = async (payload: Record<string, unknown>): Promise<any> => callApi('POST', '/actions', payload);
 
 // --- Inventory -------------------------------------------------------------
 
@@ -174,16 +162,6 @@ export const getFunctions = async (): Promise<{ functions: MigrationFunction[] }
   const result = await invokeAction({ action: 'list_functions' });
   return { functions: result.functions || [] };
 };
-
-// Fleet-level counts for the summary strip. The UI also derives most facts
-// from the rows it already has.
-export const getMetrics = async (): Promise<MetricsSummary> => {
-  const result = await invokeAction({ action: 'get_metrics' });
-  return result.metrics || result || { total: 0, deprecated: 0, by_runtime: {}, by_status: {} };
-};
-
-// Regions enabled for this account (ec2:DescribeRegions on the API function).
-export const listRegions = async (): Promise<RegionList> => invokeAction({ action: 'list_regions' });
 
 // The per-scan rollup series (measurement history), ordered oldest-first by the
 // backend. Shared with the Statistics charts (FEAT-002).
@@ -202,7 +180,7 @@ export const getStats = async (): Promise<{ rollups: RollupRecord[] }> => {
 export type GitPlatform = 'github' | 'gitlab' | 'bitbucket' | 'codecommit';
 export type DetectionMethod = 'tag' | 'ai';
 
-export interface GitSettings {
+interface GitSettings {
   platform: GitPlatform;
   host?: string;
   org?: string;
@@ -273,7 +251,7 @@ export interface RefreshPhase {
   accountsFound?: number;
 }
 
-export interface RefreshProgress {
+interface RefreshProgress {
   support_done?: number;
   discover_done: number;
   assess_done: number;
@@ -290,7 +268,7 @@ export interface RefreshExecutionStatus {
   error?: unknown;
 }
 
-export interface RefreshRequest {
+interface RefreshRequest {
   // The scope the operator is rescanning: tag filter + optional regions/accounts.
   scope?: {
     tags?: Array<{ key: string; values: string[] }>;
@@ -386,24 +364,11 @@ export const getRefreshStatus = async (executionArn: string): Promise<RefreshExe
 // repository when AWS Transform produced changes. Nothing is merged and no
 // pull request is opened: the flow ends at the pushed branch.
 
-// Start a migration for one function.
-export const startMigration = async (
-  functionArn: string,
-): Promise<{ executionArn: string; migItemKey?: string }> => {
-  const result = await callApi('POST', '/migrate', { function_arn: functionArn });
-  return { executionArn: result.executionArn, migItemKey: result.migItemKey };
-};
-
-// Read the migration-run status for one function. Returns the mig# item, or
-// { migration_status: 'NOT_STARTED' } when no migration has been started.
-export const getMigrationStatus = async (functionArn: string): Promise<MigrationFunction> =>
-  callApi('GET', `/migrate/${encodeURIComponent(functionArn)}`);
-
 // --- Migration BATCH (one durable execution per Migrate click) --------------
 // A Migrate click starts ONE batch durable execution over the selected ARNs,
 // surfaced as a small set of phases with counters (the same RefreshPhase shape
 // as the scan). The UI starts it, then polls getMigrationRunStatus on phase
-// state. This replaces the N startMigration calls / N flashes.
+// state, so one click produces one card and one finish flash.
 
 // One migration phase with a counter (same field shape as RefreshPhase).
 export interface MigrationPhase {
@@ -418,7 +383,7 @@ export interface MigrationPhase {
   branchesReady?: number; // Transform phase: units whose upgrade branch is pushed
 }
 
-export interface MigrationRunProgress {
+interface MigrationRunProgress {
   phases: MigrationPhase[];
   rejected_by_code?: Record<string, number>;
   total_selected?: number | null;   // from the decoded prepare-batch result
@@ -448,8 +413,8 @@ export interface MigrationRunExecutionStatus {
   progress?: MigrationRunProgress;
 }
 
-// ONE call per Migrate click (replaces N startMigration calls). Each function
-// that transforms cleanly ends with its upgrade branch pushed; nothing is merged.
+// ONE call per Migrate click, whatever the selection size. Each function that
+// transforms cleanly ends with its upgrade branch pushed; nothing is merged.
 export const startMigrationBatch = async (
   functionArns: string[],
 ): Promise<{ executionArn: string; batchSize: number; overCap: number; skipped: string[] }> => {
