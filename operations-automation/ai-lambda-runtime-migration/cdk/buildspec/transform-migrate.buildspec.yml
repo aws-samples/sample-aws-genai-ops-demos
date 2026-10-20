@@ -16,7 +16,7 @@ version: 0.2
 #
 # Env (all PLAINTEXT start-build overrides): REPOSITORY_URL, SOURCE_BRANCH
 # (branch to clone and cut the upgrade branch from; empty = default branch),
-# TARGET_RUNTIME, TRANSFORM_NAME, JOB_ID, OUTPUT_BUCKET, MIG_ITEM_KEY.
+# TARGET_RUNTIME, TRANSFORM_NAME, TRANSFORM_FALLBACK_REGION, JOB_ID, OUTPUT_BUCKET.
 
 phases:
   install:

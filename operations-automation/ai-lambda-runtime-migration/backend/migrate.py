@@ -739,7 +739,6 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
             {"name": "TRANSFORM_FALLBACK_REGION", "value": _transform_fallback_region(), "type": "PLAINTEXT"},
             {"name": "JOB_ID", "value": job_id, "type": "PLAINTEXT"},
             {"name": "OUTPUT_BUCKET", "value": BUCKET_NAME, "type": "PLAINTEXT"},
-            {"name": "MIG_ITEM_KEY", "value": mig_key, "type": "PLAINTEXT"},
             # The branch the build clones and cuts the upgrade branch from (empty
             # = the repo's default branch), so the branch diff is the upgrade and
             # nothing else.

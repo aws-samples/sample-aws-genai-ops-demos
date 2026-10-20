@@ -54,8 +54,8 @@ def _now() -> str:
 
 def _lookup_index(build_id: str) -> dict:
     """The buildidx#<build_id> row (mig_item_key, job_id, callback_id, batch_id),
-    or {} when unknown. The index row is authoritative; the MIG_ITEM_KEY env hint
-    is only an optimization and carries no job/callback id."""
+    or {} when unknown. The index row is the only link from a build to its mig#
+    item, job id and callback id."""
     if not build_id:
         return {}
     resp = _table().get_item(Key={"item_key": f"buildidx#{build_id}"})
@@ -251,7 +251,7 @@ def handler(event, context=None):
     build_status = str(detail.get("build-status", "")).upper()
 
     index = _lookup_index(build_id)
-    mig_key = index.get("mig_item_key") or os.environ.get("MIG_ITEM_KEY")
+    mig_key = index.get("mig_item_key")
     if not mig_key:
         # Nothing to update (unknown build); best-effort no-op.
         logger.warning("no buildidx# row for build %s; nothing to update", build_id)

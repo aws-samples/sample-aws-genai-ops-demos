@@ -606,10 +606,10 @@ def test_transform_submitter_passes_source_branch(monkeypatch):
     migrate.start_transform(_resolved())("cb-2", MagicMock())
     sb = clients["codebuild"].start_build.call_args
     assert _env_value(sb, "SOURCE_BRANCH")["value"] == ""
-    # The seven pre-existing vars are still there; the build no longer takes a
-    # pull-request flag (the pushed branch is the end of the flow).
+    # The six build inputs are there; the build takes no pull-request flag (the
+    # pushed branch is the end of the flow).
     for name in ("REPOSITORY_URL", "TARGET_RUNTIME", "TRANSFORM_NAME", "TRANSFORM_FALLBACK_REGION",
-                 "JOB_ID", "OUTPUT_BUCKET", "MIG_ITEM_KEY"):
+                 "JOB_ID", "OUTPUT_BUCKET"):
         assert _env_value(sb, name) is not None, name
     assert _env_value(sb, "OPEN_PR") is None
 

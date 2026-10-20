@@ -141,7 +141,6 @@ export class TransformStack extends cdk.Stack {
         TRANSFORM_FALLBACK_REGION: { value: 'eu-central-1' },
         JOB_ID: { value: '' },
         OUTPUT_BUCKET: { value: props.bucketName },
-        MIG_ITEM_KEY: { value: '' },
       },
     });
 
