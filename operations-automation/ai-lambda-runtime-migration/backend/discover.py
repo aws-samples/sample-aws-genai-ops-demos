@@ -212,13 +212,6 @@ def _caller_account(region: str) -> str:
 #   highest 'normal'              -> developer   (no TA API)
 #   'urgent'/'high'               -> business    (TA available)
 #   'critical'                    -> enterprise  (TA available)
-SUPPORT_TIER_LABELS = {
-    "basic": "Basic",
-    "developer": "Developer",
-    "business": "Business tier",
-    "enterprise": "Enterprise tier",
-    "unknown": "Unknown",
-}
 TA_AVAILABLE_TIERS = ("business", "enterprise")
 
 

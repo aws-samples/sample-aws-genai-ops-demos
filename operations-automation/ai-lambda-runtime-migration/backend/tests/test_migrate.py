@@ -28,6 +28,7 @@ from aws_durable_execution_sdk_python.exceptions import (
 )
 
 import migrate
+import transform_runtimes
 from migrate import (
     sanitize_execution_name, repository_url, render_additional_plan_context,
     _render_transform_config, prepare_batch, summarize_migration, derive_job_id,
@@ -231,7 +232,7 @@ def test_render_context_directive_paragraph_first_for_every_family(item, family,
 def test_render_context_python_has_lambda_conventions_prefix():
     ctx = render_additional_plan_context(_PY_FN, "python", "python3.13")
     paragraphs = _paragraphs(ctx)
-    assert paragraphs[1] == migrate.PYTHON_CONTEXT_PREFIX
+    assert paragraphs[1] == transform_runtimes.PYTHON_CONTEXT_PREFIX
     # Advisory findings come last, under the header, one line per finding.
     assert paragraphs[2].startswith(migrate._ADVISORY_HEADER + "\n")
     assert "- Deprecated APIs: imp, asyncio.coroutine" in paragraphs[2]
@@ -246,7 +247,7 @@ def test_render_context_python_has_lambda_conventions_prefix():
 ])
 def test_render_context_no_lambda_explanation_for_lambda_specific_transforms(item, family, target):
     ctx = render_additional_plan_context(item, family, target)
-    assert migrate.PYTHON_CONTEXT_PREFIX not in ctx
+    assert transform_runtimes.PYTHON_CONTEXT_PREFIX not in ctx
     assert "Preserve the Lambda handler" not in ctx
     assert "infrastructure template (the Runtime property" not in ctx
 
@@ -313,7 +314,7 @@ def test_render_context_block_cap_applies_to_advisory_only():
     ctx = render_additional_plan_context(item, "python", "python3.13")
     directive, prefix, advisory = _paragraphs(ctx)
     assert directive.endswith(_DIRECTIVE_TAIL)
-    assert prefix == migrate.PYTHON_CONTEXT_PREFIX
+    assert prefix == transform_runtimes.PYTHON_CONTEXT_PREFIX
     assert len(advisory) <= MAX_CONTEXT
     assert advisory.startswith(migrate._ADVISORY_HEADER + "\n- Deprecated APIs: ")
     # Cut on an item boundary: the ellipsis follows the complete Dependency
@@ -737,7 +738,6 @@ def test_render_config_omits_empty_fields():
 def test_transform_runtimes_carry_validation_commands():
     """Each family in the constants map carries its validationCommands (python
     pytest per the AWS blog; nodejs/dotnet their language test runners)."""
-    import transform_runtimes
     assert transform_runtimes.TRANSFORMS["python"]["validationCommands"] == "python -m pytest"
     assert transform_runtimes.TRANSFORMS["nodejs"]["validationCommands"] == "npm test"
     assert transform_runtimes.TRANSFORMS["dotnet"]["validationCommands"] == "dotnet test"

@@ -143,9 +143,6 @@ QUEUED_STALE_AFTER = timedelta(minutes=30)
 # is never truncated.
 MAX_CONTEXT = 4000
 
-# Re-exported for callers/tests that render context from this module.
-PYTHON_CONTEXT_PREFIX = transform_runtimes.PYTHON_CONTEXT_PREFIX
-
 # Header of the advisory paragraph carrying the Phase-1 findings.
 _ADVISORY_HEADER = "Phase 1 assessment (advisory):"
 
