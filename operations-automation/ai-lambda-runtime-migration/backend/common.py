@@ -10,6 +10,11 @@ from typing import Any, List
 
 from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
+# Caps on free-text fields stored on the mig# item or carried in the build
+# callback payload, so one verbose diff or stack trace cannot bloat a row.
+DIFF_SUMMARY_MAX_CHARS = 1000
+FAILURE_DETAIL_MAX_CHARS = 500
+
 
 def convert_floats(obj: Any) -> Any:
     """DynamoDB needs Decimal, not float."""

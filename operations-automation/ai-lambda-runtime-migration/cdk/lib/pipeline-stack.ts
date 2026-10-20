@@ -5,6 +5,8 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 import { DISCOVER_READ_ACTIONS, hubPipelineRoleName, SPOKE_ROLE_NAME } from './scan-permissions';
+// The orchestrator's verify reads are scoped to the fixture repository.
+import { FIXTURE_REPO_NAME } from './mock-fixture-stack';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -29,9 +31,6 @@ const API_FUNCTION_NAME = 'lambda-runtime-migration-api';
 // Phase-2 migration functions (created only under the `transform` gate).
 const MIGRATE_FUNCTION_NAME = 'lambda-runtime-migration-migrate';
 const BUILD_COMPLETE_FUNCTION_NAME = 'lambda-runtime-migration-build-complete';
-// Fixture repository name (fixed in mock-fixture-stack.ts); the orchestrator's
-// verify reads are scoped to it.
-const FIXTURE_REPO_NAME = 'lambda-migration-demo-fixture';
 // One place for the Lambda Python version: runtime of both functions, the
 // Docker bundling image and the pip wheel target must agree.
 const PYTHON_RUNTIME = lambda.Runtime.PYTHON_3_13;

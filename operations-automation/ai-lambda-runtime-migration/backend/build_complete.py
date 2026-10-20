@@ -28,6 +28,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+from common import DIFF_SUMMARY_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +281,7 @@ def handler(event, context=None):
     callback_sent = False
     if callback_id:
         payload = {"status": status, "branch": branch, "failure_code": failure_code,
-                   "diff_summary": (diff_summary or "")[:1000], "build_status": build_status}
+                   "diff_summary": (diff_summary or "")[:DIFF_SUMMARY_MAX_CHARS], "build_status": build_status}
         callback_sent = _complete_callback(callback_id, build_id, payload)
     else:
         logger.warning("no callback id for build %s; updating the item only", build_id)

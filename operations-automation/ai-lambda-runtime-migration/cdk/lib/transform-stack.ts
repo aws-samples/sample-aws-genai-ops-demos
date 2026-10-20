@@ -6,6 +6,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
+// The CodeBuild role scopes its git permissions to exactly the fixture repo.
+import { FIXTURE_REPO_NAME } from './mock-fixture-stack';
 
 export interface TransformStackProps extends cdk.StackProps {
   /** Name of the existing migration-artifacts bucket (DataStack.bucket). */
@@ -21,9 +23,6 @@ export interface TransformStackProps extends cdk.StackProps {
   buildCompleteFunction: lambda.IFunction;
 }
 
-// Fixture repository name is fixed in mock-fixture-stack.ts; the CodeBuild role
-// scopes its git permissions to exactly this repo.
-const FIXTURE_REPO_NAME = 'lambda-migration-demo-fixture';
 // Buildspec object key under the artifacts bucket (uploaded by deploy-transform).
 // MUST be named buildspec.yml: with an S3 single-file source, CodeBuild
 // downloads the object as the source root and then looks for a file literally

@@ -42,6 +42,11 @@ import * as path from 'path';
  * a package exists; it does not validate the .NET handler. Python and Node ship
  * genuine trivial handlers.
  */
+
+// Fixture repository name. The Pipeline and Transform stacks scope their
+// CodeCommit grants to exactly this repository, so it is declared once here.
+export const FIXTURE_REPO_NAME = 'lambda-migration-demo-fixture';
+
 export class MockFixtureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -58,7 +63,7 @@ export class MockFixtureStack extends cdk.Stack {
     // python/ subfolders in one initial commit — the same sources the Lambdas
     // run below.
     const repo = new codecommit.Repository(this, 'FixtureRepo', {
-      repositoryName: 'lambda-migration-demo-fixture',
+      repositoryName: FIXTURE_REPO_NAME,
       description: 'Mock fixture repository holding the source for the three deprecated-runtime demo Lambda functions',
       code: codecommit.Code.fromDirectory(fixturesRoot, 'main'),
     });
@@ -100,10 +105,10 @@ export class MockFixtureStack extends cdk.Stack {
 
     // (c) Tags on EACH function so code-behind detection resolves the function
     // to the fixture repository. Keys confirmed against the code:
-    // SettingsPage.tsx DEFAULT_REPO_TAG = 'source-repo'; backend reads
+    // frontend constants.ts DEFAULT_REPO_TAG = 'source-repo'; backend reads
     // tags[repo_tag]/tags[branch_tag].
     for (const fn of [pythonFn, nodejsFn, dotnetFn]) {
-      cdk.Tags.of(fn).add('source-repo', 'lambda-migration-demo-fixture');
+      cdk.Tags.of(fn).add('source-repo', FIXTURE_REPO_NAME);
       cdk.Tags.of(fn).add('git-branch', 'main');
     }
 

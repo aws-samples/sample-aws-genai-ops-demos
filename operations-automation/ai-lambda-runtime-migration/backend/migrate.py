@@ -77,7 +77,7 @@ from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create
 from aws_durable_execution_sdk_python.types import WaitForCallbackContext
 
 from aws_utils import get_region, get_transform_region  # staged copy of shared/utils/aws_utils.py
-from common import results_by_index
+from common import results_by_index, DIFF_SUMMARY_MAX_CHARS, FAILURE_DETAIL_MAX_CHARS
 import api
 import discover
 import transform_runtimes
@@ -323,7 +323,7 @@ def parse_build_result(raw) -> dict:
     if status == "TRANSFORMED" and not branch:
         return _parse_failed("transformed without a branch")
     diff_summary = payload.get("diff_summary")
-    diff_summary = diff_summary[:1000] if isinstance(diff_summary, str) else ""
+    diff_summary = diff_summary[:DIFF_SUMMARY_MAX_CHARS] if isinstance(diff_summary, str) else ""
     failure_code = payload.get("failure_code")
     failure_code = failure_code if isinstance(failure_code, str) else None
     return {
@@ -789,7 +789,7 @@ def _settle(mig_key: str, code: str, detail: str) -> dict:
     written = _set_live_fields(mig_key, {
         "migration_status": "FAILED",
         "migration_failure_code": code,
-        "migration_failure_detail": detail[:500],
+        "migration_failure_detail": detail[:FAILURE_DETAIL_MAX_CHARS],
         "migration_updated_at": _now(),
     }, condition=_SETTLE_CONDITION)
     if not written:
@@ -988,7 +988,7 @@ def _run_batch(event: dict, context: DurableContext) -> dict:
         except CallbackError as exc:                       # submitter exhausted / external failure
             ctx.logger.error("transform-%d: %s", index, exc)
             transformed = {"ok": False, "status": "FAILED", "failure_code": "TRANSFORM_FAILED",
-                           "detail": str(exc)[:500]}
+                           "detail": str(exc)[:FAILURE_DETAIL_MAX_CHARS]}
             ctx.step(settle_failed(resolved, transformed["detail"]),
                      name=f"settle-{index}")
 
