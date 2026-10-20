@@ -23,7 +23,7 @@ import type { MigrationRunStatus } from '../api';
 // --- Static content --------------------------------------------------------
 
 interface StepRow {
-  step: string;        // the UI phase label (RefreshSteps / MigrationSteps)
+  step: string;        // the UI phase label (ScanSteps / MigrationSteps)
   durableStep: string; // the durable step name(s) in pipeline.py / migrate.py
   what: string;
   service: string;

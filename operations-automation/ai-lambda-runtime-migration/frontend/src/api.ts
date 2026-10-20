@@ -238,7 +238,7 @@ export const resolveReposDemo = async (
 // durable execution. The UI only starts and observes it, so closing the tab
 // never kills a run.
 
-export interface RefreshPhase {
+export interface ScanPhase {
   label: string;
   status: 'pending' | 'in-progress' | 'success' | 'warning' | 'error' | 'stopped';
   done: number;
@@ -255,7 +255,7 @@ interface RefreshProgress {
   support_done?: number;
   discover_done: number;
   assess_done: number;
-  phases?: RefreshPhase[];
+  phases?: ScanPhase[];
 }
 
 export interface RefreshExecutionStatus {
@@ -279,7 +279,7 @@ interface RefreshRequest {
 
 // Start an org-wide scan (Discover + Assess). If one is already running, the
 // API adopts it instead of starting a second one.
-export const startRefresh = async (
+export const startScan = async (
   request: RefreshRequest = {}
 ): Promise<{ executionArn: string; alreadyRunning: boolean }> => {
   const scope = request.scope;
@@ -344,7 +344,7 @@ export const getRecentScans = async (limit = 10): Promise<ScanRecord[]> => {
 
 // Poll the status of a refresh execution. The arn is appended to the greedy
 // {arn+} route path.
-export const getRefreshStatus = async (executionArn: string): Promise<RefreshExecutionStatus> => {
+export const getScanStatus = async (executionArn: string): Promise<RefreshExecutionStatus> => {
   const result = await callApi('GET', `/refresh/${executionArn}`);
   return {
     executionArn,
@@ -366,11 +366,11 @@ export const getRefreshStatus = async (executionArn: string): Promise<RefreshExe
 
 // --- Migration BATCH (one durable execution per Migrate click) --------------
 // A Migrate click starts ONE batch durable execution over the selected ARNs,
-// surfaced as a small set of phases with counters (the same RefreshPhase shape
-// as the scan). The UI starts it, then polls getMigrationRunStatus on phase
+// surfaced as a small set of phases with counters (the same ScanPhase shape
+// as the scan). The UI starts it, then polls getMigrationBatchStatus on phase
 // state, so one click produces one card and one finish flash.
 
-// One migration phase with a counter (same field shape as RefreshPhase).
+// One migration phase with a counter (same field shape as ScanPhase).
 export interface MigrationPhase {
   label: string;
   status: 'pending' | 'in-progress' | 'success' | 'warning' | 'error' | 'stopped';
@@ -404,7 +404,7 @@ export interface MigrationBatchSummary {
   failed: number;
 }
 
-export interface MigrationRunExecutionStatus {
+export interface MigrationBatchStatus {
   executionArn: string;
   status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'STOPPED';
   startDate?: Date;
@@ -428,10 +428,10 @@ export const startMigrationBatch = async (
 };
 
 // Poll one batch migration run's status + phases. The arn is appended to the
-// greedy {arn+} route path. startDate/stopDate map the same way as getRefreshStatus.
-export const getMigrationRunStatus = async (
+// greedy {arn+} route path. startDate/stopDate map the same way as getScanStatus.
+export const getMigrationBatchStatus = async (
   executionArn: string,
-): Promise<MigrationRunExecutionStatus> => {
+): Promise<MigrationBatchStatus> => {
   const r = await callApi('GET', `/migrate-run/${executionArn}`);
   return {
     executionArn,

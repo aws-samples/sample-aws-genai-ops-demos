@@ -1,9 +1,9 @@
 // Shared by the two Steps cards (ScanSteps for a scan, MigrationSteps for a
 // migration batch) so a status label or a unit plural can never differ between
 // them.
-import type { RefreshPhase } from '../api';
+import type { ScanPhase } from '../api';
 
-export type PhaseStatus = RefreshPhase['status'];
+export type PhaseStatus = ScanPhase['status'];
 
 // Status icon aria-labels for Cloudscape Steps.
 export const STATUS_LABEL: Record<PhaseStatus, string> = {

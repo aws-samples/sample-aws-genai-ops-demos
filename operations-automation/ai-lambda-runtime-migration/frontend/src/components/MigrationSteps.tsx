@@ -12,7 +12,7 @@ import { STATUS_LABEL, countUnit } from './steps-common';
 // per migration phase (Prepare / Resolve / Transform), a progress bar on the
 // phase in flight when its size is known. Reads identically whether migrating
 // 1 or 100 functions — the counts flow left to right and rejections show as
-// the gap. A thin sibling of RefreshSteps: same render structure, same
+// the gap. A thin sibling of ScanSteps: same render structure, same
 // Cloudscape components, but its own copy (migration units, no ellipsis).
 //
 // The card is ONE ExpandableSection whatever the run state. The page owns

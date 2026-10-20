@@ -6,7 +6,7 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import LiveRegion from '@cloudscape-design/components/live-region';
-import { RefreshPhase } from '../api';
+import { ScanPhase } from '../api';
 import { STATUS_LABEL, countUnit } from './steps-common';
 
 // Progress of a scan (Discover + Assess) as Cloudscape "progressive steps": one
@@ -19,7 +19,7 @@ import { STATUS_LABEL, countUnit } from './steps-common';
 
 // Discover and Assess are the generative-AI phases: Amazon Nova prioritizes the
 // fleet and assesses each function.
-const isGenAi = (p: RefreshPhase) =>
+const isGenAi = (p: ScanPhase) =>
   p.label.startsWith('Discover') || p.label.startsWith('Assess');
 
 // What a phase's counter counts. The fan-out steps iterate over different units:
@@ -28,18 +28,18 @@ const isGenAi = (p: RefreshPhase) =>
 // Developer accounts were ruled out by the Support-tier step), so it reads
 // "eligible accounts" to make that subset explicit. Labelling the count removes
 // the "2 of 2 done" ambiguity (2 accounts? 2 functions?).
-const unitFor = (p: RefreshPhase): string =>
+const unitFor = (p: ScanPhase): string =>
   p.label.startsWith('Assess') ? 'function'
     : p.label.startsWith('Discover') ? 'eligible account'
     : 'account';
 // "5 of 5 accounts" / "2 of 2 eligible accounts" / "63 of 63 functions"
-const countText = (p: RefreshPhase): string => `${p.done} of ${p.total} ${countUnit(p.total ?? 0, unitFor(p))}`;
+const countText = (p: ScanPhase): string => `${p.done} of ${p.total} ${countUnit(p.total ?? 0, unitFor(p))}`;
 
 // Per-phase sub-note surfacing WHICH service/action the phase uses, appended to
 // the progress detail: Discover queries Trusted Advisor then Nova prioritizes;
 // Assess runs the Nova code analysis. Keeps the service call visible in the
 // sub-label rather than crowding the step title.
-const phaseNote = (p: RefreshPhase): string =>
+const phaseNote = (p: ScanPhase): string =>
   p.label.startsWith('Discover') ? ' · via Trusted Advisor, then Amazon Nova prioritizes'
     : p.label.startsWith('Assess') ? ' · Amazon Nova assesses complexity'
     : '';
@@ -47,9 +47,9 @@ const phaseNote = (p: RefreshPhase): string =>
 // The "Determine the accounts to scan" phase is a single poll of AWS
 // Organizations, so "1 of 1 account done" tells the user nothing. It reports a
 // result instead: how many accounts the scan found.
-const isAccountListing = (p: RefreshPhase) => p.label.startsWith('Determine the accounts');
+const isAccountListing = (p: ScanPhase) => p.label.startsWith('Determine the accounts');
 
-const detailsFor = (p: RefreshPhase) => {
+const detailsFor = (p: ScanPhase) => {
   if (isAccountListing(p)) {
     if (p.status === 'in-progress') return <Box variant="small">Listing accounts…</Box>;
     if ((p.status === 'success' || p.status === 'warning') && typeof p.accountsFound === 'number') {
@@ -79,7 +79,7 @@ const detailsFor = (p: RefreshPhase) => {
   return undefined;
 };
 
-export default function RefreshSteps({ phases, running }: { phases: RefreshPhase[]; running: boolean }) {
+export default function ScanSteps({ phases, running }: { phases: ScanPhase[]; running: boolean }) {
   const steps: StepsProps.Step[] = phases.map((p) => ({
     status: p.status === 'in-progress' ? (p.total && p.total >= 1 ? 'in-progress' : 'loading') : p.status,
     statusIconAriaLabel: STATUS_LABEL[p.status],

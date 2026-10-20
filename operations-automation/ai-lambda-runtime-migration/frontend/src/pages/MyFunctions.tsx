@@ -28,14 +28,14 @@ import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar'
 import Skeleton from '@cloudscape-design/components/skeleton';
 import Alert from '@cloudscape-design/components/alert';
 import { useNavigate } from 'react-router-dom';
-import { getFunctions, getSettings, startRefresh, getRefreshStatus, getRecentScans, getRecentMigrationRuns, startMigrationBatch, getMigrationRunStatus, MigrationFunction, MigrationRunStatus, RefreshPhase, RefreshExecutionStatus, MigrationRunExecutionStatus, ScanSummary } from '../api';
+import { getFunctions, getSettings, startScan, getScanStatus, getRecentScans, getRecentMigrationRuns, startMigrationBatch, getMigrationBatchStatus, MigrationFunction, MigrationRunStatus, ScanPhase, RefreshExecutionStatus, MigrationBatchStatus, ScanSummary } from '../api';
 import { MIGRATION_RUN_STATUS, PRIORITY_INDICATOR, ALERT_STATUS_LABEL, DEFAULT_REPO_TAG, migrationRunConfig, failureCodeHelp, migrationSummaryLine } from '../constants';
 import { funcName, lambdaConsoleUrl, codecommitBranchUrl, repoNameFromCloneUrl } from '../console-links';
 import { tagKeys, tagValues, matchesTags } from '../tag-filter';
 import { deprecationState, isActiveBacklog, tallyMigrationRuns } from '../migration-tallies';
 import { useSplitPanel } from '../SplitPanelContext';
 import Link from '@cloudscape-design/components/link';
-import RefreshSteps from '../components/RefreshSteps';
+import ScanSteps from '../components/ScanSteps';
 import MigrationSteps from '../components/MigrationSteps';
 
 // Polling cadences: a scan is short-lived, a migration batch runs for minutes;
@@ -277,7 +277,7 @@ const propertyItems = (f: MigrationFunction): KeyValuePairsProps.Item[] => {
 };
 
 // Drawer: identity card + Assess facts for one function + the rescan Steps when a run is known.
-function FunctionDrawer({ f, phases, running }: { f: MigrationFunction; phases: RefreshPhase[] | null; running: boolean }) {
+function FunctionDrawer({ f, phases, running }: { f: MigrationFunction; phases: ScanPhase[] | null; running: boolean }) {
   const consoleUrl = lambdaConsoleUrl(f);
   return (
     <SpaceBetween size="l">
@@ -353,7 +353,7 @@ function FunctionDrawer({ f, phases, running }: { f: MigrationFunction; phases: 
           ]}
         />
       </Container>
-      {phases && phases.length > 0 && <RefreshSteps phases={phases} running={running} />}
+      {phases && phases.length > 0 && <ScanSteps phases={phases} running={running} />}
     </SpaceBetween>
   );
 }
@@ -378,14 +378,14 @@ export default function MyFunctions() {
 
   // Migration run state. A Migrate click starts ONE batch durable execution over
   // the selected ARNs (no wizard). A single migrationRunArn drives the
-  // MigrationSteps card and the 30 s poll of getMigrationRunStatus. The card is
+  // MigrationSteps card and the 30 s poll of getMigrationBatchStatus. The card is
   // persistent: on page load the most recent batch is re-attached (collapsed),
   // a Migrate click expands it, and it auto-collapses ONCE per execution as soon
   // as nothing but builds is in flight (latched in autoCollapsedFor so a later
   // wave's resolve never re-expands it; only the user does).
   const [migrating, setMigrating] = useState(false);
   const [migrationRunArn, setMigrationRunArn] = useState<string | null>(null);
-  const [migrationRun, setMigrationRun] = useState<MigrationRunExecutionStatus | null>(null);
+  const [migrationRun, setMigrationRun] = useState<MigrationBatchStatus | null>(null);
   const [stepsExpanded, setStepsExpanded] = useState(false);
   const migratePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoCollapsedFor = useRef<string | null>(null);
@@ -419,7 +419,7 @@ export default function MyFunctions() {
       const [latest] = await getRecentMigrationRuns(1);
       // A Migrate click since mount owns the card: ignore the (older) re-attach.
       if (!latest || startedHereFor.current) return;
-      const run = await getMigrationRunStatus(latest.executionArn);
+      const run = await getMigrationBatchStatus(latest.executionArn);
       if (startedHereFor.current) return;
       setMigrationRunArn(latest.executionArn);
       setMigrationRun(run);
@@ -477,7 +477,7 @@ export default function MyFunctions() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const status = await getRefreshStatus(refreshArn);
+        const status = await getScanStatus(refreshArn);
         if (cancelled) return;
         setRefreshStatus(status);
         if (status.status === 'RUNNING') {
@@ -497,7 +497,7 @@ export default function MyFunctions() {
 
   const rescan = async () => {
     try {
-      const { executionArn, alreadyRunning } = await startRefresh();
+      const { executionArn, alreadyRunning } = await startScan();
       setRefreshArn(executionArn);
       if (alreadyRunning) flash('info', 'A scan is already running — re-attaching to it.');
     } catch (err) {
@@ -562,9 +562,9 @@ export default function MyFunctions() {
     let cancelled = false;
     const tick = async () => {
       try {
-        let run: MigrationRunExecutionStatus | null = null;
+        let run: MigrationBatchStatus | null = null;
         if (migrationRunArn) {
-          run = await getMigrationRunStatus(migrationRunArn);
+          run = await getMigrationBatchStatus(migrationRunArn);
           if (cancelled) return;
           setMigrationRun(run);
           if (run.status === 'RUNNING') flashEligibleFor.current = migrationRunArn;
@@ -762,7 +762,7 @@ export default function MyFunctions() {
       )}
 
       {(running || (refreshStatus?.progress?.phases?.length ?? 0) > 0) && refreshStatus?.progress?.phases && (
-        <RefreshSteps phases={refreshStatus.progress.phases} running={running} />
+        <ScanSteps phases={refreshStatus.progress.phases} running={running} />
       )}
 
       {/* The persistent migration Steps card: re-attached on page load, expanded
