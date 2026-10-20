@@ -137,7 +137,7 @@ def test_clean_small_package_not_truncated_no_footer(tmp_path):
 
 # --- assess_one: the fn# write ----------------------------------------------
 
-def test_assess_one_sets_new_fields_and_removes_stale_attribute(monkeypatch):
+def test_assess_one_sets_new_fields_with_a_plain_set(monkeypatch):
     table = MagicMock()
     monkeypatch.setattr(assess, "_table", lambda: table)
     monkeypatch.setattr(assess, "download_function_code",
@@ -163,13 +163,11 @@ def test_assess_one_sets_new_fields_and_removes_stale_attribute(monkeypatch):
     expression = kwargs["UpdateExpression"]
     names = kwargs["ExpressionAttributeNames"]
     values = kwargs["ExpressionAttributeValues"]
+    # A plain field-scoped SET of the owned attributes: no REMOVE clause, every
+    # placeholder is a SET name.
     assert expression.startswith("SET ")
-    assert " REMOVE " in expression
-    assert assess._STALE_ASSESSMENT_ATTRS[0] in names.values()
-    # The stale attribute is REMOVEd (a #rN name), never SET (a #aN name).
-    stale_placeholders = [pn for pn, field in names.items() if field == assess._STALE_ASSESSMENT_ATTRS[0]]
-    assert stale_placeholders and all(pn.startswith("#r") for pn in stale_placeholders)
-    assert all(pn in expression.split(" REMOVE ", 1)[1] for pn in stale_placeholders)
+    assert " REMOVE " not in expression
+    assert all(pn.startswith("#a") for pn in names)
 
     written = {field: values[pn.replace("#a", ":v")] for pn, field in names.items() if pn.startswith("#a")}
     assert written["num_manifests"] == 1

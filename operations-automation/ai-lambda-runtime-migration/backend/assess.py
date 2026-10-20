@@ -45,10 +45,6 @@ LOCK_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
               "Pipfile.lock", "packages.lock.json"}
 MANIFEST_MAX_CHARS = 4_000
 
-# fn# attributes an earlier assessment wrote that this one no longer owns; the
-# assessment write REMOVEs them so rows assessed before the change are cleaned.
-_STALE_ASSESSMENT_ATTRS = ("target_runtime",)  # the managed transformation owns the target; REMOVE clears rows assessed before this change
-
 
 def _is_excluded(rel_path: str) -> bool:
     parts = rel_path.replace("\\", "/").split("/")
@@ -325,22 +321,17 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
         "assessed_at": when,
     })
 
-    # Field-scoped SET of the owned attributes, plus a REMOVE of the stale ones
-    # (mirrors migrate._set_fields; REMOVE of an absent attribute is a no-op).
+    # Field-scoped SET of the attributes the assessment owns (mirrors
+    # migrate._set_fields); anything else on the fn# row is left untouched.
     set_parts, attr_names, attr_values = [], {}, {}
     for idx, (k, v) in enumerate(updates.items()):
         pn, pv = f"#a{idx}", f":v{idx}"
         set_parts.append(f"{pn} = {pv}")
         attr_names[pn] = k
         attr_values[pv] = v
-    remove_parts = []
-    for idx, k in enumerate(_STALE_ASSESSMENT_ATTRS):
-        pn = f"#r{idx}"
-        remove_parts.append(pn)
-        attr_names[pn] = k
     table.update_item(
         Key={"item_key": key},
-        UpdateExpression="SET " + ", ".join(set_parts) + " REMOVE " + ", ".join(remove_parts),
+        UpdateExpression="SET " + ", ".join(set_parts),
         ExpressionAttributeNames=attr_names,
         ExpressionAttributeValues=attr_values,
     )
