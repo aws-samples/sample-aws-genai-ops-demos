@@ -18,9 +18,8 @@ const apiUrl: string = ((import.meta as any).env?.VITE_API_URL || '').replace(/\
 
 // --- Types -----------------------------------------------------------------
 
-// 'MIGRATED' is the only status written automatically this phase (inferred when
-// Trusted Advisor stops reporting a function); the rest are reserved for the
-// future AWS Transform phase.
+// 'MIGRATED' is inferred when Trusted Advisor stops reporting a function; the
+// other values are set by the scan.
 type MigrationStatus = 'DISCOVERED' | 'ASSESSED' | 'SKIPPED' | 'MIGRATED';
 
 // Phase-2 migration-run axis (the mig# item enum), distinct from the Phase-1
@@ -31,8 +30,9 @@ type MigrationStatus = 'DISCOVERED' | 'ASSESSED' | 'SKIPPED' | 'MIGRATED';
 // failed, timed out). NO_CHANGES = AWS Transform ran and found nothing to
 // change: neutral, re-migratable. BRANCH_READY = the upgrade branch is pushed
 // to the repository (migration_branch names it); the flow ends there.
-// Legacy rows may still carry other values (D8): every consumer goes through
-// constants.migrationRunConfig(), which accepts any string.
+// Unknown-value guard: every consumer goes through constants.migrationRunConfig(),
+// which accepts any string, so a status this build does not know renders with
+// its raw value and never throws.
 export type MigrationRunStatus = 'NOT_STARTED' | 'QUEUED' | 'IN_PROGRESS' | 'REJECTED' | 'FAILED' | 'NO_CHANGES' | 'BRANCH_READY';
 
 // One row of the scoped inventory. FLAT (unlike the lifecycle tracker's nested
@@ -91,7 +91,7 @@ export interface MigrationFunction {
 }
 
 // One immutable per-scan rollup row (key 'rollup#<rollup_at>'). The series is
-// the measurement history the Statistics charts draw (FEAT-002). Each run
+// the measurement history the Statistics charts draw. Each run
 // appends exactly one of these; the backend never mutates an existing row.
 export interface RollupRecord {
   item_key: string;              // rollup#<rollup_at>
@@ -113,7 +113,7 @@ export interface RollupRecord {
   run_failed?: number;
   run_no_changes?: number;
   run_branches_ready?: number;   // BRANCH_READY: upgrade branch pushed, awaiting merge
-  run_legacy?: number;           // REHEARSED | PR_OPENED | unknown (D8)
+  run_legacy?: number;           // any status this build does not know
 }
 
 // --- Transport -------------------------------------------------------------
@@ -164,7 +164,7 @@ export const getFunctions = async (): Promise<{ functions: MigrationFunction[] }
 };
 
 // The per-scan rollup series (measurement history), ordered oldest-first by the
-// backend. Shared with the Statistics charts (FEAT-002).
+// backend. Shared with the Statistics charts.
 export const getStats = async (): Promise<{ rollups: RollupRecord[] }> => {
   const result = await invokeAction({ action: 'get_stats' });
   return { rollups: result.rollups || [] };

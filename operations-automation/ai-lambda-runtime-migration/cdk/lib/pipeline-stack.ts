@@ -137,7 +137,7 @@ export class PipelineStack extends cdk.Stack {
       BUCKET_NAME: props.bucketName,
       SPOKE_ROLE_NAME: spokeRoleName,
       ...(props.spokeExternalId ? { SPOKE_EXTERNAL_ID: props.spokeExternalId } : {}),
-      // Multi-account vs single-account is decided at RUNTIME (design §5): the
+      // Multi-account vs single-account is decided at RUNTIME: the
       // pipeline always attempts organizations:ListAccounts and degrades to the
       // hub account alone when it cannot read an org. There is no MULTI_ACCOUNT
       // gate env var — a plain deploy already fans out to whatever org it can
@@ -148,7 +148,7 @@ export class PipelineStack extends cdk.Stack {
     };
 
     // ------------------------------------------------------------------
-    // Shared data-plane permissions (least-privilege, design §2.1)
+    // Shared data-plane permissions (least-privilege)
     // ------------------------------------------------------------------
     const dataAccessPolicy = new iam.ManagedPolicy(this, 'MigrationDataAccess', {
       description: 'Lambda runtime migration pipeline access: DynamoDB, Bedrock, and read-only discovery APIs',
@@ -156,8 +156,9 @@ export class PipelineStack extends cdk.Stack {
         new iam.PolicyStatement({
           sid: 'DynamoDBInventoryAccess',
           // DeleteItem: discover re-keys a row whose key shape changed (writes the
-          // new key, deletes the old one) and drops legacy duplicates of one
-          // function. Without it the re-key half-applies and the scope fails.
+          // new key, deletes the old one) and drops duplicates of one function
+          // left under an older key shape. Without it the re-key half-applies
+          // and the scope fails.
           actions: [
             'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
             'dynamodb:DeleteItem', 'dynamodb:Scan',
@@ -194,7 +195,7 @@ export class PipelineStack extends cdk.Stack {
     });
 
     // Fixed, region-suffixed role name so spoke trust policies can pin the
-    // exact principal (design §2.1 / §5).
+    // exact principal.
     const pipelineRole = new iam.Role(this, 'PipelineRole', {
       roleName: hubPipelineRoleName(this.region),
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),

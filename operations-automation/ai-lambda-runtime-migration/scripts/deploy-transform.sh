@@ -35,7 +35,7 @@ cd "$SCRIPT_DIR/.."
 
 echo -e "\033[0;36m=== AI Lambda Runtime Migration - Transform Build Plane ===\033[0m"
 
-# Run shared prerequisites check (transform service, same versions as docgen).
+# Run shared prerequisites check (transform service: the pinned Transform CLI versions the buildspec installs).
 echo -e "\n\033[0;33mRunning prerequisites check...\033[0m"
 source ../../shared/scripts/check-prerequisites.sh --required-service "transform" --min-aws-cli-version "2.31.13" --min-python-version "3.12" --require-cdk --min-cdk-version "2.1030.0"
 

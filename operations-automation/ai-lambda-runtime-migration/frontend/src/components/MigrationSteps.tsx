@@ -64,7 +64,7 @@ const countText = (p: MigrationPhase): string => {
 const gapText = (p: MigrationPhase): string =>
   (isResolve(p) && p.failed) ? `, ${p.failed} rejected` : '';
 
-// Settled Transform detail, D5 wording: "N branches ready, K no changes, J failed"
+// Settled Transform detail: "N branches ready, K no changes, J failed"
 // (zero segments omitted).
 const transformSettledText = (p: MigrationPhase): string => {
   const ready = branchesReadyOf(p);

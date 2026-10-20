@@ -167,7 +167,7 @@ Write-Host "  User Pool ID:    $userPoolId" -ForegroundColor Cyan
 Write-Host "`nNext Steps:" -ForegroundColor Yellow
 Write-Host "  1. Create a dashboard user (copy-paste these two commands):" -ForegroundColor Gray
 Write-Host ""
-Write-Host "     aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true --message-action SUPPRESS --no-cli-pager" -ForegroundColor White
+Write-Host "     aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin --user-attributes Name=email,Value=admin@example.com Name=email_verified,Value=true --message-action SUPPRESS --no-cli-pager" -ForegroundColor White
 Write-Host ""
 Write-Host "     aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin --password ""YourSecurePassword123!"" --permanent --no-cli-pager" -ForegroundColor White
 Write-Host ""

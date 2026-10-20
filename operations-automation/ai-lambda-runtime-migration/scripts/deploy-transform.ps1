@@ -25,7 +25,7 @@ Set-Location (Join-Path $PSScriptRoot '..')
 
 Write-Host "=== AI Lambda Runtime Migration - Transform Build Plane ===" -ForegroundColor Cyan
 
-# Run shared prerequisites check (transform service, same versions as docgen).
+# Run shared prerequisites check (transform service: the pinned Transform CLI versions the buildspec installs).
 Write-Host "`nRunning prerequisites check..." -ForegroundColor Yellow
 & "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "transform" -MinAwsCliVersion "2.31.13" -MinPythonVersion "3.12" -RequireCDK -MinCdkVersion "2.1030.0"
 if ($LASTEXITCODE -ne 0) {

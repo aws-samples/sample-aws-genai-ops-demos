@@ -71,7 +71,7 @@ const isYellow = (f: MigrationFunction) => (f.alert_status || '').toLowerCase() 
 
 function RemediationOverTimeChart({ rollups }: { rollups: RollupRecord[] }) {
   // Sort ascending by rollup_at so every series x is ascending (Highcharts/
-  // Cloudscape both expect ordered x). FEAT-001 returns them oldest-first, but
+  // Cloudscape both expect ordered x). The backend returns them oldest-first, but
   // sorting here keeps the chart honest regardless of input order.
   // The area chart is stacked, so a branch-ready function is drawn ONCE: the
   // red series is the backlog with no branch yet, blue "Branches ready" sits on
@@ -125,9 +125,9 @@ function RemediationOverTimeChart({ rollups }: { rollups: RollupRecord[] }) {
 // with one non-empty series per category, that renders one plain bar per row
 // and the legend doubles as the status key. Labels come from
 // MIGRATION_RUN_STATUS only; colours follow each status indicator's semantics.
-// Scope is the ACTIVE backlog (D1): Not started + In progress + Rejected +
-// Failed + No changes + Branch ready + Legacy = active functions. Legacy never
-// gets a bar; it is called out in a note below the chart instead.
+// Scope is the ACTIVE backlog: Not started + In progress + Rejected + Failed +
+// No changes + Branch ready + unknown = active functions. An unknown status
+// never gets a bar; it is called out in a note below the chart instead.
 function MigrationPipelineChart({ functions }: { functions: MigrationFunction[] }) {
   const tallies = useMemo(() => tallyMigrationRuns(functions.filter(isActiveBacklog)), [functions]);
 
@@ -184,7 +184,7 @@ function MigrationPipelineChart({ functions }: { functions: MigrationFunction[] 
 function FleetStatusNow({ functions }: { functions: MigrationFunction[] }) {
   // Deprecation facts and Branch ready come from the shared tally helper (the
   // same one My functions reads). `migrated` lives on resolved rows, so it is
-  // tallied over the whole list; the rest over the active backlog (D1).
+  // tallied over the whole list; the rest over the active backlog.
   const facts = useMemo(() => {
     const activeRows = functions.filter(isActiveBacklog);
     const all = tallyMigrationRuns(functions);

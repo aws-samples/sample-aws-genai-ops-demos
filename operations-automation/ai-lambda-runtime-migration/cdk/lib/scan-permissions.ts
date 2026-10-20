@@ -1,4 +1,4 @@
-// What a Discover+Assess run needs to read in an account (design §2.1, §5).
+// What a Discover+Assess run needs to read in an account.
 //
 // Single source of truth for two roles that must stay identical:
 //  - the hub pipeline role (scans the hub account itself)

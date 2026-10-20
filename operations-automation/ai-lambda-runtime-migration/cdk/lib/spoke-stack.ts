@@ -11,7 +11,7 @@ export interface SpokeStackProps extends cdk.StackProps {
 }
 
 /**
- * Spoke side of the opt-in multi-account scan (design §5).
+ * Spoke side of the opt-in multi-account scan.
  *
  * Deployed in a MEMBER account, this stack contains exactly one resource: the
  * read-only IAM role the hub's pipeline assumes to run Discover + Assess there.

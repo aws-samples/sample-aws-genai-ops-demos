@@ -8,7 +8,7 @@ import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import LiveRegion from '@cloudscape-design/components/live-region';
 import { RefreshPhase } from '../api';
 
-// Progress of a "Rescan my scope" run as Cloudscape "progressive steps": one
+// Progress of a scan (Discover + Assess) as Cloudscape "progressive steps": one
 // step per pipeline phase (Prepare / Discover / Assess / Summarize), a progress
 // bar on the phase in flight when its size is known (functions to discover /
 // assess). The phases come from the durable execution history, so what is shown

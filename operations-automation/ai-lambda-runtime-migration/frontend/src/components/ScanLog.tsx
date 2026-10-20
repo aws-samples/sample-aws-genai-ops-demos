@@ -2,12 +2,11 @@
 // migration batches, interleaved newest-first, as a Cloudscape gen-AI Event log —
 // a chronological, grouped list of what each scan did or skipped and how each
 // migration batch ended (each batch is ONE entry; the per-function outcome
-// lives in the My functions table). Follows the Timeline overview pattern
-// (docs/timelineoverview.md): Cloudscape Steps with status 'log', a fixed-width
-// timestamp column, a status icon, and a concise past-tense label; grouped by
-// day with Divider; an optional Select filter (All / Today / Yesterday). Each
-// entry is ONE compact line (timestamp + message, like the Event log reference
-// in docs/eventlog_code.md); a short 'Scan ·' / 'Migration ·' text prefix
+// lives in the My functions table). Follows the Cloudscape timeline pattern:
+// Steps with status 'log', a fixed-width timestamp column, a status icon, and a
+// concise past-tense label; grouped by day with Divider; an optional Select
+// filter (All / Today / Yesterday). Each entry is ONE compact line (timestamp +
+// message, as in a Cloudscape event log); a short 'Scan ·' / 'Migration ·' text prefix
 // tells the two kinds apart, and any detail is folded into the same line.
 // Rendered as the "Activity log" nav page (ScanLogPage); loads on open, no
 // manual refresh button.
@@ -173,8 +172,8 @@ const stepTypeToIndicator = (s: StepsProps.Step['status']): StatusIndicatorProps
   }
 };
 
-// Render one timeline entry as a Steps step — ONE compact line per event,
-// matching the Cloudscape Event log reference (docs/eventlog_code.md): the
+// Render one timeline entry as a Steps step: ONE compact line per event, in the
+// Cloudscape event-log layout, where the
 // timestamp is the `annotation` and the whole message is the `header`, kept
 // inline. Two things previously broke the one-liner and are deliberately
 // avoided here: a SpaceBetween/Badge wrapper in the header (a block container

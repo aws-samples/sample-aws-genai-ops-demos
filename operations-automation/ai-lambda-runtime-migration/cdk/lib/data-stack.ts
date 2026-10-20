@@ -13,7 +13,7 @@ export class DataStack extends cdk.Stack {
     // DynamoDB table for Lambda function migration inventory.
     //
     // Partition key is `item_key` = fn#<account_id>#<region>#<function_arn>
-    // (v1.1 schema change, design §4): the bare function ARN collides across
+    // because the bare function ARN collides across
     // accounts in a hub-and-spoke scan, so the key carries account + region.
     // This is a BREAKING schema change from the v1 `function_arn` key — because
     // the partition key changed, redeploying over an existing table RECREATES

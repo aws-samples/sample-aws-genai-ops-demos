@@ -59,9 +59,8 @@ phases:
       - echo "Creating branch $UPGRADE_BRANCH"
       - git checkout -b "$UPGRADE_BRANCH"
       # Remember where the branch was cut: post_build decides "changed or not"
-      # against THIS commit, because atx commits its own edits (seen live:
-      # template.yaml upgraded and committed by atx, a clean working tree, and
-      # we reported NO_CHANGES).
+      # against THIS commit, because atx commits its own edits, so a clean
+      # working tree after the run does not mean nothing changed.
       - git rev-parse HEAD > "$CODEBUILD_SRC_DIR/base.sha"
       - echo "Running AWS Transform..."
       # AWS Transform custom is not offered in every region, and there is NO way

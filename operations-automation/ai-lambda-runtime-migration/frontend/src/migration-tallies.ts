@@ -28,7 +28,7 @@ interface MigrationTallies {
   runFailed: number;      // transform / push / timeout
   runNoChanges: number;   // AWS Transform ran and found nothing to change
   runBranchReady: number; // the upgrade branch is pushed
-  runLegacy: number;      // REHEARSED / PR_OPENED / unknown (D8)
+  runLegacy: number;      // any status this build does not know
 }
 
 export function tallyMigrationRuns(rows: MigrationFunction[]): MigrationTallies {
@@ -67,11 +67,11 @@ export function tallyMigrationRuns(rows: MigrationFunction[]): MigrationTallies 
     // Not started = an active-backlog function nobody has tried to migrate
     // yet. It is NOT the whole backlog: a rejected or failed run is a run.
     // Not started + In progress + Rejected + Failed + No changes + Branch
-    // ready (+ Legacy) = active backlog.
+    // ready (+ unknown) = active backlog.
     else if (!run || run === 'NOT_STARTED') { if (isActiveBacklog(r)) notStarted += 1; }
-    // Legacy tolerance (D8): REHEARSED / PR_OPENED rows written by the
-    // previous flow are counted apart so the pages can say so, never as a
-    // run status this build knows; they leave once the function is migrated again.
+    // Unknown-value guard: a status this build does not know is counted apart
+    // so the pages can say so, never as a run status this build knows, and never
+    // throws; it leaves once the function is migrated again.
     else runLegacy += 1;
   }
   return { red, yellow, active, migrated, notStarted,

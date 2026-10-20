@@ -28,7 +28,7 @@ const FIXTURE_REPO_NAME = 'lambda-migration-demo-fixture';
 // MUST be named buildspec.yml: with an S3 single-file source, CodeBuild
 // downloads the object as the source root and then looks for a file literally
 // named buildspec.yml within it. A differently-named object fails DOWNLOAD_SOURCE
-// with "YAML file does not exist" (matches the docgen demo, which uses this name).
+// with "YAML file does not exist".
 const BUILDSPEC_KEY = 'config/buildspec.yml';
 // Fixed project name. Using the constant (not project.projectName /
 // project.projectArn) to grant StartBuild and set PROJECT_NAME on the
@@ -43,8 +43,8 @@ const PROJECT_NAME = 'lambda-runtime-migration-transform';
  *
  * Owns ONLY the resources that run AWS Transform inside CodeBuild and report
  * terminal state: a persistent CodeBuild project (source = the S3-hosted
- * buildspec), the CodeBuild IAM role (Transform + scoped S3/logs + the
- * CodeCommit git half docgen lacks), and an EventBridge rule on the build's
+ * buildspec), the CodeBuild IAM role (Transform + scoped S3/logs + CodeCommit
+ * git access to the fixture repository), and an EventBridge rule on the build's
  * terminal state targeting the build_complete Lambda.
  *
  * The two Phase-2 Lambdas (orchestrator + build_complete) live in PipelineStack
@@ -75,7 +75,8 @@ export class TransformStack extends cdk.Stack {
       description: 'CodeBuild role running AWS Transform (atx) and pushing the upgrade branch for the Lambda runtime migration',
     });
 
-    // AWS Transform (atx) custom transformation grant — docgen's single grant.
+    // AWS Transform (atx) custom transformation grant: the one permission the
+    // atx CLI needs to run a managed transformation from inside CodeBuild.
     buildRole.addToPolicy(new iam.PolicyStatement({
       sid: 'TransformCustom',
       actions: ['transform-custom:*'],
@@ -92,8 +93,9 @@ export class TransformStack extends cdk.Stack {
       resources: [`arn:${this.partition}:logs:${this.region}:${this.account}:log-group:/aws/codebuild/*`],
     }));
 
-    // CodeCommit git actions scoped to the single fixture repo — the net-new
-    // half docgen lacks. Git only (clone, branch, push): the pushed upgrade
+    // CodeCommit git actions scoped to the single fixture repo, because the
+    // buildspec clones it, cuts the upgrade branch and pushes it back. Git only
+    // (clone, branch, push): the pushed upgrade
     // branch is the deliverable; no pull request is opened by anything in this
     // demo. No account-wide CodeCommit grant, no Bedrock.
     buildRole.addToPolicy(new iam.PolicyStatement({

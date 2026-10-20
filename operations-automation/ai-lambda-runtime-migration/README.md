@@ -64,7 +64,7 @@ The deployment output includes the commands to create a Cognito user. Replace th
 aws cognito-idp admin-create-user \
   --user-pool-id <USER_POOL_ID> \
   --username admin \
-  --user-attributes Name=email,Value=admin@company.com Name=email_verified,Value=true \
+  --user-attributes Name=email,Value=admin@example.com Name=email_verified,Value=true \
   --message-action SUPPRESS --no-cli-pager
 
 aws cognito-idp admin-set-user-password \

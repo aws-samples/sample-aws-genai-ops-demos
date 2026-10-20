@@ -196,7 +196,7 @@ export default function SettingsPage() {
       header={
         <Header
           variant="h1"
-          description="Configure how the tool reaches your Git platform and how it detects each function's source repository. These settings are applied when the migration phase ships — nothing here starts a migration."
+          description="Configure how the tool reaches your Git platform and how it finds each function's source repository. Today a migration reads the repository tag, the branch tag and the organization; platform, host, secret reference and detection method are saved for later use. Nothing here starts a migration."
         >
           Settings
         </Header>
@@ -524,8 +524,8 @@ export default function SettingsPage() {
             </Container>
 
             <Box color="text-body-secondary" fontSize="body-s">
-              Saved settings are applied when the migration phase ships. Tag-based detection works today as
-              configuration; AI-driven detection is on the roadmap. Nothing on this page starts a migration.
+              Saved repository tag, branch tag and organization are read by every migration. Platform, host,
+              secret reference and detection method are stored but not used yet. Nothing on this page starts a migration.
             </Box>
           </SpaceBetween>
         </Form>

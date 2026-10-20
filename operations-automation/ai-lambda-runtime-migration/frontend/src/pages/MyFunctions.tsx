@@ -141,8 +141,8 @@ const deprecationState = (f: MigrationFunction): DeprecationState | null => {
 // out before any build, e.g. no repo tag) and FAILED (error: transform / push /
 // timeout) both show the failure code help and detail. NO_CHANGES (AWS
 // Transform found nothing to change) is neutral.
-// The raw value is kept as a string: legacy rows may carry a status this build
-// does not know (D8), and migrationRunConfig renders those as "Legacy (<raw>)".
+// The raw value is kept as a string: a row may carry a status this build does
+// not know, and migrationRunConfig renders those with the raw value.
 const migrationRunState = (f: MigrationFunction): string => f.migration_run_status || 'NOT_STARTED';
 
 // Popover / drawer text for a rejection or failure: "<label> — <detail> · <next step>".
@@ -218,9 +218,8 @@ const renderMigrationRun = (f: MigrationFunction): JSX.Element => {
         ? <StatusIndicator type="success">Migrated</StatusIndicator>
         : <StatusIndicator type="not-started">{cfg.label}</StatusIndicator>;
     default:
-      // Legacy tolerance (D8): a value this build does not know (REHEARSED /
-      // PR_OPENED rows written by the previous flow) renders as a neutral
-      // "Legacy (<raw>)" and never throws.
+      // Unknown-value guard: a status this build does not know renders with
+      // its raw value and never throws.
       return <StatusIndicator type="pending">{cfg.label}</StatusIndicator>;
   }
 };
@@ -359,8 +358,8 @@ function FunctionDrawer({ f, phases, running }: { f: MigrationFunction; phases: 
             // The target the run actually used: the family target fixed by the
             // transformation (see backend/transform_runtimes.py).
             ...pair('Target runtime', f.migration_target, (v) => `${f.runtime} → ${v}`),
-            // The upgrade branch is shown only on BRANCH_READY: a legacy row's
-            // stale value must never read as a pushed branch.
+            // The upgrade branch is shown only on BRANCH_READY: a stale value
+            // from an earlier run must never read as a pushed branch.
             ...(migrationRunState(f) === 'BRANCH_READY' ? pair('Branch', f.migration_branch, (v) => <Box variant="code">{v}</Box>) : []),
             ...(f.migration_failure_code || f.migration_failure_detail ? [{ label: 'Failure', value: <Box variant="small">{failureText(f)}</Box> }] : []),
             ...pair('Build', f.migration_build_id, (v) => <Box variant="code">{v}</Box>),
@@ -565,7 +564,7 @@ export default function MyFunctions() {
     }
   }, [migrationRun, migrationRunArn]);
 
-  // ONE 30 s timer for the migration surface (D6). It runs while the latest
+  // ONE 30 s timer for the migration surface. It runs while the latest
   // batch execution is RUNNING, or while a visible row is QUEUED / IN_PROGRESS
   // and the execution state is not yet known to be terminal (an in-flight row
   // of a batch known to be over belongs to a dead writer: polling it forever
@@ -670,12 +669,12 @@ export default function MyFunctions() {
 
   const runtimes = useMemo(() => [...new Set(rows.map((r) => r.runtime).filter(Boolean))].sort(), [rows]);
   // Migration-run statuses present in the rows (a row without a mig# item is
-  // NOT_STARTED), in the enum's display order; legacy values go last.
+  // NOT_STARTED), in the enum's display order; unknown values go last.
   const runStatuses = useMemo(() => {
     const present = new Set(rows.map((r) => r.migration_run_status || 'NOT_STARTED'));
     const known = (Object.keys(MIGRATION_RUN_STATUS) as string[]).filter((s) => present.has(s as MigrationRunStatus));
-    const legacy = [...present].filter((s) => !(s in MIGRATION_RUN_STATUS)).sort();
-    return [...known, ...legacy];
+    const unknown = [...present].filter((s) => !(s in MIGRATION_RUN_STATUS)).sort();
+    return [...known, ...unknown];
   }, [rows]);
   const complexities = useMemo(() => {
     const order = ['LOW', 'MEDIUM', 'HIGH'];

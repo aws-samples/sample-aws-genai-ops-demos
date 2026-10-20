@@ -22,7 +22,7 @@ const env = {
   region: region,
 };
 
-// Optional confused-deputy guard for the multi-account scan (design §5): the
+// Optional confused-deputy guard for the multi-account scan: the
 // same value must be given to the hub (Pipeline stack) and to every spoke.
 //   --context spokeExternalId=<opaque string>
 const spokeExternalId: string | undefined = app.node.tryGetContext('spokeExternalId') || undefined;
@@ -75,7 +75,7 @@ new FrontendStack(app, `LambdaRuntimeMigrationFrontend-${region}`, {
   description: 'Lambda Runtime Migration: CloudFront dashboard served from S3',
 });
 
-// Spoke stack (opt-in multi-account scan, design §5): ONE read-only role,
+// Spoke stack (opt-in multi-account scan): ONE read-only role,
 // deployed in a MEMBER account with that account's credentials, pointing at the
 // hub:
 //   npx cdk deploy LambdaRuntimeMigrationSpoke-<region> --context hubAccountId=<hub account id>
@@ -93,7 +93,7 @@ if (spokeHubAccountId) {
   });
 }
 
-// Org stack (opt-in multi-account scan, design §5): StackSet rolling the spoke
+// Org stack (opt-in multi-account scan): StackSet rolling the spoke
 // role out to every account of the organization root / OUs, deployed FROM the
 // hub. Only instantiated when targets are given, so single-account users never
 // see it:

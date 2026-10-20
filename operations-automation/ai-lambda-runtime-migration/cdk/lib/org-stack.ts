@@ -14,7 +14,7 @@ export interface OrgStackProps extends cdk.StackProps {
 }
 
 /**
- * Organization-wide rollout of the spoke role (design §5).
+ * Organization-wide rollout of the spoke role.
  *
  * A service-managed CloudFormation StackSet, deployed FROM the hub, that places
  * SpokeStack's read-only role in every account under the given root / OUs and

@@ -35,12 +35,11 @@ export const MIGRATION_RUN_STATUS: Record<MigrationRunStatus, StatusConfig> = {
   BRANCH_READY: { label: 'Branch ready', type: 'success' },
 };
 
-// Legacy tolerance (D8): mig# items written before BRANCH_READY may still carry
-// REHEARSED or PR_OPENED (no data migration). Any value this build does not
-// know renders as a neutral "Legacy (<raw>)" so the page never crashes.
+// Unknown-value guard: a status this build does not know renders with its raw
+// value and never throws.
 export const migrationRunConfig = (status: string | undefined): StatusConfig =>
   MIGRATION_RUN_STATUS[(status || 'NOT_STARTED') as MigrationRunStatus]
-  ?? { label: `Legacy (${status})`, type: 'pending' };
+  ?? { label: String(status), type: 'pending' };
 
 // Rejection (pre-build triage) and failure (build / transform / push) codes
 // carried by the mig# item's migration_failure_code. Defined ONCE here: the
