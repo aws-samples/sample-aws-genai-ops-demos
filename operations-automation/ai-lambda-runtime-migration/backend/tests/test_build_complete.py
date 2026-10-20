@@ -281,15 +281,17 @@ def test_build_complete_from_older_batch_does_not_write(monkeypatch, caplog):
     assert lam.calls[-1][1]["CallbackId"] == "cb-old"
 
 
-def test_build_complete_legacy_index_row_without_batch_id_writes_with_warning(monkeypatch, caplog):
+def test_build_complete_guard_always_requires_batch_id(monkeypatch):
+    # The ownership clause is never dropped: an index row without a batch id
+    # still conditions on migration_batch_id (bound to the empty value), so it
+    # can never write over an item a batch owns.
     index = {"mig_item_key": "mig#k", "job_id": "job-1", "callback_id": "cb-1"}
     tbl = _FakeTable(_items(index=index, mig=_mig()))
     _patch(monkeypatch, tbl, result_json={"status": "FAILED"})
-    with caplog.at_level(logging.WARNING, logger="build_complete"):
-        out = build_complete.handler(_event())
-    assert out["updated"] is True
-    assert "migration_batch_id" not in tbl.updates[-1]["ConditionExpression"]
-    assert "no batch id" in caplog.text
+    build_complete.handler(_event())
+    u = tbl.updates[-1]
+    assert "migration_batch_id = :batch_id" in u["ConditionExpression"]
+    assert u["ExpressionAttributeValues"][":batch_id"] == (index.get("batch_id") or "")
 
 
 # --- callback completion ----------------------------------------------------

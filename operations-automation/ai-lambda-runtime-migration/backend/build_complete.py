@@ -145,8 +145,9 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
     Guard: the item exists, is live (QUEUED/IN_PROGRESS) and is still owned by
     the batch that started this build (migration_batch_id = :batch_id), so a
     build from an earlier batch can never write over an item a later batch
-    re-queued after the staleness escape. A buildidx# row without a batch id
-    falls back to the status-only guard with a WARNING."""
+    re-queued after the staleness escape. The ownership clause is always
+    present: start_transform writes batch_id on every buildidx# row, and a row
+    without one must not be able to write at all."""
     set_parts, attr_names, attr_values = [], {}, {}
     for idx, (k, v) in enumerate(fields.items()):
         pn, pv = f"#a{idx}", f":v{idx}"
@@ -155,12 +156,9 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
         attr_values[pv] = v
     attr_values[":queued"] = "QUEUED"
     attr_values[":inprogress"] = "IN_PROGRESS"
-    condition = "attribute_exists(item_key) AND migration_status IN (:queued, :inprogress)"
-    if batch_id:
-        condition += " AND migration_batch_id = :batch_id"
-        attr_values[":batch_id"] = batch_id
-    else:
-        logger.warning("buildidx# %s has no batch id; writing without ownership check", build_id)
+    attr_values[":batch_id"] = batch_id
+    condition = ("attribute_exists(item_key) AND migration_status IN (:queued, :inprogress)"
+                 " AND migration_batch_id = :batch_id")
     try:
         _table().update_item(
             Key={"item_key": mig_key},
@@ -177,7 +175,7 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
         # item was re-queued: re-read once to say which.
         item = _table().get_item(Key={"item_key": mig_key}).get("Item") or {}
         owner = item.get("migration_batch_id")
-        if batch_id and owner and owner != batch_id:
+        if owner and owner != batch_id:
             logger.info("build %s belongs to batch %s, item now owned by %s", build_id, batch_id, owner)
         else:
             logger.info("build %s: mig item %s already terminal (%s); not writing",
@@ -187,7 +185,7 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
 
 def _choose_callback_id(item: dict, index: dict) -> str:
     """The callback id to complete, chosen by ownership. When the mig# item is
-    still owned by this build's batch (or the legacy index row has no batch id)
+    still owned by this build's batch (or the index row carries no batch id)
     the mig# copy is authoritative with the buildidx# copy as fallback. When the
     item was re-queued by a newer batch, ONLY the buildidx# copy may be used: the
     mig# copy belongs to the new batch's wait and completing it with this
