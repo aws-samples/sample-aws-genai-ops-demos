@@ -43,7 +43,7 @@
         <mxCell id="analyze-runtime" value="AgentCore Runtime" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ED7100;strokeColor=#ED7100;fontColor=#FFFFFF;fontSize=10;fontStyle=1;verticalAlign=middle;align=center;" parent="1" vertex="1">
           <mxGeometry x="350" y="315" width="120" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="analyze-desc" value="Code download · S3 upload · AI assessment" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
+        <mxCell id="analyze-desc" value="Code download · AI assessment" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" parent="1" vertex="1">
           <mxGeometry x="480" y="315" width="120" height="30" as="geometry" />
         </mxCell>
         <mxCell id="transform-rt" value="Phase 3: Transform" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=13;fontStyle=1;verticalAlign=top;align=center;spacingTop=5;" parent="1" vertex="1">

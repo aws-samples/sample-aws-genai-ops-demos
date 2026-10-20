@@ -10,11 +10,18 @@ export class DataStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // DynamoDB table for Lambda function migration inventory
+    // DynamoDB table for Lambda function migration inventory.
+    //
+    // Partition key is `item_key` = fn#<account_id>#<region>#<function_arn>
+    // (v1.1 schema change, design §4): the bare function ARN collides across
+    // accounts in a hub-and-spoke scan, so the key carries account + region.
+    // This is a BREAKING schema change from the v1 `function_arn` key — because
+    // the partition key changed, redeploying over an existing table RECREATES
+    // it (RemovalPolicy.DESTROY), resetting the inventory. Documented in README.
     this.table = new dynamodb.Table(this, 'MigrationTable', {
       tableName: 'lambda-runtime-migration',
       partitionKey: {
-        name: 'function_arn',
+        name: 'item_key',
         type: dynamodb.AttributeType.STRING,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -47,7 +54,7 @@ export class DataStack extends cdk.Stack {
     // Stack outputs
     new cdk.CfnOutput(this, 'TableName', {
       value: this.table.tableName,
-      description: 'DynamoDB table for Lambda runtime migration inventory',
+      description: 'DynamoDB table for Lambda runtime migration inventory (item_key = fn#<account>#<region>#<arn>; schema change recreates the table)',
     });
 
     new cdk.CfnOutput(this, 'TableArn', {

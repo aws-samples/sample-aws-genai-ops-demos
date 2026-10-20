@@ -1,0 +1,25 @@
+# Demo validation contract for ai-lambda-runtime-migration.
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)").
+
+# The demo's own deploy command (argv), run from the demo folder.
+deploy_command: ["./deploy-all.sh"]
+
+# Teardown runs from the CDK directory (not the default infrastructure/cdk).
+destroy_command: ["npx", "-y", "cdk", "destroy", "--all", "--force", "--no-cli-pager"]
+destroy_subdir: "cdk"
+
+# CloudFormation stacks to confirm deployed (verify) and confirm gone (destroy).
+stacks:
+  - "LambdaRuntimeMigrationData-<region>"
+  - "LambdaRuntimeMigrationAuth-<region>"
+  - "LambdaRuntimeMigrationPipeline-<region>"
+  - "LambdaRuntimeMigrationApi-<region>"
+  - "LambdaRuntimeMigrationFrontend-<region>"
+
+verify: "deterministic"
+
+notes: >
+  Needs Amazon Bedrock Nova model access enabled in the test account, and a
+  Business or Enterprise Support plan for Trusted Advisor (the Discover phase
+  queries the Trusted Advisor deprecated-runtime check). TypeScript CDK app
+  (bin/app.ts); no pythonpath_repo_root needed.

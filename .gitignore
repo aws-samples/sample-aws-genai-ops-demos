@@ -6,13 +6,6 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 
-# Exception: the IAM Security Assistant frontend MUST ship its lockfile so a
-# clean checkout installs the exact, working dependency tree. Without it,
-# `npm install` can resolve a layout where the Cloudscape chat-components
-# subpath imports and the react-markdown/remark/rehype packages don't type-
-# resolve, failing `tsc && vite build` on a fresh clone (TS2307/TS7031).
-!security/ai-iam-access-analyzer-assistant/frontend/package-lock.json
-
 # Build outputs
 dist/
 build/
@@ -26,6 +19,13 @@ target/
 **/cdk/lib/*.d.ts
 **/cdk/bin/*.js
 **/cdk/bin/*.d.ts
+
+# TypeScript compilation outputs (shared utils): aws-utils.ts is the source;
+# tsc emits aws-utils.js / aws-utils.d.ts next to it on every CDK build, which
+# otherwise show up as perpetually-untracked files. The .ts/.py/.sh sources are
+# tracked; the compiled JS/d.ts are not.
+shared/utils/*.js
+shared/utils/*.d.ts
 
 # CDK outputs
 **/cdk.out/

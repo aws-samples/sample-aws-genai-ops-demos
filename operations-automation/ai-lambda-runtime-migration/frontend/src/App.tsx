@@ -1,23 +1,35 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import AppLayout from '@cloudscape-design/components/app-layout';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
 import SideNavigation, { SideNavigationProps } from '@cloudscape-design/components/side-navigation';
 import SplitPanel from '@cloudscape-design/components/split-panel';
+import Button from '@cloudscape-design/components/button';
 import Box from '@cloudscape-design/components/box';
 import AuthModal from './AuthModal';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import { SplitPanelProvider, useSplitPanel } from './SplitPanelContext';
 
-import Dashboard from './pages/Dashboard';
-import Functions from './pages/Functions';
-import FunctionDetail from './pages/FunctionDetail';
-import MigrationPlan from './pages/MigrationPlan';
+import MyFunctions from './pages/MyFunctions';
+import ScanLogPage from './pages/ScanLogPage';
+import StatisticsPage from './pages/StatisticsPage';
+import HowItWorksPage from './pages/HowItWorksPage';
+import SettingsPage from './pages/SettingsPage';
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
-  { type: 'link', text: 'Dashboard', href: '/' },
-  { type: 'link', text: 'Functions', href: '/functions' },
-  { type: 'link', text: 'Migration Plan', href: '/migration-plan' },
+  { type: 'link', text: 'My functions', href: '/' },
+  { type: 'link', text: 'Activity log', href: '/scan-log' },
+  { type: 'link', text: 'Statistics', href: '/statistics' },
+  { type: 'link', text: 'How it works', href: '/how-it-works' },
+  { type: 'divider' },
+  { type: 'link', text: 'Settings', href: '/settings' },
+  { type: 'divider' },
+  {
+    type: 'link',
+    text: 'Documentation',
+    href: 'https://github.com/aws-samples/sample-aws-genai-ops-demos/tree/main/operations-automation/ai-lambda-runtime-migration',
+    external: true,
+  },
 ];
 
 export default function App() {
@@ -35,7 +47,7 @@ function AppContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [splitPanelPosition, setSplitPanelPosition] = useState<'bottom' | 'side'>('bottom');
+  const [splitPanelPosition, setSplitPanelPosition] = useState<'bottom' | 'side'>('side');
   const { state: splitPanelState, closePanel } = useSplitPanel();
 
   useEffect(() => { checkAuth(); }, []);
@@ -55,7 +67,7 @@ function AppContent() {
     return (
       <>
         <TopNavigation
-          identity={{ href: '#', title: 'AWS Lambda Functions Migration Assistant' }}
+          identity={{ href: '#', title: 'AWS Lambda Runtime Migration' }}
           utilities={[{ type: 'button', text: 'Loading...', iconName: 'status-in-progress' }]}
         />
         <AppLayout navigationHide toolsHide content={<Box textAlign="center" padding="xxl">Loading...</Box>} />
@@ -69,15 +81,17 @@ function AppContent() {
       <TopNavigation
         identity={{
           href: '/',
-          title: 'AWS Lambda Functions Migration Assistant',
+          title: 'AWS Lambda Runtime Migration',
           onFollow: (e) => { e.preventDefault(); navigate('/'); },
         }}
-        utilities={[{
-          type: 'button',
-          text: user ? user.email : 'Sign In',
-          iconName: user ? 'user-profile' : 'lock-private',
-          onClick: () => { if (user) handleSignOut(); else setShowAuthModal(true); },
-        }]}
+        utilities={[
+          {
+            type: 'button',
+            text: user ? user.email : 'Sign In',
+            iconName: user ? 'user-profile' : 'lock-private',
+            onClick: () => { if (user) handleSignOut(); else setShowAuthModal(true); },
+          },
+        ]}
         i18nStrings={{ overflowMenuTriggerText: 'More' }}
       />
       <AppLayout
@@ -85,12 +99,15 @@ function AppContent() {
           <SideNavigation
             activeHref={location.pathname}
             items={NAV_ITEMS}
-            onFollow={(e) => { e.preventDefault(); navigate(e.detail.href); }}
+            onFollow={(e) => { if (!e.detail.external) { e.preventDefault(); navigate(e.detail.href); } }}
           />
         }
         navigationOpen={navOpen}
         onNavigationChange={({ detail }) => setNavOpen(detail.open)}
         toolsHide
+        contentType="table"
+        maxContentWidth={Number.MAX_VALUE}
+        stickyNotifications
         splitPanel={
           splitPanelState.isOpen && splitPanelState.content ? (
             <SplitPanel
@@ -120,26 +137,20 @@ function AppContent() {
         content={
           !user ? (
             <Box textAlign="center" padding="xxl">
-              <Box variant="h1" padding={{ bottom: 's' }}>AWS Lambda Functions Migration Assistant</Box>
+              <Box variant="h1" padding={{ bottom: 's' }}>AWS Lambda Runtime Migration</Box>
               <Box variant="p" padding={{ bottom: 'm' }} color="text-body-secondary">
-                Please sign in to access the migration dashboard
+                Please sign in to access the migration tool
               </Box>
-              <button
-                onClick={() => setShowAuthModal(true)}
-                style={{
-                  padding: '10px 20px', fontSize: '16px', cursor: 'pointer',
-                  backgroundColor: '#0972d3', color: 'white', border: 'none', borderRadius: '4px',
-                }}
-              >
-                Sign In
-              </button>
+              <Button variant="primary" iconName="lock-private" onClick={() => setShowAuthModal(true)}>Sign In</Button>
             </Box>
           ) : (
             <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/functions" element={<Functions />} />
-              <Route path="/functions/:arn" element={<FunctionDetail />} />
-              <Route path="/migration-plan" element={<MigrationPlan />} />
+              <Route path="/" element={<MyFunctions />} />
+              <Route path="/scan-log" element={<ScanLogPage />} />
+              <Route path="/statistics" element={<StatisticsPage />} />
+              <Route path="/how-it-works" element={<HowItWorksPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           )
         }
