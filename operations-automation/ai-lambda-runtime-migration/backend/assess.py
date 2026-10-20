@@ -13,7 +13,6 @@ import logging
 import os
 import tempfile
 import zipfile
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.request import urlopen
 

@@ -31,6 +31,8 @@ from typing import Dict, List
 import boto3
 from botocore.exceptions import ClientError
 
+import discover
+
 # Organizations error codes that mean "there is simply no org to enumerate from
 # here" — a standalone account or a non-management/non-delegated account. These
 # are the expected single-account path, so they degrade silently (errors == []).
@@ -134,7 +136,6 @@ def _hub_first(accounts: List[Dict], hub_account_id: str) -> List[Dict]:
 
 def hub_account_id(region: str) -> str:
     """The account the pipeline runs in (cached by discover._caller_account)."""
-    import discover
     return discover._caller_account(region)
 
 

@@ -28,10 +28,10 @@ Input contract (design §3.1):
 """
 
 import logging
-import os
 import re
+import uuid
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import List
 
 from aws_durable_execution_sdk_python import durable_execution, durable_step, DurableContext, StepContext
 from aws_durable_execution_sdk_python.config import Duration, MapConfig, CompletionConfig, StepConfig
@@ -181,7 +181,6 @@ def start_run(step: StepContext, spec: dict) -> dict:
 
     The ONLY place uuid.uuid4() and datetime.now() are called.
     """
-    import uuid
     own_region = get_region()
     # Trusted Advisor's deprecated-runtime check is ACCOUNT-WIDE: one call per
     # account returns functions across every region, so there is no region

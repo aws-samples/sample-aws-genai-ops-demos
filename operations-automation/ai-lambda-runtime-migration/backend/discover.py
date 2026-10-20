@@ -17,6 +17,7 @@ Key differences from the v1 agent:
     staged aws_utils.get_bedrock_model_id); never a hardcoded region-prefixed id.
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -462,7 +463,6 @@ def prioritize_with_bedrock(session: boto3.session.Session, region: str, functio
     Returns {arn: {"score": int, "base": int, "adjustment": int, "reasoning": str}}
     for every non-SKIPPED function.
     """
-    import json
 
     func_summaries = []
     for fn in functions:

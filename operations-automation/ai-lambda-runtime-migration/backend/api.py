@@ -14,12 +14,15 @@ The browser holds no AWS credentials: everything reaches AWS through this
 function, so its role carries the permissions the UI needs.
 """
 
+import decimal
 import json
 import logging
 import os
 import random
 import re
 import time
+import urllib.parse
+from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
@@ -351,7 +354,6 @@ def migration_status(arn: str) -> tuple:
     account_id, so the ARN alone is insufficient), then composes the mig# key. A
     key mismatch or a missing fn# row degrades to NOT_STARTED, never a wrong
     status."""
-    import urllib.parse
     canonical = discover.canonical_arn(urllib.parse.unquote(arn or ""))
     fn_row = _find_fn_row(canonical)
     if fn_row is None:
@@ -695,7 +697,6 @@ def migration_run_status(execution_arn: str) -> tuple:
 
     Mirrors refresh_status's shape (executionArn/status/startDate/stopDate/summary)
     and adds progress: the three fixed phases from _migration_progress."""
-    import urllib.parse
     execution_arn = urllib.parse.unquote(execution_arn or "")
     client = _lambda_client()
     desc = client.get_durable_execution(DurableExecutionArn=execution_arn)
@@ -720,7 +721,6 @@ def migration_run_status(execution_arn: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def _decimals_to_native(obj):
-    import decimal
     if isinstance(obj, decimal.Decimal):
         return int(obj) if obj == int(obj) else float(obj)
     if isinstance(obj, dict):
@@ -947,7 +947,6 @@ def put_settings(body: dict) -> dict:
     NAME/ARN of a Secrets Manager secret (secretRef) is kept; the tool reads the
     secret server-side with its task role in the future migration phase.
     """
-    from datetime import datetime, timezone
     incoming = body.get("settings") or {}
     allowed = {k: str(incoming[k]) for k in _SETTINGS_ALLOWED if incoming.get(k) is not None}
     item = {"item_key": SETTINGS_KEY, **allowed,

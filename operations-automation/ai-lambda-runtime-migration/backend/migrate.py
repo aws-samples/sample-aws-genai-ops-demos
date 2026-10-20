@@ -59,6 +59,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import boto3
@@ -831,7 +832,6 @@ def prepare_batch(step: StepContext, arns: list, execution_arn: str) -> dict:
 
     Mirrors pipeline.start_run: non-determinism (uuid, clock, DynamoDB) is inside
     the step. The returned payload is bounded (accepted/over_cap are both <= cap)."""
-    import uuid
     batch_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
     # The mig# item is keyed on the CANONICAL arn, so the index carries canonical ARNs.
