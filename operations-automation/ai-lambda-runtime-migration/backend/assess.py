@@ -110,7 +110,7 @@ def _read_text(extract_path: str, rel_path: str) -> Optional[str]:
     try:
         with open(os.path.join(extract_path, rel_path), "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
-    except Exception as exc:  # noqa: BLE001 - an unreadable file is skipped, not fatal
+    except Exception as exc:  # an unreadable file is skipped, not fatal
         logger.warning("could not read %s: %s", rel_path, exc)
         return None
 

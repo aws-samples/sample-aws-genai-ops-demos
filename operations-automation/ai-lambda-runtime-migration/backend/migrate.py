@@ -593,7 +593,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     codecommit = boto3.client("codecommit", region_name=region)
     try:
         codecommit.get_repository(repositoryName=repo_name)
-    except Exception as exc:  # noqa: BLE001 - classify by error code
+    except Exception as exc:  # classified by error code below
         code = _classify_codecommit_error(exc)
         if code == "ACCESS_DENIED":
             return _fail("ACCESS_DENIED",
@@ -604,7 +604,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     if branch:
         try:
             codecommit.get_branch(repositoryName=repo_name, branchName=branch)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # classified by error code below
             code = _classify_codecommit_error(exc)
             if code == "ACCESS_DENIED":
                 return _fail("ACCESS_DENIED",

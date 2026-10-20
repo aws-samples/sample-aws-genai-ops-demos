@@ -172,6 +172,7 @@ def list_scans(body: dict) -> tuple:
             try:
                 result = client.get_durable_execution(DurableExecutionArn=arn).get("Result")
             except Exception:  # pragma: no cover - best effort, never fail the list
+                logger.warning("could not read result of scan execution %s", arn, exc_info=True)
                 result = None
         if result:
             try:
@@ -230,8 +231,8 @@ def list_migration_runs(body: dict) -> tuple:
         if result is None and status == "SUCCEEDED" and arn:
             try:
                 result = client.get_durable_execution(DurableExecutionArn=arn).get("Result")
-            except Exception as exc:  # noqa: BLE001 - best effort, never fail the list
-                logger.warning("could not read result of migrate execution %s: %s", arn, exc)
+            except Exception:  # best effort, never fail the list
+                logger.warning("could not read result of migrate execution %s", arn, exc_info=True)
                 result = None
         if result:
             try:
@@ -407,8 +408,8 @@ def _progress_from_history(client, execution_arn: str, status: str) -> dict:
                         accounts_found = len(accts) if isinstance(accts, list) else None
                 elif et == "StepFailed":
                     steps[name] = "failed"  # a later StepStarted/StepSucceeded (retry) overrides
-    except Exception:
-        pass
+    except Exception:  # best effort: the run view must never 500 on a history read
+        logger.warning("history read failed for %s", execution_arn, exc_info=True)
 
     def phase(label: str, prefix: str, total, single: bool = False):
         names = [n for n in steps if (n == prefix if single else n.startswith(prefix))]
@@ -566,8 +567,8 @@ def _migration_progress(client, execution_arn: str, status: str) -> dict:
                         transform_result[idx] = _decode_context_result(_context_payload(ev))
                     elif et == "ContextFailed":        # callback timed out / submitter exhausted
                         transform[idx] = "failed"
-    except Exception as exc:  # best effort: the run view must never 500 on a history read
-        logger.warning("migration history read failed for %s: %s", execution_arn, exc)
+    except Exception:  # best effort: the run view must never 500 on a history read
+        logger.warning("migration history read failed for %s", execution_arn, exc_info=True)
 
     # Phase 0 - the single prepare-batch step, by status.
     p0_done = 1 if prepare == "succeeded" else 0

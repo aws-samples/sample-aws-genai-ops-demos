@@ -71,7 +71,7 @@ def _read_result(job_id: str):
         obj = boto3.client("s3", region_name=get_region()).get_object(
             Bucket=BUCKET_NAME, Key=f"migrations/{job_id}/result.json")
         return json.loads(obj["Body"].read())
-    except Exception as exc:  # noqa: BLE001 - absent/unreadable result => derive from build state
+    except Exception as exc:  # absent/unreadable result => derive from build state
         logger.info("no result.json for job %s: %s", job_id, exc)
         return None
 

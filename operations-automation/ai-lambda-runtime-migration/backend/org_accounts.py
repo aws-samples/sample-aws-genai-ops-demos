@@ -25,12 +25,15 @@ accounts for a run:
 
 Organizations access is optional: a denied/failed call never raises.
 """
+import logging
 from typing import Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
 
 import discover
+
+logger = logging.getLogger(__name__)
 
 # Organizations error codes that mean "there is simply no org to enumerate from
 # here" — a standalone account or a non-management/non-delegated account. These
@@ -152,5 +155,6 @@ def account_name(account_id: str, region: str, org_client=None) -> str:
         org = org_client or boto3.client("organizations", region_name=region)
         acct = org.describe_account(AccountId=account_id).get("Account") or {}
         return acct.get("Name", "")
-    except Exception:  # pragma: no cover - defensive; name is best-effort
+    except Exception:  # pragma: no cover - the name is best-effort
+        logger.warning("could not read the name of account %s", account_id, exc_info=True)
         return ""
