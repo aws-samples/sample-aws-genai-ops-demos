@@ -5,9 +5,8 @@ Discover + Assess as ONE AWS Lambda durable function (v1.1 Phase 1).
     account x region)  ->  assess (download code + Nova migration assessment,
     per function)
 
-Replaces the three agent runtimes with a single checkpointed execution: the
-"Rescan my scope" / Refresh trigger. Modeled on the sibling demo
-aws-services-lifecycle-tracker/backend/pipeline.py.
+One checkpointed execution per scan, started by the "Scan functions" button
+(or a scheduled trigger), so closing the browser never interrupts a run.
 
 Replay model rules (aws-lambda-durable-functions skill): every piece of
 non-determinism — clock reads, uuid, Bedrock/boto3/DynamoDB calls — lives INSIDE
@@ -16,7 +15,7 @@ outside steps is pure transformation of step outputs. Step results are bounded
 (counts/keys/labels); the full function list is written to DynamoDB inside the
 step and never crosses a checkpoint. No secrets are returned from steps.
 
-Input contract (design §3.1):
+Input contract:
     {
       "scope": {
         "tags":    [{"key": "BU", "values": ["payments"]}],
@@ -257,12 +256,12 @@ def summarize_step(step: StepContext, run: dict, spec: dict,
     finished_at = datetime.now(timezone.utc).isoformat()
 
     # Persist ONE immutable rollup row for this run inside the step (the measurement
-    # series FEAT-002 charts read). Counts come from a fresh fleet snapshot of the
-    # 'fn#' rows this run just updated. The rollup row is written to DynamoDB here
-    # and NEVER returned — the step's result stays bounded (counts only), exactly as
-    # before. A rollup failure must not fail an otherwise-successful run, but it
-    # must be LOGGED: a silent pass hid every rollup write failing for weeks
-    # (empty by_account key) while the Statistics chart said "not enough history".
+    # series the Statistics charts read). Counts come from a fresh fleet snapshot of
+    # the 'fn#' rows this run just updated. The rollup row is written to DynamoDB
+    # here and NEVER returned, so the step's result stays bounded (counts only). A
+    # rollup failure must not fail an otherwise-successful run, but it must be
+    # logged: a silent failure here is invisible to the UI (the Statistics page
+    # would just say "not enough history").
     try:
         inventory_rows = discover.read_fleet_inventory()
         rollup = discover.build_rollup(run, disc_summary, support_summary,
@@ -409,7 +408,7 @@ def summarize_discover(cells: List[dict], batch) -> dict:
     """Fold the discover map into bounded facts + the scopes that succeeded.
 
     A scope that failed drops out of scanned_scopes, so Assess never fans out
-    over a scope whose inventory was not refreshed (design §3.3, §5)."""
+    over a scope whose inventory was not refreshed."""
     scopes, failed_cells = [], []
     discovered = rekeyed = 0
     for cell, result in zip(cells, results_by_index(batch, len(cells))):

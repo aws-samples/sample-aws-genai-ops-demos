@@ -5,7 +5,7 @@ This is AWS reference data, not per-deployment config, so it is a constant map
 (consistent with discover.SUPPORT_HOME). Maps a source Lambda runtime *family*
 to its managed transformation, default target runtime, and an optional
 additionalPlanContext prefix. Nothing per-account to configure, so a config
-table would be the wrong tool — the brief explicitly asked for constants.
+table would be the wrong tool.
 
 Python is the only family with a contextPrefix: AWS/lambda-nodejs-runtime-upgrade
 and AWS/dotnet-lambda-upgrade are Lambda-specific, so they need no Lambda

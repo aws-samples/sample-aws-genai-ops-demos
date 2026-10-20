@@ -1,5 +1,4 @@
-"""Integration test on the real durable SDK runner (design-steps.md sections 3,
-8.2 and 13): pins the operation NAMES a prepare-batch -> map 'migrate' ->
+"""Integration test on the real durable SDK runner: pins the operation NAMES a prepare-batch -> map 'migrate' ->
 resolve-<i> -> wait_for_callback transform-<i> handler really records, and the
 SHAPE of the transform-<i> ContextSucceeded payload (a JSON string whose
 content is JSON), against aws_durable_execution_sdk_python 2.x and its local

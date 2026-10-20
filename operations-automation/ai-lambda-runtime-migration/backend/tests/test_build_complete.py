@@ -143,9 +143,9 @@ def test_result_transformed_maps_to_branch_ready(monkeypatch):
     assert payload["failure_code"] is None
 
 
-def test_result_transformed_legacy_open_pr_field_is_ignored(monkeypatch):
-    # Legacy tolerance (D8): a mig# item written by the previous orchestrator
-    # still carries migration_open_pr. It no longer changes the outcome.
+def test_result_transformed_unknown_item_attribute_is_ignored(monkeypatch):
+    # An attribute this build does not know on the mig# item never changes the
+    # outcome; only the result.json status and branch do.
     tbl = _FakeTable(_items(mig=_mig(migration_open_pr=True)))
     _patch(monkeypatch, tbl, result_json={"status": "TRANSFORMED", "branch": "upgrade"})
     out = build_complete.handler(_event())

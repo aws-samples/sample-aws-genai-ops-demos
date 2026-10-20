@@ -1,5 +1,5 @@
 """Unit tests for org_accounts.resolve_accounts — the runtime multi-account
-enumeration path (design §5). Pure/injected: no real AWS calls.
+enumeration path. Pure/injected: no real AWS calls.
 
 Multi-account vs single-account is decided at runtime by attempting
 Organizations and degrading to the hub, so the injected org client — not an

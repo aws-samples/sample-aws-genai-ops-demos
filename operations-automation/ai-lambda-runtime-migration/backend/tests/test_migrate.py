@@ -57,7 +57,7 @@ def _conditional_failed():
 
 class _FakeTable:
     """Per-key item storage: a get_item after an update_item sees the SET fields
-    (needed for the callback-id-then-result sequence). `item` is a legacy default
+    (needed for the callback-id-then-result sequence). `item` is the fallback default
     returned for any key without a stored item. `raise_conditional_for` injects a
     ConditionalCheckFailedException on guarded writes to those keys."""
     def __init__(self, item=None, items=None, raise_conditional_for=None):
@@ -79,7 +79,7 @@ class _FakeTable:
             raise _conditional_failed()
         names = kwargs["ExpressionAttributeNames"]
         values = kwargs["ExpressionAttributeValues"]
-        # DynamoDB rule the real service enforces (seen live): every bound value
+        # DynamoDB rule the real service enforces: every bound value
         # must be referenced by the update or condition expression.
         expressions = kwargs.get("UpdateExpression", "") + " " + kwargs.get("ConditionExpression", "")
         unused = [p for p in values if p not in expressions]
@@ -474,7 +474,7 @@ def test_constants_are_derived():
     (b'{"status": "TRANSFORMED"}', "empty build result"),
     ("not json", "unparseable build result"),
     ("[1, 2]", "unparseable build result"),
-    (json.dumps({"status": "PR_OPENED"}), "unparseable build result"),
+    (json.dumps({"status": "SOME_UNKNOWN_STATUS"}), "unparseable build result"),
     (json.dumps({"nope": 1}), "unparseable build result"),
     (json.dumps({"status": "TRANSFORMED"}), "transformed without a branch"),
     (json.dumps({"status": "TRANSFORMED", "branch": ""}), "transformed without a branch"),
@@ -880,7 +880,7 @@ def test_resolve_blocks_when_mig_item_queued(monkeypatch):
 
 def test_resolve_blocks_before_fail_write_protects_live_item(monkeypatch):
     # Without the guard this function would be TAG_NOT_FOUND and _fail would
-    # write FAILED over the live IN_PROGRESS item (the #116 clobber).
+    # write FAILED over the live IN_PROGRESS item another batch owns.
     fn = {**_PY_FN, "tags": {}}
     tbl = _FakeTable(item=_mig_item("IN_PROGRESS"))
     _patch_common(monkeypatch, fn_item=fn, table=tbl)
@@ -995,15 +995,14 @@ def test_is_live_migration_boundary():
     assert migrate._is_live_migration(outside, "b-2", now=now) is False
     # Own batch id: never live (replay).
     assert migrate._is_live_migration({**inside, "migration_batch_id": "b-2"}, "b-2", now=now) is False
-    # Settled statuses are never live, whatever the stamps. The two legacy
-    # values (REHEARSED / PR_OPENED) stay here to prove a legacy settled item is
-    # re-migratable (D8).
-    for status in ("BRANCH_READY", "REJECTED", "FAILED", "NO_CHANGES", "REHEARSED", "PR_OPENED"):
+    # Settled statuses are never live, whatever the stamps; a status this build
+    # does not know is settled too, so such an item is re-migratable.
+    for status in ("BRANCH_READY", "REJECTED", "FAILED", "NO_CHANGES", "SOME_UNKNOWN_STATUS"):
         assert migrate._is_live_migration({**item, "migration_status": status}, "b-2", now=now) is False
 
 
 @pytest.mark.parametrize("status", ["BRANCH_READY", "REJECTED", "FAILED", "NO_CHANGES",
-                                    "REHEARSED", "PR_OPENED"])   # the last two: legacy rows (D8)
+                                    "SOME_UNKNOWN_STATUS"])   # the last one: a value this build does not know
 def test_resolve_proceeds_when_mig_item_settled(monkeypatch, status):
     tbl = _FakeTable(item=_mig_item(status))
     _patch_common(monkeypatch, settings={"branchTag": "git-branch"}, table=tbl)
@@ -1024,8 +1023,8 @@ def test_resolve_no_existing_item_still_queues(monkeypatch):
 
 
 def test_resolve_requeue_clears_previous_run_outcome(monkeypatch):
-    """Regression (seen live): a function migrated again kept the previous run's
-    failure code (NO_CHANGES item still saying TRANSFORM_FAILED). The QUEUED
+    """A function migrated again must not keep the previous run's failure code
+    (a NO_CHANGES item still saying TRANSFORM_FAILED). The QUEUED
     write must REMOVE every per-run outcome field; request fields are re-SET."""
     stale = _mig_item("FAILED", migration_failure_code="TRANSFORM_FAILED",
                       migration_failure_detail="old",
@@ -1116,8 +1115,7 @@ def test_summarize_migration_new_keys():
 
 
 def test_summarize_migration_tolerates_unknown_unit_status():
-    # Legacy tolerance (D8): a unit result status this fold does not know (e.g.
-    # "TRANSFORMED" from an in-flight execution of the previous orchestrator) is
+    # Unknown-value guard: a unit result status this fold does not know is
     # counted as resolved only, never as a failure, and never raises.
     out = summarize_migration(_batch_dict(["a", "b"]), _Batch([
         _ok(0, {"stage": "transform", "ok": True, "status": "TRANSFORMED"}),

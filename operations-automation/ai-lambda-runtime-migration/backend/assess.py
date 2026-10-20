@@ -5,7 +5,8 @@ Assess: download a function's code and run the Nova migration assessment
 The target runtime is NOT assessed: it is fixed per language family by the
 managed transformation (transform_runtimes.TRANSFORMS[...]["defaultTarget"]).
 
-Ported from agent/analyze/main.py. The agent-runtime app wrapper is gone.
+Plain functions called from inside the pipeline's durable steps: no handler of
+its own, no AWS client created at import time.
 """
 
 import io

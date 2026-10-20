@@ -1,4 +1,4 @@
-"""Unit tests for discover.py pure helpers (design §10)."""
+"""Unit tests for discover.py pure helpers."""
 from unittest.mock import MagicMock
 
 import discover
@@ -139,7 +139,7 @@ def test_prioritize_applies_and_clamps_adjustment(monkeypatch):
 
 
 def test_prioritize_adjustment_on_base_72(monkeypatch):
-    """The FEAT-003 drawer example: +8 on a base-72 function -> 80 / 72 / +8."""
+    """The drawer example: +8 on a base-72 function -> 80 / 72 / +8."""
     arn = "arn:x"
     fn = _active_fn(arn)
     monkeypatch.setattr(discover, "base_priority_score", lambda f: 72)
@@ -705,7 +705,7 @@ def test_rekey_row_never_clobbers_a_live_item_under_the_new_mig_key(monkeypatch)
     arn = f"arn:aws:lambda:us-east-1:{hub}:function:old"
     old_mig_key = discover.mig_item_key("", "us-east-1", arn)
     new_mig_key = discover.mig_item_key(hub, "us-east-1", arn)
-    legacy = {"item_key": old_mig_key, "account_id": "", "migration_status": "PR_OPENED",
+    legacy = {"item_key": old_mig_key, "account_id": "", "migration_status": "SOME_UNKNOWN_STATUS",
               "migration_batch_id": "b-old", "migration_updated_at": "2025-05-01T00:00:00Z"}
     live = {"item_key": new_mig_key, "account_id": hub, "migration_status": "QUEUED",
             "migration_batch_id": "b-new", "migration_updated_at": "2025-06-02T00:00:00Z"}
@@ -880,7 +880,8 @@ def test_read_fleet_inventory_returns_fn_and_mig_rows_only(monkeypatch):
 
 def test_build_rollup_counts_migration_run_axis():
     """The active backlog partitioned by the migration-run axis: no item ->
-    not started, QUEUED/IN_PROGRESS -> in progress, legacy PR_OPENED -> legacy;
+    not started, QUEUED/IN_PROGRESS -> in progress, an unknown status is counted
+    apart;
     a resolved MIGRATED row is never counted even with a BRANCH_READY item; an
     orphan mig# item is ignored; matching is by canonical ARN ($LATEST)."""
     rows = [
@@ -888,14 +889,14 @@ def test_build_rollup_counts_migration_run_axis():
         _fn_row(arn="b"), _fn_row(arn="c"),    # QUEUED / IN_PROGRESS
         _fn_row(arn="d"), _fn_row(arn="e"),    # REJECTED / FAILED
         _fn_row(arn="f"), _fn_row(arn="g"),    # NO_CHANGES / BRANCH_READY
-        _fn_row(arn="h"),                      # legacy PR_OPENED
+        _fn_row(arn="h"),                      # unknown status
         _fn_row(arn="i", alert="Green", resolved_at="2025-01-01T00:00:00Z",
                 migration_status="MIGRATED"),
         _mig_item("b", "QUEUED"), _mig_item("c", "IN_PROGRESS"),
         _mig_item("d", "REJECTED"), _mig_item("e", "FAILED"),
         _mig_item("f", "NO_CHANGES"),
         _mig_item("g:$LATEST", "BRANCH_READY"),   # canonical matching
-        _mig_item("h", "PR_OPENED"),
+        _mig_item("h", "SOME_UNKNOWN_STATUS"),
         _mig_item("i", "BRANCH_READY"),           # resolved row: not awaiting merge
         _mig_item("zzz", "BRANCH_READY"),         # orphan: no fn# row
     ]
@@ -935,8 +936,8 @@ def test_build_rollup_not_started_only_counts_active_backlog():
     assert rollup["total_active"] == 1
 
 
-def test_build_rollup_rehearsed_item_counts_as_legacy():
-    rows = [_fn_row(arn="a"), _mig_item("a", "REHEARSED")]
+def test_build_rollup_unknown_status_counts_apart():
+    rows = [_fn_row(arn="a"), _mig_item("a", "SOME_UNKNOWN_STATUS")]
     rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert rollup["run_legacy"] == 1
     assert rollup["run_not_started"] == 0

@@ -1,5 +1,5 @@
 """
-Organization account enumeration for the multi-account scan (design §5).
+Organization account enumeration for the multi-account scan.
 
 Single-account is the default outcome, but it is decided at RUNTIME, not by a
 deploy-time flag: every refresh ATTEMPTS to read AWS Organizations and degrades
@@ -23,7 +23,6 @@ accounts for a run:
   * any OTHER failure (throttling, a genuine service error) also degrades to the
     hub, but keeps a one-line reported error so real misconfig stays visible.
 
-Modeled on the sibling demo aws-services-lifecycle-tracker/backend/org_targets.py.
 Organizations access is optional: a denied/failed call never raises.
 """
 from typing import Dict, List
@@ -140,7 +139,7 @@ def hub_account_id(region: str) -> str:
 
 
 def account_name(account_id: str, region: str, org_client=None) -> str:
-    """The AWS Organizations display name for one account (e.g. "Benjamin LECOQ").
+    """The AWS Organizations display name for one account (e.g. "payments-prod").
 
     Uses organizations:DescribeAccount — the same source (and the same existing
     org-read permission) that gives member accounts their names via ListAccounts.

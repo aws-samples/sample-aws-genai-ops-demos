@@ -1,5 +1,5 @@
 """
-Bedrock model id, resolved once at Lambda init (design §2.1 / contributor-guide).
+Bedrock model id, resolved once at Lambda init.
 
 The region-prefixed CRIS id is NEVER hardcoded. The Pipeline stack copies the
 repo's shared/utils/aws_utils.py into the Lambda bundle as aws_utils.py at synth
@@ -7,7 +7,7 @@ time; here we call its get_bedrock_model_id with the UNPREFIXED Nova base id, so
 the helper prepends the correct CRIS prefix (us./eu./apac./global.) for the
 deployment region.
 
-Rules enforced here (fixing the v1 double-prefix bug):
+Rules enforced here:
   * Pass the unprefixed base `amazon.nova-2-lite-v1:0` — feeding the helper an
     already-`global.`-prefixed id would double-prefix to an invalid id.
   * Pass the explicit Nova base name — the helper defaults to a Claude id.

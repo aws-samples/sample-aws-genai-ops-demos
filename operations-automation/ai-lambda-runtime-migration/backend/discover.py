@@ -1,19 +1,21 @@
 """
 Discover: find deprecated-runtime Lambda functions and enrich/prioritize them.
 
-Ported from agent/discover/main.py (the old agent runtime) into plain,
-step-callable helpers for the durable pipeline (backend/pipeline.py). The
-agent-runtime app wrapper, the module-level DynamoDB resource used outside a step,
-and the two `time.sleep(3)` Trusted Advisor retries are all gone — in the
-durable model, step-level retry (StepConfig) handles TA flakiness
-deterministically and every boto3/Bedrock call runs inside a step.
+Plain, step-callable helpers for the durable pipeline (backend/pipeline.py):
+Trusted Advisor's deprecated-runtime check is the source of truth, each flagged
+function is enriched with its Lambda configuration, tags and CloudWatch usage,
+diffed against the stored inventory and prioritized with Bedrock. No DynamoDB
+resource or client is created at import time and no retry sleeps live here:
+step-level retry (StepConfig) handles Trusted Advisor flakiness and every
+boto3/Bedrock call runs inside a step.
 
-Key differences from the v1 agent:
+Rules this module enforces:
   * Rows are keyed `item_key` = fn#<account_id>#<region>#<function_arn> and
-    carry account_id / account_name / region attributes (design §4).
-  * The Support (Trusted Advisor) client uses the partition-home endpoint, not a
-    hardcoded us-east-1 (design §3.5 / contributor-guide).
-  * The Bedrock model id is read from MODEL_ID (computed in the Lambda from the
+    carry account_id / account_name / region attributes, so the same ARN in two
+    accounts never collides.
+  * The Support (Trusted Advisor) client uses the partition-home endpoint, never
+    a hardcoded region.
+  * The Bedrock model id comes from model_id.py (computed in the Lambda from the
     staged aws_utils.get_bedrock_model_id); never a hardcoded region-prefixed id.
 """
 
@@ -73,7 +75,7 @@ def canonical_arn(arn: str) -> str:
 
 
 def item_key(account_id: str, region: str, function_arn: str) -> str:
-    """Partition key for the inventory table (design §4).
+    """Partition key for the inventory table.
 
     The ARN is canonicalized (trailing ':$LATEST' stripped) so the TA-qualified
     and the Lambda-API unqualified forms of the SAME function produce one
@@ -121,14 +123,14 @@ def support_home_region(region: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Session (hub or assumed spoke role, design §5)
+# Session (hub or assumed spoke role)
 # ---------------------------------------------------------------------------
 
 def session_for_account(account_id: str, region: str) -> boto3.session.Session:
     """boto3 session for an account.
 
     The hub's own id (what STS reports for the pipeline) or an empty id (the
-    legacy hub placeholder) -> the Lambda's own credentials. Any other account
+    hub when STS was unreachable) -> the Lambda's own credentials. Any other account
     id assumes the fixed-name read-only spoke role (opt-in multi-account scope);
     SPOKE_ROLE_NAME / SPOKE_EXTERNAL_ID come from the pipeline environment.
     """
@@ -164,7 +166,7 @@ def _caller_account(region: str) -> str:
 
     Only a SUCCESS is cached. Caching a failure for the container's lifetime
     would make every later hub scan in that container key its rows under the
-    legacy empty-id prefix (fn##...) and re-create the twin rows the identity
+    empty-id prefix (fn##...) and re-create the twin rows the identity
     match exists to prevent; a transient STS error must stay transient.
     """
     if "account" not in _CALLER_CACHE:
@@ -184,9 +186,8 @@ def _caller_account(region: str) -> str:
 # --- Support tier (per-account TA availability) ------------------------------
 #
 # No API returns an account's Support plan. AWS documents inferring it from the
-# case severities the account may open (support:DescribeSeverityLevels). Ported
-# verbatim-in-spirit from the sibling demo aws-services-lifecycle-tracker
-# (backend/health_match.py support_tier). Trusted Advisor's API needs a
+# case severities the account may open (support:DescribeSeverityLevels).
+# Trusted Advisor's API needs a
 # Business/Enterprise-tier plan, so a Basic/Developer account cannot be scanned
 # and the scope must say "not checked", never silently empty.
 #   SubscriptionRequiredException -> basic       (no Support/TA API)
@@ -675,7 +676,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
     Writes rows to DynamoDB inside this step (the full function list never
     crosses a checkpoint) and returns only bounded facts. A scope that fails
     leaves its previous inventory intact — a row is marked RESOLVED only when
-    its own scope succeeded (design §3.3).
+    its own scope succeeded.
     """
     account_id = cell.get("account_id", "")
     account_name = cell.get("account_name", "")
@@ -718,19 +719,18 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
     # one region: read every row this account has (any region) so a function that
     # dropped out of the TA result is correctly marked RESOLVED under its region.
     existing = read_account_inventory(session, account_id)
-    # The hub used to be keyed under an EMPTY account id (fn##<region>#...). When
-    # this scope IS the hub, read those legacy rows too so the identity match
-    # below re-keys them onto the real-id key instead of retiring them.
+    # _caller_account returns "" when STS is unreachable, so hub rows can be
+    # keyed under an EMPTY account id (fn##<region>#...). When this scope IS the
+    # hub, read those rows too so the identity match below re-keys them onto the
+    # real-id key instead of retiring them.
     if account_id and account_id == _caller_account(region):
         existing = existing + read_account_inventory(session, "")
 
     # Match on a STABLE IDENTITY, (region, canonical ARN), never on the raw
-    # item_key string. Twice in this demo's history a change to the key's shape
-    # (ARN qualifier, hub account id) made a raw-key set difference retire the
-    # ENTIRE inventory as MIGRATED/Green while inserting fresh twin rows. With an
-    # identity match a key-shape change re-keys the row (below) and can no
-    # longer retire anything; only a function that genuinely vanished from TA is
-    # resolved.
+    # item_key string: a change of the key's shape (ARN qualifier, hub account
+    # id) must re-key rows (below), never retire them as MIGRATED/Green while
+    # inserting fresh twin rows. Only a function that genuinely vanished from TA
+    # is resolved.
     existing_by_identity: Dict[tuple, dict] = {}
     stale_duplicates: List[dict] = []
     for row in existing:
@@ -743,13 +743,13 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
         existing_by_identity[ident] = keep
         stale_duplicates.append(drop)
     for drop in stale_duplicates:
-        # A legacy duplicate of an identity that survives under another key: it
+        # A duplicate of an identity that survives under another key shape: it
         # is the same function twice, not a second function, so delete rather
-        # than retire it (retiring would count it as a migration). The twin
-        # pattern the key-shape bug produced is "old row resolved but carrying
-        # the assessment / priority / first_seen_at, fresh twin active and
-        # bare": the active twin wins, so first merge the history the dropped
-        # row has and the kept row lacks (kept row's values win) before deleting.
+        # than retire it (retiring would count it as a migration). Typical twin
+        # shape: the old row is resolved but carries the assessment / priority /
+        # first_seen_at, the fresh twin is active and bare. The active twin wins,
+        # so first merge the history the dropped row has and the kept row lacks
+        # (kept row's values win) before deleting.
         ident = _row_identity(drop, region)
         existing_by_identity[ident] = _merge_dropped_duplicate(
             table, existing_by_identity[ident], drop, account_id)
@@ -814,8 +814,8 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
                      if ident not in discovered_identities and not r.get("resolved_at")]
     if len(resolved_keys) >= 5 and len(resolved_keys) * 2 > active_before:
         # A genuine large migration is legitimate (still proceed), but a scope
-        # retiring most of its backlog at once is exactly what a key-shape bug
-        # looked like, so make it visible.
+        # retiring most of its backlog at once is also what a key-matching
+        # defect would look like, so make it visible.
         logger.warning("discover_scope[%s]: retiring %d of %d active rows in one scan "
                        "(TA now flags %d functions); verify this is a real migration",
                        account_id or "hub", len(resolved_keys), active_before, len(functions))
@@ -884,8 +884,8 @@ def _row_recency(row: dict) -> str:
 
 
 def _prefer_row(a: dict, b: dict) -> tuple:
-    """(keep, drop) between two existing rows sharing one identity (a legacy
-    duplicate). The ACTIVE row (no resolved_at) wins; when both are active or
+    """(keep, drop) between two existing rows sharing one identity (a
+    duplicate under another key shape). The ACTIVE row (no resolved_at) wins; when both are active or
     both resolved, the most recently updated wins. Pure."""
     a_active, b_active = not a.get("resolved_at"), not b.get("resolved_at")
     if a_active != b_active:
@@ -897,7 +897,7 @@ def _merge_dropped_duplicate(table, keep: dict, drop: dict, account_id: str) -> 
     """Back-fill onto the kept row the history attributes only the dropped
     duplicate carries (kept row's values win; identity and axis attributes are
     never copied). Field-scoped SET of just the missing attributes on the kept
-    key (issue-#116 write discipline). Returns the merged in-memory row so a
+    key, never a whole-item put. Returns the merged in-memory row so a
     later re-key of the kept row carries the merged attributes too.
     """
     missing = {k: v for k, v in drop.items()
@@ -950,11 +950,11 @@ def _rekey_mig_sibling(table, old_mig_key: str, new_mig_key: str, account_id: st
     """Move a function's migration-run item (mig#) to the key its re-keyed fn#
     row now implies. Without this, migrate.resolve_and_verify composes the NEW
     mig# key from the fn# row and a re-migration creates a second mig# item for
-    one function (stale status shown over the live run, a live legacy item
-    invisible to the ALREADY_IN_PROGRESS guard): the twin-row bug on the mig# axis.
+    one function (stale status shown over the live run, a live item under the
+    old key invisible to the ALREADY_IN_PROGRESS guard): twin rows on the mig# axis.
 
     Every attribute is preserved. The put is conditional on the new key being
-    absent: a live item under the new key is never clobbered (issue #116). When
+    absent: a live item under the new key is never clobbered. When
     the item carries a build id, the buildidx#<build_id> row build_complete
     resolves the mig# key through is re-pointed, so an in-flight build still
     lands its outcome on the moved item. Returns True when an item was moved.
@@ -1037,8 +1037,8 @@ def list_discovered_arns(session: boto3.session.Session, scopes: List[dict]) -> 
 # Per-scan rollup history (immutable measurement series)
 # ---------------------------------------------------------------------------
 
-# mig# enum value -> rollup run_* key. Not listed (legacy REHEARSED / PR_OPENED,
-# or any value a newer writer may add) -> run_legacy.
+# mig# enum value -> rollup run_* key. Any value not listed here, including one
+# a newer writer may add, counts as run_legacy.
 _RUN_BUCKETS = {
     "NOT_STARTED": "run_not_started",
     "QUEUED": "run_in_progress",
@@ -1077,7 +1077,7 @@ def build_rollup(run: dict, disc_summary: dict,
         partitioned by the migration-run axis (the mig# enum). No item or
         NOT_STARTED -> run_not_started; QUEUED | IN_PROGRESS -> run_in_progress;
         BRANCH_READY -> run_branches_ready; anything this build does not know
-        (legacy REHEARSED / PR_OPENED) -> run_legacy. The seven keys always sum
+        -> run_legacy. The seven keys always sum
         to total_active. Callers passing fn# rows only get run_* = 0 except
         run_not_started == total_active.
 
@@ -1111,8 +1111,9 @@ def build_rollup(run: dict, disc_summary: dict,
         runtime = row.get("runtime", "unknown") or "unknown"
         by_runtime[runtime] = by_runtime.get(runtime, 0) + 1
         # Never an empty map key: DynamoDB rejects it (ValidationException:
-        # Empty attribute name) and the whole rollup write would fail. Legacy
-        # hub rows carry account_id == "" -> group them under "unknown".
+        # Empty attribute name) and the whole rollup write would fail. Hub rows
+        # scanned while STS was unreachable carry account_id == "" -> group them
+        # under "unknown".
         account = row.get("account_id", "") or "unknown"
         by_account[account] = by_account.get(account, 0) + 1
 

@@ -91,7 +91,7 @@ def start_refresh(body: dict) -> tuple:
     if not PIPELINE_FUNCTION_ARN:
         return {"error": "PIPELINE_FUNCTION_ARN not configured"}, 500
 
-    # Validate the scope here so the 400 carries the field name (design §6).
+    # Validate the scope here so the 400 carries the field name.
     payload = {"scope": body.get("scope") or {},
                "refresh_origin": body.get("refresh_origin", "manual")}
     normalize_spec(payload)  # raises SpecValidationError -> handled by caller
@@ -476,12 +476,11 @@ def _decode_context_result(payload: str) -> dict:
     return {}
 
 
-# Anchored on purpose (design-steps.md section 3): the SDK derives two children
-# of the transform-<i> wait_for_callback context, "transform-<i> submitter"
-# (a step) and "transform-<i> create callback id" (a callback), and the map
-# emits "migrate" / "map-item-<i>" contexts; none of them may match a phase.
-# A bare-prefix match once counted the (since renamed) bookkeeping step, whose
-# name shared the per-function steps' prefix, as a started transformation.
+# Anchored on purpose: the SDK records child contexts named "transform-<i>
+# submitter" (a step) and "transform-<i> create callback id" (a callback)
+# under each transform-<i> wait_for_callback, and the map emits "migrate" /
+# "map-item-<i>" contexts; none of them may match a phase, so a bare prefix
+# match would over-count.
 _PREPARE_RE = re.compile(r"^prepare-batch$")
 _RESOLVE_RE = re.compile(r"^resolve-(\d+)$")
 _TRANSFORM_RE = re.compile(r"^transform-(\d+)$")
@@ -593,8 +592,8 @@ def _migration_progress(client, execution_arn: str, status: str) -> dict:
     # Mirrors migrate.parse_build_result: the status must be TRANSFORMED,
     # NO_CHANGES or FAILED and a TRANSFORMED payload must carry a branch, else
     # the unit counts as failed (the orchestrator settles it TRANSFORM_FAILED).
-    # Legacy tolerance (D8): an undecodable payload or a status this fold does
-    # not know (e.g. a PR_OPENED-era value) counts as failed, never raises.
+    # Unknown-value guard: an undecodable payload or a status this fold does
+    # not know counts as failed, never raises.
     p2_done = p2_failed = no_changes = 0
     for i, st in transform.items():
         if st == "failed":
@@ -773,17 +772,18 @@ def _matches_scope(row: dict, scope: dict) -> bool:
 def _hub_account() -> tuple:
     """(account_id, friendly_name) for the hub (the account the API runs in).
 
-    Derived at runtime via STS (never hardcoded). Hub rows written before the
-    hub carried its real id have an EMPTY account_id (they are re-keyed on the
-    next scan); this resolves the real id for DISPLAY so the home table shows the
-    real account instead of '-' in the meantime. Best effort: an unavailable STS
-    call leaves rows as-is.
+    Derived at runtime via STS (never hardcoded). discover._caller_account
+    returns "" when STS is unreachable, so hub rows can be keyed on an EMPTY
+    account_id (they are re-keyed on the next scan that resolves it); this
+    resolves the real id for DISPLAY so the home table shows the real account
+    instead of '-' in the meantime. Best effort: an unavailable STS call leaves
+    rows as-is.
     """
     region = get_region()
     account_id = discover._caller_account(region)
     if not account_id:
         return "", ""
-    # Prefer the real AWS Organizations account name (e.g. "Benjamin LECOQ"),
+    # Prefer the real AWS Organizations account name (e.g. "payments-prod"),
     # the same source member accounts get their names from. Fall back to a
     # self-descriptive placeholder only when the org can't be read.
     org_name = org_accounts.account_name(account_id, region)
@@ -792,10 +792,11 @@ def _hub_account() -> tuple:
 
 
 def _fill_hub_display(rows: list) -> list:
-    """Resolve LEGACY empty-id hub rows to the real hub id/name for DISPLAY only.
+    """Resolve empty-id hub rows to the real hub id/name for DISPLAY only.
 
-    Rows scanned since the hub carries its real id already have it and are left
-    alone. Only the in-memory response is rewritten — stored item_key, account_id
+    An empty account_id is a valid key (STS unreachable at scan time, see
+    _hub_account); rows that already carry the real id are left alone. Only the
+    in-memory response is rewritten — stored item_key, account_id
     and scope matching (which ran above on the stored id) are untouched.
     """
     if not any(not r.get("account_id") for r in rows):
@@ -813,10 +814,9 @@ def _fill_hub_display(rows: list) -> list:
 def _merge_migration_runs(rows: list) -> list:
     """Merge the mig# items onto their fn# rows under distinct migration_run_* names.
 
-    The mig# enum (QUEUED/IN_PROGRESS/REJECTED/FAILED/NO_CHANGES/BRANCH_READY; the
-    legacy REHEARSED / PR_OPENED values older items may carry are passed through
-    as-is, the frontend renders them as a neutral "Legacy" status - D8) is a
-    DIFFERENT axis from the fn# row's own migration_status (the Phase-1 assessment axis),
+    The mig# enum (QUEUED/IN_PROGRESS/REJECTED/FAILED/NO_CHANGES/BRANCH_READY; a
+    value this build does not know is passed through unchanged and the frontend
+    renders the raw value) is a DIFFERENT axis from the fn# row's own migration_status (the Phase-1 assessment axis),
     so it is surfaced under migration_run_* and NEVER overwrites fn#'s own
     migration_status. A function with no mig# item defaults to NOT_STARTED. One
     extra table scan per inventory load (acceptable at demo volume)."""

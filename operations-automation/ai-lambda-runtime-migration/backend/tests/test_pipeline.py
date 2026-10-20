@@ -1,4 +1,4 @@
-"""Unit tests for the durable pipeline's pure surface (design §10).
+"""Unit tests for the durable pipeline's pure surface.
 
 The durable runtime itself (checkpointing against the Lambda service) is not
 driven here: aws-durable-execution-sdk-python 2.0.0 does not ship the named

@@ -145,9 +145,7 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
     the batch that started this build (migration_batch_id = :batch_id), so a
     build from an earlier batch can never write over an item a later batch
     re-queued after the staleness escape. A buildidx# row without a batch id
-    (written by the pre-change orchestrator still in flight during the deploy)
-    falls back to the status-only guard with a WARNING; remove that fallback in a
-    later cleanup once no legacy rows can exist."""
+    falls back to the status-only guard with a WARNING."""
     set_parts, attr_names, attr_values = [], {}, {}
     for idx, (k, v) in enumerate(fields.items()):
         pn, pv = f"#a{idx}", f":v{idx}"
@@ -234,9 +232,8 @@ def normalize_build_id(event_build_id: str) -> str:
 
     EventBridge's "CodeBuild Build State Change" detail.build-id is the full
     ARN 'arn:<partition>:codebuild:<region>:<account>:build/<project>:<uuid>'.
-    Looking the index up with the raw ARN never matched (seen live: every
-    completion logged "no buildidx# row" and the durable callback was never
-    completed), so strip everything up to and including 'build/'.
+    The index is keyed on '<project>:<uuid>', so derive that id before the
+    lookup by stripping everything up to and including 'build/'.
     """
     build_id = (event_build_id or "").strip()
     marker = ":build/"

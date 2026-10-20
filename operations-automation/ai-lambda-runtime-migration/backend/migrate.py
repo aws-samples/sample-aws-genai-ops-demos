@@ -31,7 +31,7 @@ code outside steps is pure. Step results are bounded identifiers; the large
 assessment text and the rendered YAML are written to S3 inside the step and
 never cross a durable checkpoint.
 
-Migration state lives in a SEPARATE DynamoDB item (issue #116): keyed
+Migration state lives in a SEPARATE DynamoDB item keyed
 mig#<account>#<region>#<canonical_arn> in the same table, so a Phase-1 scan
 refresh (which rewrites fn# rows) never clobbers it. Its migration_status enum:
 QUEUED / IN_PROGRESS (live), REJECTED (triaged out before any build: no repo
@@ -39,9 +39,9 @@ tag, source/branch not found, unsupported runtime, access denied - a business
 rejection, not a transform failure), FAILED (a real failure: the build could
 not start, the transform failed, the push failed, timed out), NO_CHANGES (the
 transform found nothing to change: neutral, not a failure), BRANCH_READY (the
-upgrade branch is pushed; migration_branch names it). Items written before this
-flow may still carry the legacy REHEARSED / PR_OPENED values: they are read as
-settled (re-migratable) and never written again. REJECTED is deliberately distinct
+upgrade branch is pushed; migration_branch names it). Any status outside
+QUEUED / IN_PROGRESS is settled (re-migratable); a value this build does not
+know is passed through unchanged. REJECTED is deliberately distinct
 from FAILED so an untagged function never counts toward the transform-failure
 numbers. Every mig# write is a field-scoped update_item (never a whole-item PutItem); the
 two create paths are unguarded, every later transition is guarded on the live
@@ -122,10 +122,10 @@ _LIVE_VALUES = {":queued": "QUEUED", ":inprogress": "IN_PROGRESS"}
 
 # A function whose mig# item is in one of these states is owned by a running
 # batch and must not be re-queued: a second batch would StartBuild twice and its
-# writes would clobber the live item (issue #116). resolve_and_verify rejects it
-# with ALREADY_IN_PROGRESS instead. Settled states (BRANCH_READY, REJECTED,
-# FAILED, NO_CHANGES - and the legacy REHEARSED / PR_OPENED values older items
-# may still carry) and absent items may be (re-)migrated. A live
+# writes would clobber the live item. resolve_and_verify rejects it with
+# ALREADY_IN_PROGRESS instead. Settled states (BRANCH_READY, REJECTED, FAILED,
+# NO_CHANGES, or any value this build does not know) and absent items may be
+# (re-)migrated. A live
 # status is bounded in time (QUEUED_STALE_AFTER, IN_PROGRESS_STALE_AFTER): no
 # writer can be guaranteed to run (operator stop, durable ceiling, double
 # fault), so liveness is proven by a fresh migration_updated_at, never assumed.
@@ -343,8 +343,8 @@ def _is_live_migration(existing: dict, batch_id: str, now: datetime = None) -> b
 
     Not live (the guard lets the function through):
     - no item, or a settled status (BRANCH_READY, REJECTED, FAILED, NO_CHANGES,
-      or the legacy REHEARSED / PR_OPENED values older items may still carry) -
-      a REJECTED function is re-migratable once its tag is fixed;
+      or any value this build does not know): a REJECTED function is
+      re-migratable once its tag is fixed;
     - the item is stamped with THIS batch's id: a durable replay of the step
       after its own QUEUED write must re-queue, not reject itself;
     - QUEUED with no migration_build_id and a migration_updated_at older than
@@ -476,9 +476,9 @@ def _set_live_fields(key: str, fields: dict, condition: str) -> bool:
     item first, or this is a replay); any other ClientError propagates."""
     # Bind ONLY the placeholders the condition references: DynamoDB rejects an
     # ExpressionAttributeValues entry the expression never uses
-    # ("Value provided in ExpressionAttributeValues unused in expressions").
-    # Seen live on the first transform-<i> submitter, whose condition is
-    # ":queued" alone while _LIVE_VALUES also carries ":inprogress".
+    # ("Value provided in ExpressionAttributeValues unused in expressions"), and
+    # the submitter's condition is ":queued" alone while _LIVE_VALUES also
+    # carries ":inprogress".
     used = {p: v for p, v in _LIVE_VALUES.items() if p in condition}
     try:
         _set_fields(key, fields, condition=condition, extra_values=used)
@@ -521,18 +521,19 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
             fn_item = row
             break
 
-    # account/region come from the fn# item (legacy hub rows may still carry an
-    # empty account_id), so the mig# key byte-matches what the GET path composes.
+    # account/region come from the fn# item (hub rows may carry an empty
+    # account_id when STS was unreachable at scan time), so the mig# key
+    # byte-matches what the GET path composes.
     account_id = (fn_item or {}).get("account_id", "") or ""
     region = (fn_item or {}).get("region", "") or get_region()
     mig_key = discover.mig_item_key(account_id, region, canonical)
 
-    # Duplicate-writer guard (issue #116): a live QUEUED / IN_PROGRESS mig# item
-    # belongs to a batch that is still running. Reject WITHOUT writing — writing
-    # REJECTED over it (as _fail would) is exactly the clobber #116 forbids, and
-    # re-queuing it would StartBuild twice. Settled states (BRANCH_READY, REJECTED,
-    # FAILED, NO_CHANGES, and the legacy REHEARSED / PR_OPENED values) and absent
-    # items fall through and may be re-migrated;
+    # Duplicate-writer guard: a live QUEUED / IN_PROGRESS mig# item belongs to a
+    # batch that is still running. Reject WITHOUT writing: writing REJECTED over
+    # it (as _fail would) would clobber another batch's live item, and re-queuing
+    # it would StartBuild twice. Settled states (BRANCH_READY, REJECTED, FAILED,
+    # NO_CHANGES, or any value this build does not know) and absent items fall
+    # through and may be re-migrated;
     # so do this batch's own item (durable replay) and a stale QUEUED item with
     # no build id (see _is_live_migration). Residual: the read and the QUEUED
     # create below are two calls, so two batches resolving the same function
@@ -832,7 +833,7 @@ def prepare_batch(step: StepContext, arns: list, execution_arn: str) -> dict:
     canon = [discover.canonical_arn(a) for a in arns]
     accepted = canon[:MAX_FUNCTIONS_PER_RUN]
     over_cap = canon[len(accepted):]        # reported, NEVER silently dropped
-    # Field-scoped update_item (never a whole-item PutItem), unguarded create — issue #116.
+    # Field-scoped update_item (never a whole-item PutItem); the create is unguarded.
     _set_fields(f"migbatch#{batch_id}", {
         "batch_id": batch_id,
         "migration_batch_execution_arn": execution_arn,
@@ -885,10 +886,9 @@ def summarize_migration(batch: dict, mig_batch) -> dict:
             branches_ready += 1
         elif status == "NO_CHANGES":
             no_changes += 1
-        # Legacy tolerance (D8): any other status (a unit result shape this fold
-        # does not know, e.g. "TRANSFORMED" from an in-flight execution of the
-        # previous orchestrator) is counted as resolved only - never as a
-        # failure, never raises.
+        # Unknown-value guard: any other status (a unit result shape this fold
+        # does not know) is counted as resolved only, never as a failure, and
+        # never raises.
     return {
         "batch_id": batch["batch_id"],
         "started_at": batch["started_at"],

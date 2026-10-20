@@ -1,4 +1,4 @@
-"""Direct-invoke tests for api.py routing and validation (design §6, §10).
+"""Direct-invoke tests for api.py routing and validation.
 
 The Cognito JWT 401 path is the authorizer's job, not unit-testable here. These
 assert routing, 400 on bad JSON, and 400 with the offending field named for an
@@ -758,8 +758,8 @@ def test_start_migration_batch_some_unknown_skipped_and_single_invoke(monkeypatc
     assert "open_pr" not in payload
 
 
-def test_start_migration_batch_ignores_legacy_open_pr_key(monkeypatch):
-    # An older client may still send open_pr: it is neither validated nor forwarded.
+def test_start_migration_batch_ignores_unknown_request_key(monkeypatch):
+    # A request key this build does not know is neither validated nor forwarded.
     monkeypatch.setattr(api, "MIGRATE_FUNCTION_ARN", _mig_env())
     monkeypatch.setattr(api, "_scan_inventory", _fn_only)
     captured = {}
@@ -964,9 +964,9 @@ def test_migration_progress_transform_context_failed_is_failed():
 
 
 def test_migration_progress_tolerates_unknown_transform_status():
-    # Legacy tolerance (D8): a transform payload with a status this build does
-    # not know (a PR_OPENED-era value) counts as failed, never raises.
-    events = _PREPARE_OK + _resolve_ok(0) + _transform_done(0, {"status": "PR_OPENED", "branch": "b"})
+    # Unknown-value guard: a transform payload with a status this build does
+    # not know counts as failed, never raises.
+    events = _PREPARE_OK + _resolve_ok(0) + _transform_done(0, {"status": "SOME_UNKNOWN_STATUS", "branch": "b"})
     phases, _ = _phases(events)
     p2 = phases[2]
     assert (p2["done"], p2["failed"], p2["total"], p2["status"]) == (0, 1, 1, "error")
@@ -1021,8 +1021,8 @@ def test_migration_progress_all_rejected_downstream_is_real_zero():
     """Regression: when EVERY function is rejected at Resolve, the downstream
     phase must report a REAL total of 0 (nothing to transform), not None. None
     means "size unknown" and made the UI render a bare label; 0 lets it say
-    "Nothing to transform". Seen live: 2 untagged functions -> Resolve 0 of 2
-    (2 rejected), the next phase rendered empty."""
+    "Nothing to transform" (2 untagged functions -> Resolve 0 of 2, 2 rejected,
+    and a real 0 for the next phase)."""
     events = _PREPARE_OK + _resolve_rejected(0) + _resolve_rejected(1)
     phases, progress = _phases(events)
     p1, p2 = phases[1], phases[2]
