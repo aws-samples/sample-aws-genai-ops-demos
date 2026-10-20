@@ -19,6 +19,7 @@ Rules this module enforces:
     staged aws_utils.get_bedrock_model_id); never a hardcoded region-prefixed id.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -296,14 +297,28 @@ def query_trusted_advisor(session: boto3.session.Session, region: str) -> Dict[s
 # Enrichment — Lambda API + CloudWatch
 # ---------------------------------------------------------------------------
 
+def _log_ref(value: str) -> str:
+    """A short, stable reference for a function name or ARN in log lines.
+
+    The function name and ARN are read from the scanned account's API responses
+    through the assumed-role session, so static analysis treats them as data
+    that must not reach a log in clear text. An 8-char SHA-256 prefix lets an
+    operator correlate log lines for one function across a run without the raw
+    value ever being logged.
+    """
+    return hashlib.sha256((value or "").encode()).hexdigest()[:8]
+
+
 def enrich_function(session: boto3.session.Session, function_arn: str, default_region: str) -> Dict[str, Any]:
     """Enrich a function with Lambda config, tags, and CloudWatch metrics.
 
     Env var values are masked to '***' so no secret crosses a checkpoint or
-    reaches the UI. Failures are logged by error code only (see _error_code).
+    reaches the UI. Failures are logged by error code and a hashed function
+    reference only (see _error_code / _log_ref).
     """
     region = extract_region(function_arn, default_region)
     function_name = extract_function_name(function_arn)
+    fn_ref = _log_ref(function_name)
 
     lambda_client = session.client("lambda", region_name=region)
     logs_client = session.client("logs", region_name=region)
@@ -324,7 +339,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
             "env_vars": {k: "***" for k in cfg.get("Environment", {}).get("Variables", {})},
         })
     except Exception as e:
-        logger.error("GetFunctionConfiguration failed for %s: %s", function_name, _error_code(e))
+        logger.error("GetFunctionConfiguration failed for fn %s: %s", fn_ref, _error_code(e))
 
     try:
         unversioned_arn = (function_arn.rsplit(":", 1)[0]
@@ -332,7 +347,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
                            else function_arn)
         enrichment["tags"] = lambda_client.list_tags(Resource=unversioned_arn).get("Tags", {})
     except Exception as e:
-        logger.error("ListTags failed for %s: %s", function_name, _error_code(e))
+        logger.error("ListTags failed for fn %s: %s", fn_ref, _error_code(e))
         enrichment["tags"] = {}
 
     try:
@@ -349,7 +364,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
     except ClientError as e:
         code = _error_code(e)
         if code != "ResourceNotFoundException":
-            logger.error("DescribeLogStreams failed for %s: %s", function_name, code)
+            logger.error("DescribeLogStreams failed for fn %s: %s", fn_ref, code)
         enrichment["last_invocation_date"] = None
 
     try:
@@ -364,7 +379,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
         enrichment["invocation_count_14d"] = int(
             sum(dp.get("Sum", 0) for dp in metrics_resp.get("Datapoints", [])))
     except Exception as e:
-        logger.error("GetMetricStatistics failed for %s: %s", function_name, _error_code(e))
+        logger.error("GetMetricStatistics failed for fn %s: %s", fn_ref, _error_code(e))
         enrichment["invocation_count_14d"] = 0
 
     enrichment["migration_status"] = (
@@ -939,10 +954,10 @@ def _rekey_row(table, old_row: dict, new_key: str, account_id: str, account_name
                "region": region, "function_arn": function_arn}
     table.put_item(Item=convert_floats(new_row))
     table.delete_item(Key={"item_key": old_row["item_key"]})
-    # Log the function name, never row contents or the keys read back from the
-    # table: those travelled through the scan session and must stay out of logs.
-    logger.info("discover_scope: re-keyed inventory row for %s into region %s",
-                extract_function_name(function_arn), region)
+    # A hashed function reference, never row contents or the keys read back from
+    # the table: those travelled through the scan session and must stay out of logs.
+    logger.info("discover_scope: re-keyed inventory row for fn %s into region %s",
+                _log_ref(function_arn), region)
     old_mig_key = mig_item_key(old_row.get("account_id", "") or "",
                                old_row.get("region") or region, function_arn)
     new_mig_key = mig_item_key(account_id, region, function_arn)
