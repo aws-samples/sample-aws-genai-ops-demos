@@ -570,16 +570,13 @@ def test_list_functions_merges_migration_run_without_touching_fn_status(monkeypa
     assert row["migration_diff_summary"] == " a.py | 2 +-"
     assert row["migration_build_id"] == "b1"
     assert row["migration_target"] == "python3.12"   # the target the run used (drawer)
-    assert row["migration_pr_url"] is None          # nothing writes it any more (D8)
 
 
-def test_list_functions_passes_legacy_status_through(monkeypatch):
-    # Legacy tolerance (D8): a mig# item from the previous flow (REHEARSED /
-    # PR_OPENED with a migration_pr_url) is merged as-is; the frontend renders
-    # it as a neutral "Legacy" status. No data migration, no crash.
+def test_list_functions_passes_unknown_status_through(monkeypatch):
+    # An unknown mig# status is merged as-is; the frontend renders the raw value.
     fn_row = _fn_rows(1)[0]
     mig_row = {"item_key": f"mig#111#eu-west-3#{_MIG_FN_ARN}", "function_arn": _MIG_FN_ARN,
-               "migration_status": "PR_OPENED", "migration_pr_url": "https://pr", "migration_open_pr": True}
+               "migration_status": "SOME_UNKNOWN_STATUS"}
 
     def _scan(prefix="fn#"):
         return [fn_row] if prefix == "fn#" else [mig_row]
@@ -587,8 +584,7 @@ def test_list_functions_passes_legacy_status_through(monkeypatch):
     monkeypatch.setattr(api, "_scan_inventory", _scan)
     monkeypatch.setattr(api, "_fill_hub_display", lambda rows: rows)
     row = api.handler({"action": "list_functions"})["functions"][0]
-    assert row["migration_run_status"] == "PR_OPENED"
-    assert row["migration_pr_url"] == "https://pr"
+    assert row["migration_run_status"] == "SOME_UNKNOWN_STATUS"
 
 
 def test_list_functions_matches_mig_item_on_latest_qualified_arn(monkeypatch):

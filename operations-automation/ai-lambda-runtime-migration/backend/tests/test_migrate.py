@@ -1028,7 +1028,7 @@ def test_resolve_requeue_clears_previous_run_outcome(monkeypatch):
     failure code (NO_CHANGES item still saying TRANSFORM_FAILED). The QUEUED
     write must REMOVE every per-run outcome field; request fields are re-SET."""
     stale = _mig_item("FAILED", migration_failure_code="TRANSFORM_FAILED",
-                      migration_failure_detail="old", migration_pr_url="https://old",
+                      migration_failure_detail="old",
                       migration_build_id="p:old", migration_callback_id="cb-old",
                       migration_diff_summary="old diff")
     tbl = _FakeTable(item=stale)

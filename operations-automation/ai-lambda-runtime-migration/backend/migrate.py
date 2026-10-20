@@ -413,13 +413,11 @@ def _render_transform_config(transform_name: str, build_command: str,
 
 # Per-run outcome fields on a mig# item. A re-queue REMOVEs them so a function
 # migrated again never shows the previous run's failure code, previous upgrade
-# branch or build (seen live: a NO_CHANGES item still carrying TRANSFORM_FAILED
-# from the run before). Identity and request fields (repo, source branch,
-# target...) are re-SET. migration_pr_url is only ever present on legacy rows
-# (nothing writes it any more); it is kept here so a re-migrated legacy row
-# loses it too.
+# branch or build (a NO_CHANGES item must not keep a TRANSFORM_FAILED code from
+# the run before). Identity and request fields (repo, source branch, target...)
+# are re-SET.
 _RUN_OUTCOME_FIELDS = (
-    "migration_failure_code", "migration_failure_detail", "migration_pr_url",
+    "migration_failure_code", "migration_failure_detail",
     "migration_branch", "migration_build_id", "migration_callback_id",
     "migration_diff_summary",
 )

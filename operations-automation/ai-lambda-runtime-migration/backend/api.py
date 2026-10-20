@@ -829,8 +829,6 @@ def _merge_migration_runs(rows: list) -> list:
         row["migration_branch"] = (mig or {}).get("migration_branch")
         row["migration_repo"] = (mig or {}).get("migration_repo")
         row["migration_diff_summary"] = (mig or {}).get("migration_diff_summary")
-        # Legacy rows only (D8): nothing writes migration_pr_url any more.
-        row["migration_pr_url"] = (mig or {}).get("migration_pr_url")
         row["migration_build_id"] = (mig or {}).get("migration_build_id")
         # The target the run used: the family default of the managed
         # transformation (transform_runtimes.TRANSFORMS[family]["defaultTarget"]).
