@@ -782,7 +782,6 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
         })
 
 
-_SETTLE_CODES = ("TRANSFORM_FAILED",)
 _SETTLE_CONDITION = "migration_status IN (:queued, :inprogress)"
 
 
@@ -812,12 +811,10 @@ def settle_timed_out(step: StepContext, resolved: dict) -> dict:
 
 
 @durable_step
-def settle_failed(step: StepContext, resolved: dict, detail: str, code: str) -> dict:
+def settle_failed(step: StepContext, resolved: dict, detail: str) -> dict:
     """settle-<i> after a submitter failure or a rejected build result:
-    FAILED / <code>, guarded on the live statuses."""
-    if code not in _SETTLE_CODES:
-        raise ValueError(f"settle_failed: unknown code {code!r}")   # programming error, not input
-    return _settle(resolved["mig_key"], code, detail)
+    FAILED / TRANSFORM_FAILED, guarded on the live statuses."""
+    return _settle(resolved["mig_key"], "TRANSFORM_FAILED", detail)
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +981,7 @@ def _run_batch(event: dict, context: DurableContext) -> dict:
                 # no-op. It is load-bearing only for a callback payload
                 # build_complete never produced (None / garbage).
                 ctx.logger.warning("transform-%d: rejected build result: %s", index, transformed["detail"])
-                ctx.step(settle_failed(resolved, transformed["detail"], code="TRANSFORM_FAILED"),
+                ctx.step(settle_failed(resolved, transformed["detail"]),
                          name=f"settle-{index}")
         except CallbackTimeoutError:
             # Re-raised identically on every replay, so this branch is deterministic.
@@ -995,7 +992,7 @@ def _run_batch(event: dict, context: DurableContext) -> dict:
             ctx.logger.error("transform-%d: %s", index, exc)
             transformed = {"ok": False, "status": "FAILED", "failure_code": "TRANSFORM_FAILED",
                            "detail": str(exc)[:500]}
-            ctx.step(settle_failed(resolved, transformed["detail"], code="TRANSFORM_FAILED"),
+            ctx.step(settle_failed(resolved, transformed["detail"]),
                      name=f"settle-{index}")
 
         if not transformed.get("ok"):

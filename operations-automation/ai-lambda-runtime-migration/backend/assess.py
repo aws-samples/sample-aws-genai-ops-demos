@@ -175,7 +175,7 @@ def read_source_code(extract_path: str, source_files: List[str]) -> Dict[str, An
 # original source in the demo bucket; nothing consumed it, and the Transform
 # phase works from the Git repository, so it was removed.)
 
-def assess_with_ai(session: boto3.session.Session, region: str, function_arn: str,
+def assess_with_ai(session: boto3.session.Session, function_arn: str,
                    runtime: str, code_info: dict) -> Dict[str, Any]:
     """Send source code to Nova for a migration assessment (constrained decoding).
 
@@ -273,14 +273,14 @@ Your findings are handed to an automated upgrade agent (AWS Transform) as adviso
 # Step entry point (called inside a durable step, per function)
 # ---------------------------------------------------------------------------
 
-def _table(session: boto3.session.Session = None):
+def _table():
     """The inventory table ALWAYS lives in the hub account's deploy region.
 
     Assess runs per-function across whatever region the function lives in (and
     possibly an assumed spoke session), but the single inventory table is in the
-    hub/deploy region. So DynamoDB must NOT follow the scan `session`: use the
-    Lambda's own credentials + own region for every table access. (Matches
-    discover._table.)
+    hub/deploy region. So DynamoDB must NOT follow the scan session: every table
+    access uses the Lambda's own credentials and own region (same rule as
+    discover._table).
     """
     return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
@@ -294,7 +294,7 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
     region = target.get("region") or extract_region(function_arn, "")
     runtime = target.get("runtime", "unknown")
     key = target["item_key"]
-    table = _table(session)
+    table = _table()
 
     download = download_function_code(session, function_arn, region)
     if download.get("skipped"):
@@ -304,10 +304,10 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
             ExpressionAttributeValues={":s": "SKIPPED", ":m": download["reason"], ":t": when},
         )
         return {"item_key": key, "function_arn": function_arn, "status": "SKIPPED",
-                "reason": download["reason"], "ok": True}
+                "reason": download["reason"]}
 
     code_info = read_source_code(download["extract_path"], download["source_files"])
-    assessment = assess_with_ai(session, region, function_arn, runtime, code_info)
+    assessment = assess_with_ai(session, function_arn, runtime, code_info)
 
     updates = convert_floats({
         "migration_status": "ASSESSED",
@@ -349,5 +349,4 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
         "function_arn": function_arn,
         "status": "ASSESSED",
         "complexity": assessment.get("complexity", "MEDIUM"),
-        "ok": True,
     }

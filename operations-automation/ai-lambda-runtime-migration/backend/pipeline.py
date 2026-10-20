@@ -265,8 +265,8 @@ def summarize_step(step: StepContext, run: dict, spec: dict,
     # (empty by_account key) while the Statistics chart said "not enough history".
     try:
         inventory_rows = discover.read_fleet_inventory()
-        rollup = discover.build_rollup(run, disc_summary, asmt_summary,
-                                       support_summary, inventory_rows, finished_at)
+        rollup = discover.build_rollup(run, disc_summary, support_summary,
+                                       inventory_rows, finished_at)
         discover.put_rollup(rollup)
     except Exception:  # best effort, never fail the summary
         logger.exception("rollup write failed; the Statistics series will miss this run")

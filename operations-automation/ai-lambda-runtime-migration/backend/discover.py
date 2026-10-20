@@ -604,15 +604,14 @@ Return 0 when nothing in the metadata justifies a change.
 # DynamoDB access (called inside steps)
 # ---------------------------------------------------------------------------
 
-def _table(session: boto3.session.Session = None):
+def _table():
     """The inventory table ALWAYS lives in the hub account, in the deploy region.
 
     Discovery fans out across regions and (optionally) assumes spoke roles in
-    other accounts, so the passed-in `session` points at wherever we are
-    SCANNING. DynamoDB must NOT follow it: the table is single, in the hub
-    account's deploy region. So ignore `session` and use the Lambda's own
-    credentials + own region for every table access, regardless of which
-    (account, region) is being scanned.
+    other accounts, but DynamoDB must NOT follow the scan session: the table is
+    single, in the hub account's deploy region, so every table access uses the
+    Lambda's own credentials and own region, regardless of which (account,
+    region) is being scanned.
     """
     return boto3.resource("dynamodb", region_name=get_region()).Table(TABLE_NAME)
 
@@ -624,7 +623,7 @@ def read_scope_inventory(session: boto3.session.Session, account_id: str, region
     share the prefix fn#<account>#<region>#. begins_with on the partition key is
     not a Query predicate, so this scans with a filter — fine at demo volume.
     """
-    table = _table(session)
+    table = _table()
     prefix = f"fn#{account_id}#{region}#"
     items, kwargs = [], {}
     while True:
@@ -644,7 +643,7 @@ def read_account_inventory(session: boto3.session.Session, account_id: str) -> L
     on the partition key is not a Query predicate, so this scans with a filter —
     fine at demo volume.
     """
-    table = _table(session)
+    table = _table()
     prefix = f"fn#{account_id}#"
     items, kwargs = [], {}
     while True:
@@ -714,7 +713,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
     # Regions actually seen across the account (Assess reads rows back by these).
     regions_seen = sorted({fn["region"] for fn in functions})
 
-    table = _table(session)
+    table = _table()
     # TA is account-wide, so the diff is over the WHOLE account's inventory, not
     # one region: read every row this account has (any region) so a function that
     # dropped out of the TA result is correctly marked RESOLVED under its region.
@@ -859,7 +858,6 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
         "ta_checked": True,
         "ta_message": ta_message,
         "ta_reason": None,
-        "ok": True,
     }
     logger.info("discover_scope[%s]: tier=%s ta_checked=True regions_seen=%s discovered=%d new=%d "
                 "resolved=%d rekeyed=%d duplicates_deleted=%d",
@@ -1060,7 +1058,7 @@ def _run_bucket(mig: Optional[dict]) -> str:
     return _RUN_BUCKETS.get(str(mig.get("migration_status", "")), "run_legacy")
 
 
-def build_rollup(run: dict, disc_summary: dict, asmt_summary: dict,
+def build_rollup(run: dict, disc_summary: dict,
                  support_summary: dict, inventory_rows: List[dict], when: str) -> dict:
     """Build ONE immutable per-scan rollup record from a fleet snapshot. Pure.
 
@@ -1084,9 +1082,7 @@ def build_rollup(run: dict, disc_summary: dict, asmt_summary: dict,
         run_not_started == total_active.
 
     `run`, `disc_summary` and `support_summary` supply the bounded run facts
-    (run_id, accounts scanned / not checked). `asmt_summary` is accepted for a
-    stable signature (FEAT-002 may surface assess counts) but not required here.
-    The returned record is keyed 'rollup#<rollup_at>' so the series sorts by
+    (run_id, accounts scanned / not checked). The returned record is keyed 'rollup#<rollup_at>' so the series sorts by
     time and never collides with a function row.
     """
     rollup_at = when
@@ -1140,7 +1136,7 @@ def build_rollup(run: dict, disc_summary: dict, asmt_summary: dict,
     }
 
 
-def read_fleet_inventory(session: boto3.session.Session = None) -> List[dict]:
+def read_fleet_inventory() -> List[dict]:
     """Scan the function rows ('fn#') and their migration-run items ('mig#')
     across the whole table.
 
@@ -1148,7 +1144,7 @@ def read_fleet_inventory(session: boto3.session.Session = None) -> List[dict]:
     accounts/regions. begins_with on the partition key is not a Query predicate,
     so this scans with a filter — fine at demo volume.
     """
-    table = _table(session)
+    table = _table()
     items, kwargs = [], {}
     while True:
         resp = table.scan(**kwargs)
@@ -1160,6 +1156,6 @@ def read_fleet_inventory(session: boto3.session.Session = None) -> List[dict]:
     return items
 
 
-def put_rollup(record: dict, session: boto3.session.Session = None) -> None:
+def put_rollup(record: dict) -> None:
     """Persist one immutable rollup row (floats -> Decimal for DynamoDB)."""
-    _table(session).put_item(Item=convert_floats(record))
+    _table().put_item(Item=convert_floats(record))

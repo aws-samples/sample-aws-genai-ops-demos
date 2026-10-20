@@ -665,18 +665,10 @@ def test_transform_submitter_flip_conditional_failure_is_swallowed(monkeypatch):
 
 # --- settle steps -----------------------------------------------------------
 
-def test_settle_failed_rejects_unknown_code(monkeypatch):
-    tbl = _queued_table()
-    _patch_common(monkeypatch, table=tbl)
-    with pytest.raises(ValueError):
-        _run_step(migrate.settle_failed, _resolved(), "x", "NOPE")
-    assert tbl.updates == []
-
-
 def test_settle_failed_writes_guarded_and_swallows_conditional(monkeypatch):
     tbl = _queued_table(migration_status="IN_PROGRESS")
     _patch_common(monkeypatch, table=tbl)
-    out = _run_step(migrate.settle_failed, _resolved(), "d" * 600, "TRANSFORM_FAILED")
+    out = _run_step(migrate.settle_failed, _resolved(), "d" * 600)
     assert out == {"settled": True}
     u = tbl.updates[-1]
     assert u["ConditionExpression"] == "migration_status IN (:queued, :inprogress)"
@@ -686,16 +678,7 @@ def test_settle_failed_writes_guarded_and_swallows_conditional(monkeypatch):
     assert _updated_field(u, "migration_failure_code") == "TRANSFORM_FAILED"
     assert len(_updated_field(u, "migration_failure_detail")) == 500
     tbl.raise_conditional_for.add(_MIG_KEY)
-    assert _run_step(migrate.settle_failed, _resolved(), "x", "TRANSFORM_FAILED") == {"settled": False}
-
-
-def test_settle_failed_rejects_removed_pr_failed_code(monkeypatch):
-    # No pull-request step exists any more; its code is not a settle code.
-    tbl = _queued_table(migration_status="IN_PROGRESS")
-    _patch_common(monkeypatch, table=tbl)
-    with pytest.raises(ValueError):
-        _run_step(migrate.settle_failed, _resolved(), "x", "PR_FAILED")
-    assert tbl.updates == []
+    assert _run_step(migrate.settle_failed, _resolved(), "x") == {"settled": False}
 
 
 def test_settle_timed_out_detail_names_the_window(monkeypatch):

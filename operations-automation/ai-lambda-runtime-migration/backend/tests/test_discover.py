@@ -247,7 +247,7 @@ def _patch_scope(monkeypatch):
     table = MagicMock()
     table.scan.return_value = {"Items": []}
     table.get_item.return_value = {}          # no mig# sibling unless a test says so
-    monkeypatch.setattr(discover, "_table", lambda session: table)
+    monkeypatch.setattr(discover, "_table", lambda: table)
     monkeypatch.setattr(discover, "read_account_inventory",
                         lambda session, account_id: [])
     # No STS in tests: the scanned account is NOT the hub unless a test says so.
@@ -389,7 +389,7 @@ def test_discover_scope_resolves_functions_gone_from_ta(monkeypatch):
     # TA now returns nothing.
     monkeypatch.setattr(discover, "query_trusted_advisor",
                         lambda session, region: {"functions": [], "message": "No functions."})
-    table = discover._table(MagicMock())
+    table = discover._table()
 
     result = discover_scope(
         MagicMock(),
@@ -801,7 +801,7 @@ def test_build_rollup_counts_active_and_migrated():
         {"account_id": "111", "ta_eligible": True},
         {"account_id": "222", "ta_eligible": False},
     ]}
-    rollup = build_rollup(run, disc_summary, {}, support_summary, rows,
+    rollup = build_rollup(run, disc_summary, support_summary, rows,
                           "2025-01-02T00:00:00Z")
 
     assert rollup["item_key"] == "rollup#2025-01-02T00:00:00Z"
@@ -822,16 +822,16 @@ def test_build_rollup_never_emits_empty_account_key():
     (ValidationException: Empty attribute name), which silently killed every
     rollup write; group those rows under "unknown" instead."""
     rows = [_fn_row(account="", arn="a"), _fn_row(account="", arn="b"), _fn_row(account="222", arn="c")]
-    rollup = build_rollup({"run_id": "r"}, {}, {}, {}, rows, "2025-01-02T00:00:00Z")
+    rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert "" not in rollup["by_account"]
     assert rollup["by_account"] == {"unknown": 2, "222": 1}
 
 
 def test_put_rollup_writes_rollup_prefixed_item(monkeypatch):
     table = MagicMock()
-    monkeypatch.setattr(discover, "_table", lambda session=None: table)
+    monkeypatch.setattr(discover, "_table", lambda: table)
     put_rollup({"item_key": "rollup#2025-01-02T00:00:00Z", "total_active": 3,
-                "by_account": {"111": 3}}, MagicMock())
+                "by_account": {"111": 3}})
     assert table.put_item.called
     written = table.put_item.call_args.kwargs["Item"]
     assert written["item_key"].startswith("rollup#")
@@ -874,8 +874,8 @@ def test_read_fleet_inventory_returns_fn_and_mig_rows_only(monkeypatch):
         {"item_key": "rollup#2025-01-01T00:00:00Z", "total_active": 1},
         {"item_key": "settings#git", "provider": "codecommit"},
     ]}
-    monkeypatch.setattr(discover, "_table", lambda session=None: table)
-    assert discover.read_fleet_inventory(MagicMock()) == [fn, mig]
+    monkeypatch.setattr(discover, "_table", lambda: table)
+    assert discover.read_fleet_inventory() == [fn, mig]
 
 
 def test_build_rollup_counts_migration_run_axis():
@@ -899,7 +899,7 @@ def test_build_rollup_counts_migration_run_axis():
         _mig_item("i", "BRANCH_READY"),           # resolved row: not awaiting merge
         _mig_item("zzz", "BRANCH_READY"),         # orphan: no fn# row
     ]
-    rollup = build_rollup({"run_id": "r"}, {}, {}, {}, rows, "2025-01-02T00:00:00Z")
+    rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert rollup["run_not_started"] == 1
     assert rollup["run_in_progress"] == 2
     assert rollup["run_rejected"] == 1
@@ -916,7 +916,7 @@ def test_build_rollup_run_keys_are_zero_without_mig_items():
     rows = [_fn_row(arn="a", alert="Red"), _fn_row(arn="b", alert="Yellow"),
             _fn_row(arn="d", alert="Green", resolved_at="2025-01-01T00:00:00Z",
                     migration_status="MIGRATED")]
-    rollup = build_rollup({"run_id": "r"}, {}, {}, {}, rows, "2025-01-02T00:00:00Z")
+    rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert rollup["total_active"] == 2
     assert rollup["run_not_started"] == rollup["total_active"]
     for key in _RUN_KEYS:
@@ -930,13 +930,13 @@ def test_build_rollup_not_started_only_counts_active_backlog():
     rows = [_fn_row(arn="a", alert="Green"),
             _fn_row(arn="b", alert="Red", resolved_at="2025-01-01T00:00:00Z"),
             _fn_row(arn="c", alert="Red")]
-    rollup = build_rollup({"run_id": "r"}, {}, {}, {}, rows, "2025-01-02T00:00:00Z")
+    rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert rollup["run_not_started"] == 1
     assert rollup["total_active"] == 1
 
 
 def test_build_rollup_rehearsed_item_counts_as_legacy():
     rows = [_fn_row(arn="a"), _mig_item("a", "REHEARSED")]
-    rollup = build_rollup({"run_id": "r"}, {}, {}, {}, rows, "2025-01-02T00:00:00Z")
+    rollup = build_rollup({"run_id": "r"}, {}, {}, rows, "2025-01-02T00:00:00Z")
     assert rollup["run_legacy"] == 1
     assert rollup["run_not_started"] == 0

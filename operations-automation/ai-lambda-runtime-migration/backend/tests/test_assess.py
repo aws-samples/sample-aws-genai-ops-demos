@@ -139,7 +139,7 @@ def test_clean_small_package_not_truncated_no_footer(tmp_path):
 
 def test_assess_one_sets_new_fields_and_removes_stale_attribute(monkeypatch):
     table = MagicMock()
-    monkeypatch.setattr(assess, "_table", lambda session=None: table)
+    monkeypatch.setattr(assess, "_table", lambda: table)
     monkeypatch.setattr(assess, "download_function_code",
                         lambda session, arn, region: {"skipped": False, "function_name": "fn",
                                                      "extract_path": "/tmp/x", "source_files": ["h.py"]})
@@ -148,7 +148,7 @@ def test_assess_one_sets_new_fields_and_removes_stale_attribute(monkeypatch):
                                              "code_content": "print(1)", "num_manifests": 1,
                                              "source_truncated": True})
     monkeypatch.setattr(assess, "assess_with_ai",
-                        lambda session, region, arn, runtime, code_info: {
+                        lambda session, arn, runtime, code_info: {
                             "complexity": "LOW", "summary": "s", "migration_risks": "none",
                             "deprecated_apis": [], "breaking_changes": [], "dependency_issues": []})
 
@@ -156,8 +156,8 @@ def test_assess_one_sets_new_fields_and_removes_stale_attribute(monkeypatch):
               "account_id": "111", "region": "eu-west-3", "runtime": "python3.9"}
     out = assess.assess_one(MagicMock(), target, "2024-01-01T00:00:00+00:00")
 
-    assert out["status"] == "ASSESSED" and out["ok"] is True
-    assert set(out) == {"item_key", "function_arn", "status", "complexity", "ok"}
+    assert out["status"] == "ASSESSED"
+    assert set(out) == {"item_key", "function_arn", "status", "complexity"}
 
     kwargs = table.update_item.call_args.kwargs
     expression = kwargs["UpdateExpression"]
