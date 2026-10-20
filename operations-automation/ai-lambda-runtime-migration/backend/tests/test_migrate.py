@@ -27,12 +27,14 @@ from aws_durable_execution_sdk_python.exceptions import (
     StepInterruptedError, NonDeterministicExecutionError, UnrecoverableError,
 )
 
+import common
 import migrate
 import transform_runtimes
+from common import sanitize_execution_name, transform_has_branch
 from migrate import (
-    sanitize_execution_name, repository_url, render_additional_plan_context,
+    repository_url, render_additional_plan_context,
     _render_transform_config, prepare_batch, summarize_migration, derive_job_id,
-    parse_build_result, transform_has_branch,
+    parse_build_result,
     MAX_CONTEXT, MAX_FUNCTIONS_PER_RUN,
     BUILD_TIMEOUT_MINUTES, QUEUE_TIMEOUT_MINUTES, CALLBACK_SLACK_MINUTES,
     TRANSFORM_CALLBACK_TIMEOUT, IN_PROGRESS_STALE_AFTER,
@@ -153,14 +155,14 @@ def _patch_common(monkeypatch, fn_item=_PY_FN, settings=None, table=None):
 # --- sanitize_execution_name ------------------------------------------------
 
 def test_sanitize_execution_name(monkeypatch):
-    monkeypatch.setattr(migrate.time, "time", lambda: 1718900000)
+    monkeypatch.setattr(common.time, "time", lambda: 1718900000)
     name = sanitize_execution_name(
         "arn:aws:lambda:eu-west-3:111:function:lambda-migration-mock-python")
     assert name == "migrate-lambda-migration-mock-python-1718900000"
 
 
 def test_sanitize_execution_name_caps_and_sanitizes(monkeypatch):
-    monkeypatch.setattr(migrate.time, "time", lambda: 1)
+    monkeypatch.setattr(common.time, "time", lambda: 1)
     name = sanitize_execution_name(
         "arn:aws:lambda:eu-west-3:111:function:My_Weird.Name$With*Chars" + "x" * 80)
     core = name[len("migrate-"):-len("-1")]
@@ -500,8 +502,8 @@ def test_parse_build_result_well_formed():
     assert none["ok"] is True and none["status"] == "NO_CHANGES" and none["parse_failed"] is False
 
 
-# Shared with test_api.py (run against api.transform_has_branch) so the two
-# verbatim copies of the predicate cannot drift.
+# Shared with test_api.py: the orchestrator (parse_build_result) and the API
+# progress fold must agree on what counts as a pushed branch.
 TRANSFORM_HAS_BRANCH_CASES = [
     ({"status": "TRANSFORMED", "branch": "b"}, True),
     ({"status": "TRANSFORMED"}, False),

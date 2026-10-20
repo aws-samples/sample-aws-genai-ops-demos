@@ -8,6 +8,7 @@ import json
 import pytest
 
 import api
+import common
 from tests.test_migrate import TRANSFORM_HAS_BRANCH_CASES
 
 
@@ -898,10 +899,10 @@ def test_migration_progress_prepare_not_decoded_yet_sizes_are_none():
 def test_migration_progress_transformed_without_branch_is_phase2_failure():
     """A TRANSFORMED payload without a branch is a phase-2 failure (build_complete
     writes FAILED/TRANSFORM_FAILED, the orchestrator's settle is a guarded no-op)
-    and is NOT a branch ready. api.transform_has_branch is a verbatim copy of
-    migrate's: same table."""
+    and is NOT a branch ready. The API fold uses the shared predicate
+    (common.transform_has_branch): same table as the orchestrator's tests."""
     for result, expected in TRANSFORM_HAS_BRANCH_CASES:
-        assert api.transform_has_branch(result) is expected, result
+        assert common.transform_has_branch(result) is expected, result
     events = (_PREPARE_OK + _resolve_ok(0) + _resolve_ok(1)
               + _transform_done(0, {"status": "TRANSFORMED", "branch": ""})
               + _transform_done(1))

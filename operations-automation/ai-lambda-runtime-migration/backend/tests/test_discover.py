@@ -2,9 +2,10 @@
 from unittest.mock import MagicMock
 
 import discover
+from common import extract_region
 from discover import (
     _priority_label, item_key, canonical_arn, support_home_region, base_priority_score,
-    fallback_priorities, prioritize_with_bedrock, _extract_region, discover_scope,
+    fallback_priorities, prioritize_with_bedrock, discover_scope,
     build_rollup, put_rollup,
 )
 
@@ -39,9 +40,9 @@ def test_canonical_arn_strips_only_latest():
 
 
 def test_extract_region_from_arn():
-    assert _extract_region("arn:aws:lambda:eu-west-1:111:function:f", "us-east-1") == "eu-west-1"
+    assert extract_region("arn:aws:lambda:eu-west-1:111:function:f", "us-east-1") == "eu-west-1"
     # No region segment -> fall back to the default.
-    assert _extract_region("bogus-arn", "us-east-1") == "us-east-1"
+    assert extract_region("bogus-arn", "us-east-1") == "us-east-1"
 
 
 def test_support_home_region_commercial():

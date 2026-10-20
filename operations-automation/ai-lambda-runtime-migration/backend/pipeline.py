@@ -36,9 +36,9 @@ from typing import Dict, List
 from aws_durable_execution_sdk_python import durable_execution, durable_step, DurableContext, StepContext
 from aws_durable_execution_sdk_python.config import Duration, MapConfig, CompletionConfig, StepConfig
 from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create_retry_strategy
-from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+from common import results_by_index
 import discover
 import assess
 import support
@@ -372,16 +372,6 @@ def handler(event: dict, context: DurableContext) -> dict:
 # Batch result folding (pure)
 # ---------------------------------------------------------------------------
 
-def _results_by_index(batch, count: int) -> List:
-    """BatchResult.all as a list aligned to the input index; None where the item
-    failed (or never started because a completion policy fired)."""
-    aligned = [None] * count
-    for item in batch.all:
-        if item.status is BatchItemStatus.SUCCEEDED and item.result is not None:
-            aligned[item.index] = item.result
-    return aligned
-
-
 def select_candidates(accounts: List[dict], batch) -> dict:
     """Fold the support-tier map into the discover candidate list + full tiers.
 
@@ -398,7 +388,7 @@ def select_candidates(accounts: List[dict], batch) -> dict:
     """
     accounts = accounts or [{"id": "", "name": ""}]
     candidates, tiers, support_errors = [], [], []
-    for account, result in zip(accounts, _results_by_index(batch, len(accounts))):
+    for account, result in zip(accounts, results_by_index(batch, len(accounts))):
         account_id = account.get("id", "")
         account_name = account.get("name", "")
         if result is None:
@@ -423,7 +413,7 @@ def summarize_discover(cells: List[dict], batch) -> dict:
     over a scope whose inventory was not refreshed (design §3.3, §5)."""
     scopes, failed_cells = [], []
     discovered = rekeyed = 0
-    for cell, result in zip(cells, _results_by_index(batch, len(cells))):
+    for cell, result in zip(cells, results_by_index(batch, len(cells))):
         if result is not None:
             acct = result.get("account_id", cell.get("account_id", ""))
             # Trusted Advisor is account-wide, so one cell's discover writes rows
@@ -458,7 +448,7 @@ def summarize_discover(cells: List[dict], batch) -> dict:
 def summarize_assess(targets: List[dict], batch) -> dict:
     """Fold the assess map into bounded counts."""
     assessed, skipped, failed = 0, 0, 0
-    for target, result in zip(targets, _results_by_index(batch, len(targets))):
+    for target, result in zip(targets, results_by_index(batch, len(targets))):
         if result is None:
             failed += 1
         elif result.get("status") == "SKIPPED":

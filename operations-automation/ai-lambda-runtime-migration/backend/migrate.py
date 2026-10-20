@@ -59,7 +59,6 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import datetime, timedelta, timezone
 
 import boto3
@@ -75,9 +74,9 @@ from aws_durable_execution_sdk_python.config import (
 from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create_retry_strategy
 # WaitForCallbackContext is NOT exported at the package root.
 from aws_durable_execution_sdk_python.types import WaitForCallbackContext
-from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
 
 from aws_utils import get_region, get_transform_region  # staged copy of shared/utils/aws_utils.py
+from common import results_by_index
 import api
 import discover
 import transform_runtimes
@@ -166,22 +165,6 @@ def _table():
 # ---------------------------------------------------------------------------
 # Pure helpers (unit-tested)
 # ---------------------------------------------------------------------------
-
-def sanitize_execution_name(function_arn: str) -> str:
-    """Build a DurableExecutionName from the function ARN.
-
-    A DurableExecutionName cannot carry the ':' / '/' an ARN has, so it is built
-    from the function name (last ARN segment, arn.split(':')[6] like
-    discover._extract_function_name), lowercased, every non-alphanumeric char
-    replaced by '-', capped to ~40 chars, then suffixed with the epoch:
-    'migrate-<sanitized-fn-name>-<epoch>'. Pure except for the clock.
-    """
-    parts = (function_arn or "").split(":")
-    fn_name = parts[6] if len(parts) >= 7 else (function_arn or "")
-    slug = re.sub(r"[^a-z0-9]+", "-", fn_name.lower()).strip("-")
-    slug = slug[:40].strip("-") or "fn"
-    return f"migrate-{slug}-{int(time.time())}"
-
 
 def repository_url(repo_name: str, region: str = None) -> str:
     """Derive the CodeCommit HTTPS clone URL for a resolved repository name.
@@ -294,15 +277,6 @@ def render_additional_plan_context(fn_item: dict, family: str, target: str) -> s
     return "\n\n".join(paragraphs)
 
 
-def _mig_key(account_id: str, region: str, canonical_arn: str) -> str:
-    """mig#<account>#<region>#<canonical_arn> — the same shape as discover.item_key,
-    differing only in the prefix so fn# and mig# keys for one function line up.
-    The shape lives in discover.mig_item_key so a scan that re-keys a fn# row
-    (account id / ARN form change) composes the SAME mig# key when it moves the
-    function's migration item alongside."""
-    return discover.mig_item_key(account_id, region, canonical_arn)
-
-
 def derive_job_id(mig_key: str, batch_id: str) -> str:
     """The per-run job id: the mig# key with separators flattened (path-safe as an
     S3 key segment and a git ref component) suffixed with the batch id's first 8
@@ -310,18 +284,6 @@ def derive_job_id(mig_key: str, batch_id: str) -> str:
     prefix, upgrade branch and CodeCommit idempotency token. Deterministic
     across replays (both inputs are checkpointed values). Pure."""
     return f"{re.sub(r'[^A-Za-z0-9]+', '-', mig_key).strip('-')}-{batch_id[:8]}"
-
-
-def transform_has_branch(result: dict) -> bool:
-    """True when a transform result produced a pushed branch: status TRANSFORMED
-    with a non-empty branch. Pure.
-
-    Defined here and COPIED VERBATIM into api.py (same name, same body). Not an
-    import: migrate.py does `import api` at module level, so api importing
-    migrate would be circular, and api.py must not pay the orchestrator's
-    import-time cost (SDK, boto3 clients). Change both copies together; the
-    tests feed the same table (TRANSFORM_HAS_BRANCH_CASES) to both."""
-    return (result or {}).get("status") == "TRANSFORMED" and bool((result or {}).get("branch"))
 
 
 _BUILD_RESULT_STATUSES = ("TRANSFORMED", "NO_CHANGES", "FAILED")
@@ -564,7 +526,7 @@ def resolve_and_verify(step: StepContext, request: dict) -> dict:
     # empty account_id), so the mig# key byte-matches what the GET path composes.
     account_id = (fn_item or {}).get("account_id", "") or ""
     region = (fn_item or {}).get("region", "") or get_region()
-    mig_key = _mig_key(account_id, region, canonical)
+    mig_key = discover.mig_item_key(account_id, region, canonical)
 
     # Duplicate-writer guard (issue #116): a live QUEUED / IN_PROGRESS mig# item
     # belongs to a batch that is still running. Reject WITHOUT writing — writing
@@ -894,17 +856,6 @@ def prepare_batch(step: StepContext, arns: list, execution_arn: str) -> dict:
     }
 
 
-def _results_by_index(batch, count: int) -> list:
-    """BatchResult.all as a list aligned to the input index; None where the item
-    failed (or never started because a completion policy fired). Lifted verbatim
-    from pipeline._results_by_index (we do NOT import pipeline into migrate)."""
-    aligned = [None] * count
-    for item in batch.all:
-        if item.status is BatchItemStatus.SUCCEEDED and item.result is not None:
-            aligned[item.index] = item.result
-    return aligned
-
-
 def summarize_migration(batch: dict, mig_batch) -> dict:
     """Fold the batch map result into bounded counts. PURE — called in the
     handler OUTSIDE any step (mirrors pipeline.summarize_assess/summarize_discover);
@@ -913,7 +864,7 @@ def summarize_migration(batch: dict, mig_batch) -> dict:
     Invariants: rejected + resolved == len(accepted), and
     resolved == branches_ready + no_changes + failed (+ tolerated unknown
     statuses, see below)."""
-    results = _results_by_index(mig_batch, len(batch["accepted"]))
+    results = results_by_index(mig_batch, len(batch["accepted"]))
     # Rejections (the resolve stage's REJECTED mig# items + the no-write
     # ALREADY_IN_PROGRESS exit): TAG_NOT_FOUND / SOURCE_NOT_FOUND /
     # RUNTIME_UNSUPPORTED / ACCESS_DENIED / BRANCH_NOT_FOUND / ALREADY_IN_PROGRESS /

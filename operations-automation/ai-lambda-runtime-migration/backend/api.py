@@ -25,6 +25,7 @@ from typing import Optional
 import boto3
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+from common import sanitize_execution_name, transform_has_branch
 from pipeline import normalize_spec, SpecValidationError
 from model_id import model_id as _model_id
 import discover
@@ -295,9 +296,9 @@ def start_migration(body: dict) -> tuple:
 
     account_id = fn_row.get("account_id", "") or ""
     region = fn_row.get("region", "") or get_region()
-    mig_item_key = f"mig#{account_id}#{region}#{canonical}"
+    mig_item_key = discover.mig_item_key(account_id, region, canonical)
 
-    name = _sanitize_migration_name(canonical)
+    name = sanitize_execution_name(canonical)
     payload = {"function_arn": canonical}
     resp = _lambda_client().invoke(
         FunctionName=MIGRATE_FUNCTION_ARN,
@@ -342,15 +343,6 @@ def _start_migration_batch(function_arns) -> tuple:
             "batchSize": len(accepted), "overCap": 0, "skipped": skipped}, 202
 
 
-def _sanitize_migration_name(function_arn: str) -> str:
-    """DurableExecutionName 'migrate-<sanitized-fn-name>-<epoch>' (see migrate.py)."""
-    parts = (function_arn or "").split(":")
-    fn_name = parts[6] if len(parts) >= 7 else (function_arn or "")
-    slug = re.sub(r"[^a-z0-9]+", "-", fn_name.lower()).strip("-")
-    slug = slug[:40].strip("-") or "fn"
-    return f"migrate-{slug}-{int(time.time())}"
-
-
 def migration_status(arn: str) -> tuple:
     """Single mig# item for a function ARN, or {migration_status:'NOT_STARTED'}.
 
@@ -366,7 +358,7 @@ def migration_status(arn: str) -> tuple:
         return {"migration_status": "NOT_STARTED"}, 200
     account_id = fn_row.get("account_id", "") or ""
     region = fn_row.get("region", "") or get_region()
-    mig_key = f"mig#{account_id}#{region}#{canonical}"
+    mig_key = discover.mig_item_key(account_id, region, canonical)
     resp = _table().get_item(Key={"item_key": mig_key})
     item = resp.get("Item")
     if not item:
@@ -460,18 +452,6 @@ def _progress_from_history(client, execution_arn: str, status: str) -> dict:
 # ---------------------------------------------------------------------------
 # Migration-run progress (Phase 2 batch): folded from the execution history
 # ---------------------------------------------------------------------------
-
-def transform_has_branch(result: dict) -> bool:
-    """True when a transform result produced a pushed branch: status TRANSFORMED
-    with a non-empty branch. Pure.
-
-    VERBATIM COPY of migrate.transform_has_branch (same name, same body). Not an
-    import: migrate.py does `import api` at module level, so api importing
-    migrate would be circular, and api.py must not pay the orchestrator's
-    import-time cost (SDK, boto3 clients). Change both copies together; the
-    tests feed the same table (TRANSFORM_HAS_BRANCH_CASES) to both."""
-    return (result or {}).get("status") == "TRANSFORMED" and bool((result or {}).get("branch"))
-
 
 def _decode_context_result(payload: str) -> dict:
     """ContextSucceeded payload of a wait_for_callback with no serdes. The SDK

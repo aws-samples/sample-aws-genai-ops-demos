@@ -20,13 +20,13 @@ Key differences from the v1 agent:
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+from common import convert_floats, extract_region, extract_function_name
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -42,17 +42,6 @@ METRICS_LOOKBACK_DAYS = 14
 # AWS Support / Trusted Advisor is partition-global, reached through a single
 # home region per partition — never a literal us-east-1 (contributor-guide).
 SUPPORT_HOME = {"aws": "us-east-1", "aws-cn": "cn-north-1", "aws-us-gov": "us-gov-west-1"}
-
-
-def _convert_floats(obj: Any) -> Any:
-    """DynamoDB needs Decimal, not float."""
-    if isinstance(obj, float):
-        return Decimal(str(obj))
-    if isinstance(obj, dict):
-        return {k: _convert_floats(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_convert_floats(item) for item in obj]
-    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -122,16 +111,6 @@ _IDENTITY_ATTRS = ("item_key", "account_id", "account_name", "region", "function
 # Axis attributes that are never back-filled from a dropped duplicate: the kept
 # row's deprecation / migration state must stay the one the kept row has.
 _AXIS_ATTRS = ("resolved_at", "migration_status", "alert_status")
-
-
-def _extract_region(arn: str, default: str) -> str:
-    parts = arn.split(":")
-    return parts[3] if len(parts) >= 4 and parts[3] else default
-
-
-def _extract_function_name(arn: str) -> str:
-    parts = arn.split(":")
-    return parts[6] if len(parts) >= 7 else arn
 
 
 def support_home_region(region: str) -> str:
@@ -321,8 +300,8 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
     Env var values are masked to '***' so no secret crosses a checkpoint or
     reaches the UI.
     """
-    region = _extract_region(function_arn, default_region)
-    function_name = _extract_function_name(function_arn)
+    region = extract_region(function_arn, default_region)
+    function_name = extract_function_name(function_arn)
 
     lambda_client = session.client("lambda", region_name=region)
     logs_client = session.client("logs", region_name=region)
@@ -726,7 +705,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
     # the cell's deploy region. Normalize that region onto every function so the
     # key, the enrichment clients, and the row all land in the right place.
     for fn in functions:
-        fn["region"] = fn.get("region") or _extract_region(fn.get("function_arn", ""), region)
+        fn["region"] = fn.get("region") or extract_region(fn.get("function_arn", ""), region)
 
     if tags_filter:
         functions = [fn for fn in functions
@@ -803,7 +782,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
             merged = {**fn, **enrichment, "item_key": key, "account_id": account_id,
                       "account_name": account_name, "region": fn_region,
                       "first_seen_at": when, "migration_status": enrichment["migration_status"]}
-            table.put_item(Item=_convert_floats(merged))
+            table.put_item(Item=convert_floats(merged))
             existing_by_identity[ident] = merged
             new_count += 1
             all_active.append(merged)
@@ -813,7 +792,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
                 UpdateExpression="SET days_to_deprecation = :d, avg_daily_invokes = :a, alert_status = :s, ta_last_updated = :t, resolved_at = :r",
                 ExpressionAttributeValues={
                     ":d": fn.get("days_to_deprecation", 0),
-                    ":a": _convert_floats(fn.get("avg_daily_invokes", 0)),
+                    ":a": convert_floats(fn.get("avg_daily_invokes", 0)),
                     ":s": fn.get("alert_status", ""),
                     ":t": fn.get("ta_last_updated", ""),
                     ":r": None,
@@ -897,7 +876,7 @@ def _row_identity(row: dict, default_region: str) -> tuple:
     today. The region comes from the row attribute, else from the ARN. Pure.
     """
     arn = str(row.get("function_arn", "") or "")
-    row_region = row.get("region") or _extract_region(arn, default_region)
+    row_region = row.get("region") or extract_region(arn, default_region)
     return (row_region, canonical_arn(arn))
 
 
@@ -930,7 +909,7 @@ def _merge_dropped_duplicate(table, keep: dict, drop: dict, account_id: str) -> 
         return keep
     names, values, parts = {}, {}, []
     for idx, (k, v) in enumerate(missing.items()):
-        names[f"#m{idx}"], values[f":m{idx}"] = k, _convert_floats(v)
+        names[f"#m{idx}"], values[f":m{idx}"] = k, convert_floats(v)
         parts.append(f"#m{idx} = :m{idx}")
     table.update_item(
         Key={"item_key": keep["item_key"]},
@@ -957,7 +936,7 @@ def _rekey_row(table, old_row: dict, new_key: str, account_id: str, account_name
     new_row = {**old_row, "item_key": new_key, "account_id": account_id,
                "account_name": account_name or old_row.get("account_name", ""),
                "region": region, "function_arn": function_arn}
-    table.put_item(Item=_convert_floats(new_row))
+    table.put_item(Item=convert_floats(new_row))
     table.delete_item(Key={"item_key": old_row["item_key"]})
     logger.info("discover_scope[%s]: re-keyed row %s -> %s",
                 account_id or "hub", old_row.get("item_key"), new_key)
@@ -987,7 +966,7 @@ def _rekey_mig_sibling(table, old_mig_key: str, new_mig_key: str, account_id: st
         return False
     new_item = {**old_item, "item_key": new_mig_key, "account_id": account_id}
     try:
-        table.put_item(Item=_convert_floats(new_item),
+        table.put_item(Item=convert_floats(new_item),
                        ConditionExpression="attribute_not_exists(item_key)")
     except ClientError as exc:
         if (exc.response.get("Error") or {}).get("Code") != "ConditionalCheckFailedException":
@@ -1183,4 +1162,4 @@ def read_fleet_inventory(session: boto3.session.Session = None) -> List[dict]:
 
 def put_rollup(record: dict, session: boto3.session.Session = None) -> None:
     """Persist one immutable rollup row (floats -> Decimal for DynamoDB)."""
-    _table(session).put_item(Item=_convert_floats(record))
+    _table(session).put_item(Item=convert_floats(record))

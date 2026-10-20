@@ -14,13 +14,13 @@ import os
 import tempfile
 import zipfile
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from urllib.request import urlopen
 
 import boto3
 
 from aws_utils import get_region  # staged copy of shared/utils/aws_utils.py
+from common import convert_floats, extract_region, extract_function_name
 from model_id import model_id as _model_id  # computed once at init from staged aws_utils
 
 logger = logging.getLogger(__name__)
@@ -50,26 +50,6 @@ MANIFEST_MAX_CHARS = 4_000
 _STALE_ASSESSMENT_ATTRS = ("target_runtime",)  # the managed transformation owns the target; REMOVE clears rows assessed before this change
 
 
-def _convert_floats(obj: Any) -> Any:
-    if isinstance(obj, float):
-        return Decimal(str(obj))
-    if isinstance(obj, dict):
-        return {k: _convert_floats(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_convert_floats(item) for item in obj]
-    return obj
-
-
-def _extract_region(arn: str, default: str) -> str:
-    parts = arn.split(":")
-    return parts[3] if len(parts) >= 4 and parts[3] else default
-
-
-def _extract_function_name(arn: str) -> str:
-    parts = arn.split(":")
-    return parts[6] if len(parts) >= 7 else arn
-
-
 def _is_excluded(rel_path: str) -> bool:
     parts = rel_path.replace("\\", "/").split("/")
     return any(p in EXCLUDED_DIRS for p in parts)
@@ -94,8 +74,8 @@ def download_function_code(session: boto3.session.Session, function_arn: str, de
     Returns {skipped: True, reason} for Image package type (not migratable via
     code), otherwise the extracted source file list.
     """
-    region = _extract_region(function_arn, default_region)
-    function_name = _extract_function_name(function_arn)
+    region = extract_region(function_arn, default_region)
+    function_name = extract_function_name(function_arn)
     lambda_client = session.client("lambda", region_name=region)
 
     response = lambda_client.get_function(FunctionName=function_arn)
@@ -312,7 +292,7 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
     Writes the assessment back to the item_key row and returns bounded facts.
     """
     function_arn = target["function_arn"]
-    region = target.get("region") or _extract_region(function_arn, "")
+    region = target.get("region") or extract_region(function_arn, "")
     runtime = target.get("runtime", "unknown")
     key = target["item_key"]
     table = _table(session)
@@ -330,7 +310,7 @@ def assess_one(session: boto3.session.Session, target: dict, when: str) -> dict:
     code_info = read_source_code(download["extract_path"], download["source_files"])
     assessment = assess_with_ai(session, region, function_arn, runtime, code_info)
 
-    updates = _convert_floats({
+    updates = convert_floats({
         "migration_status": "ASSESSED",
         "migration_complexity": assessment.get("complexity", "MEDIUM"),
         "assessment_summary": assessment.get("summary", ""),
