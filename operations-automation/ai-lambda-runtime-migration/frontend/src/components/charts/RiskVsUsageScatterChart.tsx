@@ -9,6 +9,8 @@ import Highcharts from './highcharts-setup';
 import Box from '@cloudscape-design/components/box';
 import HighchartsReact from './HighchartsReact';
 import { MigrationFunction } from '../../api';
+import { funcName } from '../../console-links';
+import { deprecationState, DeprecationState } from '../../migration-tallies';
 
 // red = error, yellow = warning, green = success (status data-viz convention).
 const STATE_COLOR: Record<string, string> = {
@@ -17,16 +19,7 @@ const STATE_COLOR: Record<string, string> = {
   Resolved: '#037f0c',
 };
 
-const funcName = (arn: string): string => arn.match(/function:(.+)/)?.[1] || arn;
-
-type DeprecationLabel = 'Deprecated' | 'Approaching EOL' | 'Resolved';
-function deprecationLabel(f: MigrationFunction): DeprecationLabel | null {
-  if (f.resolved_at || (f.alert_status || '').toLowerCase() === 'green') return 'Resolved';
-  const alert = (f.alert_status || '').toLowerCase();
-  if (alert === 'red') return 'Deprecated';
-  if (alert === 'yellow') return 'Approaching EOL';
-  return null;
-}
+type DeprecationLabel = DeprecationState['label'];
 
 interface ScatterSeries {
   name: DeprecationLabel;
@@ -40,7 +33,7 @@ function buildSeries(functions: MigrationFunction[]): ScatterSeries[] {
     Resolved: { name: 'Resolved', data: [] },
   };
   for (const f of functions) {
-    const label = deprecationLabel(f);
+    const label = deprecationState(f)?.label ?? null;
     if (!label) continue;
     if (typeof f.days_to_deprecation !== 'number') continue;
     buckets[label].data.push({

@@ -8,11 +8,26 @@
 // toggled set on My functions, the active backlog on Statistics).
 import type { MigrationFunction } from './api';
 
+// The Deprecation axis is STATE-ONLY (no inline dates): a function is either
+// Resolved (inferred green: TA stopped reporting it), Deprecated (Red, past
+// EOL) or Approaching EOL (Yellow). Resolved wins once resolved_at is set. The
+// ONE derivation every page and chart reads; null when TA reported no colour.
+export type DeprecationState = { label: 'Resolved' | 'Deprecated' | 'Approaching EOL'; type: 'success' | 'error' | 'warning'; resolved: boolean };
+export const deprecationState = (f: MigrationFunction): DeprecationState | null => {
+  const alert = (f.alert_status || '').toLowerCase();
+  if (f.resolved_at || alert === 'green') {
+    return { label: 'Resolved', type: 'success', resolved: true };
+  }
+  if (alert === 'red') return { label: 'Deprecated', type: 'error', resolved: false };
+  if (alert === 'yellow') return { label: 'Approaching EOL', type: 'warning', resolved: false };
+  return null;
+};
+
 // Active backlog: flagged Red (past EOL) or Yellow (approaching) by Trusted
 // Advisor and not yet resolved. Resolved / Green rows are no longer backlog.
 export const isActiveBacklog = (f: MigrationFunction): boolean => {
-  const alert = (f.alert_status || '').toLowerCase();
-  return !f.resolved_at && (alert === 'red' || alert === 'yellow');
+  const st = deprecationState(f);
+  return st !== null && !st.resolved;
 };
 
 interface MigrationTallies {

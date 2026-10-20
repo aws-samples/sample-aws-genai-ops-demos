@@ -6,6 +6,7 @@ import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import LiveRegion from '@cloudscape-design/components/live-region';
 import { MigrationPhase, MigrationBatchSummary } from '../api';
 import { migrationSummaryLine } from '../constants';
+import { STATUS_LABEL, countUnit } from './steps-common';
 
 // Progress of one batch migration as Cloudscape "progressive steps": one step
 // per migration phase (Prepare / Resolve / Transform), a progress bar on the
@@ -20,11 +21,6 @@ import { migrationSummaryLine } from '../constants';
 // load, and the user can toggle it at any time. The flow ends with a pushed
 // upgrade branch per function; there is no fourth phase.
 
-const STATUS_LABEL: Record<MigrationPhase['status'], string> = {
-  pending: 'Pending', 'in-progress': 'In progress', success: 'Done',
-  warning: 'Done with failures', error: 'Failed', stopped: 'Skipped',
-};
-
 // Phase classification by label prefix (the labels are the backend contract:
 // api._MIGRATION_PHASE_LABELS).
 const isPrepare = (p: MigrationPhase) => p.label.startsWith('Prepare');
@@ -35,7 +31,6 @@ const isTransform = (p: MigrationPhase) => p.label.startsWith('Transform');
 // code. Mark it with the gen-AI sparkle, not the bookkeeping phases around it.
 const isGenAi = isTransform;
 
-const countUnit = (n: number, unit: string): string => `${unit}${n === 1 ? '' : 's'}`;
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
 const branchesReadyOf = (p: MigrationPhase): number => p.branchesReady ?? Math.max(0, p.done - (p.noChanges ?? 0));

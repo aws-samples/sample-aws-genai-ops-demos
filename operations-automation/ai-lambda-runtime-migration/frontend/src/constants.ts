@@ -3,6 +3,7 @@
  * Single source of truth — imported by My functions, the Activity log and the
  * How it works page, so a label or an indicator can never drift between them.
  */
+import type { StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
 import type { MigrationBatchSummary, MigrationRunStatus } from './api';
 
 type StatusIndicatorType = 'success' | 'error' | 'warning' | 'info' | 'stopped' | 'pending' | 'in-progress' | 'loading' | 'not-started';
@@ -11,6 +12,28 @@ export interface StatusConfig {
   label: string;
   type: StatusIndicatorType;
 }
+
+// Tag key a migration reads the source repository name from when Settings
+// has never been saved (the backend default; shown in Settings and in the
+// Migrate help text).
+export const DEFAULT_REPO_TAG = 'source-repo';
+
+// Backend _priority_label() returns UPPERCASE labels (CRITICAL/HIGH/MEDIUM/LOW/
+// INACTIVE). All status-like columns use StatusIndicator (consistent with the
+// Deprecation column), so map each priority to a StatusIndicator type.
+export const PRIORITY_INDICATOR: Record<string, StatusIndicatorProps.Type> = {
+  CRITICAL: 'error', HIGH: 'warning', MEDIUM: 'warning',
+  LOW: 'info', INACTIVE: 'pending',
+};
+
+// Trusted Advisor alert colours, shown with their meaning in the PropertyFilter
+// token instead of the raw colour: Red = already past EOL, Yellow = approaching,
+// Green = resolved.
+export const ALERT_STATUS_LABEL: Record<string, string> = {
+  Red: 'Already deprecated (past EOL)',
+  Yellow: 'Approaching deprecation',
+  Green: 'Resolved',
+};
 
 // Deprecation axis (the fn# row's own migration_status, written by the scan).
 // MIGRATED is inferred when Trusted Advisor stops reporting a function; the

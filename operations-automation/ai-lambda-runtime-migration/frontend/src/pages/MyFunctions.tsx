@@ -29,24 +29,23 @@ import Skeleton from '@cloudscape-design/components/skeleton';
 import Alert from '@cloudscape-design/components/alert';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, getSettings, startRefresh, getRefreshStatus, getRecentScans, getRecentMigrationRuns, startMigrationBatch, getMigrationRunStatus, MigrationFunction, MigrationRunStatus, RefreshPhase, RefreshExecutionStatus, MigrationRunExecutionStatus, ScanSummary } from '../api';
-import { MIGRATION_RUN_STATUS, migrationRunConfig, failureCodeHelp, migrationSummaryLine } from '../constants';
-import { lambdaConsoleUrl, codecommitBranchUrl, repoNameFromCloneUrl } from '../console-links';
+import { MIGRATION_RUN_STATUS, PRIORITY_INDICATOR, ALERT_STATUS_LABEL, DEFAULT_REPO_TAG, migrationRunConfig, failureCodeHelp, migrationSummaryLine } from '../constants';
+import { funcName, lambdaConsoleUrl, codecommitBranchUrl, repoNameFromCloneUrl } from '../console-links';
 import { tagKeys, tagValues, matchesTags } from '../tag-filter';
-import { isActiveBacklog, tallyMigrationRuns } from '../migration-tallies';
+import { deprecationState, isActiveBacklog, tallyMigrationRuns } from '../migration-tallies';
 import { useSplitPanel } from '../SplitPanelContext';
 import Link from '@cloudscape-design/components/link';
 import RefreshSteps from '../components/RefreshSteps';
 import MigrationSteps from '../components/MigrationSteps';
 
-const funcName = (arn: string): string => arn.match(/function:(.+)/)?.[1] || arn;
+// Polling cadences: a scan is short-lived, a migration batch runs for minutes;
+// the first tick after a click comes quickly so the card fills in at once.
+const SCAN_POLL_MS = 3000;
+const MIGRATION_POLL_MS = 30000;
+const FIRST_TICK_MS = 1000;
 
-// Backend _priority_label() returns UPPERCASE labels (CRITICAL/HIGH/MEDIUM/LOW/
-// INACTIVE). All status-like columns use StatusIndicator (consistent with the
-// Deprecation column), so map each priority to a StatusIndicator type.
-const PRIORITY_INDICATOR: Record<string, any> = {
-  CRITICAL: 'error', HIGH: 'warning', MEDIUM: 'warning',
-  LOW: 'info', INACTIVE: 'pending',
-};
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 const URGENCY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INACTIVE: 4 };
 const urgencyRank = (f: MigrationFunction) => URGENCY_RANK[f.priority_label || ''] ?? 4;
 // Backend priority labels are UPPERCASE (CRITICAL/HIGH/...), used as data keys
@@ -104,33 +103,13 @@ const FILTER_I18N: PropertyFilterProps.I18nStrings = {
   removeTokenButtonAriaLabel: (t) => `Remove ${t.propertyKey || 'search'} ${t.operator} ${t.value}`,
 };
 
-// TA alert_status is stored title-case (Red/Yellow/Green). Render the human
-// meaning in the PropertyFilter token instead of the raw colour: Red = already
-// past EOL, Yellow = approaching, Green = resolved.
-const ALERT_STATUS_LABEL: Record<string, string> = {
-  Red: 'Already deprecated (past EOL)',
-  Yellow: 'Approaching deprecation',
-  Green: 'Resolved',
-};
+// TA alert_status is stored title-case (Red/Yellow/Green); the PropertyFilter
+// token shows its meaning (ALERT_STATUS_LABEL), not the raw colour.
 const alertStatusLabel = (value: string): string => ALERT_STATUS_LABEL[value] ?? value;
 // Migration-run and complexity tokens read the same labels as the columns
 // ("Branch ready", "Rejected"; "Low", "High"), not the raw enum.
 const migrationRunLabel = (value: string): string => migrationRunConfig(value).label;
 const complexityLabel = (value: string): string => titleCase(value);
-
-// The Deprecation axis is STATE-ONLY (no inline dates): a function is either
-// Resolved (inferred green — TA stopped reporting it), Deprecated (Red, past
-// EOL) or Approaching EOL (Yellow). Resolved wins once resolved_at is set.
-type DeprecationState = { label: string; type: 'success' | 'error' | 'warning'; resolved: boolean };
-const deprecationState = (f: MigrationFunction): DeprecationState | null => {
-  if (f.resolved_at || (f.alert_status || '').toLowerCase() === 'green') {
-    return { label: 'Resolved', type: 'success', resolved: true };
-  }
-  const alert = (f.alert_status || '').toLowerCase();
-  if (alert === 'red') return { label: 'Deprecated', type: 'error', resolved: false };
-  if (alert === 'yellow') return { label: 'Approaching EOL', type: 'warning', resolved: false };
-  return null;
-};
 
 // The single Migration axis. An active/terminal mig# run (the Phase-2 lifecycle
 // enum) wins; otherwise the Phase-1 inferred-MIGRATED state (set when Trusted
@@ -445,7 +424,7 @@ export default function MyFunctions() {
       setMigrationRunArn(latest.executionArn);
       setMigrationRun(run);
       setStepsExpanded(false);
-    } catch (err: any) {
+    } catch (err) {
       // Non-fatal: the card is optional (a scan-only deployment returns []).
       console.warn('Could not re-attach to the latest migration batch', err);
     }
@@ -453,7 +432,7 @@ export default function MyFunctions() {
 
   // Settings never saved? get_settings returns {} for an absent row (a saved row
   // always carries updated_at). Migrate then falls back to the default
-  // `source-repo` tag, which is legitimate but must be SAID before the user
+  // DEFAULT_REPO_TAG tag, which is legitimate but must be SAID before the user
   // learns it from a wall of "Rejected: no repo tag". null = not known yet.
   const [settingsUnset, setSettingsUnset] = useState<boolean | null>(null);
   const [settingsNoticeDismissed, setSettingsNoticeDismissed] = useState(false);
@@ -475,8 +454,8 @@ export default function MyFunctions() {
     try {
       const { functions } = await getFunctions();
       setRows(functions);
-    } catch (err: any) {
-      flash('error', `Failed to load functions: ${err.message}`);
+    } catch (err) {
+      flash('error', `Failed to load functions: ${errorMessage(err)}`);
     }
   }, []);
 
@@ -502,17 +481,17 @@ export default function MyFunctions() {
         if (cancelled) return;
         setRefreshStatus(status);
         if (status.status === 'RUNNING') {
-          pollRef.current = setTimeout(tick, 3000);
+          pollRef.current = setTimeout(tick, SCAN_POLL_MS);
         } else {
           flash(status.status === 'SUCCEEDED' ? 'success' : 'warning', `Scan ${status.status.toLowerCase()}`);
           if (status.summary) setLatestSummary(status.summary as ScanSummary);
           load();
         }
-      } catch (err: any) {
-        if (!cancelled) flash('error', `Could not read the scan status: ${err.message}`);
+      } catch (err) {
+        if (!cancelled) flash('error', `Could not read the scan status: ${errorMessage(err)}`);
       }
     };
-    pollRef.current = setTimeout(tick, 1000);
+    pollRef.current = setTimeout(tick, FIRST_TICK_MS);
     return () => { cancelled = true; if (pollRef.current) clearTimeout(pollRef.current); };
   }, [refreshArn, load]);
 
@@ -521,8 +500,8 @@ export default function MyFunctions() {
       const { executionArn, alreadyRunning } = await startRefresh();
       setRefreshArn(executionArn);
       if (alreadyRunning) flash('info', 'A scan is already running — re-attaching to it.');
-    } catch (err: any) {
-      flash('error', `Could not start the scan: ${err.message}`);
+    } catch (err) {
+      flash('error', `Could not start the scan: ${errorMessage(err)}`);
     }
   };
 
@@ -599,17 +578,17 @@ export default function MyFunctions() {
           flash('info', `Migration batch finished: ${run.summary ? migrationSummaryLine(run.summary) : run.status.toLowerCase()}`);
           return;   // the dependency change stops the timer; nothing left to poll
         }
-        if (!cancelled) migratePollRef.current = setTimeout(tick, 30000);
-      } catch (err: any) {
+        if (!cancelled) migratePollRef.current = setTimeout(tick, MIGRATION_POLL_MS);
+      } catch (err) {
         if (cancelled) return;
         // A transient read failure must not freeze the card and the rows while
         // the batch is still running: report it and keep the 30 s cadence.
-        flash('error', `Could not read the migration status: ${err.message}`);
-        migratePollRef.current = setTimeout(tick, 30000);
+        flash('error', `Could not read the migration status: ${errorMessage(err)}`);
+        migratePollRef.current = setTimeout(tick, MIGRATION_POLL_MS);
       }
     };
     // First tick quickly after a click (the arn was just set), otherwise 30 s.
-    migratePollRef.current = setTimeout(tick, migrationRun ? 30000 : 1000);
+    migratePollRef.current = setTimeout(tick, migrationRun ? MIGRATION_POLL_MS : FIRST_TICK_MS);
     return () => { cancelled = true; if (migratePollRef.current) clearTimeout(migratePollRef.current); };
     // migrationRun is read only to pick the first delay; it is deliberately not
     // a dependency (every poll result would otherwise restart the timer).
@@ -635,10 +614,10 @@ export default function MyFunctions() {
       }
       setSelected([]);
       const overCapNote = overCap > 0 ? `, ${overCap} not started (exceeds the per-run cap)` : '';
-      const defaultsNote = settingsUnset ? ' Using the default source-repo tag detection (Settings not configured).' : '';
+      const defaultsNote = settingsUnset ? ` Using the default ${DEFAULT_REPO_TAG} tag detection (Settings not configured).` : '';
       flash('info', `Migration started for ${batchSize} function${batchSize === 1 ? '' : 's'}${overCapNote}. The upgrade branch is pushed to each repository when AWS Transform produces changes.${defaultsNote}`);
-    } catch (err: any) {
-      flash('error', `Could not start the migration: ${err.message}`);
+    } catch (err) {
+      flash('error', `Could not start the migration: ${errorMessage(err)}`);
     } finally {
       setMigrating(false);
     }
@@ -776,7 +755,7 @@ export default function MyFunctions() {
           header="Source repository detection is not configured"
           action={<Button onClick={() => navigate('/settings')}>Open Settings</Button>}
         >
-          Migrate will look for a <Box variant="code" display="inline">source-repo</Box> tag on each function
+          Migrate will look for a <Box variant="code" display="inline">{DEFAULT_REPO_TAG}</Box> tag on each function
           to find its repository. Set your Git platform and tag names in Settings to change that. Scanning
           does not need any settings.
         </Alert>

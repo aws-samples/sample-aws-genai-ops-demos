@@ -7,6 +7,7 @@ import Header from '@cloudscape-design/components/header';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import LiveRegion from '@cloudscape-design/components/live-region';
 import { RefreshPhase } from '../api';
+import { STATUS_LABEL, countUnit } from './steps-common';
 
 // Progress of a scan (Discover + Assess) as Cloudscape "progressive steps": one
 // step per pipeline phase (Prepare / Discover / Assess / Summarize), a progress
@@ -14,11 +15,7 @@ import { RefreshPhase } from '../api';
 // assess). The phases come from the durable execution history, so what is shown
 // is what the service checkpointed. Once the run is over the same steps stay
 // available, collapsed (pattern: "include an expandable section detailing the
-// steps taken"). Lifted near-verbatim from aws-services-lifecycle-tracker.
-
-const STATUS_LABEL: Record<RefreshPhase['status'], string> = {
-  pending: 'Pending', 'in-progress': 'In progress', success: 'Done', warning: 'Done with failures', error: 'Failed', stopped: 'Skipped',
-};
+// steps taken").
 
 // Discover and Assess are the generative-AI phases: Amazon Nova prioritizes the
 // fleet and assesses each function.
@@ -35,7 +32,6 @@ const unitFor = (p: RefreshPhase): string =>
   p.label.startsWith('Assess') ? 'function'
     : p.label.startsWith('Discover') ? 'eligible account'
     : 'account';
-const countUnit = (n: number, unit: string): string => `${unit}${n === 1 ? '' : 's'}`;
 // "5 of 5 accounts" / "2 of 2 eligible accounts" / "63 of 63 functions"
 const countText = (p: RefreshPhase): string => `${p.done} of ${p.total} ${countUnit(p.total ?? 0, unitFor(p))}`;
 

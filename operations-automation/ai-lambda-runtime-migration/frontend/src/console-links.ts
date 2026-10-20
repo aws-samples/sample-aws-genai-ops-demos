@@ -11,7 +11,9 @@ const consoleDnsSuffix = (region: string): string => {
 
 const consoleHost = (region: string): string => `https://${region}.console.${consoleDnsSuffix(region)}`;
 
-const funcName = (arn: string): string => arn.match(/function:(.+)/)?.[1] || arn;
+// Function name (with any qualifier) from a Lambda ARN; the ARN itself when it
+// has no function segment.
+export const funcName = (arn: string): string => arn.match(/function:(.+)/)?.[1] || arn;
 
 // Deep link to the function in the Lambda console, for the region it lives in.
 // The console opens it when the user is signed into that function's account

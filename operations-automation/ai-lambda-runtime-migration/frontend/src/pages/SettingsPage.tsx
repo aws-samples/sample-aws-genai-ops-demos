@@ -39,8 +39,7 @@ import {
   DetectionMethod,
   RepoResolution,
 } from '../api';
-
-const DEFAULT_REPO_TAG = 'source-repo';
+import { DEFAULT_REPO_TAG } from '../constants';
 
 // Sample support prompts (the chips under the playground input). Clicking one
 // fills the prompt — the operator describes how their repositories are
@@ -129,8 +128,8 @@ export default function SettingsPage() {
     try {
       const { results } = await resolveReposDemo(prompt);
       setAiResults(results);
-    } catch (err: any) {
-      setAiError(err?.message || "The source repositories couldn't be resolved. Try again.");
+    } catch (err) {
+      setAiError((err instanceof Error && err.message) || "The source repositories couldn't be resolved. Try again.");
     } finally {
       clearStepTimer();
       setAiLoading(false);
@@ -151,8 +150,8 @@ export default function SettingsPage() {
       // Honor the backend backfill and a legacy value directly.
       setRepoTag(settings.repoTag || settings.repoTagKey || DEFAULT_REPO_TAG);
       setBranchTag(settings.branchTag || '');
-    } catch (err: any) {
-      setLoadError(err?.message || "The settings couldn't be fetched. Try again later.");
+    } catch (err) {
+      setLoadError((err instanceof Error && err.message) || "The settings couldn't be fetched. Try again later.");
     } finally {
       setLoading(false);
     }
@@ -184,8 +183,8 @@ export default function SettingsPage() {
         branchTag: branchTag.trim() || undefined,
       });
       setSaved(true);
-    } catch (err: any) {
-      setSaveError(err?.message || "The settings couldn't be saved. Try again later.");
+    } catch (err) {
+      setSaveError((err instanceof Error && err.message) || "The settings couldn't be saved. Try again later.");
     } finally {
       setSaving(false);
     }

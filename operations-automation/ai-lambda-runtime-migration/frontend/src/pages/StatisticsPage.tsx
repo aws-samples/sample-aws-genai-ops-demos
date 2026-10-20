@@ -34,7 +34,7 @@ import Link from '@cloudscape-design/components/link';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, getStats, MigrationFunction, RollupRecord } from '../api';
 import { MIGRATION_RUN_STATUS } from '../constants';
-import { isActiveBacklog, tallyMigrationRuns } from '../migration-tallies';
+import { deprecationState, isActiveBacklog, tallyMigrationRuns } from '../migration-tallies';
 import AccountRiskBubbleChart from '../components/charts/AccountRiskBubbleChart';
 import RiskVsUsageScatterChart from '../components/charts/RiskVsUsageScatterChart';
 
@@ -64,8 +64,8 @@ const HERO_DESCRIPTION = 'Active backlog, upgrade branches ready for merge, and 
 const PIPELINE_DESCRIPTION = 'Where every active function stands in the migration flow. Branch ready means an upgrade branch was pushed to the repository; the pull request, review and merge happen there.';
 const BRANCHES_READY_LABEL = 'Branches ready (awaiting merge)';
 
-const isRed = (f: MigrationFunction) => (f.alert_status || '').toLowerCase() === 'red' && !f.resolved_at;
-const isYellow = (f: MigrationFunction) => (f.alert_status || '').toLowerCase() === 'yellow' && !f.resolved_at;
+const isRed = (f: MigrationFunction) => deprecationState(f)?.label === 'Deprecated';
+const isYellow = (f: MigrationFunction) => deprecationState(f)?.label === 'Approaching EOL';
 
 // --- Chart 1: Fleet remediation over time (hero) ---------------------------
 
@@ -378,8 +378,8 @@ export default function StatisticsPage() {
       const [fns, stats] = await Promise.all([getFunctions(), getStats()]);
       setFunctions(fns.functions);
       setRollups(stats.rollups);
-    } catch (err: any) {
-      setError(err?.message || "The data couldn't be fetched. Try again later.");
+    } catch (err) {
+      setError((err instanceof Error && err.message) || "The data couldn't be fetched. Try again later.");
     } finally {
       setLoading(false);
     }

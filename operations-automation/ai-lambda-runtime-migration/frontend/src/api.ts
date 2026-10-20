@@ -14,7 +14,7 @@
 //   GET  /migrate-runs       -> recent batch executions (Steps card re-attach, Activity log)
 import { getIdToken } from './auth';
 
-const apiUrl: string = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '');
+const apiUrl: string = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 // --- Types -----------------------------------------------------------------
 
