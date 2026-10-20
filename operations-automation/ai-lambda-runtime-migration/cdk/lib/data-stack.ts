@@ -29,19 +29,6 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // GSI for querying by migration status, sorted by priority score
-    this.table.addGlobalSecondaryIndex({
-      indexName: 'migration-status-index',
-      partitionKey: {
-        name: 'migration_status',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'priority_score',
-        type: dynamodb.AttributeType.NUMBER,
-      },
-    });
-
     // S3 bucket for migration reports and packages
     this.bucket = new s3.Bucket(this, 'MigrationBucket', {
       bucketName: `lambda-migration-${cdk.Aws.ACCOUNT_ID}-${cdk.Aws.REGION}`,

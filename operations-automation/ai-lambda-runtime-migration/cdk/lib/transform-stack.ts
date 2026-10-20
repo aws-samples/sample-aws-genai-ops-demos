@@ -102,6 +102,7 @@ export class TransformStack extends cdk.Stack {
         'codecommit:GitPull',
         'codecommit:GitPush',
         'codecommit:GetBranch',
+        // The buildspec creates the branch locally and pushes it; whether GitPush alone authorizes a new ref is untested, so CreateBranch stays.
         'codecommit:CreateBranch',
         'codecommit:GetRepository',
       ],

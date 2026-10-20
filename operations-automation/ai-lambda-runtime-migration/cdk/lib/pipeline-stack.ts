@@ -160,9 +160,9 @@ export class PipelineStack extends cdk.Stack {
           // function. Without it the re-key half-applies and the scope fails.
           actions: [
             'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-            'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan',
+            'dynamodb:DeleteItem', 'dynamodb:Scan',
           ],
-          resources: [props.table.tableArn, `${props.table.tableArn}/index/*`],
+          resources: [props.table.tableArn],
         }),
         // No S3 here: the scan (Discover + Assess) and the API never touch the
         // bucket. Only the Phase-2 functions do, each with its own scoped
@@ -172,8 +172,8 @@ export class PipelineStack extends cdk.Stack {
           sid: 'BedrockModelInvocation',
           actions: ['bedrock:InvokeModel', 'bedrock:Converse'],
           resources: [
-            'arn:aws:bedrock:*::foundation-model/*',
-            `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
+            `arn:${this.partition}:bedrock:*::foundation-model/*`,
+            `arn:${this.partition}:bedrock:*:${this.account}:inference-profile/*`,
           ],
         }),
         new iam.PolicyStatement({
@@ -237,11 +237,8 @@ export class PipelineStack extends cdk.Stack {
     }));
     this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
       sid: 'OrganizationsRead',
-      actions: [
-        'organizations:DescribeOrganization', 'organizations:ListAccounts', 'organizations:DescribeAccount',
-        'organizations:ListRoots', 'organizations:ListOrganizationalUnitsForParent', 'organizations:ListParents',
-        'organizations:DescribeOrganizationalUnit', 'organizations:ListAccountsForParent',
-      ],
+      // org_accounts.py calls ListAccounts (paginated) and DescribeAccount only.
+      actions: ['organizations:ListAccounts', 'organizations:DescribeAccount'],
       resources: ['*'],
     }));
 
@@ -300,21 +297,21 @@ export class PipelineStack extends cdk.Stack {
           retentionPeriod: cdk.Duration.days(14),
         },
       });
-      // Data-plane + verify grants for the orchestrator. Scan/Query are needed
-      // because resolve_and_verify locates the function's fn# row via
-      // api._scan_inventory (a DynamoDB Scan); GetItem/UpdateItem cover the mig#
-      // read/writes. (index/* is included so a future GSI-backed lookup works.)
+      // Data-plane + verify grants for the orchestrator. Scan is needed because
+      // resolve_and_verify locates the function's fn# row via a DynamoDB Scan of
+      // the inventory; GetItem/UpdateItem cover the mig# read/writes.
       migrateFunction.addToRolePolicy(new iam.PolicyStatement({
         sid: 'MigrationItemAccess',
-        actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:Query', 'dynamodb:Scan'],
-        resources: [props.table.tableArn, `${props.table.tableArn}/index/*`],
+        actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
+        resources: [props.table.tableArn],
       }));
       // The orchestrator writes the AWS Transform config render
       // (migrations/<job_id>/transform-config.yaml) that the build reads back.
-      // This is the config render, not a function-source upload.
+      // This is the config render, not a function-source upload; build_complete
+      // does the only read (its own statement below).
       migrateFunction.addToRolePolicy(new iam.PolicyStatement({
         sid: 'MigrationArtifacts',
-        actions: ['s3:GetObject', 's3:PutObject'],
+        actions: ['s3:PutObject'],
         resources: [`${bucketArn}/*`],
       }));
       // Hub-region fixture repository only. The orchestrator calls CodeCommit in

@@ -12,7 +12,6 @@
 export const DISCOVER_READ_ACTIONS: string[] = [
   // Trusted Advisor deprecated-runtime check (L4dfs2Q4C5) via the Support API.
   'support:DescribeTrustedAdvisorCheckResult',
-  'support:RefreshTrustedAdvisorCheck',
   // Per-account Support tier inference (ceiling of the openable case severities),
   // so a Basic/Developer account reports "TA not checked" instead of empty.
   'support:DescribeSeverityLevels',
@@ -20,10 +19,8 @@ export const DISCOVER_READ_ACTIONS: string[] = [
   'lambda:GetFunction',
   'lambda:GetFunctionConfiguration',
   'lambda:ListTags',
-  'lambda:ListVersionsByFunction',
   // CloudWatch logs/metrics enrichment (last invocation, 14-day invocation count).
   'logs:DescribeLogStreams',
-  'logs:DescribeLogGroups',
   'cloudwatch:GetMetricStatistics',
 ];
 

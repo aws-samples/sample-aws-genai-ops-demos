@@ -66,7 +66,7 @@ export class FrontendStack extends cdk.Stack {
         principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
         conditions: {
           StringEquals: {
-            'AWS:SourceArn': `arn:aws:cloudfront::${cdk.Stack.of(this).account}:distribution/${distribution.distributionId}`,
+            'AWS:SourceArn': `arn:${cdk.Stack.of(this).partition}:cloudfront::${cdk.Stack.of(this).account}:distribution/${distribution.distributionId}`,
           },
         },
       })
