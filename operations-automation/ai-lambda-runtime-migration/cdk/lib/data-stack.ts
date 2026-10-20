@@ -57,19 +57,9 @@ export class DataStack extends cdk.Stack {
       description: 'DynamoDB table for Lambda runtime migration inventory (item_key = fn#<account>#<region>#<arn>; schema change recreates the table)',
     });
 
-    new cdk.CfnOutput(this, 'TableArn', {
-      value: this.table.tableArn,
-      description: 'DynamoDB table ARN for Lambda runtime migration inventory',
-    });
-
     new cdk.CfnOutput(this, 'BucketName', {
       value: this.bucket.bucketName,
       description: 'S3 bucket for migration reports and packages',
-    });
-
-    new cdk.CfnOutput(this, 'BucketArn', {
-      value: this.bucket.bucketArn,
-      description: 'S3 bucket ARN for migration reports and packages',
     });
   }
 }

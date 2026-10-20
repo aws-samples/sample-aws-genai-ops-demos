@@ -179,13 +179,5 @@ export class TransformStack extends cdk.Stack {
       value: project.projectName,
       description: 'Name of the CodeBuild project running AWS Transform migrations',
     });
-    new cdk.CfnOutput(this, 'ArtifactsBucketName', {
-      value: props.bucketName,
-      description: 'S3 bucket holding the buildspec (config/) and per-run migration artifacts (migrations/<job_id>/)',
-    });
-    new cdk.CfnOutput(this, 'TransformBuildRoleArn', {
-      value: buildRole.roleArn,
-      description: 'ARN of the CodeBuild role running AWS Transform',
-    });
   }
 }

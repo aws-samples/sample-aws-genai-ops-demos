@@ -57,28 +57,6 @@ export function getAccountId(): string | null {
 }
 
 /**
- * Get the correct cross-region inference (CRIS) prefixed model ID for the
- * current region.
- *
- * Amazon Bedrock newer models are often only available via cross-region
- * inference profiles. This detects the deployment region and applies the
- * appropriate geographic prefix (us/eu/apac) or falls back to global for
- * regions without a dedicated geographic CRIS (ca, me, af, sa, il, mx).
- *
- * Mirrors aws_utils.py get_bedrock_model_id. Note Asia Pacific's CRIS prefix is
- * "apac", not "ap"; mapping ap-* to "ap" yields an invalid profile id.
- *
- * @param modelName Base model id without prefix (e.g. "anthropic.claude-sonnet-4-6")
- * @returns CRIS-prefixed model id (e.g. "eu.anthropic.claude-sonnet-4-6")
- */
-export function getBedrockModelId(modelName: string = 'anthropic.claude-sonnet-4-6'): string {
-  const geoPrefix = getRegion().split('-')[0];
-  const crisPrefix: { [key: string]: string } = { us: 'us', eu: 'eu', ap: 'apac' };
-  const prefix = crisPrefix[geoPrefix] || 'global';
-  return `${prefix}.${modelName}`;
-}
-
-/**
  * AWS Transform CUSTOM (code transformation, the `atx custom` product) regions,
  * per the AWS Transform user guide "Supported Regions". The guide also lists
  * Asia Pacific (Singapore) "VMware agents only" and South America (Sao Paulo)

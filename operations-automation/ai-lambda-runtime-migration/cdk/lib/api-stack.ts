@@ -83,9 +83,5 @@ export class ApiStack extends cdk.Stack {
       value: this.apiUrl,
       description: 'HTTP API base URL used by the frontend (VITE_API_URL)',
     });
-    new cdk.CfnOutput(this, 'ApiId', {
-      value: this.httpApi.apiId,
-      description: 'HTTP API ID',
-    });
   }
 }

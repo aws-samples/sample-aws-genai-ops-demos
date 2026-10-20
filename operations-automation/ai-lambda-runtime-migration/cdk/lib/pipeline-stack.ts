@@ -146,9 +146,9 @@ export class PipelineStack extends cdk.Stack {
       // hub account alone when it cannot read an org. There is no MULTI_ACCOUNT
       // gate env var — a plain deploy already fans out to whatever org it can
       // read, which is what keeps the scan durable across redeploys.
-      // MODEL_ID is NOT set here: there is no TypeScript getBedrockModelId, so
-      // the Lambda computes it at init from the staged aws_utils.py (model_id.py)
-      // with the unprefixed Nova base id. Set MODEL_ID only to override.
+      // MODEL_ID is deliberately not set here: the Lambda computes it at init
+      // from the staged aws_utils.py (model_id.py) so the Python helper is the
+      // single owner of the CRIS prefix. Set MODEL_ID only to override.
     };
 
     // ------------------------------------------------------------------
