@@ -196,18 +196,6 @@ def test_list_functions_resolves_hub_account_for_display(monkeypatch):
     assert by_arn["arn:spoke"]["account_name"] == "Spoke"
 
 
-def test_get_metrics_excludes_rollup_rows(monkeypatch):
-    class _Table:
-        def scan(self, **_kwargs):
-            return {"Items": _inventory_with_rollups()}
-    monkeypatch.setattr(api, "_table", lambda: _Table())
-
-    resp = api.handler({"action": "get_metrics"})
-    # Only the two function rows count toward the metrics total.
-    assert resp["total"] == 2
-    assert resp["deprecated"] == 2
-
-
 # --- Settings: non-secret whitelist, never a token value -------------------
 
 class _SettingsTable:

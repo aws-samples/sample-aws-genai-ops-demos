@@ -5,7 +5,7 @@
 // JWT authorizer). The browser holds no AWS credentials — this replaces the
 // old SigV4 browser-side runtime invokes.
 //
-//   POST /actions            -> router actions (list_functions / list_regions / get_metrics)
+//   POST /actions            -> router actions (list_functions / get_stats / settings)
 //   POST /refresh            -> start (or adopt) the durable Discover + Assess pipeline
 //   GET  /refresh/{arn+}     -> pipeline execution status for polling / re-attach
 //   GET  /scans              -> recent scan executions (Activity log)

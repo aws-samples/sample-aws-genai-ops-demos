@@ -18,7 +18,7 @@ export interface ApiStackProps extends cdk.StackProps {
  * The Cognito user-pool JWT authorizer validates the ID token the SPA sends in
  * the Authorization header; the browser itself holds no AWS credentials.
  *
- *   POST /actions          router actions (list_functions, list_regions, ...)
+ *   POST /actions          router actions (list_functions, get_stats, settings, ...)
  *   POST /refresh          start (or adopt) a durable pipeline execution
  *   GET  /refresh/{arn+}   execution status for UI polling / re-attach
  *   GET  /scans            recent durable executions for the scan-log timeline

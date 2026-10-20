@@ -885,37 +885,6 @@ def list_functions(body: dict) -> dict:
     return {"functions": rows, "total": len(rows)}
 
 
-def list_regions(_body: dict) -> dict:
-    """Regions enabled for this account (Settings dropdown)."""
-    try:
-        resp = boto3.client("ec2", region_name=_region()).describe_regions()
-        regions = sorted(r["RegionName"] for r in resp.get("Regions", []))
-    except Exception as e:  # pragma: no cover - best effort
-        return {"regions": [_region()], "message": str(e)}
-    return {"regions": regions}
-
-
-def get_metrics(body: dict) -> dict:
-    """Summary-strip counts over the scoped inventory."""
-    scope = body.get("scope") or {}
-    rows = [r for r in _scan_inventory() if _matches_scope(r, scope)]
-    by_runtime: dict = {}
-    by_status: dict = {}
-    deprecated = 0
-    for r in rows:
-        by_runtime[r.get("runtime", "unknown")] = by_runtime.get(r.get("runtime", "unknown"), 0) + 1
-        status = r.get("migration_status", "DISCOVERED")
-        by_status[status] = by_status.get(status, 0) + 1
-        if str(r.get("alert_status", "")).lower() in ("red", "yellow"):
-            deprecated += 1
-    return {
-        "total": len(rows),
-        "deprecated": deprecated,
-        "by_runtime": by_runtime,
-        "by_status": by_status,
-    }
-
-
 def get_stats(_body: dict) -> dict:
     """The immutable per-scan rollup series (measurement history for the charts).
 
@@ -1199,8 +1168,6 @@ def resolve_repos_demo(body: dict) -> dict:
 
 _ACTIONS = {
     "list_functions": list_functions,
-    "list_regions": list_regions,
-    "get_metrics": get_metrics,
     "get_stats": get_stats,
     "get_settings": get_settings,
     "put_settings": put_settings,

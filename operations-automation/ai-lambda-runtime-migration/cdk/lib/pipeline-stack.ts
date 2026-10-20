@@ -434,12 +434,6 @@ export class PipelineStack extends cdk.Stack {
       resources: [this.pipelineFunction.functionArn, `${this.pipelineFunction.functionArn}:*`],
     }));
     this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
-      // Settings page: list the regions enabled for this account. API only.
-      sid: 'RegionListing',
-      actions: ['ec2:DescribeRegions'],
-      resources: ['*'], // DescribeRegions has no resource-level permissions
-    }));
-    this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
       // Resolve the hub account's friendly name for the inventory table
       // (the hub's rows carry an empty account_id; the API names it for display,
       // the same AWS Organizations source member accounts are named from).
