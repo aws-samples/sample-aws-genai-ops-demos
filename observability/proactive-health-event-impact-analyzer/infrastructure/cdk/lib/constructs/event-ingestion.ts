@@ -20,6 +20,8 @@ export interface EventIngestionProps {
   deployEnvironment: string;
   /** SNS topic for DLQ alarm notifications */
   alarmTopic: sns.ITopic;
+  /** Caps investigations started per Event Router invocation (default 10) */
+  maxInvestigationsPerInvocation?: number;
 }
 
 export class EventIngestion extends Construct {
@@ -67,6 +69,7 @@ export class EventIngestion extends Construct {
       environment: {
         STATE_MACHINE_ARN: props.stateMachine.stateMachineArn,
         FINDING_DEDUP_TABLE: findingDedupTable.tableName,
+        MAX_INVESTIGATIONS_PER_INVOCATION: String(props.maxInvestigationsPerInvocation ?? 10),
       },
       logGroup: new logs.LogGroup(this, 'EventRouterLogs', {
         retention: logRetention,
@@ -137,7 +140,7 @@ export class EventIngestion extends Construct {
     // WHOLE batch (including non-qualifying findings) is delivered. This pattern
     // is therefore only a COARSE batch-admission gate for cost/noise reduction —
     // the AUTHORITATIVE per-finding gate is re-applied inside the Event Router
-    // (see handleSecurityHubEvent). Net behavior: only NEW/ACTIVE/HIGH/CRITICAL
+    // (see handleSecurityHubEvent). Net behavior: only NEW/ACTIVE/CRITICAL
     // findings ever start an execution, enforced in the Lambda regardless.
     //
     // The `source` + `detail-type` are not array-nested and are always valid.
@@ -148,13 +151,13 @@ export class EventIngestion extends Construct {
     // Health rule.
     const securityHubFindingRule = new events.Rule(this, 'SecurityHubFindingRule', {
       ruleName: 'health-analyzer-securityhub-capture',
-      description: 'Captures HIGH/CRITICAL AWS Security Hub findings for impact analysis',
+      description: 'Captures CRITICAL AWS Security Hub findings for impact analysis',
       eventPattern: {
         source: ['aws.securityhub'],
         detailType: ['Security Hub Findings - Imported'],
         detail: {
           findings: {
-            Severity: { Label: ['HIGH', 'CRITICAL'] },
+            Severity: { Label: ['CRITICAL'] },
             Workflow: { Status: ['NEW'] },
             RecordState: ['ACTIVE'],
           },
