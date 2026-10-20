@@ -296,11 +296,23 @@ def query_trusted_advisor(session: boto3.session.Session, region: str) -> Dict[s
 # Enrichment — Lambda API + CloudWatch
 # ---------------------------------------------------------------------------
 
+def _error_code(exc: Exception) -> str:
+    """The AWS error code of a failed call, or the exception class name.
+
+    Log lines carry this instead of the exception itself: a botocore error
+    message can echo request parameters, and the session behind the call may
+    hold assumed-role credentials, so the raw exception never reaches a log.
+    """
+    if isinstance(exc, ClientError):
+        return (exc.response.get("Error") or {}).get("Code") or exc.__class__.__name__
+    return exc.__class__.__name__
+
+
 def enrich_function(session: boto3.session.Session, function_arn: str, default_region: str) -> Dict[str, Any]:
     """Enrich a function with Lambda config, tags, and CloudWatch metrics.
 
     Env var values are masked to '***' so no secret crosses a checkpoint or
-    reaches the UI.
+    reaches the UI. Failures are logged by error code only (see _error_code).
     """
     region = extract_region(function_arn, default_region)
     function_name = extract_function_name(function_arn)
@@ -324,7 +336,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
             "env_vars": {k: "***" for k in cfg.get("Environment", {}).get("Variables", {})},
         })
     except Exception as e:
-        logger.error("GetFunctionConfiguration failed for %s: %s", function_name, e)
+        logger.error("GetFunctionConfiguration failed for %s: %s", function_name, _error_code(e))
 
     try:
         unversioned_arn = (function_arn.rsplit(":", 1)[0]
@@ -332,7 +344,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
                            else function_arn)
         enrichment["tags"] = lambda_client.list_tags(Resource=unversioned_arn).get("Tags", {})
     except Exception as e:
-        logger.error("ListTags failed for %s: %s", function_name, e)
+        logger.error("ListTags failed for %s: %s", function_name, _error_code(e))
         enrichment["tags"] = {}
 
     try:
@@ -347,8 +359,9 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
         else:
             enrichment["last_invocation_date"] = None
     except ClientError as e:
-        if e.response["Error"]["Code"] != "ResourceNotFoundException":
-            logger.error("DescribeLogStreams failed for %s: %s", function_name, e)
+        code = _error_code(e)
+        if code != "ResourceNotFoundException":
+            logger.error("DescribeLogStreams failed for %s: %s", function_name, code)
         enrichment["last_invocation_date"] = None
 
     try:
@@ -363,7 +376,7 @@ def enrich_function(session: boto3.session.Session, function_arn: str, default_r
         enrichment["invocation_count_14d"] = int(
             sum(dp.get("Sum", 0) for dp in metrics_resp.get("Datapoints", [])))
     except Exception as e:
-        logger.error("GetMetricStatistics failed for %s: %s", function_name, e)
+        logger.error("GetMetricStatistics failed for %s: %s", function_name, _error_code(e))
         enrichment["invocation_count_14d"] = 0
 
     enrichment["migration_status"] = (
@@ -859,9 +872,11 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
         "ta_message": ta_message,
         "ta_reason": None,
     }
-    logger.info("discover_scope[%s]: tier=%s ta_checked=True regions_seen=%s discovered=%d new=%d "
+    # Counts only: the account id and region list come back through the scan
+    # session, so the summary line names neither (the run summary carries them).
+    logger.info("discover_scope: tier=%s ta_checked=True regions=%d discovered=%d new=%d "
                 "resolved=%d rekeyed=%d duplicates_deleted=%d",
-                account_id or "hub", support_tier_name, regions_seen,
+                support_tier_name, len(regions_seen),
                 len(all_active), new_count, len(resolved_keys), rekeyed, len(stale_duplicates))
     return result
 
@@ -936,8 +951,10 @@ def _rekey_row(table, old_row: dict, new_key: str, account_id: str, account_name
                "region": region, "function_arn": function_arn}
     table.put_item(Item=convert_floats(new_row))
     table.delete_item(Key={"item_key": old_row["item_key"]})
-    logger.info("discover_scope[%s]: re-keyed row %s -> %s",
-                account_id or "hub", old_row.get("item_key"), new_key)
+    # Log the function name, never row contents or the keys read back from the
+    # table: those travelled through the scan session and must stay out of logs.
+    logger.info("discover_scope: re-keyed inventory row for %s into region %s",
+                extract_function_name(function_arn), region)
     old_mig_key = mig_item_key(old_row.get("account_id", "") or "",
                                old_row.get("region") or region, function_arn)
     new_mig_key = mig_item_key(account_id, region, function_arn)
@@ -976,9 +993,9 @@ def _rekey_mig_sibling(table, old_mig_key: str, new_mig_key: str, account_id: st
         same_copy = all(current.get(k) == old_item.get(k)
                         for k in ("migration_batch_id", "migration_updated_at", "migration_status"))
         if not same_copy:
-            logger.warning("discover_scope[%s]: mig# item %s not moved to %s: a different item "
-                           "already exists under the new key; left both untouched",
-                           account_id or "hub", old_mig_key, new_mig_key)
+            logger.warning("discover_scope: a migration item was not re-keyed because a different "
+                           "item already exists under the new key; both left untouched "
+                           "(manual cleanup: look for two mig# items for one function)")
             return False
     build_id = old_item.get("migration_build_id")
     if build_id:
@@ -988,8 +1005,7 @@ def _rekey_mig_sibling(table, old_mig_key: str, new_mig_key: str, account_id: st
             ExpressionAttributeValues={":k": new_mig_key},
         )
     table.delete_item(Key={"item_key": old_mig_key})
-    logger.info("discover_scope[%s]: re-keyed migration item %s -> %s",
-                account_id or "hub", old_mig_key, new_mig_key)
+    logger.info("discover_scope: re-keyed one migration item alongside its inventory row")
     return True
 
 
