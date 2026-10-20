@@ -88,7 +88,7 @@ export default function SettingsPage() {
   const [org, setOrg] = useState('');
   const [secretRef, setSecretRef] = useState('');
   const [detectionMethod, setDetectionMethod] = useState<DetectionMethod>('tag');
-  // Tag that names the repository; honor a legacy repoTagKey when loading.
+  // Tag that names the repository; the default applies until a value is saved.
   const [repoTag, setRepoTag] = useState(DEFAULT_REPO_TAG);
   // Optional tag that names the release branch; empty = default branch.
   const [branchTag, setBranchTag] = useState('');
@@ -147,8 +147,8 @@ export default function SettingsPage() {
       setSecretRef(settings.secretRef || '');
       // Restore the stored detection method; anything other than 'ai' is 'tag'.
       setDetectionMethod(settings.detectionMethod === 'ai' ? 'ai' : 'tag');
-      // Honor the backend backfill and a legacy value directly.
-      setRepoTag(settings.repoTag || settings.repoTagKey || DEFAULT_REPO_TAG);
+      // An unset tag shows the default the backend applies.
+      setRepoTag(settings.repoTag || DEFAULT_REPO_TAG);
       setBranchTag(settings.branchTag || '');
     } catch (err) {
       setLoadError((err instanceof Error && err.message) || "The settings couldn't be fetched. Try again later.");

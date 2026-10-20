@@ -222,6 +222,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
         "org": "acme",
         "secretRef": "my-git-token-secret",
         "detectionMethod": "tag",
+        # Not a settings field (removed): dropped like any unknown key.
         "repoTagKey": "source-repo",
         # These must NEVER be persisted:
         "token": "should-be-dropped",
@@ -235,7 +236,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
     # Only the whitelisted keys (plus item_key/updated_at) are written.
     assert written["platform"] == "gitlab"
     assert written["secretRef"] == "my-git-token-secret"
-    assert written["repoTagKey"] == "source-repo"
+    assert "repoTagKey" not in written
     assert "updated_at" in written
     for forbidden in ("token", "tokenValue", "unknown"):
         assert forbidden not in written
@@ -244,11 +245,11 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
 
 def test_get_settings_returns_stored_item(monkeypatch):
     stored = {"item_key": api.SETTINGS_KEY, "platform": "github", "org": "acme",
-              "detectionMethod": "tag", "repoTagKey": "source-repo"}
+              "detectionMethod": "tag", "repoTag": "source-repo"}
     monkeypatch.setattr(api, "_table", lambda: _SettingsTable(item=stored))
     resp = api.handler({"action": "get_settings"})
     assert resp["settings"]["platform"] == "github"
-    assert resp["settings"]["repoTagKey"] == "source-repo"
+    assert resp["settings"]["repoTag"] == "source-repo"
 
 
 def test_get_settings_empty_when_absent(monkeypatch):
@@ -267,7 +268,7 @@ def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
         "detectionMethod": "tag",
         "repoTag": "Git:Repository",
         "branchTag": "git:branch",
-        # Still accepted for backward compatibility.
+        # Not a settings field (removed): dropped like any unknown key.
         "repoTagKey": "source-repo",
         # Must NEVER be persisted:
         "token": "should-be-dropped",
@@ -277,23 +278,23 @@ def test_put_settings_persists_repo_and_branch_tags(monkeypatch):
     written = table.put_item_arg
     assert written["repoTag"] == "Git:Repository"
     assert written["branchTag"] == "git:branch"
-    assert written["repoTagKey"] == "source-repo"
+    assert "repoTagKey" not in written
     assert resp["settings"]["repoTag"] == "Git:Repository"
     assert resp["settings"]["branchTag"] == "git:branch"
     assert "token" not in written
     assert "token" not in resp["settings"]
 
 
-def test_get_settings_backfills_repo_tag_from_legacy_key(monkeypatch):
-    # A row saved before the two-field split: only the legacy repoTagKey.
+def test_get_settings_does_not_backfill_repo_tag_from_removed_key(monkeypatch):
+    # A stored attribute that is not a settings field is returned as-is and
+    # never promoted to repoTag; the UI falls back to its default tag.
     stored = {"item_key": api.SETTINGS_KEY, "platform": "github", "org": "acme",
               "detectionMethod": "tag", "repoTagKey": "source-repo"}
     table = _SettingsTable(item=stored)
     monkeypatch.setattr(api, "_table", lambda: table)
     resp = api.handler({"action": "get_settings"})
-    # repoTag is surfaced from the legacy key for the UI.
-    assert resp["settings"]["repoTag"] == "source-repo"
-    # The stored row is untouched (no repoTag written back).
+    assert resp["settings"].get("repoTag") is None
+    # The stored row is untouched (nothing written back).
     assert table.put_item_arg is None
 
 

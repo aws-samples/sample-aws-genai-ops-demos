@@ -875,10 +875,8 @@ SETTINGS_KEY = "settings#git"
 #
 # repoTag  = the resource tag key whose value is the source repository.
 # branchTag = an OPTIONAL resource tag key whose value is the release branch.
-# repoTagKey is the legacy single-tag field; it is kept last so settings saved
-# before the two-field split still read and write (backward compatibility).
 _SETTINGS_ALLOWED = ("platform", "host", "org", "secretRef", "detectionMethod",
-                     "repoTag", "branchTag", "repoTagKey")
+                     "repoTag", "branchTag")
 
 
 def resolve_repo_from_tags(tags, repo_tag, branch_tag, org=None):
@@ -929,12 +927,6 @@ def get_settings(_body: dict) -> dict:
     """
     resp = _table().get_item(Key={"item_key": SETTINGS_KEY})
     settings = _decimals_to_native(resp.get("Item")) or {}
-    # Backward compatibility: a row saved before the two-field split carries only
-    # the legacy `repoTagKey`. Surface its value as `repoTag` on the response
-    # (read-only, like _fill_hub_display) so the UI that now reads `repoTag`
-    # still shows the previously saved tag. The stored row is left untouched.
-    if settings and settings.get("repoTagKey") and not settings.get("repoTag"):
-        settings["repoTag"] = settings["repoTagKey"]
     return {"settings": settings}
 
 

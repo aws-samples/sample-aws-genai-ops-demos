@@ -188,7 +188,6 @@ interface GitSettings {
   detectionMethod: DetectionMethod;
   repoTag?: string;          // tag key whose value is the source repository
   branchTag?: string;        // optional tag key whose value is the release branch
-  repoTagKey?: string;       // legacy single-tag field, kept for back-compat reads
   updated_at?: string;
 }
 
