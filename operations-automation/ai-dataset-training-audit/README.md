@@ -165,15 +165,18 @@ prefix mapping changes, update `agent/aws_utils.py`, the inline mapping in
 
 ```bash
 # CDK
-cd cdk && npx -y cdk destroy DatasetTrainingAudit-<region> --force -c aws:cdk:bundling-stacks=[]
+cd cdk && npx -y cdk destroy DatasetTrainingAudit-<region> --force -c imageTag=destroy
 
 # Terraform
 cd terraform && terraform destroy -var image_tag=<tag> -var region=<region> -auto-approve
 ```
 
-The `-c aws:cdk:bundling-stacks=[]` flag skips the image build on the destroy
-re-synth, so destroy needs no Docker daemon. Both paths remove the bucket (with
-its objects), the DynamoDB table, the log group, and the ECR repo.
+The `-c imageTag=destroy` flag makes the destroy re-synth reference an existing
+ECR image via the stack's imageTag escape hatch instead of building the
+container image, so destroy needs no Docker daemon. (Do not use
+`-c aws:cdk:bundling-stacks=[]`: the current CDK CLI rejects user-provided
+`aws:`-prefixed context keys.) Both paths remove the bucket (with its objects),
+the DynamoDB table, the log group, and the ECR repo.
 
 ## Catalog
 

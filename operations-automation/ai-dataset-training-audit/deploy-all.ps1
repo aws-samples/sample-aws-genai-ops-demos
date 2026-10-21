@@ -95,4 +95,4 @@ Write-Host "  aws logs tail $logGroup --region $region --follow"
 Write-Host "`nRead the report when the task stops:" -ForegroundColor Yellow
 Write-Host "  aws s3 ls s3://$outputBucket/reports/ --region $region"
 Write-Host ""
-Write-Host "  Cleanup: cd cdk; npx -y cdk destroy $stackName --force -c aws:cdk:bundling-stacks=[]" -ForegroundColor Gray
+Write-Host "  Cleanup: cd cdk; npx -y cdk destroy $stackName --force -c imageTag=destroy" -ForegroundColor Gray
