@@ -26,6 +26,7 @@ class ApiConstruct(Construct):
         user_pool: cognito.IUserPool,
         tools_functions: dict,
         reports_bucket: s3.IBucket,
+        jobs_table,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -35,38 +36,30 @@ class ApiConstruct(Construct):
             Path(__file__).resolve().parent.parent.parent.parent / "src"
         )
 
-        # Conversation handler Lambda (orchestrates Bedrock + tools)
-        self.conversation_fn = lambda_.Function(
-            self,
-            "ConversationHandler",
-            runtime=lambda_.Runtime.PYTHON_3_14,
-            handler="agent.handler",
-            code=lambda_.Code.from_asset(src_path),
-            timeout=Duration.seconds(120),
-            memory_size=1024,
-            environment={
-                "REPORTS_BUCKET": reports_bucket.bucket_name,
-                # Region-appropriate CRIS prefix (us./eu./apac./global.) resolved at
-                # synth time, so a deploy outside us-east-1 doesn't ship a Lambda whose
-                # Bedrock calls can never succeed (see #207).
-                "BEDROCK_MODEL_ID": get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0"),
-                "LIST_FINDINGS_FN": tools_functions["list_findings"].function_name,
-                "GET_FINDING_DETAILS_FN": tools_functions["get_finding_details"].function_name,
-                "GENERATE_POLICY_FN": tools_functions["generate_policy"].function_name,
-                "CHECK_DEPENDENCIES_FN": tools_functions["check_dependencies"].function_name,
-                "VALIDATE_POLICY_FN": tools_functions["validate_policy"].function_name,
-                "EXPORT_REPORT_FN": tools_functions["export_report"].function_name,
-                "GENERATE_ACTION_PLAN_FN": tools_functions["generate_action_plan"].function_name,
-                "COMPARE_ROLES_FN": tools_functions["compare_roles"].function_name,
-                "LIST_EXPORTS_FN": tools_functions["list_exports"].function_name,
-                "TRIAGE_ACCESS_KEYS_FN": tools_functions["triage_access_keys"].function_name,
-                "CROSS_ACCOUNT_IAM_CONTEXT_FN": tools_functions["cross_account_iam_context"].function_name,
-            },
-        )
+        # Environment shared by the conversation dispatcher AND the async
+        # worker — both need the tool-function names and the Bedrock model id.
+        _shared_env = {
+            "REPORTS_BUCKET": reports_bucket.bucket_name,
+            # Region-appropriate CRIS prefix (us./eu./apac./global.) resolved at
+            # synth time, so a deploy outside us-east-1 doesn't ship a Lambda whose
+            # Bedrock calls can never succeed (see #207).
+            "BEDROCK_MODEL_ID": get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0"),
+            "LIST_FINDINGS_FN": tools_functions["list_findings"].function_name,
+            "GET_FINDING_DETAILS_FN": tools_functions["get_finding_details"].function_name,
+            "GENERATE_POLICY_FN": tools_functions["generate_policy"].function_name,
+            "CHECK_DEPENDENCIES_FN": tools_functions["check_dependencies"].function_name,
+            "VALIDATE_POLICY_FN": tools_functions["validate_policy"].function_name,
+            "EXPORT_REPORT_FN": tools_functions["export_report"].function_name,
+            "GENERATE_ACTION_PLAN_FN": tools_functions["generate_action_plan"].function_name,
+            "COMPARE_ROLES_FN": tools_functions["compare_roles"].function_name,
+            "LIST_EXPORTS_FN": tools_functions["list_exports"].function_name,
+            "TRIAGE_ACCESS_KEYS_FN": tools_functions["triage_access_keys"].function_name,
+            "CROSS_ACCOUNT_IAM_CONTEXT_FN": tools_functions["cross_account_iam_context"].function_name,
+            "JOBS_TABLE": jobs_table.table_name,
+        }
 
-        # Bedrock permissions for conversation Lambda
-        self.conversation_fn.add_to_role_policy(
-            iam.PolicyStatement(
+        def _bedrock_policy() -> iam.PolicyStatement:
+            return iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
                     "bedrock:InvokeModel",
@@ -74,9 +67,6 @@ class ApiConstruct(Construct):
                 ],
                 resources=[
                     "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
-                    # All CRIS geo-prefixes get_bedrock_model_id() can resolve to
-                    # (us./eu./apac./global.), so a deploy outside us-east-1 doesn't
-                    # get an AccessDenied on an otherwise-correct model ID (see #207).
                     "arn:aws:bedrock:*::foundation-model/us.anthropic.claude-*",
                     "arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-*",
                     "arn:aws:bedrock:*::foundation-model/apac.anthropic.claude-*",
@@ -87,11 +77,55 @@ class ApiConstruct(Construct):
                     "arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-*",
                 ],
             )
+
+        # Async worker Lambda — runs the slow model path (two Bedrock rounds)
+        # OFF the request, with the full 120s budget, so it never hits the API
+        # Gateway 29s ceiling. Invoked asynchronously by the dispatcher below.
+        # Same source asset, different handler (agent_worker.handler).
+        self.worker_fn = lambda_.Function(
+            self,
+            "ConversationWorker",
+            runtime=lambda_.Runtime.PYTHON_3_14,
+            handler="agent_worker.handler",
+            code=lambda_.Code.from_asset(src_path),
+            timeout=Duration.seconds(120),
+            memory_size=1024,
+            environment=dict(_shared_env),
         )
+        self.worker_fn.add_to_role_policy(_bedrock_policy())
+        for fn in tools_functions.values():
+            fn.grant_invoke(self.worker_fn)
+        jobs_table.grant_read_write_data(self.worker_fn)
+
+        # Conversation handler Lambda (dispatcher: short-circuits inline, hands
+        # the slow path to the worker). Env also carries the worker's name so
+        # it can async-invoke it.
+        self.conversation_fn = lambda_.Function(
+            self,
+            "ConversationHandler",
+            runtime=lambda_.Runtime.PYTHON_3_14,
+            handler="agent.handler",
+            code=lambda_.Code.from_asset(src_path),
+            timeout=Duration.seconds(120),
+            memory_size=1024,
+            environment={
+                **_shared_env,
+                # Dispatcher needs the worker's name to async-invoke it.
+                "WORKER_FUNCTION_NAME": self.worker_fn.function_name,
+            },
+        )
+
+        # Bedrock permissions for conversation Lambda (the inline-fallback path
+        # still runs the model itself when async plumbing is unavailable).
+        self.conversation_fn.add_to_role_policy(_bedrock_policy())
 
         # Allow conversation Lambda to invoke tool Lambdas
         for fn in tools_functions.values():
             fn.grant_invoke(self.conversation_fn)
+
+        # Dispatcher needs to write job rows and fire the worker asynchronously.
+        jobs_table.grant_read_write_data(self.conversation_fn)
+        self.worker_fn.grant_invoke(self.conversation_fn)
 
         # Session-start capability probe (#171 phase C). Runs the same
         # read-only checks deploy-all.sh runs at deploy time (#170) but from
@@ -200,6 +234,20 @@ class ApiConstruct(Construct):
         conversation_resource = api.root.add_resource("conversation")
         conversation_resource.add_method(
             "POST",
+            apigw.LambdaIntegration(self.conversation_fn),
+            authorizer=authorizer,
+            authorization_type=apigw.AuthorizationType.COGNITO,
+        )
+
+        # GET /conversation/status/{job_id} — async job poll. The dispatcher
+        # returns 202 + job_id for the slow model path; the frontend polls this
+        # until the job is DONE/ERROR. Served by the same conversation Lambda
+        # (its GET branch reads the DynamoDB job row).
+        status_resource = conversation_resource.add_resource("status").add_resource(
+            "{job_id}"
+        )
+        status_resource.add_method(
+            "GET",
             apigw.LambdaIntegration(self.conversation_fn),
             authorizer=authorizer,
             authorization_type=apigw.AuthorizationType.COGNITO,
