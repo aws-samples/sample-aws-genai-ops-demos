@@ -1,5 +1,6 @@
 # CDK
 cdk.out*
+cdk.context.json
 node_modules/
 
 # Python

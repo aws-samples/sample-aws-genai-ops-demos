@@ -64,6 +64,8 @@ $clusterName   = Get-StackOutput "ClusterName"
 $taskSg        = Get-StackOutput "TaskSecurityGroupId"
 $publicSubnets = Get-StackOutput "PublicSubnetIds"
 $taskDef       = Get-StackOutput "TaskDefinitionArn"
+# Log group name is fixed by the stack (lib/dataset-training-audit-stack.ts): /dataset-training-audit/<region>.
+$logGroup      = "/dataset-training-audit/$region"
 
 # 4. User-friendly summary + the exact run-task command. The network config MUST
 #    pass subnets, securityGroups AND assignPublicIp=ENABLED, or the public-subnet
@@ -83,9 +85,14 @@ Write-Host "    --launch-type FARGATE ``"
 Write-Host "    --task-definition $taskDef ``"
 Write-Host "    --region $region ``"
 Write-Host "    --network-configuration 'awsvpcConfiguration={subnets=[$publicSubnets],securityGroups=[$taskSg],assignPublicIp=ENABLED}' ``"
-Write-Host "    --overrides '{\""containerOverrides\"":[{\""name\"":\""DartContainer\"",\""command\"":[\""python\"",\""agent.py\"",\""Check s3://$outputBucket/train.jsonl for llama3-70b fine-tuning\""]}]}'"
+Write-Host "    --overrides '{\""containerOverrides\"":[{\""name\"":\""DartContainer\"",\""command\"":[\""Check s3://$outputBucket/train.jsonl for llama3-70b fine-tuning\""]}]}'"
 Write-Host ""
 Write-Host "  First upload a dataset under s3://$outputBucket/ (the task reads its own" -ForegroundColor Gray
 Write-Host "  output bucket by default). To scan a dataset in another bucket, see the" -ForegroundColor Gray
 Write-Host "  README section 'Scanning a dataset in your own S3 bucket'." -ForegroundColor Gray
+Write-Host "`nWatch the run (logs stream here):" -ForegroundColor Yellow
+Write-Host "  aws logs tail $logGroup --region $region --follow"
+Write-Host "`nRead the report when the task stops:" -ForegroundColor Yellow
+Write-Host "  aws s3 ls s3://$outputBucket/reports/ --region $region"
+Write-Host ""
 Write-Host "  Cleanup: cd cdk; npx -y cdk destroy $stackName --force -c aws:cdk:bundling-stacks=[]" -ForegroundColor Gray
