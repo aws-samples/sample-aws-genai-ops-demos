@@ -209,6 +209,13 @@ export class DatasetTrainingAuditStack extends cdk.Stack {
       containerImage = ecs.ContainerImage.fromDockerImageAsset(asset);
     }
 
+    // Path-safety allowlists (comma-separated; empty = allow any). Opt-in via context,
+    // mirroring the Terraform allowed_s3_buckets / allowed_s3_prefixes / allowed_local_base_dir
+    // variables so both IaC paths set the same three env vars the agent's Config reads.
+    const allowedS3Buckets: string = this.node.tryGetContext('allowedS3Buckets') ?? '';
+    const allowedS3Prefixes: string = this.node.tryGetContext('allowedS3Prefixes') ?? '';
+    const allowedLocalBaseDir: string = this.node.tryGetContext('allowedLocalBaseDir') ?? '';
+
     taskDefinition.addContainer('DartContainer', {
       image: containerImage,
       environment: {
@@ -221,6 +228,9 @@ export class DatasetTrainingAuditStack extends cdk.Stack {
         MAX_TOKENS: '4096',
         DEFAULT_MODE: 'step-by-step',
         DEDUP_SIMILARITY_THRESHOLD: '0.85',
+        ALLOWED_S3_BUCKETS: allowedS3Buckets,
+        ALLOWED_S3_PREFIXES: allowedS3Prefixes,
+        ALLOWED_LOCAL_BASE_DIR: allowedLocalBaseDir,
       },
       healthCheck: {
         command: ['CMD-SHELL', "python -c 'import agent' || exit 1"],
