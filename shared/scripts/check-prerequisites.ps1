@@ -117,23 +117,36 @@ if ($RequireSAM) {
     }
 }
 
-# Check Docker (if required). A SAM app whose build must run in a container
-# (`sam build --use-container`) needs a RUNNING Docker engine — on Windows this is the
-# correct path for a makefile-SAM MCP server (the container is Linux, so the build dodges
-# missing `make` and win32-only wheels). Checks the daemon responds, not just that the CLI
-# is on PATH.
+# Check for a running container engine (if required). A SAM app whose build must run in a
+# container (`sam build --use-container`), or a CDK DockerImageAsset / local `docker build`,
+# needs a RUNNING container engine. Docker and Finch are both accepted; the check confirms the
+# daemon/VM responds, not just that the CLI is on PATH.
+#
+# Finch note: with Finch (and no Docker), CDK/SAM still shell out to a binary named `docker`.
+# Point them at Finch for the deploy with `$env:CDK_DOCKER = "finch"` (CDK) or a `docker`->`finch`
+# shim on PATH. This check passes on Finch alone; the deploy tooling needs that override.
 if ($RequireDocker) {
-    Write-Host "`nChecking Docker..." -ForegroundColor Yellow
+    Write-Host "`nChecking container engine (Docker or Finch)..." -ForegroundColor Yellow
     $dockerOk = $false
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         $null = docker info 2>$null
         $dockerOk = ($LASTEXITCODE -eq 0)
     }
+    $finchOk = $false
+    if (-not $dockerOk -and (Get-Command finch -ErrorAction SilentlyContinue)) {
+        $null = finch info 2>$null
+        $finchOk = ($LASTEXITCODE -eq 0)
+    }
     if ($dockerOk) {
         Write-Host "      OK: Docker is installed and the engine is running" -ForegroundColor Green
+    } elseif ($finchOk) {
+        Write-Host "      OK: Finch is installed and its VM is running" -ForegroundColor Green
+        Write-Host "      Using Finch: for CDK deploys set '`$env:CDK_DOCKER = \"finch\"' so the" -ForegroundColor Cyan
+        Write-Host "      image build/push uses Finch (CDK/SAM otherwise call a 'docker' binary)." -ForegroundColor Cyan
     } else {
-        Write-Host "      ERROR: Docker is required and its engine must be running." -ForegroundColor Red
-        Write-Host "      Install Docker Desktop, start it, then re-run. Verify with: docker info" -ForegroundColor Cyan
+        Write-Host "      ERROR: A running container engine (Docker or Finch) is required." -ForegroundColor Red
+        Write-Host "      Docker: install Docker Desktop and start it, verify with 'docker info'." -ForegroundColor Cyan
+        Write-Host "      Finch:  'finch vm start', verify with 'finch info', then set `$env:CDK_DOCKER = 'finch'." -ForegroundColor Cyan
         exit 1
     }
 }

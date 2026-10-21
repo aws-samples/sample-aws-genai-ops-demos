@@ -418,6 +418,19 @@ import { getRegion, getAccountId } from '../../../../shared/utils/aws-utils';
 source ../../shared/scripts/check-prerequisites.sh agentcore 2.31.13
 ```
 
+#### Container engine — Docker or Finch (`--require-docker` / `-RequireDocker`)
+
+A demo that builds a container image locally (a CDK `DockerImageAsset`, a Terraform-path `docker build`/`docker push`, or `sam build --use-container`) must pass `--require-docker` (`-RequireDocker` on PowerShell) to the shared prerequisites check. That check accepts **either Docker or Finch** as the running engine — it probes `docker info`, then `finch info`.
+
+**Finch caveat (failure-derived):** CDK and SAM shell out to a binary literally named `docker`, so a running Finch engine alone is enough for the prerequisites check but not for the *build* step. On a Finch-only machine the user must also point the tooling at Finch for the deploy:
+
+- **CDK**: `export CDK_DOCKER=finch` (bash) / `$env:CDK_DOCKER = "finch"` (PowerShell), or a `docker`→`finch` shim on `PATH`.
+- The prerequisites check prints this hint when it detects Finch rather than Docker.
+
+Demos that build the image **in the cloud** (CodeBuild → ECR, as several demos do) need no local engine at all and should not pass `--require-docker`.
+
+**Docker-free `cdk destroy`.** `cdk destroy` re-synthesizes the app, which re-evaluates a `DockerImageAsset` and can trigger a local image build on teardown. Give the stack an `imageTag` context escape hatch (reference an existing ECR image when `-c imageTag=<tag>` is set, build the asset otherwise) and run destroy with `-c imageTag=destroy`. Do **not** use `-c aws:cdk:bundling-stacks=[]`: the current CDK CLI rejects user-provided `aws:`-prefixed context keys (`User-provided context cannot use keys prefixed with 'aws:'`), which aborts the destroy.
+
 **Shared CDK deployment** (always, one call per stack). Never call `cdk deploy`, `cdk bootstrap` or `cdk destroy` directly from a demo script:
 ```powershell
 & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "infrastructure/cdk" -StackName "MyStack-$region"
