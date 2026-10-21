@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -48,6 +49,11 @@ def _load_system_prompt() -> str:
 
 
 SYSTEM_PROMPT = _load_system_prompt()
+
+# Last structured report produced by the generate_preflight_report tool during an agent
+# run. Captured here so the (free-text) agent path can persist the verdict/score on the
+# audit record from clean structured data rather than scraping the rendered Markdown.
+_last_structured_report: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +175,7 @@ def generate_preflight_report(
     def _parse(value: Any) -> dict[str, Any]:
         return json.loads(value) if isinstance(value, str) else value
 
-    return _report_mod.generate_preflight_report(
+    report = _report_mod.generate_preflight_report(
         dataset_path,
         target_model,
         _parse(profile_result),
@@ -179,6 +185,11 @@ def generate_preflight_report(
         _parse(cost_result),
         run_id,
     )
+    # Remember the structured verdict/score so run_preflight can persist them on the
+    # audit record without re-parsing the agent's free-text answer.
+    global _last_structured_report
+    _last_structured_report = report
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +357,37 @@ def _persist_report_to_s3(run_id: str, report_markdown: str) -> None:
         )
 
 
+# Verdict/score extraction against the known rendered report format. The templated
+# narrative renders "**Quality score:** NN/100" and "**Verdict:** GO WITH FIXES"; the
+# _render_report header renders "Quality score: NN/100 — Recommendation: NO-GO". Both are
+# covered by these narrow, anchored patterns.
+_SCORE_RE = re.compile(r"[Qq]uality\s*score:\**\s*(\d{1,3})\s*/\s*100")
+_VERDICT_RE = re.compile(
+    r"(?:Verdict|Recommendation):\**\s*(GO WITH FIXES|NO-GO|GO)\b"
+)
+
+
+def _extract_verdict_and_score(text: str) -> tuple[str | None, int | None]:
+    """Best-effort parse of verdict + 0-100 score from a rendered report.
+
+    Returns ``(None, None)`` if either cannot be confidently extracted. Never raises.
+    """
+    try:
+        verdict_match = _VERDICT_RE.search(text)
+        score_match = _SCORE_RE.search(text)
+        verdict = verdict_match.group(1) if verdict_match else None
+        score: int | None = None
+        if score_match:
+            value = int(score_match.group(1))
+            if 0 <= value <= 100:
+                score = value
+        if verdict is None or score is None:
+            return None, None
+        return verdict, score
+    except Exception:  # noqa: BLE001 - extraction is best-effort, never fails the run
+        return None, None
+
+
 def run_preflight(user_message: str, run_id: str | None = None) -> str:
     """Run a pre-flight audit and return the Markdown report text.
 
@@ -357,26 +399,69 @@ def run_preflight(user_message: str, run_id: str | None = None) -> str:
     if run_id is None:
         run_id = f"dart-{uuid.uuid4().hex[:8]}"
 
+    global _last_structured_report
+    _last_structured_report = None
+
     if Config.OFFLINE:
         dataset_path = _extract_dataset_path(user_message)
         target_model = _extract_target_model(user_message)
         report = _run_offline_chain(dataset_path, target_model, run_id)
-        return _render_report(report)
+        rendered = _render_report(report)
+        # Offline path has the structured verdict/score cleanly in hand.
+        _write_completion_audit(
+            run_id,
+            recommendation=report.get("recommendation"),
+            quality_score=report.get("quality_score"),
+            dataset_path=dataset_path,
+            target_model=target_model,
+        )
+        return rendered
 
     agent = build_agent()
     result = agent(user_message)
     report_text = str(result)
 
     _persist_report_to_s3(run_id, report_text)
+    # Prefer the structured report captured from the generate_preflight_report tool; fall
+    # back to a narrow parse of the rendered text, then to status-only.
+    if _last_structured_report is not None:
+        recommendation = _last_structured_report.get("recommendation")
+        quality_score = _last_structured_report.get("quality_score")
+    else:
+        recommendation, quality_score = _extract_verdict_and_score(report_text)
+    _write_completion_audit(
+        run_id, recommendation=recommendation, quality_score=quality_score
+    )
+    return report_text
+
+
+def _write_completion_audit(
+    run_id: str,
+    recommendation: str | None = None,
+    quality_score: int | None = None,
+    dataset_path: str | None = None,
+    target_model: str | None = None,
+) -> None:
+    """Best-effort ``status="completed"`` audit write carrying the verdict/score.
+
+    Import and call are both swallowed so a missing table or import can never fail a
+    successful run. ``recommendation``/``quality_score`` are passed through as-is; when
+    ``None`` the audit row simply omits them (the error path relies on this)."""
     try:
         from audit import write_audit_record
 
-        write_audit_record(run_id=run_id, status="completed")
+        write_audit_record(
+            run_id=run_id,
+            status="completed",
+            recommendation=recommendation,
+            quality_score=quality_score,
+            dataset_path=dataset_path,
+            target_model=target_model,
+        )
     except Exception as err:  # noqa: BLE001 - audit import/call is best-effort
         logger.error(
             json.dumps({"event": "audit_error", "run_id": run_id, "error": str(err)})
         )
-    return report_text
 
 
 def _render_report(report: dict[str, Any]) -> str:

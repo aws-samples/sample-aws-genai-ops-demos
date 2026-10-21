@@ -131,3 +131,111 @@ class _FakeBoto3:
 
     def client(self, service: str, region_name: str = ""):
         return self._factory(service, region_name)
+
+
+# ---------------------------------------------------------------------------
+# Audit-trail record wiring (PR review feedback): a completed run must persist the
+# verdict + quality score, not just status. Offline path has them cleanly; the agent
+# (free-text) path recovers them from the captured structured report or a narrow parse.
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_dynamodb(monkeypatch) -> FakeDynamoDBClient:
+    """Route boto3.client('dynamodb') to a recording stub (S3 stubbed too); return DDB."""
+    import sys
+
+    ddb = FakeDynamoDBClient()
+
+    def _client(service: str, region_name: str = ""):  # noqa: ARG001
+        if service == "dynamodb":
+            return ddb
+        if service == "s3":
+            return FakeS3Client()
+        raise AssertionError(f"unexpected client: {service}")
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3(_client))
+    return ddb
+
+
+def test_offline_run_writes_verdict_and_score(fixture_path: str, monkeypatch) -> None:
+    """Offline completion writes recommendation + quality_score to the audit row."""
+    monkeypatch.setattr(Config, "OFFLINE", True)
+    monkeypatch.setattr(Config, "AUDIT_TABLE", "dart-test-table")
+    monkeypatch.setattr(Config, "OUTPUT_BUCKET", "")  # skip S3 persistence
+    ddb = _install_fake_dynamodb(monkeypatch)
+
+    report_text = agent_mod.run_preflight(
+        f"Check {fixture_path} for llama3-70b fine-tuning", run_id="dart-offline"
+    )
+
+    assert "NO-GO" in report_text
+    assert len(ddb.items) == 1
+    item = ddb.items[0]["Item"]
+    assert item["status"] == {"S": "completed"}
+    assert item["recommendation"] == {"S": "NO-GO"}
+    assert item["quality_score"] == {"N": "49"}
+
+
+def test_agent_path_writes_verdict_from_structured_report(monkeypatch) -> None:
+    """Agent path persists the verdict/score captured from the report tool."""
+    monkeypatch.setattr(Config, "OFFLINE", False)
+    monkeypatch.setattr(Config, "AUDIT_TABLE", "dart-test-table")
+    monkeypatch.setattr(Config, "OUTPUT_BUCKET", "dart-test-bucket")
+    ddb = _install_fake_dynamodb(monkeypatch)
+
+    def _fake_agent(message: str) -> str:
+        # Simulate the generate_preflight_report tool having run during the loop.
+        agent_mod._last_structured_report = {
+            "recommendation": "GO WITH FIXES",
+            "quality_score": 72,
+        }
+        return "Here is the audit. Verdict: GO WITH FIXES. Quality Score: 72/100."
+
+    monkeypatch.setattr(agent_mod, "build_agent", lambda: _fake_agent)
+
+    agent_mod.run_preflight("audit s3://bucket/data.jsonl", run_id="dart-agent")
+
+    item = ddb.items[0]["Item"]
+    assert item["status"] == {"S": "completed"}
+    assert item["recommendation"] == {"S": "GO WITH FIXES"}
+    assert item["quality_score"] == {"N": "72"}
+
+
+def test_agent_path_extracts_verdict_from_free_text(monkeypatch) -> None:
+    """With no structured report, a narrow parse of the free text recovers verdict/score."""
+    monkeypatch.setattr(Config, "OFFLINE", False)
+    monkeypatch.setattr(Config, "AUDIT_TABLE", "dart-test-table")
+    monkeypatch.setattr(Config, "OUTPUT_BUCKET", "dart-test-bucket")
+    ddb = _install_fake_dynamodb(monkeypatch)
+
+    def _fake_agent(message: str) -> str:
+        # No structured report captured; only rendered-style free text is available.
+        return "## DART Pre-flight Audit\n\n**Verdict:** GO  \n**Quality score:** 88/100\n"
+
+    monkeypatch.setattr(agent_mod, "build_agent", lambda: _fake_agent)
+
+    agent_mod.run_preflight("audit s3://bucket/data.jsonl", run_id="dart-parse")
+
+    item = ddb.items[0]["Item"]
+    assert item["recommendation"] == {"S": "GO"}
+    assert item["quality_score"] == {"N": "88"}
+
+
+def test_agent_path_falls_back_to_status_only(monkeypatch) -> None:
+    """Unparseable free text falls back to status-only; no crash, null verdict/score."""
+    monkeypatch.setattr(Config, "OFFLINE", False)
+    monkeypatch.setattr(Config, "AUDIT_TABLE", "dart-test-table")
+    monkeypatch.setattr(Config, "OUTPUT_BUCKET", "dart-test-bucket")
+    ddb = _install_fake_dynamodb(monkeypatch)
+
+    def _fake_agent(message: str) -> str:
+        return "The dataset was reviewed and no structured verdict is available here."
+
+    monkeypatch.setattr(agent_mod, "build_agent", lambda: _fake_agent)
+
+    agent_mod.run_preflight("audit s3://bucket/data.jsonl", run_id="dart-fallback")
+
+    item = ddb.items[0]["Item"]
+    assert item["status"] == {"S": "completed"}
+    assert "recommendation" not in item
+    assert "quality_score" not in item
