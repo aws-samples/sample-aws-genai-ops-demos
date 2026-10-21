@@ -71,7 +71,10 @@ terraform init -input=false
 
 # 4. Pass 1 - ECR repository only (nothing references a not-yet-pushed image).
 echo -e "\n\033[0;33m[2/4] terraform apply (ECR repository only)...\033[0m"
-terraform apply -target=aws_ecr_repository.dart -var "region=${region}" -auto-approve -input=false
+# image_tag is required with no default; Terraform validates all root variables
+# even for a -target apply, so pass 1 must supply a placeholder. The task def that
+# consumes the image is not created until pass 2, so this value is never used here.
+terraform apply -target=aws_ecr_repository.dart -var "region=${region}" -var "image_tag=bootstrap" -auto-approve -input=false
 REPO_URL="$(terraform output -raw ecr_repository_url)"
 REGISTRY="${REPO_URL%%/*}"
 
@@ -110,9 +113,14 @@ echo "    --launch-type FARGATE \\"
 echo "    --task-definition ${task_def} \\"
 echo "    --region ${region} \\"
 echo "    --network-configuration 'awsvpcConfiguration={subnets=[${public_subnets}],securityGroups=[${task_sg}],assignPublicIp=ENABLED}' \\"
-echo "    --overrides '{\"containerOverrides\":[{\"name\":\"DartContainer\",\"command\":[\"python\",\"agent.py\",\"Check s3://'\"${output_bucket}\"'/train.jsonl for llama3-70b fine-tuning\"]}]}'"
+echo "    --overrides '{\"containerOverrides\":[{\"name\":\"DartContainer\",\"command\":[\"Check s3://'\"${output_bucket}\"'/train.jsonl for llama3-70b fine-tuning\"]}]}'"
 echo ""
 echo -e "\033[0;90m  First upload a dataset under s3://${output_bucket}/ (the task reads its own\033[0m"
 echo -e "\033[0;90m  output bucket by default). To scan a dataset in another bucket, see the\033[0m"
 echo -e "\033[0;90m  README section 'Scanning a dataset in your own S3 bucket'.\033[0m"
+echo -e "\n\033[0;33mWatch the run (logs stream here):\033[0m"
+echo "  aws logs tail /dataset-training-audit/${region} --region ${region} --follow"
+echo -e "\n\033[0;33mRead the report when the task stops:\033[0m"
+echo "  aws s3 ls s3://${output_bucket}/reports/ --region ${region}"
+echo ""
 echo -e "\033[0;90m  Cleanup: cd terraform && terraform destroy -var image_tag=${IMAGE_TAG} -var region=${region} -auto-approve\033[0m"

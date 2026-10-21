@@ -70,7 +70,10 @@ terraform init -input=false
 
 # 4. Pass 1 - ECR repository only (nothing references a not-yet-pushed image).
 Write-Host "`n[2/4] terraform apply (ECR repository only)..." -ForegroundColor Yellow
-terraform apply -target=aws_ecr_repository.dart -var "region=$region" -auto-approve -input=false
+# image_tag is required with no default; Terraform validates all root variables
+# even for a -target apply, so pass 1 must supply a placeholder. The task def that
+# consumes the image is not created until pass 2, so this value is never used here.
+terraform apply -target=aws_ecr_repository.dart -var "region=$region" -var "image_tag=bootstrap" -auto-approve -input=false
 $repoUrl  = terraform output -raw ecr_repository_url
 $registry = $repoUrl.Split('/')[0]
 
@@ -109,9 +112,14 @@ Write-Host "    --launch-type FARGATE ``"
 Write-Host "    --task-definition $taskDef ``"
 Write-Host "    --region $region ``"
 Write-Host "    --network-configuration 'awsvpcConfiguration={subnets=[$publicSubnets],securityGroups=[$taskSg],assignPublicIp=ENABLED}' ``"
-Write-Host "    --overrides '{\""containerOverrides\"":[{\""name\"":\""DartContainer\"",\""command\"":[\""python\"",\""agent.py\"",\""Check s3://$outputBucket/train.jsonl for llama3-70b fine-tuning\""]}]}'"
+Write-Host "    --overrides '{\""containerOverrides\"":[{\""name\"":\""DartContainer\"",\""command\"":[\""Check s3://$outputBucket/train.jsonl for llama3-70b fine-tuning\""]}]}'"
 Write-Host ""
 Write-Host "  First upload a dataset under s3://$outputBucket/ (the task reads its own" -ForegroundColor Gray
 Write-Host "  output bucket by default). To scan a dataset in another bucket, see the" -ForegroundColor Gray
 Write-Host "  README section 'Scanning a dataset in your own S3 bucket'." -ForegroundColor Gray
+Write-Host "`nWatch the run (logs stream here):" -ForegroundColor Yellow
+Write-Host "  aws logs tail /dataset-training-audit/$region --region $region --follow"
+Write-Host "`nRead the report when the task stops:" -ForegroundColor Yellow
+Write-Host "  aws s3 ls s3://$outputBucket/reports/ --region $region"
+Write-Host ""
 Write-Host "  Cleanup: cd terraform; terraform destroy -var image_tag=$imageTag -var region=$region -auto-approve" -ForegroundColor Gray
