@@ -11,9 +11,12 @@
 deploy_command: ["./deploy-all.sh"]
 
 # Teardown. The stack is named explicitly so destroy targets exactly the stack
-# in `stacks`. `-c aws:cdk:bundling-stacks=[]` skips the DockerImageAsset build
-# on the destroy re-synth, so destroy needs no Docker daemon or AWS image build.
-destroy_command: ["npx", "-y", "cdk", "destroy", "DatasetTrainingAudit-<region>", "--force", "--no-cli-pager", "-c", "aws:cdk:bundling-stacks=[]"]
+# in `stacks`. `-c imageTag=destroy` makes the destroy re-synth reference an
+# existing ECR image via the stack's imageTag escape hatch instead of building
+# the DockerImageAsset, so destroy needs no Docker daemon and no image build.
+# (The banned `aws:`-prefixed bundling-stacks flag is rejected by the CDK CLI,
+# so it must not be used here.)
+destroy_command: ["npx", "-y", "cdk", "destroy", "DatasetTrainingAudit-<region>", "--force", "--no-cli-pager", "-c", "imageTag=destroy"]
 
 # This demo uses cdk/, not the default infrastructure/cdk/.
 destroy_subdir: "cdk"
