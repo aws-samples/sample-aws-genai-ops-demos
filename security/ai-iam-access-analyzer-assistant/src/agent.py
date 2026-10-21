@@ -772,6 +772,36 @@ _CR_ROLE_NAME = re.compile(
     re.IGNORECASE,
 )
 
+# Comparative / multi-entity phrasing that a single-role CR short-circuit must
+# NOT try to handle. "compare ... and draft a change request for whichever is
+# safer", "X vs Y", "the two users", "both roles" — these are genuinely
+# multi-step requests for the model path, not a one-role deterministic CR.
+# Previously the CR short-circuit fired on these and extracted a bogus role
+# name (e.g. "two" from "the two users"), producing a "Role 'two' not found"
+# document instead of the comparison the user asked for (found in live
+# testing). Now these fall through to the async model path, which is no longer
+# at risk of the 29s timeout the short-circuit was built to avoid.
+_CR_COMPARATIVE = re.compile(
+    r"\b(?:compare|comparison|versus|vs\.?|whichever|either|"
+    r"both|the\s+two|two\s+(?:users?|roles?|identities)|"
+    r"safer\s+to\s+(?:remove|delete)|which\s+(?:one|of))\b",
+    re.IGNORECASE,
+)
+
+# Captures that are English filler, not real IAM entity names. A role name
+# that happens to equal one of these is implausible; far more likely the
+# regex latched onto a determiner/quantifier ("the", "two", "my"). When the
+# capture is one of these, treat the CR request as unnamed and fall through.
+_CR_ROLE_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "my", "our", "your", "their", "this", "that",
+        "these", "those", "it", "them", "one", "two", "three", "both",
+        "all", "any", "each", "every", "some", "which", "whichever",
+        "either", "neither", "user", "users", "role", "roles", "identity",
+        "identities", "key", "keys", "account", "and", "or",
+    }
+)
+
 # Regex for deterministic "generate an action plan" style prompts. The tool
 # already produces a fully structured plan, so we can render it directly and
 # skip both Bedrock round trips (planning + synthesis) that would otherwise
@@ -2818,11 +2848,25 @@ def _shortcircuit_change_request(user_message: str):
     if not _CHANGE_REQUEST_INTENT.search(user_message):
         return None
 
+    # Conservative, like the cross-account short-circuit: a single-role CR is
+    # the WRONG handler for a comparative / multi-entity request ("compare ...
+    # whichever is safer", "the two users", "X vs Y"). Fall through to the
+    # model path (now async, so no 29s risk) rather than extract a bogus
+    # single entity from the phrasing.
+    if _CR_COMPARATIVE.search(user_message):
+        return None
+
     role_match = _CR_ROLE_NAME.search(user_message)
     if not role_match:
         # No explicit subject — let the model ask which role rather than guess.
         return None
     role_name = role_match.group(1)
+
+    # Guard against latching onto a determiner/quantifier ("the", "two", "my")
+    # instead of a real role name. If the capture is English filler, treat the
+    # request as unnamed and fall through to the model.
+    if role_name.lower() in _CR_ROLE_STOPWORDS:
+        return None
 
     # Build the ARN the tool expects. _get_entity_type keys off the ":role/"
     # segment, and _analyze_role_dependencies derives the role name from the
