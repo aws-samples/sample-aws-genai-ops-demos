@@ -40,6 +40,7 @@ class IamAnalyzerAssistantStack(Stack):
             user_pool=auth.user_pool,
             tools_functions=tools.functions,
             reports_bucket=storage.reports_bucket,
+            jobs_table=storage.jobs_table,
         )
 
         # Frontend hosting (CloudFront + S3)

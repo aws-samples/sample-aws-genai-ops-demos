@@ -157,5 +157,51 @@ class HandlerChangeRequestShortCircuitTest(unittest.TestCase):
         self.assertIn("LonelyRole", doc)
 
 
+class ChangeRequestConservativeGuardTest(unittest.TestCase):
+    """Regression guards for the live-test Test 3 failure: a comparative,
+    multi-entity prompt must NOT be swallowed by the single-role CR
+    short-circuit (which extracted "two" from "the two users" and produced a
+    'Role two not found' document). These must fall through to the model."""
+
+    def test_comparative_prompt_falls_through(self):
+        msg = (
+            "compare the blast radius of deleting the two users that each have "
+            "two access keys, and draft a change request for whichever is safer "
+            "to remove"
+        )
+        # The exact live-test prompt must NOT short-circuit.
+        self.assertIsNone(agent._shortcircuit_change_request(msg))
+
+    def test_other_comparative_phrasings_fall_through(self):
+        for msg in [
+            "draft a change request comparing RoleA vs RoleB",
+            "change request for whichever of these roles is riskier",
+            "compare both roles and draft a change request",
+            "change request for the two roles",
+        ]:
+            with self.subTest(msg=msg):
+                self.assertIsNone(agent._shortcircuit_change_request(msg))
+
+    def test_stopword_capture_falls_through(self):
+        # "the two users" style — the capture would be a determiner/quantifier.
+        for msg in [
+            "generate a change request for the two users",
+            "create a change request for my users",
+        ]:
+            with self.subTest(msg=msg):
+                self.assertIsNone(agent._shortcircuit_change_request(msg))
+
+    def test_legit_named_role_still_fires(self):
+        """The conservative guards must not break the real case: a CR for a
+        specifically named role still short-circuits."""
+        with patch.object(agent, "invoke_tool", return_value=_sample_dependencies()) as invoke:
+            out = agent._shortcircuit_change_request(
+                "generate a change request for deleting CloudSecAuditRole"
+            )
+        self.assertIsNotNone(out)
+        invoke.assert_called_once()
+        self.assertIn("CloudSecAuditRole", out["response"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,81 @@ interface MessageHistory {
   content: string;
 }
 
+/**
+ * Async job envelope. The slow model path returns 202 + { job_id } instead
+ * of blocking the request past the API Gateway 29s ceiling; the client then
+ * polls GET /conversation/status/{job_id} until the job is terminal. Fast
+ * deterministic short-circuits still return 200 with the result inline, so
+ * most turns never touch this path.
+ */
+interface JobAccepted {
+  job_id: string;
+  status: "RUNNING";
+}
+
+interface JobStatus {
+  status: "RUNNING" | "DONE" | "ERROR";
+  result?: ConversationResponse;
+  error?: string;
+}
+
+// Poll cadence for an async job. 90 attempts × 1.5s ≈ 135s, comfortably
+// beyond the worker Lambda's own 120s timeout — so the client keeps polling
+// for as long as the worker could possibly run, and only gives up once the
+// job cannot still be in flight.
+const POLL_INTERVAL_MS = 1500;
+const POLL_MAX_ATTEMPTS = 90;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function pollJob(
+  jobId: string,
+  token: string
+): Promise<ConversationResponse> {
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    await sleep(POLL_INTERVAL_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_ENDPOINT}conversation/status/${jobId}`, {
+        method: "GET",
+        headers: { Authorization: token },
+      });
+    } catch {
+      // A transient network blip during polling shouldn't kill the turn —
+      // the job is still running server-side. Skip this attempt and retry.
+      continue;
+    }
+
+    if (!response.ok) {
+      // 404 means the job id is unknown or its row expired. Anything else is
+      // unexpected; surface it rather than spinning forever.
+      const err = await response.json().catch(() => ({}));
+      throw new Error(
+        err.error || err.message || `Job status error: ${response.status}`
+      );
+    }
+
+    const body = (await response.json()) as JobStatus;
+    if (body.status === "DONE") {
+      return body.result ?? { response: "" };
+    }
+    if (body.status === "ERROR") {
+      throw new ApiTimeoutError(
+        body.error ||
+          "The request could not be completed. Please try again, or narrow it to a single step."
+      );
+    }
+    // RUNNING — keep polling.
+  }
+
+  throw new ApiTimeoutError(
+    "This request is taking longer than expected. It may still complete on the " +
+      "server — if you were exporting or saving something, say \"list my exports\" " +
+      "to check. For multi-step requests, try one step per message."
+  );
+}
+
 export async function sendMessage(
   message: string,
   history: MessageHistory[],
@@ -148,6 +223,15 @@ export async function sendMessage(
     }
     const error = await response.json().catch(() => ({}));
     throw new Error(error.message || error.error || `API error: ${response.status}`);
+  }
+
+  // 202 Accepted → the slow model path is running asynchronously. Poll the
+  // status endpoint until the job is DONE/ERROR, then return the SAME
+  // ConversationResponse shape a synchronous 200 would have — so callers
+  // (ChatInterface) render a polled result identically to an inline one.
+  if (response.status === 202) {
+    const job = (await response.json()) as JobAccepted;
+    return pollJob(job.job_id, token);
   }
 
   return response.json();

@@ -12,6 +12,8 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 
+import jobs
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -770,6 +772,36 @@ _CR_ROLE_NAME = re.compile(
     r"(?:the\s+)?(?:role\s+)?"
     r"[`\"']?([A-Za-z][\w+=,.@\-]{1,127})[`\"']?",
     re.IGNORECASE,
+)
+
+# Comparative / multi-entity phrasing that a single-role CR short-circuit must
+# NOT try to handle. "compare ... and draft a change request for whichever is
+# safer", "X vs Y", "the two users", "both roles" — these are genuinely
+# multi-step requests for the model path, not a one-role deterministic CR.
+# Previously the CR short-circuit fired on these and extracted a bogus role
+# name (e.g. "two" from "the two users"), producing a "Role 'two' not found"
+# document instead of the comparison the user asked for (found in live
+# testing). Now these fall through to the async model path, which is no longer
+# at risk of the 29s timeout the short-circuit was built to avoid.
+_CR_COMPARATIVE = re.compile(
+    r"\b(?:compare|comparison|versus|vs\.?|whichever|either|"
+    r"both|the\s+two|two\s+(?:users?|roles?|identities)|"
+    r"safer\s+to\s+(?:remove|delete)|which\s+(?:one|of))\b",
+    re.IGNORECASE,
+)
+
+# Captures that are English filler, not real IAM entity names. A role name
+# that happens to equal one of these is implausible; far more likely the
+# regex latched onto a determiner/quantifier ("the", "two", "my"). When the
+# capture is one of these, treat the CR request as unnamed and fall through.
+_CR_ROLE_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "my", "our", "your", "their", "this", "that",
+        "these", "those", "it", "them", "one", "two", "three", "both",
+        "all", "any", "each", "every", "some", "which", "whichever",
+        "either", "neither", "user", "users", "role", "roles", "identity",
+        "identities", "key", "keys", "account", "and", "or",
+    }
 )
 
 # Regex for deterministic "generate an action plan" style prompts. The tool
@@ -2818,11 +2850,25 @@ def _shortcircuit_change_request(user_message: str):
     if not _CHANGE_REQUEST_INTENT.search(user_message):
         return None
 
+    # Conservative, like the cross-account short-circuit: a single-role CR is
+    # the WRONG handler for a comparative / multi-entity request ("compare ...
+    # whichever is safer", "the two users", "X vs Y"). Fall through to the
+    # model path (now async, so no 29s risk) rather than extract a bogus
+    # single entity from the phrasing.
+    if _CR_COMPARATIVE.search(user_message):
+        return None
+
     role_match = _CR_ROLE_NAME.search(user_message)
     if not role_match:
         # No explicit subject — let the model ask which role rather than guess.
         return None
     role_name = role_match.group(1)
+
+    # Guard against latching onto a determiner/quantifier ("the", "two", "my")
+    # instead of a real role name. If the capture is English filler, treat the
+    # request as unnamed and fall through to the model.
+    if role_name.lower() in _CR_ROLE_STOPWORDS:
+        return None
 
     # Build the ARN the tool expects. _get_entity_type keys off the ":role/"
     # segment, and _analyze_role_dependencies derives the role name from the
@@ -3050,6 +3096,74 @@ def _summarize_input(tool_input: dict) -> str:
     return ", ".join(parts) if parts else "no parameters"
 
 
+def run_model_path(request_payload: dict) -> dict:
+    """Run the full Bedrock model path (two Converse rounds) for one turn and
+    return the response envelope — the SAME dict shape the inline short-circuit
+    paths and the old inline model path returned.
+
+    This is the slow path that can exceed the API Gateway 29s ceiling, so it
+    is normally executed by the async worker Lambda (see agent_worker.py /
+    jobs.py). It is a pure function of the request payload: it does NOT build
+    an HTTP response, so the worker can store its return value and the status
+    endpoint can hand it back to the frontend unchanged. The dispatcher also
+    calls it directly as an inline fallback when the async plumbing is absent.
+
+    request_payload keys: message, history, mode, org_context.
+    """
+    user_message = request_payload.get("message", "")
+    conversation_history = request_payload.get("history", []) or []
+    mode = request_payload.get("mode", "guided")
+    org_context = request_payload.get("org_context")
+
+    # Build messages for Bedrock — trim history to prevent timeout.
+    # Only keep last 8 messages (4 exchanges) to bound payload/latency.
+    messages = []
+    recent_history = conversation_history[-8:] if len(conversation_history) > 8 else conversation_history
+    for msg in recent_history:
+        messages.append(
+            {
+                "role": msg["role"],
+                "content": [{"text": msg["content"][:2000]}],  # Trim long messages
+            }
+        )
+    messages.append({"role": "user", "content": [{"text": user_message}]})
+
+    # Select system prompt based on mode (+ org context, #173 Level 1)
+    system_prompt = _get_system_prompt(mode, org_context)
+
+    # Run conversation with tool orchestration
+    response, tool_calls_made, new_pagination, coverage = converse_with_tools(
+        messages, system_prompt=system_prompt
+    )
+
+    # Extract assistant response text
+    assistant_content = response["output"]["message"]["content"]
+    response_text = ""
+    for block in assistant_content:
+        if "text" in block:
+            response_text += block["text"]
+
+    # #183: an empty `coverage` is ambiguous — it means either "nothing was
+    # checked, ever" (dangerous: the model may be fabricating) or "I reused
+    # data a tool already checked earlier this conversation" (safe, but the
+    # #171 safety signal is lost). Flag the second case explicitly whenever
+    # this turn made no tool calls but earlier turns in the same conversation
+    # did, so a reader (and the frontend) can tell them apart without relying
+    # solely on the model's prose.
+    answered_from_prior_context = (
+        not tool_calls_made and not coverage and bool(conversation_history)
+    )
+
+    return {
+        "response": response_text,
+        "usage": response.get("usage", {}),
+        "tools_used": tool_calls_made,
+        "pagination": new_pagination,
+        "coverage": coverage,
+        "answered_from_prior_context": answered_from_prior_context,
+    }
+
+
 def handler(event, context):
     """Lambda handler for conversation requests."""
     try:
@@ -3061,8 +3175,29 @@ def handler(event, context):
 
         http_method = event.get("httpMethod", "POST")
 
-        # GET /conversations — return empty for now (future: DynamoDB history)
         if http_method == "GET":
+            # GET /conversation/status/{job_id} — async job poll. The path
+            # parameter is present only on the status route; /conversations
+            # (history) has none.
+            path_params = event.get("pathParameters") or {}
+            job_id = path_params.get("job_id")
+            if job_id:
+                job = jobs.get_job(job_id)
+                if job is None:
+                    return {
+                        "statusCode": 404,
+                        "headers": _cors_headers(),
+                        "body": json.dumps(
+                            {"status": "ERROR", "error": "Job not found or expired"}
+                        ),
+                    }
+                return {
+                    "statusCode": 200,
+                    "headers": _cors_headers(),
+                    "body": json.dumps(jobs.status_response(job)),
+                }
+
+            # GET /conversations — return empty for now (future: DynamoDB history)
             return {
                 "statusCode": 200,
                 "headers": _cors_headers(),
@@ -3253,60 +3388,38 @@ def handler(event, context):
                 "body": json.dumps(shortcircuit),
             }
 
-        # Build messages for Bedrock — trim history to prevent timeout
-        messages = []
-        # Only keep last 8 messages (4 exchanges) to stay under API Gateway payload/time limits
-        recent_history = conversation_history[-8:] if len(conversation_history) > 8 else conversation_history
-        for msg in recent_history:
-            messages.append(
-                {
-                    "role": msg["role"],
-                    "content": [{"text": msg["content"][:2000]}],  # Trim long messages
+        # No short-circuit matched — this is the slow model path (two Bedrock
+        # rounds) that can exceed the API Gateway 29s integration ceiling. Run
+        # it ASYNCHRONOUSLY: write a job row, fire the worker Lambda, and
+        # return 202 immediately. The frontend polls /conversation/status/{id}.
+        # This decouples the turn from the 29s ceiling for ANY prompt and any
+        # account size (see jobs.py). If the async plumbing is unavailable
+        # (e.g. JOBS_TABLE not configured in a local/legacy deploy), fall back
+        # to running the model path inline and returning 200 — preserving the
+        # original behavior rather than failing the request.
+        request_payload = {
+            "message": user_message,
+            "history": conversation_history,
+            "mode": mode,
+            "org_context": org_context,
+        }
+        if jobs.JOBS_TABLE and jobs.WORKER_FUNCTION_NAME:
+            try:
+                job_id = jobs.create_job(request_payload)
+                jobs.dispatch_worker(job_id)
+                return {
+                    "statusCode": 202,
+                    "headers": _cors_headers(),
+                    "body": json.dumps({"job_id": job_id, "status": jobs.STATUS_RUNNING}),
                 }
-            )
-        messages.append({"role": "user", "content": [{"text": user_message}]})
+            except Exception as e:  # noqa: BLE001 — degrade to inline, never 500 here
+                logger.error("Async dispatch failed, running inline: %s", e)
 
-        # Select system prompt based on mode (+ org context, #173 Level 1)
-        system_prompt = _get_system_prompt(mode, org_context)
-
-        # Run conversation with tool orchestration
-        response, tool_calls_made, new_pagination, coverage = converse_with_tools(
-            messages, system_prompt=system_prompt
-        )
-
-        # Extract assistant response text
-        assistant_content = response["output"]["message"]["content"]
-        response_text = ""
-        for block in assistant_content:
-            if "text" in block:
-                response_text += block["text"]
-
-        # #183: an empty `coverage` is ambiguous — it means either "nothing was
-        # checked, ever" (dangerous: the model may be fabricating) or "I reused
-        # data a tool already checked earlier this conversation" (safe, but the
-        # #171 safety signal is lost). Flag the second case explicitly whenever
-        # this turn made no tool calls but earlier turns in the same
-        # conversation did, so a reader (and the frontend, eventually) can tell
-        # them apart without relying solely on the model's prose. See the
-        # ANSWERING FROM PRIOR-TURN DATA system-prompt rule for the model-side
-        # half of this fix.
-        answered_from_prior_context = (
-            not tool_calls_made and not coverage and bool(conversation_history)
-        )
-
+        result = run_model_path(request_payload)
         return {
             "statusCode": 200,
             "headers": _cors_headers(),
-            "body": json.dumps(
-                {
-                    "response": response_text,
-                    "usage": response.get("usage", {}),
-                    "tools_used": tool_calls_made,
-                    "pagination": new_pagination,
-                    "coverage": coverage,
-                    "answered_from_prior_context": answered_from_prior_context,
-                }
-            ),
+            "body": json.dumps(result),
         }
 
     except ClientError as e:
