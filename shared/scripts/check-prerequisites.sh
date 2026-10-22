@@ -166,16 +166,26 @@ if [ "$REQUIRE_SAM" = true ]; then
     fi
 fi
 
-# Check Docker (if required). A SAM app whose build must run in a container
-# (`sam build --use-container`) needs a RUNNING Docker engine. Checks the daemon responds,
-# not just that the CLI is on PATH.
+# Check for a running container engine (if required). A SAM app whose build must run in a
+# container (`sam build --use-container`), or a CDK DockerImageAsset / local `docker build`,
+# needs a RUNNING container engine. Docker and Finch are both accepted; the check confirms the
+# daemon/VM responds, not just that the CLI is on PATH.
+#
+# Finch note: with Finch (and no Docker), CDK/SAM still shell out to a binary named `docker`.
+# Point them at Finch for the deploy with `export CDK_DOCKER=finch` (CDK) or a `docker`->`finch`
+# shim on PATH. This check passes on Finch alone; the deploy tooling needs that override.
 if [ "$REQUIRE_DOCKER" = true ]; then
-    echo -e "\n\033[0;33mChecking Docker...\033[0m"
+    echo -e "\n\033[0;33mChecking container engine (Docker or Finch)...\033[0m"
     if command -v docker &> /dev/null && docker info &> /dev/null; then
         echo -e "\033[0;32m      ✓ Docker is installed and the engine is running\033[0m"
+    elif command -v finch &> /dev/null && finch info &> /dev/null; then
+        echo -e "\033[0;32m      ✓ Finch is installed and its VM is running\033[0m"
+        echo -e "\033[0;36m      Using Finch: for CDK deploys set 'export CDK_DOCKER=finch' so the\033[0m"
+        echo -e "\033[0;36m      image build/push uses Finch (CDK/SAM otherwise call a 'docker' binary).\033[0m"
     else
-        echo -e "\033[0;31m      ❌ Docker is required and its engine must be running.\033[0m"
-        echo -e "\033[0;36m      Install Docker, start it, then re-run. Verify with: docker info\033[0m"
+        echo -e "\033[0;31m      ❌ A running container engine (Docker or Finch) is required.\033[0m"
+        echo -e "\033[0;36m      Docker: install and start it, verify with 'docker info'.\033[0m"
+        echo -e "\033[0;36m      Finch:  'finch vm start', verify with 'finch info', then 'export CDK_DOCKER=finch'.\033[0m"
         exit 1
     fi
 fi
