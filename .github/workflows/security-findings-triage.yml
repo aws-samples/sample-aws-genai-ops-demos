@@ -1,0 +1,47 @@
+name: Security Findings Triage
+
+# Turns open Dependabot alerts into ONE self-updating issue per demo, assigned to
+# the demo's owners from .github/CODEOWNERS (read from the default branch at run
+# time). Issues are found again by a hidden marker, updated when the alert set
+# changes, and closed when a demo has no open alerts left.
+# Logic and unit tests: .github/scripts/security-findings-triage{,.test}.js
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # every Monday 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log what would be created/updated/closed/assigned, write nothing"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: security-findings-triage
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read              # checkout the script, read CODEOWNERS
+      issues: write               # open/update/close/assign the per-demo issues
+      vulnerability-alerts: read  # list Dependabot alerts with GITHUB_TOKEN
+    steps:
+      # Scheduled/dispatched runs only: no PR code is ever checked out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Reconcile Dependabot alerts with per-demo issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        with:
+          script: |
+            const triage = require('./.github/scripts/security-findings-triage.js');
+            await triage.main({ github, context, core, dryRun: process.env.DRY_RUN === 'true' });
