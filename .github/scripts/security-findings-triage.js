@@ -294,9 +294,10 @@ function normalizeBody(body) {
 
 function renderChangeComment(added, resolved) {
   const parts = [];
-  if (added.length) parts.push(`new ${added.map((n) => `#${n}`).join(', ')}`);
-  if (resolved.length) parts.push(`resolved ${resolved.map((n) => `#${n}`).join(', ')}`);
-  return `Alert set changed (${parts.join('; ')}). Table updated.`;
+  // No "#N": GitHub would link it to issue/PR N and post a cross-reference on it.
+  if (added.length) parts.push(`new: ${added.join(', ')}`);
+  if (resolved.length) parts.push(`resolved: ${resolved.join(', ')}`);
+  return `Dependabot alerts changed (${parts.join('; ')}). Table updated.`;
 }
 
 // ---------------------------------------------------------------------------

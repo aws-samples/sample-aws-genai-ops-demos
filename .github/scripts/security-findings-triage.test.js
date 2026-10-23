@@ -198,7 +198,9 @@ test('plan: unchanged rerun is a noop (even with ticked checkboxes), changed set
   const changed = t.planActions(new Map([[demo, want]]), [{ number: 10, body: oldBody, assignees: ['bquintas', 'benlec'] }]);
   assert.equal(changed[0].type, 'update');
   assert.equal(changed[0].body, want.body);
-  assert.equal(changed[0].comment, 'Alert set changed (new #2; resolved #3). Table updated.');
+  assert.equal(changed[0].comment, 'Dependabot alerts changed (new: 2; resolved: 3). Table updated.');
+  // Plain "#N" would be autolinked to issue/PR N by GitHub.
+  assert.doesNotMatch(changed[0].comment, /#\d/);
   assert.deepEqual(changed[0].addAssignees, []);
 });
 
