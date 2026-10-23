@@ -26,3 +26,7 @@
 # Governance files — require maintainer approval (keep LAST: last match wins)
 /.kiro/          @bquintas @benlec
 /.github/        @bquintas @benlec
+# Security-scan config: weakening it must get the same maintainer review
+/.ash/              @bquintas @benlec
+/bandit.yaml        @bquintas @benlec
+/.secrets.baseline  @bquintas @benlec
