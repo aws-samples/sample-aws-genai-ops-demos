@@ -144,6 +144,8 @@ Thumbs.db
 # Agent task artifacts (plans, reviews, verifications produced while working;
 # internal workflow scratch, not demo deliverables)
 **/.agents/
+# Local git worktrees created by agents and maintainers
+.worktrees/
 
 # Scratch directory for files staged for deletion (never a deliverable)
 DELETE/
