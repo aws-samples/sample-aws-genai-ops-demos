@@ -1,0 +1,8 @@
+-r requirements.txt
+pytest==8.3.3
+pytest-cov==5.0.0
+pytest-mock==3.14.0
+ruff==0.6.9
+mypy==1.11.2
+pip-audit==2.7.3
+boto3-stubs[comprehend,s3,dynamodb,bedrock-runtime,secretsmanager]==1.35.36

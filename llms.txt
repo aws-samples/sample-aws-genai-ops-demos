@@ -25,6 +25,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 
 ## Operations Automation
 
+- [AI Dataset Training Audit](operations-automation/ai-dataset-training-audit/README.md): Pre-flight validation for LLM fine-tuning datasets: seven checks (schema, duplicates, PII via Comprehend, viability, cost) producing a GO/NO-GO/GO-WITH-FIXES verdict and 0–100 quality score before any GPU spend
 - [AI-Powered Technical Documentation Generation](operations-automation/ai-documentation-generation/README.md): Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase
 - [AI-Powered Legacy System Automation](operations-automation/ai-legacy-system-browser-automation/README.md): Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring
 - [AI Password Reset Chatbot](operations-automation/ai-password-reset-chatbot/README.md): Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access

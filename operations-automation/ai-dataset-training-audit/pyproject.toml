@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The agent code is importable as top-level modules (config, tools, agent), so the agent/
+# directory is the import root.
+src = ["agent"]
+extend-exclude = [".venv", ".venv-verify", "cdk.out", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = [
+    "B904",  # raise ... from err not required for every re-raise in demo code
+]
+
+[tool.pytest.ini_options]
+# Put the agent dir on sys.path so tests import config/tools/agent/audit directly.
+pythonpath = ["agent"]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "agent"
+ignore_missing_imports = true
+warn_unused_ignores = false
+disallow_untyped_defs = false
+check_untyped_defs = true
+explicit_package_bases = true
+namespace_packages = true
