@@ -1,5 +1,5 @@
 # AI Lambda Runtime Migration Assistant
-*Discover and assess AWS Lambda functions running deprecated runtimes with a Lambda durable function and Amazon Nova, then plan each migration from a scoped inventory*
+*Discover and assess AWS Lambda functions running deprecated runtimes with a Lambda durable function and Amazon Nova, then upgrade them with AWS Transform to a branch pushed to each function's repository*
 
 ## Overview
 
@@ -15,7 +15,7 @@ A React dashboard built with the Cloudscape Design System provides the inventory
 - **Difficulty**: Intermediate
 - **Target Audience**: DevOps Engineers, Platform Engineers, SREs
 - **Key Technologies**: AWS Lambda durable functions, Amazon Nova, Amazon API Gateway (HTTP API), Amazon Cognito, Amazon CloudFront, Cloudscape Design System
-- **Estimated Cost**: ~$5 for 1,000 functions (see [Cost Estimate](#cost-estimate))
+- **Estimated Cost**: ~$5 to discover and assess 1,000 functions, plus ~$0.40 per migrated function for AWS Transform and CodeBuild (see [Cost Estimate](#cost-estimate))
 
 ## Architecture
 
@@ -57,9 +57,16 @@ Two optional switches change what gets deployed:
 | `-MultiAccount` (with optional `-OrgTargets r-xxxx,ou-...`) | `--multi-account` (with optional `--org-targets ...`) | Rolls the read-only spoke role out to the member accounts of your AWS Organization, so the hub can assume into them. A read-only preflight runs first, then the Org/Spoke StackSet. See [Multi-account scanning](#multi-account-scanning). |
 | `-Mock` | `--mock` | Deploys the mock fixture: a CodeCommit repository and three deprecated-runtime Lambda functions to try **Migrate** on. See [Mock fixture (optional)](#mock-fixture-optional). |
 
+**Windows (PowerShell):**
 ```powershell
 .\deploy-all.ps1 -Mock
 .\deploy-all.ps1 -MultiAccount -Mock
+```
+
+**macOS/Linux:**
+```bash
+./deploy-all.sh --mock
+./deploy-all.sh --multi-account --mock
 ```
 
 Without `-MultiAccount` the scan is still organization-aware: multi-account is decided at **runtime**, not by a deploy flag. When the hub account is the organization's management account (or a delegated administrator), every Discover enumerates the active member accounts and scans them; a standalone account degrades cleanly to the hub alone.
@@ -277,7 +284,7 @@ ai-lambda-runtime-migration/
 
 ## Cost Estimate
 
-Pricing based on Amazon Nova on-demand rates and Lambda/API Gateway consumption-based pricing. Actual costs vary with function code size and complexity.
+Pricing based on Amazon Nova on-demand rates, Lambda/API Gateway consumption-based pricing, and AWS Transform and AWS CodeBuild rates for migrations. Actual costs vary with function code size and complexity.
 
 ### Scenario: 1,000 Lambda Functions — Discover + Assess (One-Time)
 
@@ -288,6 +295,23 @@ Assumes an average function has 3 source files, ~500 lines of code.
 | Discover | TA query + Lambda/CW enrichment + AI prioritization | ~$1 | ~$1 | ~$2 |
 | Assess | Code download + AI assessment (×1,000) | ~$2 | ~$1 | ~$3 |
 | **Total** | | **~$3** | **~$2** | **~$5** |
+
+### Scenario: Migrate 100 Functions (Pay Per Migration)
+
+Discover and Assess cost nothing more once they have run. Each **Migrate** adds two consumption charges, both billed only while a migration runs:
+
+- **AWS Transform custom**: $0.035 per agent-minute, the time the Transform agent actively works on the transformation ([AWS Transform pricing](https://aws.amazon.com/transform/pricing/)).
+- **AWS CodeBuild**: the `general1.medium` Linux build that hosts the Transform CLI, about $0.01 per build minute in us-east-1; the rate varies by region ([CodeBuild pricing](https://aws.amazon.com/codebuild/pricing/)).
+
+The agent-minutes a function needs depend on its size and on how far the runtime jump goes; we have not measured them per function. The table assumes **10 agent-minutes and 5 build minutes per function**. For reference, a small Node.js mock function took about 3.5 minutes end to end on our test run, of which about 1.5 minutes in CodeBuild.
+
+| Item | Per function | ×100 functions |
+|------|-------------|----------------|
+| AWS Transform (10 agent-minutes × $0.035) | ~$0.35 | ~$35 |
+| CodeBuild (5 build minutes × ~$0.01) | ~$0.05 | ~$5 |
+| **Total** | **~$0.40** | **~$40** |
+
+Scale the estimate with your own numbers: `functions × (agent-minutes × $0.035 + build minutes × CodeBuild rate)`. Migrating one representative function first, then checking its charges in AWS Billing, gives you a realistic per-function figure before you run a batch.
 
 Infrastructure costs (CloudFront, Cognito, DynamoDB, S3, HTTP API) are negligible — all services are either free-tier eligible or on-demand with near-zero cost when idle.
 

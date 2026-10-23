@@ -9,41 +9,6 @@ repository (see "Migration" below).
 
 ## Overview
 
-```
-                  ┌──────────────┐      ID token (JWT)      ┌───────────────┐
-  Operator  ───►  │  CloudFront  │ ─────────────────────►   │  HTTP API     │
-  (browser)       │  + S3 (SPA)  │   Authorization: Bearer  │  (API GW)     │
-                  └──────────────┘                          └───────┬───────┘
-                         ▲                                          │ Cognito JWT
-                         │ Cognito ID token                         │ authorizer
-                         │                                          ▼
-                  ┌──────────────┐                          ┌───────────────┐
-                  │  Cognito     │                          │  API Lambda   │
-                  │  User Pool   │                          │ (start/adopt  │
-                  └──────────────┘                          │  + read)      │
-                                                            └───────┬───────┘
-                                                                    │ start / poll
-                                                                    ▼
-                                           ┌──────────────────────────────────────┐
-                                           │  Durable pipeline Lambda (5 steps)    │
-                                           │  determine → support tier → discover  │
-                                           │  → assess → summarize                 │
-                                           └───────┬───────────────────────┬───────┘
-                                                   │ hub creds             │ assume spoke role
-                                                   ▼                       ▼
-                                           ┌───────────────┐       ┌───────────────┐
-                                           │  Hub account  │       │ Member account│
-                                           │  (TA, Lambda, │       │ (read-only    │
-                                           │  CloudWatch)  │       │  spoke role)  │
-                                           └───────────────┘       └───────────────┘
-                                                   │
-                                                   ▼
-                                    ┌───────────────────────────┐
-                                    │  DynamoDB inventory + S3   │
-                                    │  Amazon Nova (Bedrock)     │
-                                    └───────────────────────────┘
-```
-
 The browser holds **no AWS credentials**. It authenticates against a Cognito
 User Pool and calls the HTTP API with the Cognito **ID token**; an API Gateway
 Cognito JWT authorizer validates every request. There is no Identity Pool and
