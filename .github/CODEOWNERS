@@ -8,6 +8,7 @@
 /observability/eks-investigation-devops-agent/                         @AmiroucheRA @bquintas @benlec
 /observability/proactive-health-event-impact-analyzer/                 @u-mancini @bquintas @benlec
 /observability/saas-status-mcp/                                        @benlec @bquintas
+/operations-automation/ai-dataset-training-audit/                      @bquintas @benlec
 /operations-automation/ai-documentation-generation/                    @benlec @bquintas
 /operations-automation/ai-lambda-runtime-migration/                    @benlec @bquintas
 /operations-automation/ai-legacy-system-browser-automation/            @merichea @bquintas @benlec
