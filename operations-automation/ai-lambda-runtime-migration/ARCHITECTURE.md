@@ -53,7 +53,7 @@ happens server-side in the durable pipeline Lambda.
 
 ## The 5-step durable pipeline
 
-A single **Refresh** is one [Lambda durable function](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
+A single **Discover** is one [Lambda durable function](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
 execution with five checkpointed steps. Each step is a `@durable_step`, so a
 mid-run failure resumes from the last checkpoint rather than restarting. All
 non-determinism (clock, uuid, boto3/Bedrock/DynamoDB calls) lives **inside**
@@ -65,7 +65,7 @@ The step labels below are the exact strings the dashboard renders from the
 execution history:
 
 1. **Determine the accounts to scan** — `resolve_accounts()` in
-   `backend/org_accounts.py` turns the refresh scope into concrete accounts.
+   `backend/org_accounts.py` turns the scan scope into concrete accounts.
    Explicit accounts in the scope win verbatim; otherwise AWS Organizations is
    queried for the active member accounts. The hub is always first and always
    scanned with its own credentials (empty account id); member accounts keep
@@ -109,7 +109,7 @@ list, because the list could be very large. An empty scan therefore reads as
 ## Multi-account: hub-and-spoke, decided at runtime
 
 Single-account is the default outcome, but it is decided at **runtime**, not by
-a deploy-time flag. Every Refresh attempts `organizations:ListAccounts`:
+a deploy-time flag. Every Discover attempts `organizations:ListAccounts`:
 
 - **Standalone account / not the management or delegated-admin account**
   (`AccessDeniedException`, `AWSOrganizationsNotInUseException`) or a
