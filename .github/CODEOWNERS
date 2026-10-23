@@ -1,3 +1,27 @@
-# Governance files — require maintainer approval
+# Demo owners: the author first, then both maintainers as backup.
+# Any one listed owner can give the code-owner approval, so a demo is never
+# blocked when its author is away or opens the PR themselves.
+/cost-optimization/ai-graviton-migration-assessment/                   @bquintas @benlec
+/cost-optimization/aws-genai-cost-optimization-mcp-server/             @emenguy @bquintas @benlec
+/observability/aws-feature-relevance-notification-system/              @awsrahulrsr @bquintas @benlec
+/observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/ @rahulnarya @bquintas @benlec
+/observability/eks-investigation-devops-agent/                         @AmiroucheRA @bquintas @benlec
+/observability/proactive-health-event-impact-analyzer/                 @u-mancini @bquintas @benlec
+/observability/saas-status-mcp/                                        @benlec @bquintas
+/operations-automation/ai-documentation-generation/                    @benlec @bquintas
+/operations-automation/ai-lambda-runtime-migration/                    @benlec @bquintas
+/operations-automation/ai-legacy-system-browser-automation/            @merichea @bquintas @benlec
+/operations-automation/ai-password-reset-chatbot/                      @benlec @bquintas
+/operations-automation/anycompany-it-demo-portal/                      @benlec @bquintas
+/operations-automation/aws-services-lifecycle-tracker/                 @benlec @bquintas
+/resilience/ai-chaos-engineering-with-fis/                             @benlec @bquintas
+/resilience/ai-load-test-generation-with-dlt/                          @OHsechun @hunmini @bquintas @benlec
+/resilience/fsx-windows-sla-review-devops-agent/                       @benlec @bquintas
+/security/ai-iam-access-analyzer-assistant/                            @jgq-amazon @bquintas @benlec
+/security/ai-incident-response-playbook-builder/                       @Dakum11 @bquintas @benlec
+/security/ai-permission-boundary-generator/                            @otymix @bquintas @benlec
+/security/prowler-security-findings-agent/                             @albertjh @bquintas @benlec
+
+# Governance files — require maintainer approval (keep LAST: last match wins)
 /.kiro/          @bquintas @benlec
 /.github/        @bquintas @benlec
