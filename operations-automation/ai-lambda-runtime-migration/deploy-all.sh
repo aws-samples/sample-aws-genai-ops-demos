@@ -155,6 +155,10 @@ if [ -z "$bucket" ] || [ "$bucket" == "None" ]; then
     echo -e "\033[0;31mFailed to get the artifacts bucket name from stack outputs\033[0m"
     exit 1
 fi
+if [ -z "$transform_project_name" ] || [ "$transform_project_name" == "None" ]; then
+    echo -e "\033[0;31mFailed to get the AWS Transform CodeBuild project name from stack outputs\033[0m"
+    exit 1
+fi
 
 echo -e "\n\033[0;33mUploading the migration buildspec to the artifacts bucket...\033[0m"
 # Object MUST be named buildspec.yml: CodeBuild's S3 single-file source looks for

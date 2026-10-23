@@ -150,6 +150,10 @@ if ([string]::IsNullOrEmpty($bucket) -or $bucket -eq "None") {
     Write-Host "Failed to get the artifacts bucket name from stack outputs" -ForegroundColor Red
     exit 1
 }
+if ([string]::IsNullOrEmpty($transformProjectName) -or $transformProjectName -eq "None") {
+    Write-Host "Failed to get the AWS Transform CodeBuild project name from stack outputs" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "`nUploading the migration buildspec to the artifacts bucket..." -ForegroundColor Yellow
 # Object MUST be named buildspec.yml: CodeBuild's S3 single-file source looks for
