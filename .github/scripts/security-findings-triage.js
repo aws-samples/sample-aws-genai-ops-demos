@@ -209,6 +209,7 @@ function renderBody({ demo, alerts, mentions, maintainers }) {
     '- [ ] Real: open a PR that bumps the package.',
     `- [ ] Doesn't apply: comment why with a reason (\`not_used\`, \`tolerable_risk\`, \`inaccurate\`) and assign ${who}, who dismiss the alert.`,
     '',
+    'Please don\'t close it by hand: a new one is opened next week while the alerts are still open.',
     'This issue closes automatically when all alerts for this demo are fixed or dismissed.',
     '',
   ].join('\n');

@@ -148,6 +148,7 @@ test('body: marker, table, checklist, auto-close line, mention', () => {
   assert.ok(body.indexOf('[#18]') < body.indexOf('[#13]'), 'high severity first');
   assert.match(body, /- \[ \] Real: open a PR that bumps the package\./);
   assert.match(body, /not_used.*tolerable_risk.*inaccurate.*assign @bquintas or @benlec, who dismiss the alert\./);
+  assert.match(body, /Please don't close it by hand/);
   assert.match(body.trim(), /closes automatically when all alerts for this demo are fixed or dismissed\.$/);
   const noMention = t.renderBody({ demo: 'shared', alerts, mentions: [], maintainers: ['bquintas', 'benlec'] });
   assert.doesNotMatch(noMention, /Owner:/);
