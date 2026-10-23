@@ -372,11 +372,13 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             echo -e "\033[0;32m      ✓ Amazon Nova Act is available in $CURRENT_REGION\033[0m"
             ;;
         "transform")
-            # AWS Transform service availability (informational only)
-            echo -e "\033[0;36m      ℹ AWS Transform service check (informational)\033[0m"
-            echo -e "\033[0;90m        AWS Transform service must be available in $CURRENT_REGION\033[0m"
-            echo -e "\033[0;90m        Please check the documentation for AWS Transform supported regions:\033[0m"
-            echo -e "\033[0;90m        https://docs.aws.amazon.com/transform/latest/userguide/regions.html\033[0m"
+            # AWS Transform has no describe/list API and is not in the SSM region
+            # list, so availability cannot be verified here. Each demo picks the
+            # region where AWS Transform runs (the deploy region, or its own
+            # fallback) at run time; this line only points at the reference.
+            echo -e "\033[0;36m      ℹ AWS Transform region availability is not verifiable from the CLI\033[0m"
+            echo -e "\033[0;90m        The demo selects the AWS Transform region at run time (deploy region $CURRENT_REGION first)\033[0m"
+            echo -e "\033[0;90m        Supported regions: https://docs.aws.amazon.com/transform/latest/userguide/regions.html\033[0m"
             ;;
         *)
             echo -e "\033[0;33m      ⚠ Unknown service '$REQUIRED_SERVICE', skipping service check...\033[0m"

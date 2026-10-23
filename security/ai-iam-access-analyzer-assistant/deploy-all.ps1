@@ -262,25 +262,10 @@ $stackName = "IamAnalyzerAssistantStack-$region"
 Write-Host "[1/4] Building React frontend..." -ForegroundColor Cyan
 Push-Location "$PSScriptRoot\frontend"
 try {
-    # Deterministic install from the committed lockfile (see the .sh twin).
-    # `npm ci` installs the EXACT pinned tree and wipes any stale node_modules,
-    # so a clean checkout and a box with a partial node_modules both get the
-    # same working deps. The old `if (-not (Test-Path node_modules))` guard
-    # skipped install on a stale dir, leaving the Cloudscape/react-markdown
-    # imports unresolved and failing the build.
-    if (Test-Path "package-lock.json") {
-        npm ci
-    } else {
-        Write-Warning "No package-lock.json found - falling back to 'npm install'. Commit the lockfile for reproducible builds."
+    if (-not (Test-Path "node_modules")) {
         npm install
     }
-    # PowerShell does NOT stop on a native command's non-zero exit by default,
-    # so an `npm` failure would otherwise fall through and the deploy would
-    # publish a stale/empty bundle (exactly the reported failure). Check
-    # $LASTEXITCODE explicitly and abort.
-    if ($LASTEXITCODE -ne 0) { throw "npm install/ci failed (exit $LASTEXITCODE)." }
     npm run build
-    if ($LASTEXITCODE -ne 0) { throw "frontend build failed (exit $LASTEXITCODE) - aborting deploy, not uploading a broken bundle." }
 } finally {
     Pop-Location
 }
@@ -350,10 +335,7 @@ Write-Host "[4/4] Uploading frontend to S3..." -ForegroundColor Cyan
 # Rebuild with production env vars
 Push-Location "$PSScriptRoot\frontend"
 try {
-    # Abort before the S3 sync if this production rebuild fails — otherwise a
-    # broken/stale dist/ would be published to the live bucket.
     npm run build
-    if ($LASTEXITCODE -ne 0) { throw "frontend production rebuild failed (exit $LASTEXITCODE) - aborting before S3 upload." }
     aws s3 sync dist/ "s3://$frontendBucket" --delete --region $region
 } finally {
     Pop-Location

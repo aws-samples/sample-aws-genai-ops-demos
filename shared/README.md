@@ -183,6 +183,22 @@ model_id = get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0")
 | `ap-*` | `apac.` | APAC only |
 | Others (`ca-`, `me-`, `af-`, `sa-`, `il-`, `mx-`) | `global.` | Worldwide |
 
+### Transform region selection
+
+AWS Transform custom (code transformation) is offered in a handful of regions, and nothing lets a deployment probe that availability ahead of time (no `transform` service in the AWS CLI, no service id in SSM global-infrastructure). `get_transform_region(region)` (Python) and `getTransformRegion(region)` (TypeScript) return the deploy region itself when AWS Transform is available there, otherwise the geographically nearest entry of the static `TRANSFORM_REGIONS` list (eu-* to Frankfurt, ap-south-* to Mumbai, ap-southeast-* to Sydney, other ap-* to Tokyo, everything else to N. Virginia).
+
+The list is static because no API lists Transform availability; it only chooses a *fallback*, a build that uses it still tries the deploy region first. Python and TypeScript have identical semantics and the same 8-entry list; the full rationale and the documentation source live in the Python docstring (`shared/utils/aws_utils.py`). Keep the two lists in sync.
+
+```python
+from shared.utils.aws_utils import get_transform_region
+get_transform_region("eu-west-3")   # -> "eu-central-1"
+```
+
+```typescript
+import { getTransformRegion } from '../../../../shared/utils/aws-utils';
+getTransformRegion('eu-west-3');   // -> 'eu-central-1'
+```
+
 ### CDK pattern for Lambdas
 
 The recommended pattern is to compute the model ID in the CDK app (which has access to shared utils via PYTHONPATH) and pass it as a Lambda environment variable:

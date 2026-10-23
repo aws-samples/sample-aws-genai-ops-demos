@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Mock .NET Lambda on a deprecated runtime (dotnet6). The Runtime line below is
+  what AWS Transform (AWS/dotnet-lambda-upgrade) rewrites to a supported
+  version, producing the diff the migration demo opens as a pull request.
+
+Resources:
+  MockDotnetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-migration-mock-dotnet
+      Handler: MockDotnet::MockDotnet.Function::Handler
+      Runtime: dotnet6
+      MemorySize: 128
+      Timeout: 10
+      CodeUri: .

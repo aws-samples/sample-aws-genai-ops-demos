@@ -10,6 +10,9 @@ frontend/.env.production.local
 # CDK
 cdk/cdk.out*/
 cdk/node_modules/
+cdk/.backend-stage/
+# Staged copy of shared/utils/aws_utils.py (synth-time / test-time artifact)
+backend/aws_utils.py
 
 # Draw.io temp files
 *.drawio.bkp
