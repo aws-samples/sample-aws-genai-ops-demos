@@ -1,0 +1,74 @@
+<mxfile host="Kiro" agent="drawio-starter" version="24.0.0">
+  <diagram id="aurora-incident" name="Aurora Incident Investigation">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="750" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- VPC container -->
+        <mxCell id="vpc" value="VPC (2 AZs, no NAT)" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#8C4FFF;dashed=0;verticalAlign=top;align=left;spacingLeft=30;fontColor=#8C4FFF;fontSize=12;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc;" vertex="1" parent="1">
+          <mxGeometry x="300" y="150" width="500" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="pubsub" value="Public subnet" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#7AA116;dashed=0;verticalAlign=top;align=left;spacingLeft=30;fontColor=#7AA116;fontSize=11;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_public_subnet;" vertex="1" parent="1">
+          <mxGeometry x="330" y="210" width="190" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="privsub" value="Isolated DB subnets" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#00A4A6;dashed=0;verticalAlign=top;align=left;spacingLeft=30;fontColor=#00A4A6;fontSize=11;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;" vertex="1" parent="1">
+          <mxGeometry x="560" y="200" width="210" height="290" as="geometry" />
+        </mxCell>
+
+        <!-- Icons -->
+        <mxCell id="laptop" value="Operator laptop&#10;inject-failure.sh / aws cli" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#232F3E;fontColor=#FFFFFF;strokeColor=none;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="320" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="secrets" value="Secrets Manager&#10;aurora-demo/credentials" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.secrets_manager;" vertex="1" parent="1">
+          <mxGeometry x="120" y="120" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="bastion" value="Bastion / load-generator&#10;(mysql client)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#ED7100;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" vertex="1" parent="1">
+          <mxGeometry x="380" y="240" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="writer" value="Aurora writer&#10;aurora-demo-writer" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#C925D1;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.aurora;" vertex="1" parent="1">
+          <mxGeometry x="620" y="240" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="reader" value="Aurora reader&#10;aurora-demo-reader" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#C925D1;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.aurora;" vertex="1" parent="1">
+          <mxGeometry x="620" y="380" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cw" value="CloudWatch&#10;metrics / PI / logs" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#E7157B;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch_2;" vertex="1" parent="1">
+          <mxGeometry x="860" y="230" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="alarms" value="CloudWatch Alarms" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#E7157B;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch_2;" vertex="1" parent="1">
+          <mxGeometry x="860" y="340" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="eb" value="EventBridge&#10;RDS failover events" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#E7157B;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+          <mxGeometry x="860" y="450" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="sns" value="SNS&#10;aurora-demo-alarm" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#E7157B;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.simple_notification_service;" vertex="1" parent="1">
+          <mxGeometry x="700" y="590" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="webhook" value="Webhook Lambda&#10;(HMAC-signed)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#ED7100;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" vertex="1" parent="1">
+          <mxGeometry x="500" y="590" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" value="Amazon DevOps Agent&#10;auto-investigation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#01A88D;fontColor=#FFFFFF;strokeColor=none;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="300" y="595" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="mcp" value="MCP Server&#10;API Gateway + Lambda" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" vertex="1" parent="1">
+          <mxGeometry x="110" y="595" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="e1" value="SSH :22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="laptop" target="bastion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" value="rds failover-db-cluster" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;dashed=1;" edge="1" parent="1" source="laptop" target="writer"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" value="MySQL :3306" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="bastion" target="writer"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="bastion" target="reader"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" value="reads secret" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="bastion" target="secrets"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" value="metrics / logs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="writer" target="cw"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="reader" target="cw"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="cw" target="alarms"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="alarms" target="sns"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" value="failover events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="eb" target="sns"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" value="if webhook configured" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="sns" target="webhook"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="webhook" target="agent"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" value="business context" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="agent" target="mcp"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
