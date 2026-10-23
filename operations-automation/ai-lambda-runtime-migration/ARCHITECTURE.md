@@ -3,8 +3,8 @@
 This document describes the architecture that is built today: an org-wide
 discovery and assessment pipeline for deprecated-runtime AWS Lambda functions,
 driven by a Lambda durable function and Amazon Nova, presented through a React
-dashboard. The optional Transform build plane runs the actual code migration via
-AWS Transform in CodeBuild and ends by pushing an upgrade branch to the source
+dashboard. The Transform build plane, deployed with the rest of the demo, runs
+the actual code migration via AWS Transform in CodeBuild and ends by pushing an upgrade branch to the source
 repository (see "Migration" below).
 
 ## Overview
@@ -158,8 +158,19 @@ regions. Solution-adoption tracking lives **only** on the Pipeline stack.
 | `LambdaRuntimeMigrationPipeline-{region}` | 5-step Discover + Assess | Durable pipeline Lambda, API Lambda, hub pipeline role (always org-read + spoke-assume) | Data |
 | `LambdaRuntimeMigrationApi-{region}` | HTTP API | API Gateway HTTP API + Cognito JWT authorizer | Auth, Pipeline |
 | `LambdaRuntimeMigrationFrontend-{region}` | Dashboard | CloudFront distribution + S3 website bucket | Auth, Api |
+| `LambdaRuntimeMigrationTransform-{region}` | Migration build plane | CodeBuild project running AWS Transform (`atx`), build role, EventBridge rule on build terminal state | Data, Pipeline |
 
-Two **optional** stacks support the opt-in spoke rollout and are only
+The migration orchestrator and the completion handler Lambdas live in the
+Pipeline stack (so the API -> orchestrator wiring stays intra-stack); the
+Transform stack references them one-directionally, so CDK orders it after
+Pipeline on deploy and before it on `cdk destroy --all`.
+
+The mock fixture `LambdaRuntimeMigrationMock-{region}` (a CodeCommit repository
+and three deprecated-runtime Lambda functions) is optional test data, only
+synthesized with `--context mockFixture=true` (`deploy-all -Mock` or
+`scripts/deploy-mock`).
+
+Two **optional** stacks support the multi-account spoke rollout and are only
 synthesized when their context keys are present, so the default single-account
 synth never depends on them (both use `BootstraplessSynthesizer` — no
 `cdk bootstrap` in member accounts):
@@ -196,8 +207,7 @@ the non-empty assessment findings (deprecated APIs, breaking changes, dependency
 issues, migration risks) as an advisory paragraph. The target is the assessed
 one when it is valid for the family and newer than the source runtime, else the
 family default (`nodejs24.x`, `dotnet10`, `python3.13`). The
-optional Transform build plane (`--context transform=true`) adds a second Lambda
-durable function (`backend/migrate.py`), a CodeBuild project running the `atx`
+migration is built from a second Lambda durable function (`backend/migrate.py`), a CodeBuild project running the `atx`
 CLI and an EventBridge-triggered completion handler (`backend/build_complete.py`).
 
 One **Migrate** click is one batch durable execution with three steps per

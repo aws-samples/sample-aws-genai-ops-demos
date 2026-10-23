@@ -28,7 +28,7 @@ The browser holds no AWS credentials. The React SPA calls an HTTP API protected 
 - Python 3.13+
 - AWS CDK 2.1030.0+
 - AWS Business or Enterprise Support plan in **each account you scan** (required for Trusted Advisor API access). Accounts on Basic/Developer Support are skipped and reported as "not checked" — see [The scan pipeline](#the-scan-pipeline-durable-5-step-discover--assess)
-- AWS credentials configured with permissions for CloudFormation, Lambda, S3, DynamoDB, Cognito, API Gateway, Bedrock, and IAM
+- AWS credentials configured with permissions for CloudFormation, Lambda, S3, DynamoDB, Cognito, API Gateway, Bedrock, CodeBuild, CodeCommit, EventBridge, AWS Transform and IAM
 - Amazon Bedrock access to Amazon Nova enabled in your target region ([Model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html))
 
 The deploy script verifies your credentials with `aws sts get-caller-identity`; admin access is required to deploy the demo.
@@ -48,9 +48,21 @@ chmod +x deploy-all.sh scripts/build-frontend.sh
 ./deploy-all.sh
 ```
 
-The script deploys five CDK stacks (Data → Auth → Pipeline → Api → Frontend) through the shared deployment scripts, builds the React frontend with the API URL and Cognito config, and prints the CloudFront dashboard URL.
+That one command deploys the full demo, migration included: six CDK stacks (Data → Auth → Pipeline → Api → Transform → Frontend) through the shared deployment scripts, the AWS Transform buildspec uploaded to the artifacts bucket, and the React frontend built with the API URL and Cognito config. It prints the CloudFront dashboard URL and the CodeBuild project name. **Discover** and **Migrate** both work as soon as it finishes.
 
-Single-account is the default, but multi-account is decided at **runtime**, not by a deploy flag: a plain `deploy-all` already leaves a pipeline that fans out to whatever AWS Organization it can read. When the hub account is the organization's management account (or a delegated administrator), every Refresh enumerates the active member accounts and scans them; a standalone account degrades cleanly to the hub alone. To additionally roll the read-only spoke role out to member accounts (so the hub can assume into them), pass `-MultiAccount` (PowerShell) / `--multi-account` (Bash); a read-only preflight runs first, then the optional Org/Spoke StackSet. See [Multi-account scanning](#multi-account-scanning).
+Two optional switches change what gets deployed:
+
+| PowerShell | Bash | What it adds |
+|------------|------|--------------|
+| `-MultiAccount` (with optional `-OrgTargets r-xxxx,ou-...`) | `--multi-account` (with optional `--org-targets ...`) | Rolls the read-only spoke role out to the member accounts of your AWS Organization, so the hub can assume into them. A read-only preflight runs first, then the Org/Spoke StackSet. See [Multi-account scanning](#multi-account-scanning). |
+| `-Mock` | `--mock` | Deploys the mock fixture: a CodeCommit repository and three deprecated-runtime Lambda functions to try **Migrate** on. See [Mock fixture (optional)](#mock-fixture-optional). |
+
+```powershell
+.\deploy-all.ps1 -Mock
+.\deploy-all.ps1 -MultiAccount -Mock
+```
+
+Without `-MultiAccount` the scan is still organization-aware: multi-account is decided at **runtime**, not by a deploy flag. When the hub account is the organization's management account (or a delegated administrator), every Discover enumerates the active member accounts and scans them; a standalone account degrades cleanly to the hub alone.
 
 ### Create a Dashboard User
 
@@ -76,7 +88,7 @@ aws cognito-idp admin-set-user-password \
 2. Sign in with the credentials you just created
 3. Click **Discover** to run the durable discover + assess pipeline; watch the per-step progress as the durable execution advances
 4. Filter the inventory by account, region, or tag and sort by urgency
-5. Select functions and click **Migrate** (requires the optional Transform build plane, see below); each function ends as *Branch ready* with a link to the pushed upgrade branch, *No changes*, *Rejected* or *Failed*. The **How it works** page explains every step, status and code.
+5. Select functions and click **Migrate**; each function ends as *Branch ready* with a link to the pushed upgrade branch, *No changes*, *Rejected* or *Failed*. The **How it works** page explains every step, status and code.
 
 ## The scan pipeline (durable 5-step Discover + Assess)
 
@@ -110,7 +122,7 @@ Per-account Support tier is always reported. An account without Business/Enterpr
 
 ## Migrating a function (AWS Transform)
 
-The optional **Transform** build plane (opt-in via `scripts/deploy-transform.ps1` / `.sh`) runs an [AWS Transform](https://docs.aws.amazon.com/transform/latest/userguide/) managed runtime-upgrade transformation against a function's source repository inside AWS CodeBuild. A migration is one durable execution with three steps per batch, shown live in a collapsible **Migration steps** card on My functions:
+The **Transform** build plane, deployed by `deploy-all` with the rest of the demo, runs an [AWS Transform](https://docs.aws.amazon.com/transform/latest/userguide/) managed runtime-upgrade transformation against a function's source repository inside AWS CodeBuild. A migration is one durable execution with three steps per batch, shown live in a collapsible **Migration steps** card on My functions:
 
 1. **Prepare the migration batch** — mint the batch id, apply the 50-function per-run cap (extra selections are reported, never silently dropped).
 2. **Resolve source repositories** — read each function's repository (and optional branch) tag configured in Settings (the two tag keys are the only configuration a migration reads; the repository is an AWS CodeCommit repository in the function's account and region), verify the repository and branch exist, use the family's target runtime. A function that cannot be resolved is **Rejected** with a code (no repository tag, repository or branch not found, unsupported runtime, access denied, already in progress).
@@ -133,6 +145,37 @@ The migration build always **tries your deploy region first** and only falls bac
 
 To override the automatic choice, set the **`TRANSFORM_FALLBACK_REGION`** environment variable on the CodeBuild project (or pass it as a `start-build` environment-variable override). Any value you set replaces the geo-derived fallback; the build still tries your deploy region first, then uses your value if that region is unsupported. Use this to pin migrations to a specific supported Region for data-residency or latency reasons.
 
+## Mock fixture (optional)
+
+The mock fixture (`LambdaRuntimeMigrationMock-<region>`) is self-contained test data so you can demo **Migrate** without touching your own repositories. It creates:
+
+- An AWS CodeCommit repository `lambda-migration-demo-fixture`, seeded with `python/`, `nodejs/` and `dotnet/` sources
+- Three Lambda functions on deprecated runtimes (`python3.9`, `nodejs16.x`, `dotnet6`), each tagged `source-repo` and `git-branch` so Migrate resolves them to the fixture repository with the default Settings
+
+Trusted Advisor's deprecated-runtime check refreshes on its own schedule, so it can take hours before the new functions are listed and show up in the inventory after a **Discover**.
+
+**Deploy** it with the rest of the demo, or add it later on its own:
+
+```powershell
+.\deploy-all.ps1 -Mock          # full demo + mock fixture
+.\scripts\deploy-mock.ps1       # mock fixture only, on an existing deployment
+```
+
+```bash
+./deploy-all.sh --mock
+./scripts/deploy-mock.sh
+```
+
+**Remove** it (the rest of the demo stays):
+
+```powershell
+.\scripts\deploy-mock.ps1 -Destroy
+```
+
+```bash
+./scripts/deploy-mock.sh --destroy
+```
+
 ## CDK Stacks
 
 All stack IDs include the region suffix for multi-region deployment support.
@@ -144,6 +187,10 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `LambdaRuntimeMigrationPipeline-{region}` | Discover + Assess (5 steps) | Lambda durable function, API Lambda, hub pipeline IAM role (always carries the org-read + spoke-assume grants) | Data |
 | `LambdaRuntimeMigrationApi-{region}` | HTTP API | API Gateway HTTP API, Cognito JWT authorizer | Auth, Pipeline |
 | `LambdaRuntimeMigrationFrontend-{region}` | Dashboard | CloudFront distribution, S3 website bucket | Auth, Api |
+| `LambdaRuntimeMigrationTransform-{region}` | Migration build plane | CodeBuild project running AWS Transform, build role, EventBridge rule on build completion | Data, Pipeline |
+| `LambdaRuntimeMigrationMock-{region}` | Mock fixture (optional, `-Mock` / `scripts/deploy-mock`) | CodeCommit repo, three deprecated-runtime Lambda functions | None |
+
+The migration orchestrator and completion handler Lambdas live in the Pipeline stack. The multi-account Org and Spoke stacks are covered in [Multi-account scanning](#multi-account-scanning).
 
 > **Redeploy resets the inventory.** The inventory table's partition key is `item_key` (`fn#<account_id>#<region>#<function_arn>`). This is a breaking schema change from earlier versions, so the Data stack recreates the table on deploy — any previous inventory is cleared. This is demo-quality behavior; there is no data migration.
 
@@ -187,7 +234,7 @@ ai-lambda-runtime-migration/
 │   ├── transform_runtimes.py           # Runtime family -> AWS Transform target reference data
 │   ├── requirements.txt
 │   └── tests/                          # pytest suite (durable test runners)
-├── cdk/                                # CDK TypeScript infrastructure (9 stacks: 7 deployed by default + Spoke/Org for multi-account)
+├── cdk/                                # CDK TypeScript infrastructure (9 stacks: 6 deployed by default, Mock optional, Spoke/Org for multi-account)
 │   ├── bin/app.ts                      # Entry point with solution adoption tracking
 │   ├── buildspec/
 │   │   └── transform-migrate.buildspec.yml  # CodeBuild steps: clone, run AWS Transform, push the upgrade branch
@@ -197,8 +244,8 @@ ai-lambda-runtime-migration/
 │   │   ├── pipeline-stack.ts           # Lambda durable functions + API Lambda
 │   │   ├── api-stack.ts                # HTTP API + Cognito JWT authorizer
 │   │   ├── frontend-stack.ts           # CloudFront + S3 website
-│   │   ├── transform-stack.ts          # Optional: CodeBuild project for AWS Transform (deploy-transform)
-│   │   ├── mock-fixture-stack.ts       # Optional: fixture repo + three deprecated-runtime functions (deploy-mock)
+│   │   ├── transform-stack.ts          # CodeBuild project running AWS Transform + completion rule
+│   │   ├── mock-fixture-stack.ts       # Optional: fixture repo + three deprecated-runtime functions (-Mock / deploy-mock)
 │   │   ├── spoke-stack.ts              # Multi-account: read-only role in each member account
 │   │   ├── org-stack.ts                # Multi-account: StackSet rolling the Spoke stack out
 │   │   └── scan-permissions.ts         # Shared scan/read IAM statements (hub + spoke)
@@ -225,8 +272,7 @@ ai-lambda-runtime-migration/
 │   └── vite.config.ts
 └── scripts/
     ├── build-frontend.ps1 / .sh         # Build frontend with Vite env injection
-    ├── deploy-mock.ps1 / .sh            # Deploy / destroy the Mock fixture stack
-    └── deploy-transform.ps1 / .sh       # Deploy / destroy the Transform stack and upload the buildspec
+    └── deploy-mock.ps1 / .sh            # Deploy / destroy the Mock fixture stack on its own
 ```
 
 ## Cost Estimate
@@ -247,29 +293,37 @@ Infrastructure costs (CloudFront, Cognito, DynamoDB, S3, HTTP API) are negligibl
 
 ## Cleanup
 
-Destroy the stacks in reverse dependency order:
-
-**Bash:**
-```bash
-cd cdk
-region=$(aws configure get region)
-npx cdk destroy "LambdaRuntimeMigrationFrontend-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationApi-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationPipeline-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationAuth-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationData-$region" --no-cli-pager
-```
+Destroy the stacks in reverse dependency order through the shared deployment script, from the demo folder. The prerequisites script sets the region exactly as `deploy-all` does. Skip the mock line if you did not deploy the fixture, and the Org line if you did not deploy with `-MultiAccount` (replace `<ORG_TARGETS>` with the root/OU ids you deployed with).
 
 **PowerShell:**
 ```powershell
-cd cdk
-$region = aws configure get region
-npx cdk destroy "LambdaRuntimeMigrationFrontend-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationApi-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationPipeline-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationAuth-$region" --no-cli-pager
-npx cdk destroy "LambdaRuntimeMigrationData-$region" --no-cli-pager
+& "..\..\shared\scripts\check-prerequisites.ps1"
+$region = $global:AWS_REGION
+.\scripts\deploy-mock.ps1 -Destroy
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationFrontend-$region" -SkipBootstrap -DestroyStack
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationTransform-$region" -SkipBootstrap -DestroyStack
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationApi-$region" -SkipBootstrap -DestroyStack
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationOrg-$region" -SkipBootstrap -DestroyStack -CdkContext "orgTargets=<ORG_TARGETS>"
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationPipeline-$region" -SkipBootstrap -DestroyStack
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationAuth-$region" -SkipBootstrap -DestroyStack
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName "LambdaRuntimeMigrationData-$region" -SkipBootstrap -DestroyStack
 ```
+
+**Bash:**
+```bash
+source ../../shared/scripts/check-prerequisites.sh
+region="$AWS_REGION"
+./scripts/deploy-mock.sh --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationFrontend-$region" --skip-bootstrap --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationTransform-$region" --skip-bootstrap --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationApi-$region" --skip-bootstrap --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationOrg-$region" --skip-bootstrap --destroy --cdk-context "orgTargets=<ORG_TARGETS>"
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationPipeline-$region" --skip-bootstrap --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationAuth-$region" --skip-bootstrap --destroy
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "LambdaRuntimeMigrationData-$region" --skip-bootstrap --destroy
+```
+
+The artifacts bucket (including the uploaded buildspec) empties itself on destroy.
 
 ## Design Decisions
 
