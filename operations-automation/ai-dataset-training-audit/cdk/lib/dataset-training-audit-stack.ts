@@ -105,6 +105,47 @@ export class DatasetTrainingAuditStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // autoDeleteObjects is backed by a stack-singleton CustomResourceProvider Lambda (a raw
+    // CfnResource, so neither the logGroup prop nor @aws-cdk/aws-lambda:useCdkManagedLogGroup
+    // applies to it). Left alone, Lambda creates /aws/lambda/<generated-name> on first
+    // invocation, outside CloudFormation, and it survives `cdk destroy`. Route its logs to a
+    // stack-owned log group via LoggingConfig instead. The Ref makes the Handler depend on the
+    // log group.
+    //
+    // Lambda delivers logs asynchronously (seconds after the invocation), so the Delete
+    // invocation's logs can land after this group is deleted; with AWSLambdaBasicExecutionRole
+    // (logs:CreateLogGroup on *) Lambda would then recreate it as an orphan. So the provider
+    // role gets no managed policy, only CreateLogStream/PutLogEvents on this group. The inline
+    // policy references the group's ARN, so destroy order is Handler -> Role -> log group:
+    // the role can never create a log group, and is gone before this one is deleted.
+    const autoDeleteLogGroup = new logs.LogGroup(this, 'AutoDeleteObjectsLogGroup', {
+      logGroupName: `/dataset-training-audit/${region}/auto-delete-objects`,
+      encryptionKey,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    const autoDeleteProvider = this.node.tryFindChild(
+      'Custom::S3AutoDeleteObjectsCustomResourceProvider',
+    ) as cdk.CustomResourceProviderBase | undefined;
+    const autoDeleteHandler = autoDeleteProvider?.node.tryFindChild('Handler') as
+      | cdk.CfnResource
+      | undefined;
+    const autoDeleteRole = autoDeleteProvider?.node.tryFindChild('Role') as
+      | cdk.CfnResource
+      | undefined;
+    if (!autoDeleteProvider || !autoDeleteHandler || !autoDeleteRole) {
+      throw new Error('S3 autoDeleteObjects provider not found; CDK internals changed');
+    }
+    autoDeleteHandler.addPropertyOverride('LoggingConfig', {
+      LogGroup: autoDeleteLogGroup.logGroupName,
+    });
+    autoDeleteRole.addPropertyDeletionOverride('ManagedPolicyArns');
+    autoDeleteProvider.addToRolePolicy({
+      Effect: 'Allow',
+      Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+      Resource: autoDeleteLogGroup.logGroupArn,
+    });
+
     // ---------------------------------------------------------------------
     // DynamoDB audit table.
     // ---------------------------------------------------------------------
@@ -171,11 +212,24 @@ export class DatasetTrainingAuditStack extends cdk.Stack {
     // ---------------------------------------------------------------------
     // ECS cluster.
     // ---------------------------------------------------------------------
+    const clusterName = `dataset-training-audit-${region}`;
+
+    // Container Insights writes to /aws/ecs/containerinsights/<cluster>/performance and ECS
+    // creates that group itself if missing, outside CloudFormation. Create it first with the
+    // exact name (1-day retention, as ECS would) so the stack owns it and destroy removes it.
+    const containerInsightsLogGroup = new logs.LogGroup(this, 'ContainerInsightsLogGroup', {
+      logGroupName: `/aws/ecs/containerinsights/${clusterName}/performance`,
+      encryptionKey,
+      retention: logs.RetentionDays.ONE_DAY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     const cluster = new ecs.Cluster(this, 'DartCluster', {
-      clusterName: `dataset-training-audit-${region}`,
+      clusterName,
       vpc,
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
     });
+    cluster.node.addDependency(containerInsightsLogGroup);
 
     // ---------------------------------------------------------------------
     // Fargate task definition.

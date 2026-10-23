@@ -260,8 +260,20 @@ resource "aws_security_group" "task" {
 # -----------------------------------------------------------------------------
 # ECS cluster.
 # -----------------------------------------------------------------------------
+# Container Insights writes to /aws/ecs/containerinsights/<cluster>/performance
+# and ECS creates that group itself if it is missing, outside Terraform, so it
+# would survive `terraform destroy`. Manage it explicitly with the exact name
+# (1-day retention, as ECS would) and create it before the cluster.
+resource "aws_cloudwatch_log_group" "container_insights" {
+  name              = "/aws/ecs/containerinsights/dataset-training-audit-${var.region}/performance"
+  retention_in_days = 1
+  kms_key_id        = aws_kms_key.dart.arn
+  tags              = local.tags
+}
+
 resource "aws_ecs_cluster" "dart" {
-  name = "dataset-training-audit-${var.region}"
+  name       = "dataset-training-audit-${var.region}"
+  depends_on = [aws_cloudwatch_log_group.container_insights]
 
   setting {
     name  = "containerInsights"

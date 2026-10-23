@@ -51,7 +51,8 @@ summary block plus the exact `aws ecs run-task` command to launch a scan.
   audit costs a few cents; Comprehend cost scales with the number of records
   scanned (every string field of every record is scanned — no sampling).
 - **Standing**: a KMS key, an (empty until used) S3 bucket, a PAY_PER_REQUEST
-  DynamoDB table, and a CloudWatch log group (1-week retention). These are
+  DynamoDB table, and stack-owned CloudWatch log groups (task logs, Container
+  Insights and, on the CDK path, the bucket auto-delete Lambda). These are
   effectively free when idle.
 
 Running the demo in your own account will incur AWS charges; tear it down when
@@ -176,7 +177,9 @@ ECR image via the stack's imageTag escape hatch instead of building the
 container image, so destroy needs no Docker daemon. (Do not use
 `-c aws:cdk:bundling-stacks=[]`: the current CDK CLI rejects user-provided
 `aws:`-prefixed context keys.) Both paths remove the bucket (with its objects),
-the DynamoDB table, the log group, and the ECR repo.
+the DynamoDB table, every log group (task, Container Insights and the CDK
+auto-delete Lambda's, all created by the stack itself so none is left behind),
+and the ECR repo.
 
 ## Catalog
 
