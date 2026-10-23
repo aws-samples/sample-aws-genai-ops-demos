@@ -69,7 +69,12 @@ Two optional switches change what gets deployed:
 ./deploy-all.sh --multi-account --mock
 ```
 
-Without `-MultiAccount` the scan is still organization-aware: multi-account is decided at **runtime**, not by a deploy flag. When the hub account is the organization's management account (or a delegated administrator), every Discover enumerates the active member accounts and scans them; a standalone account degrades cleanly to the hub alone.
+Which accounts a **Discover** scans is not set by these switches. Each Discover works it out when it runs:
+
+- **Standalone account**, or an account that is not the organization's management account or a delegated administrator: Discover scans only the account you deployed into (the hub).
+- **Management account or delegated administrator**: Discover lists the organization's active member accounts and scans them alongside the hub. It reads a member account through a read-only role that must exist in that account, and `-MultiAccount` / `--multi-account` is what installs that role.
+
+So deploy with `-MultiAccount` when you want member accounts scanned. Without it, Discover can only read the hub's own functions.
 
 ### Create a Dashboard User
 
