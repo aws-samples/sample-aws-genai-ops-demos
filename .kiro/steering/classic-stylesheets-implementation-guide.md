@@ -1,6 +1,7 @@
 ---
-inclusion: fileMatch
-fileMatchPattern: 'operations-automation/anycompany-it-demo-portal/frontend/*'
+inclusion: auto
+name: classic-stylesheets-implementation-guide
+description: Use when building or styling a retro or classic-themed demo UI with the Classic Stylesheets (CDE, Manzana, Ventana themes), such as the AnyCompany IT demo portal.
 ---
 
 # Classic Stylesheets Implementation Guide
