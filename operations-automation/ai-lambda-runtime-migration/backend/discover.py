@@ -285,7 +285,7 @@ def query_trusted_advisor(session: boto3.session.Session, region: str) -> Dict[s
             })
         except Exception as e:  # pragma: no cover - defensive parse guard
             parse_errors.append(f"metadata={md}, error={e}")
-            logger.warning("Skipping malformed resource: %s (metadata: %s)", e, md)
+            logger.warning("Skipping malformed resource: %s", _error_code(e))
 
     msg = f"Found {len(functions)} function(s)."
     if parse_errors:
@@ -590,8 +590,8 @@ Return 0 when nothing in the metadata justifies a change.
                     continue
                 arn = val.get("arn", "")
                 if arn not in base_by_arn:
-                    logger.warning("prioritize batch %d/%d: Nova returned unknown ARN %s, ignored",
-                                   batch_no, len(batches), arn)
+                    logger.warning("prioritize batch %d/%d: Nova returned unknown fn %s, ignored",
+                                   batch_no, len(batches), _log_ref(arn))
                     continue
                 base = base_by_arn[arn]
                 adj = max(-ADJUSTMENT_LIMIT, min(ADJUSTMENT_LIMIT, int(val.get("adjustment", 0))))
@@ -611,7 +611,7 @@ Return 0 when nothing in the metadata justifies a change.
             result.update(batch_result)
         except Exception as e:
             logger.warning("prioritize batch %d/%d fell back to rule-based scores: %s",
-                           batch_no, len(batches), e)
+                           batch_no, len(batches), _error_code(e))
             result.update(fallback_priorities(batch))
 
     return result
@@ -769,8 +769,7 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
         ident = _row_identity(drop, region)
         existing_by_identity[ident] = _merge_dropped_duplicate(
             table, existing_by_identity[ident], drop, account_id)
-        logger.info("discover_scope[%s]: deleting stale duplicate row %s",
-                    account_id or "hub", drop.get("item_key"))
+        logger.info("discover_scope: deleting one stale duplicate row")
         table.delete_item(Key={"item_key": drop["item_key"]})
     active_before = sum(1 for r in existing_by_identity.values() if not r.get("resolved_at"))
 
@@ -832,9 +831,9 @@ def discover_scope(session: boto3.session.Session, cell: dict, run_id: str, when
         # A genuine large migration is legitimate (still proceed), but a scope
         # retiring most of its backlog at once is also what a key-matching
         # defect would look like, so make it visible.
-        logger.warning("discover_scope[%s]: retiring %d of %d active rows in one scan "
+        logger.warning("discover_scope: retiring %d of %d active rows in one scan "
                        "(TA now flags %d functions); verify this is a real migration",
-                       account_id or "hub", len(resolved_keys), active_before, len(functions))
+                       len(resolved_keys), active_before, len(functions))
     for key in resolved_keys:
         table.update_item(
             Key={"item_key": key},
@@ -933,9 +932,8 @@ def _merge_dropped_duplicate(table, keep: dict, drop: dict, account_id: str) -> 
         ExpressionAttributeNames=names,
         ExpressionAttributeValues=values,
     )
-    logger.info("discover_scope[%s]: merged %d attribute(s) (%s) from duplicate %s into %s",
-                account_id or "hub", len(missing), ", ".join(sorted(missing)),
-                drop.get("item_key"), keep.get("item_key"))
+    logger.info("discover_scope: merged %d attribute(s) from a duplicate row into its twin",
+                len(missing))
     return {**missing, **keep}
 
 
@@ -956,8 +954,7 @@ def _rekey_row(table, old_row: dict, new_key: str, account_id: str, account_name
     table.delete_item(Key={"item_key": old_row["item_key"]})
     # A hashed function reference, never row contents or the keys read back from
     # the table: those travelled through the scan session and must stay out of logs.
-    logger.info("discover_scope: re-keyed inventory row for fn %s into region %s",
-                _log_ref(function_arn), region)
+    logger.info("discover_scope: re-keyed inventory row for fn %s", _log_ref(function_arn))
     old_mig_key = mig_item_key(old_row.get("account_id", "") or "",
                                old_row.get("region") or region, function_arn)
     new_mig_key = mig_item_key(account_id, region, function_arn)

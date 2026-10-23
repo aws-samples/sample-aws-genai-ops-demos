@@ -695,7 +695,7 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
             "migration_updated_at": _now(),
         }, condition="migration_status = :queued")
         if not written:
-            logger.info("mig item %s already settled; CodeBuild project still not configured", mig_key)
+            logger.info("mig item already settled; CodeBuild project still not configured")
         raise RuntimeError("CodeBuild project is not configured")
 
     # 2. Per-run job id (S3 prefix, upgrade branch, CodeCommit idempotency token).
@@ -764,7 +764,7 @@ def start_transform(callback_id: str, ctx: WaitForCallbackContext, resolved: dic
         "migration_updated_at": _now(),
     }, condition="migration_status = :queued")
     if not written:
-        logger.info("mig item %s already IN_PROGRESS for build %s (replay)", mig_key, build_id)
+        logger.info("mig item already IN_PROGRESS for build %s (replay)", build_id)
 
     # 6. Idempotent, unguarded build-id -> mig-item index row (authoritative
     #    lookup for build_complete). The callback id is duplicated here so
@@ -792,9 +792,9 @@ def _settle(mig_key: str, code: str, detail: str) -> dict:
         "migration_updated_at": _now(),
     }, condition=_SETTLE_CONDITION)
     if not written:
-        logger.info("mig item %s already settled; not writing FAILED/%s", mig_key, code)
+        logger.info("mig item already settled; not writing FAILED/%s", code)
     else:
-        logger.info("mig item %s settled FAILED/%s", mig_key, code)
+        logger.info("mig item settled FAILED/%s", code)
     return {"settled": written}
 
 

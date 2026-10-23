@@ -32,6 +32,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import discover
+from common import error_code
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,6 @@ def account_name(account_id: str, region: str, org_client=None) -> str:
         org = org_client or boto3.client("organizations", region_name=region)
         acct = org.describe_account(AccountId=account_id).get("Account") or {}
         return acct.get("Name", "")
-    except Exception:  # pragma: no cover - the name is best-effort
-        logger.warning("could not read the name of account %s", account_id, exc_info=True)
+    except Exception as exc:  # pragma: no cover - the name is best-effort
+        logger.warning("could not read an account name: %s", error_code(exc))
         return ""

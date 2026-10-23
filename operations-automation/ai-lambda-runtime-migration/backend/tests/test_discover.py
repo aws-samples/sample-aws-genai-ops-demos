@@ -204,7 +204,9 @@ def test_prioritize_excludes_skipped_and_fills_missing(monkeypatch, caplog):
     assert set(out) == {a, b}                                 # SKIPPED never scored
     assert out[a] == {"score": 80, "base": 85, "adjustment": -5, "reasoning": "staging"}
     assert out[b] == {"score": 85, "base": 85, "adjustment": 0, "reasoning": "rule-based score"}
-    assert "unknown ARN arn:unknown" in caplog.text
+    # Logged as a hashed reference only, never the raw ARN.
+    assert f"unknown fn {discover._log_ref('arn:unknown')}" in caplog.text
+    assert "arn:unknown" not in caplog.text
 
 
 def test_prioritize_empty_scope_makes_no_call(monkeypatch):

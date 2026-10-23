@@ -178,8 +178,8 @@ def _write_terminal(mig_key: str, fields: dict, batch_id: str, build_id: str) ->
         if owner and owner != batch_id:
             logger.info("build %s belongs to batch %s, item now owned by %s", build_id, batch_id, owner)
         else:
-            logger.info("build %s: mig item %s already terminal (%s); not writing",
-                        build_id, mig_key, item.get("migration_status"))
+            logger.info("build %s: mig item already terminal (%s); not writing",
+                        build_id, item.get("migration_status"))
         return False
 
 

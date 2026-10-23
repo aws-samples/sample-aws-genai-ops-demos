@@ -107,7 +107,7 @@ def _read_text(extract_path: str, rel_path: str) -> Optional[str]:
         with open(os.path.join(extract_path, rel_path), "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     except Exception as exc:  # an unreadable file is skipped, not fatal
-        logger.warning("could not read %s: %s", rel_path, error_code(exc))
+        logger.warning("could not read a source file: %s", error_code(exc))
         return None
 
 
