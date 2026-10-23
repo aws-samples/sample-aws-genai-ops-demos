@@ -62,9 +62,8 @@ export class ApiStack extends cdk.Stack {
     this.httpApi.addRoutes({ path: '/refresh/{arn+}', methods: [apigwv2.HttpMethod.GET], integration });
     // Scan log: the last ~10 durable executions (newest first) for the timeline.
     this.httpApi.addRoutes({ path: '/scans', methods: [apigwv2.HttpMethod.GET], integration });
-    // Phase-2 migration: always registered; the behavior behind them is gated by
-    // MIGRATE_FUNCTION_ARN presence on the API function (api.start_migration 503s
-    // when migration is not deployed). Greedy {arn+} tolerates a URL-encoded ':'.
+    // Migration routes: the API function reaches the orchestrator through
+    // MIGRATE_FUNCTION_ARN. Greedy {arn+} tolerates a URL-encoded ':'.
     this.httpApi.addRoutes({ path: '/migrate', methods: [apigwv2.HttpMethod.POST], integration });
     // One batch migration (function_arns) in a single durable execution.
     this.httpApi.addRoutes({ path: '/migrate-batch', methods: [apigwv2.HttpMethod.POST], integration });

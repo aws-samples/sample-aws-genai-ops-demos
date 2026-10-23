@@ -5,7 +5,7 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 
 /**
- * MockFixtureStack — opt-in, self-contained test fixture for the demo.
+ * MockFixtureStack — optional, self-contained test fixture for the demo.
  *
  * It stands up a CodeCommit repository seeded with three trivial handlers and
  * three Lambda functions on DEPRECATED runtimes (one each for .NET, Node.js and

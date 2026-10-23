@@ -1,6 +1,9 @@
 # AI Lambda Runtime Migration Assistant - Complete Deployment Script
 #
-# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Frontend
+# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Transform -> Frontend
+# The Transform stack is the migration build plane (CodeBuild running AWS
+# Transform); its buildspec is uploaded to the artifacts bucket right after it
+# deploys, so Migrate works as soon as the script finishes.
 # No Docker needed: the Lambda bundle is built locally with pip by the
 # Pipeline stack (pure-Python dependencies resolved as Linux/arm64 wheels).
 #
@@ -17,16 +20,22 @@
 #   The pipeline stack itself is deployed identically with or without this flag.
 # -OrgTargets: comma-separated organization root (r-xxxx) and/or OU ids to roll
 #   the spoke role out to. Default: the whole organization (its root).
+# -Mock: also deploys the optional mock fixture (LambdaRuntimeMigrationMock-<region>):
+#   a CodeCommit repository and three deprecated-runtime Lambda functions tagged
+#   so Migrate works with the default Settings. Remove it later with
+#   scripts\deploy-mock.ps1 -Destroy.
 param(
     [switch]$MultiAccount,
-    [string]$OrgTargets = ""
+    [string]$OrgTargets = "",
+    [switch]$Mock
 )
 
 Write-Host "=== AI Lambda Runtime Migration Assistant Deployment ===" -ForegroundColor Cyan
 
-# Run shared prerequisites check
+# Run shared prerequisites check (transform service: points at the AWS Transform
+# region reference; the demo picks the Transform region at run time).
 Write-Host "`nRunning prerequisites check..." -ForegroundColor Yellow
-& "..\..\shared\scripts\check-prerequisites.ps1" -MinAwsCliVersion "2.31.13" -MinPythonVersion "3.12" -RequireCDK -MinCdkVersion "2.1030.0"
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "transform" -MinAwsCliVersion "2.31.13" -MinPythonVersion "3.12" -RequireCDK -MinCdkVersion "2.1030.0"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Prerequisites check failed" -ForegroundColor Red
@@ -60,6 +69,8 @@ $authStackName = "LambdaRuntimeMigrationAuth-$region"
 $pipelineStackName = "LambdaRuntimeMigrationPipeline-$region"
 $apiStackName = "LambdaRuntimeMigrationApi-$region"
 $frontendStackName = "LambdaRuntimeMigrationFrontend-$region"
+$transformStackName = "LambdaRuntimeMigrationTransform-$region"
+$mockStackName = "LambdaRuntimeMigrationMock-$region"
 
 # Multi-account preflight (read-only; exit codes documented in check-org-access.ps1).
 # This only drives the OPTIONAL Org/Spoke StackSet rollout below — the pipeline
@@ -124,6 +135,28 @@ Write-Host "      (Creating the HTTP API with Cognito JWT authorization in front
 & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $apiStackName -SkipBootstrap
 if ($LASTEXITCODE -ne 0) { Write-Host "API stack deployment failed" -ForegroundColor Red; exit 1 }
 
+# Deploy Transform stack (migration build plane). It imports Pipeline and Data
+# exports, so it goes after them.
+Write-Host "`nDeploying Transform stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the CodeBuild project running AWS Transform, its build role and EventBridge rule)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $transformStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "Transform stack deployment failed" -ForegroundColor Red; exit 1 }
+
+# Read the artifacts bucket name from the Data stack output, then upload the
+# buildspec the CodeBuild project reads from config/.
+$bucket = aws cloudformation describe-stacks --stack-name $dataStackName --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --no-cli-pager
+$transformProjectName = aws cloudformation describe-stacks --stack-name $transformStackName --query "Stacks[0].Outputs[?OutputKey=='TransformProjectName'].OutputValue" --output text --no-cli-pager
+if ([string]::IsNullOrEmpty($bucket) -or $bucket -eq "None") {
+    Write-Host "Failed to get the artifacts bucket name from stack outputs" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "`nUploading the migration buildspec to the artifacts bucket..." -ForegroundColor Yellow
+# Object MUST be named buildspec.yml: CodeBuild's S3 single-file source looks for
+# a file named buildspec.yml in the downloaded source root.
+aws s3 cp cdk/buildspec/transform-migrate.buildspec.yml "s3://$bucket/config/buildspec.yml" --no-cli-pager
+if ($LASTEXITCODE -ne 0) { Write-Host "Buildspec upload failed" -ForegroundColor Red; exit 1 }
+
 # Build frontend with API URL and Cognito config (after backend is complete)
 Write-Host "`nBuilding frontend with stack outputs..." -ForegroundColor Yellow
 Write-Host "      (Retrieving API URL and Cognito config, building the React app)" -ForegroundColor Gray
@@ -154,6 +187,20 @@ Write-Host "      (Deploying the built React app to S3 behind CloudFront)" -Fore
 & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $frontendStackName -SkipBootstrap
 if ($LASTEXITCODE -ne 0) { Write-Host "Frontend stack deployment failed" -ForegroundColor Red; exit 1 }
 
+# Optional mock fixture (-Mock): CodeCommit repo + three deprecated-runtime
+# Lambda functions, gated behind the mockFixture CDK context.
+if ($Mock) {
+    Write-Host "`nDeploying mock fixture stack..." -ForegroundColor Yellow
+    Write-Host "      (Creating the CodeCommit repo and the three deprecated-runtime Lambda functions)" -ForegroundColor Gray
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $mockStackName -SkipBootstrap -CdkContext "mockFixture=true"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Mock fixture deployment failed" -ForegroundColor Red; exit 1 }
+
+    $repoUrl = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='FixtureRepoCloneUrlHttp'].OutputValue" --output text --no-cli-pager
+    $pythonFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockPythonFunctionName'].OutputValue" --output text --no-cli-pager
+    $nodejsFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockNodejsFunctionName'].OutputValue" --output text --no-cli-pager
+    $dotnetFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockDotnetFunctionName'].OutputValue" --output text --no-cli-pager
+}
+
 # Gather outputs
 $websiteUrl = aws cloudformation describe-stacks --stack-name $frontendStackName --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
 
@@ -164,6 +211,18 @@ Write-Host "  Dashboard URL:   $websiteUrl" -ForegroundColor Cyan
 Write-Host "  API URL:         $apiUrl" -ForegroundColor Cyan
 Write-Host "  Region:          $region" -ForegroundColor Cyan
 Write-Host "  User Pool ID:    $userPoolId" -ForegroundColor Cyan
+Write-Host "  CodeBuild project (AWS Transform): $transformProjectName" -ForegroundColor Cyan
+if ($Mock) {
+    Write-Host "`nMock fixture:" -ForegroundColor Yellow
+    Write-Host "  CodeCommit repo URL: $repoUrl" -ForegroundColor Cyan
+    Write-Host "  Functions:" -ForegroundColor Cyan
+    Write-Host "    - $pythonFn  (python3.9)" -ForegroundColor Cyan
+    Write-Host "    - $nodejsFn  (nodejs16.x)" -ForegroundColor Cyan
+    Write-Host "    - $dotnetFn  (dotnet6)" -ForegroundColor Cyan
+    Write-Host "  Trusted Advisor's deprecated-runtime detection has a lag, so these functions" -ForegroundColor DarkGray
+    Write-Host "  may take time (often hours) to appear in the inventory after the next Discover." -ForegroundColor DarkGray
+    Write-Host "  Remove the fixture with: .\scripts\deploy-mock.ps1 -Destroy" -ForegroundColor DarkGray
+}
 Write-Host "`nNext Steps:" -ForegroundColor Yellow
 Write-Host "  1. Create a dashboard user (copy-paste these two commands):" -ForegroundColor Gray
 Write-Host ""
@@ -174,6 +233,8 @@ Write-Host ""
 Write-Host "     (The username is the email address; replace it and the password with your own values)" -ForegroundColor DarkGray
 Write-Host "  2. Sign in at the Dashboard URL above and click Discover to run the first discover + assess pipeline" -ForegroundColor Gray
 Write-Host "     The hub always scans whatever organization it can read at runtime; a standalone account scans itself." -ForegroundColor DarkGray
+Write-Host "  3. Migrate is available right away: select functions and click Migrate to run AWS Transform in CodeBuild" -ForegroundColor Gray
+Write-Host "     and push an upgrade branch to each function's repository (tens of minutes per function)." -ForegroundColor DarkGray
 if ($MultiAccount) {
     $hubAccount = aws sts get-caller-identity --query Account --output text --no-cli-pager
     Write-Host "`nMulti-account:" -ForegroundColor Yellow

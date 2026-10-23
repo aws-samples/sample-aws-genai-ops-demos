@@ -27,13 +27,6 @@ const env = {
 //   --context spokeExternalId=<opaque string>
 const spokeExternalId: string | undefined = app.node.tryGetContext('spokeExternalId') || undefined;
 
-// Opt-in Phase-2 migration (CodeBuild + AWS Transform). When set, PipelineStack
-// creates the migration orchestrator + build_complete Lambdas and the API gets
-// MIGRATE_FUNCTION_ARN; TransformStack (the build plane) is also instantiated.
-// Mirrors the mockFixture gate, so the default synth is unchanged.
-const transform = app.node.tryGetContext('transform') === true
-  || app.node.tryGetContext('transform') === 'true';
-
 // Data stack (DynamoDB + S3)
 const dataStack = new DataStack(app, `LambdaRuntimeMigrationData-${region}`, {
   env,
@@ -53,7 +46,6 @@ const pipelineStack = new PipelineStack(app, `LambdaRuntimeMigrationPipeline-${r
   table: dataStack.table,
   bucketName: dataStack.bucket.bucketName,
   spokeExternalId,
-  transform,
   description: 'AI Lambda Runtime Migration Pipeline: Lambda durable function discovering and assessing deprecated-runtime Lambda functions (uksb-do9bhieqqh)(tag:lambda-runtime-migration,operations-automation)',
 });
 
@@ -114,9 +106,9 @@ if (orgTargets) {
   });
 }
 
-// Opt-in mock fixture (self-contained test data: a CodeCommit repo + three
-// deprecated-runtime Lambdas tagged for code-behind detection). Not part of
-// deploy-all; deployed on its own with scripts/deploy-mock.*. No tracking tag:
+// Optional mock fixture (self-contained test data: a CodeCommit repo + three
+// deprecated-runtime Lambdas tagged for code-behind detection). Deployed by
+// deploy-all -Mock / --mock or on its own with scripts/deploy-mock.*. No tracking tag:
 // the Pipeline stack is the demo's single tracked stack. Only instantiated when
 // --context mockFixture=true, so the default synth is unchanged.
 const mockFixture = app.node.tryGetContext('mockFixture') === true
@@ -128,20 +120,18 @@ if (mockFixture) {
   });
 }
 
-// Opt-in Phase-2 build plane (CodeBuild project + CodeBuild role + EventBridge
-// rule running AWS Transform). The two Phase-2 Lambdas live in PipelineStack
-// under the same gate; TransformStack depends on them one-directionally. Not
-// part of deploy-all; deployed on its own with scripts/deploy-transform.*. No
-// tracking tag: the Pipeline stack is the demo's single tracked stack. Only
-// instantiated when --context transform=true, so the default synth is unchanged.
-if (transform) {
-  new TransformStack(app, `LambdaRuntimeMigrationTransform-${region}`, {
-    env,
-    bucketName: dataStack.bucket.bucketName,
-    orchestratorFunction: pipelineStack.migrateFunction!,
-    buildCompleteFunction: pipelineStack.buildCompleteFunction!,
-    description: 'Lambda Runtime Migration Transform: CodeBuild project, build role and EventBridge rule running AWS Transform (atx) migrations',
-  });
-}
+// Migration build plane (CodeBuild project + CodeBuild role + EventBridge rule
+// running AWS Transform). Always deployed by deploy-all. The two migration
+// Lambdas live in PipelineStack; TransformStack references them (and the Data
+// bucket), so CDK infers Transform -> Pipeline / Data dependencies and orders
+// deploy and `cdk destroy --all` accordingly. No tracking tag: the Pipeline
+// stack is the demo's single tracked stack.
+new TransformStack(app, `LambdaRuntimeMigrationTransform-${region}`, {
+  env,
+  bucketName: dataStack.bucket.bucketName,
+  orchestratorFunction: pipelineStack.migrateFunction,
+  buildCompleteFunction: pipelineStack.buildCompleteFunction,
+  description: 'Lambda Runtime Migration Transform: CodeBuild project, build role and EventBridge rule running AWS Transform (atx) migrations',
+});
 
 app.synth();

@@ -2,7 +2,10 @@
 # AI Lambda Runtime Migration Assistant - Complete Deployment Script
 # macOS/Linux version - mirrors deploy-all.ps1
 #
-# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Frontend
+# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Transform -> Frontend
+# The Transform stack is the migration build plane (CodeBuild running AWS
+# Transform); its buildspec is uploaded to the artifacts bucket right after it
+# deploys, so Migrate works as soon as the script finishes.
 # No Docker needed: the Lambda bundle is built locally with pip by the
 # Pipeline stack (pure-Python dependencies resolved as Linux/arm64 wheels).
 #
@@ -19,24 +22,31 @@
 #   The pipeline stack itself is deployed identically with or without this flag.
 # --org-targets <ids>: comma-separated organization root (r-xxxx) and/or OU ids
 #   to roll the spoke role out to. Default: the whole organization (its root).
+# --mock: also deploys the optional mock fixture (LambdaRuntimeMigrationMock-<region>):
+#   a CodeCommit repository and three deprecated-runtime Lambda functions tagged
+#   so Migrate works with the default Settings. Remove it later with
+#   scripts/deploy-mock.sh --destroy.
 
 set -e  # Exit on error
 
 MULTI_ACCOUNT=false
 ORG_TARGETS=""
+MOCK=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --multi-account) MULTI_ACCOUNT=true; shift ;;
         --org-targets) ORG_TARGETS="$2"; shift 2 ;;
-        *) echo "Unknown option: $1"; echo "Usage: $0 [--multi-account] [--org-targets r-xxxx,ou-xxxx-yyyyyyyy]"; exit 1 ;;
+        --mock) MOCK=true; shift ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--multi-account] [--org-targets r-xxxx,ou-xxxx-yyyyyyyy] [--mock]"; exit 1 ;;
     esac
 done
 
 echo -e "\033[0;36m=== AI Lambda Runtime Migration Assistant Deployment ===\033[0m"
 
-# Run shared prerequisites check
+# Run shared prerequisites check (transform service: points at the AWS Transform
+# region reference; the demo picks the Transform region at run time).
 echo -e "\n\033[0;33mRunning prerequisites check...\033[0m"
-source ../../shared/scripts/check-prerequisites.sh --min-aws-cli-version "2.31.13" --min-python-version "3.12" --require-cdk --min-cdk-version "2.1030.0"
+source ../../shared/scripts/check-prerequisites.sh --required-service "transform" --min-aws-cli-version "2.31.13" --min-python-version "3.12" --require-cdk --min-cdk-version "2.1030.0"
 
 # Install frontend dependencies
 echo -e "\n\033[0;33mInstalling frontend dependencies...\033[0m"
@@ -64,6 +74,8 @@ auth_stack="LambdaRuntimeMigrationAuth-$region"
 pipeline_stack="LambdaRuntimeMigrationPipeline-$region"
 api_stack="LambdaRuntimeMigrationApi-$region"
 frontend_stack="LambdaRuntimeMigrationFrontend-$region"
+transform_stack="LambdaRuntimeMigrationTransform-$region"
+mock_stack="LambdaRuntimeMigrationMock-$region"
 
 # Multi-account preflight (read-only; exit codes documented in check-org-access.sh).
 # This only drives the OPTIONAL Org/Spoke StackSet rollout below — the pipeline
@@ -129,6 +141,26 @@ echo -e "\n\033[0;33mDeploying API stack...\033[0m"
 echo -e "\033[0;90m      (Creating the HTTP API with Cognito JWT authorization in front of the API function)\033[0m"
 ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$api_stack" --skip-bootstrap
 
+# Deploy Transform stack (migration build plane). It imports Pipeline and Data
+# exports, so it goes after them.
+echo -e "\n\033[0;33mDeploying Transform stack...\033[0m"
+echo -e "\033[0;90m      (Creating the CodeBuild project running AWS Transform, its build role and EventBridge rule)\033[0m"
+../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$transform_stack" --skip-bootstrap
+
+# Read the artifacts bucket name from the Data stack output, then upload the
+# buildspec the CodeBuild project reads from config/.
+bucket=$(aws cloudformation describe-stacks --stack-name "$data_stack" --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --no-cli-pager)
+transform_project_name=$(aws cloudformation describe-stacks --stack-name "$transform_stack" --query "Stacks[0].Outputs[?OutputKey=='TransformProjectName'].OutputValue" --output text --no-cli-pager)
+if [ -z "$bucket" ] || [ "$bucket" == "None" ]; then
+    echo -e "\033[0;31mFailed to get the artifacts bucket name from stack outputs\033[0m"
+    exit 1
+fi
+
+echo -e "\n\033[0;33mUploading the migration buildspec to the artifacts bucket...\033[0m"
+# Object MUST be named buildspec.yml: CodeBuild's S3 single-file source looks for
+# a file named buildspec.yml in the downloaded source root.
+aws s3 cp cdk/buildspec/transform-migrate.buildspec.yml "s3://$bucket/config/buildspec.yml" --no-cli-pager
+
 # Build frontend with API URL and Cognito config (after backend is complete)
 echo -e "\n\033[0;33mBuilding frontend with stack outputs...\033[0m"
 echo -e "\033[0;90m      (Retrieving API URL and Cognito config, building the React app)\033[0m"
@@ -157,6 +189,19 @@ echo -e "\n\033[0;33mDeploying frontend stack...\033[0m"
 echo -e "\033[0;90m      (Deploying the built React app to S3 behind CloudFront)\033[0m"
 ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$frontend_stack" --skip-bootstrap
 
+# Optional mock fixture (--mock): CodeCommit repo + three deprecated-runtime
+# Lambda functions, gated behind the mockFixture CDK context.
+if [ "$MOCK" = true ]; then
+    echo -e "\n\033[0;33mDeploying mock fixture stack...\033[0m"
+    echo -e "\033[0;90m      (Creating the CodeCommit repo and the three deprecated-runtime Lambda functions)\033[0m"
+    ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$mock_stack" --skip-bootstrap --cdk-context "mockFixture=true"
+
+    repo_url=$(aws cloudformation describe-stacks --stack-name "$mock_stack" --query "Stacks[0].Outputs[?OutputKey=='FixtureRepoCloneUrlHttp'].OutputValue" --output text --no-cli-pager)
+    python_fn=$(aws cloudformation describe-stacks --stack-name "$mock_stack" --query "Stacks[0].Outputs[?OutputKey=='MockPythonFunctionName'].OutputValue" --output text --no-cli-pager)
+    nodejs_fn=$(aws cloudformation describe-stacks --stack-name "$mock_stack" --query "Stacks[0].Outputs[?OutputKey=='MockNodejsFunctionName'].OutputValue" --output text --no-cli-pager)
+    dotnet_fn=$(aws cloudformation describe-stacks --stack-name "$mock_stack" --query "Stacks[0].Outputs[?OutputKey=='MockDotnetFunctionName'].OutputValue" --output text --no-cli-pager)
+fi
+
 # Gather outputs
 website_url=$(aws cloudformation describe-stacks --stack-name "$frontend_stack" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager)
 
@@ -167,6 +212,18 @@ echo -e "\033[0;36m  Dashboard URL:   $website_url\033[0m"
 echo -e "\033[0;36m  API URL:         $api_url\033[0m"
 echo -e "\033[0;36m  Region:          $region\033[0m"
 echo -e "\033[0;36m  User Pool ID:    $user_pool_id\033[0m"
+echo -e "\033[0;36m  CodeBuild project (AWS Transform): $transform_project_name\033[0m"
+if [ "$MOCK" = true ]; then
+    echo -e "\n\033[0;33mMock fixture:\033[0m"
+    echo -e "\033[0;36m  CodeCommit repo URL: $repo_url\033[0m"
+    echo -e "\033[0;36m  Functions:\033[0m"
+    echo -e "\033[0;36m    - $python_fn  (python3.9)\033[0m"
+    echo -e "\033[0;36m    - $nodejs_fn  (nodejs16.x)\033[0m"
+    echo -e "\033[0;36m    - $dotnet_fn  (dotnet6)\033[0m"
+    echo -e "\033[0;90m  Trusted Advisor's deprecated-runtime detection has a lag, so these functions\033[0m"
+    echo -e "\033[0;90m  may take time (often hours) to appear in the inventory after the next Discover.\033[0m"
+    echo -e "\033[0;90m  Remove the fixture with: ./scripts/deploy-mock.sh --destroy\033[0m"
+fi
 echo -e "\n\033[0;33mNext Steps:\033[0m"
 echo -e "\033[0;90m  1. Create a dashboard user (copy-paste these two commands):\033[0m"
 echo ""
@@ -177,6 +234,8 @@ echo ""
 echo -e "\033[0;90m     (The username is the email address; replace it and the password with your own values)\033[0m"
 echo -e "\033[0;90m  2. Sign in at the Dashboard URL above and click Discover to run the first discover + assess pipeline\033[0m"
 echo -e "\033[0;90m     The hub always scans whatever organization it can read at runtime; a standalone account scans itself.\033[0m"
+echo -e "\033[0;90m  3. Migrate is available right away: select functions and click Migrate to run AWS Transform in CodeBuild\033[0m"
+echo -e "\033[0;90m     and push an upgrade branch to each function's repository (tens of minutes per function).\033[0m"
 if [ "$MULTI_ACCOUNT" = true ]; then
     hub_account=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
     echo -e "\n\033[0;33mMulti-account:\033[0m"

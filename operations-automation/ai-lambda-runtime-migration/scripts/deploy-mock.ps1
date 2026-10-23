@@ -4,7 +4,8 @@
 # deprecated-runtime Lambda functions (.NET / Node.js / Python), each tagged so
 # the demo's code-behind detection resolves the function to that repository.
 #
-# This is NOT part of deploy-all. It deploys ONLY the mock stack
+# deploy-all.ps1 -Mock deploys the same stack; this script adds or removes it on
+# its own (its -Destroy is the way to remove the fixture). It deploys ONLY the mock stack
 # (LambdaRuntimeMigrationMock-<region>), gated behind the `mockFixture` CDK
 # context, through the SHARED deploy-cdk script (never `cdk deploy` directly).
 #

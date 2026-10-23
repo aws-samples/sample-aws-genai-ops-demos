@@ -18,17 +18,12 @@ export interface PipelineStackProps extends cdk.StackProps {
   spokeRoleName?: string;
   /** Optional sts:ExternalId presented when assuming spoke roles. */
   spokeExternalId?: string;
-  /** Opt-in Phase-2 migration gate (mirrors app.ts `transform` context). When
-   *  set, the migration orchestrator (migrate.handler) and the build_complete
-   *  handler are created in this stack and wired to the API function
-   *  intra-stack; TransformStack (separate, opt-in) owns the build plane. */
-  transform?: boolean;
 }
 
 const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
 const PIPELINE_FUNCTION_NAME = 'lambda-runtime-migration-pipeline';
 const API_FUNCTION_NAME = 'lambda-runtime-migration-api';
-// Phase-2 migration functions (created only under the `transform` gate).
+// Migration functions (orchestrator + CodeBuild completion handler).
 const MIGRATE_FUNCTION_NAME = 'lambda-runtime-migration-migrate';
 const BUILD_COMPLETE_FUNCTION_NAME = 'lambda-runtime-migration-build-complete';
 // One place for the Lambda Python version: runtime of both functions, the
@@ -103,11 +98,10 @@ export class PipelineStack extends cdk.Stack {
   public readonly pipelineFunction: lambda.Function;
   public readonly pipelineAlias: lambda.Alias;
   public readonly apiFunction: lambda.Function;
-  // Phase-2 migration functions, populated only under the `transform` gate so
-  // app.ts can pass them to TransformStack. Undefined on a default synth.
-  public readonly migrateFunction?: lambda.Function;
-  public readonly migrateAlias?: lambda.Alias;
-  public readonly buildCompleteFunction?: lambda.Function;
+  // Migration functions, passed by app.ts to TransformStack (the build plane).
+  public readonly migrateFunction: lambda.Function;
+  public readonly migrateAlias: lambda.Alias;
+  public readonly buildCompleteFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: PipelineStackProps) {
     super(scope, id, props);
@@ -165,7 +159,7 @@ export class PipelineStack extends cdk.Stack {
           resources: [props.table.tableArn],
         }),
         // No S3 here: the scan (Discover + Assess) and the API never touch the
-        // bucket. Only the Phase-2 functions do, each with its own scoped
+        // bucket. Only the migration functions do, each with its own scoped
         // statement below (migrate writes the Transform config, build-complete
         // reads result.json).
         new iam.PolicyStatement({
@@ -249,147 +243,143 @@ export class PipelineStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // Phase-2 migration functions (opt-in `transform` gate)
+    // Migration functions (orchestrator + CodeBuild completion handler)
     //
     // Co-located here, with the API function, so the API -> orchestrator wiring
     // (MIGRATE_FUNCTION_ARN + invoke grant) is entirely intra-stack and does not
     // form a CloudFormation dependency cycle with TransformStack. TransformStack
     // owns only the build plane and depends on these one-directionally.
     // ------------------------------------------------------------------
-    let migrateAliasForApi: lambda.Alias | undefined;
-    if (props.transform) {
-      const migrateLogGroup = new logs.LogGroup(this, 'MigrateLogGroup', {
-        logGroupName: `/aws/lambda/${MIGRATE_FUNCTION_NAME}`,
-        retention: logs.RetentionDays.ONE_MONTH,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      });
+    const migrateLogGroup = new logs.LogGroup(this, 'MigrateLogGroup', {
+      logGroupName: `/aws/lambda/${MIGRATE_FUNCTION_NAME}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
 
-      const migrateFunction = new lambda.Function(this, 'MigrateFunction', {
-        functionName: MIGRATE_FUNCTION_NAME,
-        description: 'Lambda runtime migration orchestrator: resolve, AWS Transform via CodeBuild (durable callback), upgrade branch pushed by the build (Lambda durable function)',
-        runtime: PYTHON_RUNTIME,
-        architecture: lambda.Architecture.ARM_64,
-        handler: 'migrate.handler',
-        code: backendCode,
-        memorySize: 512,
-        timeout: cdk.Duration.minutes(5),
-        logGroup: migrateLogGroup,
-        environment: sharedEnvironment,
-        durableConfig: {
-          // The execution now WAITS for every CodeBuild run (durable callback),
-          // so the ceiling must cover the pathological batch where each build in
-          // each wave sits its full queue bound and then runs to its build
-          // bound. Inputs are the constants in backend/migrate.py
-          // (QUEUE_TIMEOUT_MINUTES, BUILD_TIMEOUT_MINUTES, CALLBACK_SLACK_MINUTES,
-          // MAX_FUNCTIONS_PER_RUN, MIGRATE_CONCURRENCY); change one, re-derive this:
-          //
-          //   waves    = ceil(MAX_FUNCTIONS_PER_RUN / MIGRATE_CONCURRENCY)            = ceil(50 / 5) = 10
-          //   per_wave = resolve retries (2) + QUEUE_TIMEOUT_MINUTES (10)
-          //            + BUILD_TIMEOUT_MINUTES (60) + CALLBACK_SLACK_MINUTES (5)
-          //            + settle step (1)                                              = 78 min
-          //   ceiling  = waves x per_wave x 1.5 (replay latency, SDK retry backoff,
-          //              EventBridge delay; queueing is already bounded above)        = 1170 min ~ 19.5 h -> 20 h
-          //
-          // A too-high ceiling costs nothing (an execution that finishes early
-          // finishes early); a too-low one turns a slow but legitimate batch into
-          // TIMED_OUT. A real fixture batch finishes in minutes.
-          executionTimeout: cdk.Duration.hours(20),
-          retentionPeriod: cdk.Duration.days(14),
-        },
-      });
-      // Data-plane + verify grants for the orchestrator. Scan is needed because
-      // resolve_and_verify locates the function's fn# row via a DynamoDB Scan of
-      // the inventory; GetItem/UpdateItem cover the mig# read/writes.
-      migrateFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationItemAccess',
-        actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
-        resources: [props.table.tableArn],
-      }));
-      // The orchestrator writes the AWS Transform config render
-      // (migrations/<job_id>/transform-config.yaml) that the build reads back.
-      // This is the config render, not a function-source upload; build_complete
-      // does the only read (its own statement below).
-      migrateFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationArtifacts',
-        actions: ['s3:PutObject'],
-        resources: [`${bucketArn}/*`],
-      }));
-      // Hub-region fixture repository only. The orchestrator calls CodeCommit in
-      // the function's region (resolved['region']); a repo in any other region
-      // is denied at resolve (ACCESS_DENIED) by design, this demo migrates the
-      // fixture.
-      const fixtureRepoArn = `arn:${this.partition}:codecommit:${this.region}:${this.account}:${FIXTURE_REPO_NAME}`;
-      migrateFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationRepoVerify',
-        actions: ['codecommit:GetRepository', 'codecommit:GetBranch'],
-        resources: [fixtureRepoArn],
-      }));
-      // No write grant on the repository: the build (TransformStack) pushes the
-      // upgrade branch, and the flow ends there. The orchestrator only reads.
-      migrateFunction.role!.addManagedPolicy(
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicDurableExecutionRolePolicy'),
-      );
+    const migrateFunction = new lambda.Function(this, 'MigrateFunction', {
+      functionName: MIGRATE_FUNCTION_NAME,
+      description: 'Lambda runtime migration orchestrator: resolve, AWS Transform via CodeBuild (durable callback), upgrade branch pushed by the build (Lambda durable function)',
+      runtime: PYTHON_RUNTIME,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'migrate.handler',
+      code: backendCode,
+      memorySize: 512,
+      timeout: cdk.Duration.minutes(5),
+      logGroup: migrateLogGroup,
+      environment: sharedEnvironment,
+      durableConfig: {
+        // The execution now WAITS for every CodeBuild run (durable callback),
+        // so the ceiling must cover the pathological batch where each build in
+        // each wave sits its full queue bound and then runs to its build
+        // bound. Inputs are the constants in backend/migrate.py
+        // (QUEUE_TIMEOUT_MINUTES, BUILD_TIMEOUT_MINUTES, CALLBACK_SLACK_MINUTES,
+        // MAX_FUNCTIONS_PER_RUN, MIGRATE_CONCURRENCY); change one, re-derive this:
+        //
+        //   waves    = ceil(MAX_FUNCTIONS_PER_RUN / MIGRATE_CONCURRENCY)            = ceil(50 / 5) = 10
+        //   per_wave = resolve retries (2) + QUEUE_TIMEOUT_MINUTES (10)
+        //            + BUILD_TIMEOUT_MINUTES (60) + CALLBACK_SLACK_MINUTES (5)
+        //            + settle step (1)                                              = 78 min
+        //   ceiling  = waves x per_wave x 1.5 (replay latency, SDK retry backoff,
+        //              EventBridge delay; queueing is already bounded above)        = 1170 min ~ 19.5 h -> 20 h
+        //
+        // A too-high ceiling costs nothing (an execution that finishes early
+        // finishes early); a too-low one turns a slow but legitimate batch into
+        // TIMED_OUT. A real fixture batch finishes in minutes.
+        executionTimeout: cdk.Duration.hours(20),
+        retentionPeriod: cdk.Duration.days(14),
+      },
+    });
+    // Data-plane + verify grants for the orchestrator. Scan is needed because
+    // resolve_and_verify locates the function's fn# row via a DynamoDB Scan of
+    // the inventory; GetItem/UpdateItem cover the mig# read/writes.
+    migrateFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationItemAccess',
+      actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
+      resources: [props.table.tableArn],
+    }));
+    // The orchestrator writes the AWS Transform config render
+    // (migrations/<job_id>/transform-config.yaml) that the build reads back.
+    // This is the config render, not a function-source upload; build_complete
+    // does the only read (its own statement below).
+    migrateFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationArtifacts',
+      actions: ['s3:PutObject'],
+      resources: [`${bucketArn}/*`],
+    }));
+    // Hub-region fixture repository only. The orchestrator calls CodeCommit in
+    // the function's region (resolved['region']); a repo in any other region
+    // is denied at resolve (ACCESS_DENIED) by design, this demo migrates the
+    // fixture.
+    const fixtureRepoArn = `arn:${this.partition}:codecommit:${this.region}:${this.account}:${FIXTURE_REPO_NAME}`;
+    migrateFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationRepoVerify',
+      actions: ['codecommit:GetRepository', 'codecommit:GetBranch'],
+      resources: [fixtureRepoArn],
+    }));
+    // No write grant on the repository: the build (TransformStack) pushes the
+    // upgrade branch, and the flow ends there. The orchestrator only reads.
+    migrateFunction.role!.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicDurableExecutionRolePolicy'),
+    );
 
-      // Durable functions must be invoked through a qualified ARN.
-      const migrateAlias = new lambda.Alias(this, 'MigrateLiveAlias', {
-        aliasName: 'live',
-        version: migrateFunction.currentVersion,
-      });
+    // Durable functions must be invoked through a qualified ARN.
+    const migrateAlias = new lambda.Alias(this, 'MigrateLiveAlias', {
+      aliasName: 'live',
+      version: migrateFunction.currentVersion,
+    });
 
-      const buildCompleteLogGroup = new logs.LogGroup(this, 'BuildCompleteLogGroup', {
-        logGroupName: `/aws/lambda/${BUILD_COMPLETE_FUNCTION_NAME}`,
-        retention: logs.RetentionDays.ONE_MONTH,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      });
+    const buildCompleteLogGroup = new logs.LogGroup(this, 'BuildCompleteLogGroup', {
+      logGroupName: `/aws/lambda/${BUILD_COMPLETE_FUNCTION_NAME}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
 
-      const buildCompleteFunction = new lambda.Function(this, 'BuildCompleteFunction', {
-        functionName: BUILD_COMPLETE_FUNCTION_NAME,
-        description: 'Lambda runtime migration completion handler: writes terminal migration status on a CodeBuild terminal-state event',
-        runtime: PYTHON_RUNTIME,
-        architecture: lambda.Architecture.ARM_64,
-        handler: 'build_complete.handler',
-        code: backendCode,
-        memorySize: 256,
-        timeout: cdk.Duration.minutes(2),
-        logGroup: buildCompleteLogGroup,
-        environment: sharedEnvironment,
-      });
-      buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationItemAccess',
-        actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
-        resources: [props.table.tableArn],
-      }));
-      buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationResultRead',
-        actions: ['s3:GetObject'],
-        resources: [`${bucketArn}/*`],
-      }));
-      // Completes the orchestrator's transform-<i> wait_for_callback with the
-      // build result. The callback is authorized against the function that OWNS
-      // the execution (the migrate function), not against build_complete, hence
-      // the migrate function ARN here. Unqualified ARN + :* like MigrateDurableRead:
-      // a durable execution ARN carries the resolved numeric version. Resource
-      // shape checked with the IAM policy simulator (aws iam simulate-custom-policy):
-      // the action on function:migrate and function:migrate:* evaluates allowed
-      // for function:migrate and function:migrate:3, implicitDeny for
-      // function:other, identically to lambda:GetDurableExecution. The managed
-      // AWSLambdaBasicDurableExecutionRolePolicy carries no callback action, so
-      // this statement is required. Success only: build_complete never sends
-      // Failure (failures travel inside the success payload) and no heartbeat
-      // timeout is configured.
-      buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrationCallback',
-        actions: ['lambda:SendDurableExecutionCallbackSuccess'],
-        resources: [migrateFunction.functionArn, `${migrateFunction.functionArn}:*`],
-      }));
-      // basic Lambda logging is provided by the explicit log group + default
-      // service permissions on the function role.
+    const buildCompleteFunction = new lambda.Function(this, 'BuildCompleteFunction', {
+      functionName: BUILD_COMPLETE_FUNCTION_NAME,
+      description: 'Lambda runtime migration completion handler: writes terminal migration status on a CodeBuild terminal-state event',
+      runtime: PYTHON_RUNTIME,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'build_complete.handler',
+      code: backendCode,
+      memorySize: 256,
+      timeout: cdk.Duration.minutes(2),
+      logGroup: buildCompleteLogGroup,
+      environment: sharedEnvironment,
+    });
+    buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationItemAccess',
+      actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+      resources: [props.table.tableArn],
+    }));
+    buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationResultRead',
+      actions: ['s3:GetObject'],
+      resources: [`${bucketArn}/*`],
+    }));
+    // Completes the orchestrator's transform-<i> wait_for_callback with the
+    // build result. The callback is authorized against the function that OWNS
+    // the execution (the migrate function), not against build_complete, hence
+    // the migrate function ARN here. Unqualified ARN + :* like MigrateDurableRead:
+    // a durable execution ARN carries the resolved numeric version. Resource
+    // shape checked with the IAM policy simulator (aws iam simulate-custom-policy):
+    // the action on function:migrate and function:migrate:* evaluates allowed
+    // for function:migrate and function:migrate:3, implicitDeny for
+    // function:other, identically to lambda:GetDurableExecution. The managed
+    // AWSLambdaBasicDurableExecutionRolePolicy carries no callback action, so
+    // this statement is required. Success only: build_complete never sends
+    // Failure (failures travel inside the success payload) and no heartbeat
+    // timeout is configured.
+    buildCompleteFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationCallback',
+      actions: ['lambda:SendDurableExecutionCallbackSuccess'],
+      resources: [migrateFunction.functionArn, `${migrateFunction.functionArn}:*`],
+    }));
+    // basic Lambda logging is provided by the explicit log group + default
+    // service permissions on the function role.
 
-      this.migrateFunction = migrateFunction;
-      this.migrateAlias = migrateAlias;
-      this.buildCompleteFunction = buildCompleteFunction;
-      migrateAliasForApi = migrateAlias;
-    }
+    this.migrateFunction = migrateFunction;
+    this.migrateAlias = migrateAlias;
+    this.buildCompleteFunction = buildCompleteFunction;
 
     // ------------------------------------------------------------------
     // Plain API function (UI actions + pipeline control)
@@ -413,10 +403,7 @@ export class PipelineStack extends cdk.Stack {
       environment: {
         ...sharedEnvironment,
         PIPELINE_FUNCTION_ARN: this.pipelineAlias.functionArn,
-        // Phase-2: present only under the `transform` gate. api.py's
-        // start_migration 503s when this is unset, so the two /migrate routes
-        // exist unconditionally but only act when migration is deployed.
-        ...(migrateAliasForApi ? { MIGRATE_FUNCTION_ARN: migrateAliasForApi.functionArn } : {}),
+        MIGRATE_FUNCTION_ARN: migrateAlias.functionArn,
       },
     });
     this.apiFunction.role!.addManagedPolicy(dataAccessPolicy);
@@ -440,35 +427,33 @@ export class PipelineStack extends cdk.Stack {
       resources: ['*'], // DescribeAccount has no resource-level permissions
     }));
 
-    // Phase-2: intra-stack invoke grant on the migration orchestrator alias —
-    // same shape as PipelineControl, no cross-stack ref (no cycle). The API does
-    // NOT get codebuild:StartBuild or codecommit:* (the orchestrator does those).
-    if (migrateAliasForApi) {
-      this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrateControl',
-        actions: ['lambda:InvokeFunction'],
-        resources: [migrateAliasForApi.functionArn, `${migrateAliasForApi.functionArn}:*`],
-      }));
-      // GET /migrate-run/{arn+} reads one known migrate execution's state and
-      // history; GET /migrate-runs lists the function's executions newest-first
-      // for the Steps card re-attach and the Activity log — the same
-      // lambda:GetDurableExecution* / ListDurableExecutionsByFunction family
-      // PipelineControl holds on the pipeline function.
-      // Scope to the UNQUALIFIED function ARN (+ :*), like PipelineControl —
-      // NOT the alias ARN. A durable execution ARN carries the resolved numeric
-      // VERSION (…:migrate:5/durable-execution/…), so an alias-scoped resource
-      // (…:migrate:live:*) does not match it and GetDurableExecution 500s with
-      // AccessDenied. The unqualified-ARN + :* pattern covers every version.
-      this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
-        sid: 'MigrateDurableRead',
-        actions: [
-          'lambda:GetDurableExecution',
-          'lambda:GetDurableExecutionHistory',
-          'lambda:ListDurableExecutionsByFunction',
-        ],
-        resources: [this.migrateFunction!.functionArn, `${this.migrateFunction!.functionArn}:*`],
-      }));
-    }
+    // Intra-stack invoke grant on the migration orchestrator alias — same shape
+    // as PipelineControl, no cross-stack ref (no cycle). The API does NOT get
+    // codebuild:StartBuild or codecommit:* (the orchestrator does those).
+    this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrateControl',
+      actions: ['lambda:InvokeFunction'],
+      resources: [migrateAlias.functionArn, `${migrateAlias.functionArn}:*`],
+    }));
+    // GET /migrate-run/{arn+} reads one known migrate execution's state and
+    // history; GET /migrate-runs lists the function's executions newest-first
+    // for the Steps card re-attach and the Activity log — the same
+    // lambda:GetDurableExecution* / ListDurableExecutionsByFunction family
+    // PipelineControl holds on the pipeline function.
+    // Scope to the UNQUALIFIED function ARN (+ :*), like PipelineControl —
+    // NOT the alias ARN. A durable execution ARN carries the resolved numeric
+    // VERSION (…:migrate:5/durable-execution/…), so an alias-scoped resource
+    // (…:migrate:live:*) does not match it and GetDurableExecution 500s with
+    // AccessDenied. The unqualified-ARN + :* pattern covers every version.
+    this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrateDurableRead',
+      actions: [
+        'lambda:GetDurableExecution',
+        'lambda:GetDurableExecutionHistory',
+        'lambda:ListDurableExecutionsByFunction',
+      ],
+      resources: [migrateFunction.functionArn, `${migrateFunction.functionArn}:*`],
+    }));
 
     // ------------------------------------------------------------------
     // Outputs

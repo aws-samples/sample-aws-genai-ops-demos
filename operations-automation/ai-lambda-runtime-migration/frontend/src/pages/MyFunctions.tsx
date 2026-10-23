@@ -425,7 +425,7 @@ export default function MyFunctions() {
       setMigrationRun(run);
       setStepsExpanded(false);
     } catch (err) {
-      // Non-fatal: the card is optional (a scan-only deployment returns []).
+      // Non-fatal: the card is optional (no migration batch yet returns []).
       console.warn('Could not re-attach to the latest migration batch', err);
     }
   }, []);

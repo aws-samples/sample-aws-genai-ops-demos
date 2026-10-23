@@ -15,6 +15,7 @@ stacks:
   - "LambdaRuntimeMigrationPipeline-<region>"
   - "LambdaRuntimeMigrationApi-<region>"
   - "LambdaRuntimeMigrationFrontend-<region>"
+  - "LambdaRuntimeMigrationTransform-<region>"
 
 verify: "deterministic"
 

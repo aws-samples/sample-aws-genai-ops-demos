@@ -14,17 +14,17 @@ export interface TransformStackProps extends cdk.StackProps {
   /** Name of the existing migration-artifacts bucket (DataStack.bucket). */
   bucketName: string;
   /** The migration orchestrator function (migrate.handler), created in
-   *  PipelineStack under the same `transform` gate. TransformStack grants it
+   *  PipelineStack. TransformStack grants it
    *  codebuild:StartBuild on the project and sets its PROJECT_NAME env var, so
    *  it needs the concrete Function (addEnvironment + addToRolePolicy). */
   orchestratorFunction: lambda.Function;
   /** The build_complete handler (build_complete.handler), created in
-   *  PipelineStack under the same gate. EventBridge invokes it on build
+   *  PipelineStack. EventBridge invokes it on build
    *  terminal state. */
   buildCompleteFunction: lambda.IFunction;
 }
 
-// Buildspec object key under the artifacts bucket (uploaded by deploy-transform).
+// Buildspec object key under the artifacts bucket (uploaded by deploy-all).
 // MUST be named buildspec.yml: with an S3 single-file source, CodeBuild
 // downloads the object as the source root and then looks for a file literally
 // named buildspec.yml within it. A differently-named object fails DOWNLOAD_SOURCE
@@ -39,7 +39,7 @@ const BUILDSPEC_KEY = 'config/buildspec.yml';
 const PROJECT_NAME = 'lambda-runtime-migration-transform';
 
 /**
- * TransformStack — opt-in build-plane for Phase 2 migration.
+ * TransformStack — build plane for the migration (always deployed).
  *
  * Owns ONLY the resources that run AWS Transform inside CodeBuild and report
  * terminal state: a persistent CodeBuild project (source = the S3-hosted
@@ -47,8 +47,8 @@ const PROJECT_NAME = 'lambda-runtime-migration-transform';
  * git access to the fixture repository), and an EventBridge rule on the build's
  * terminal state targeting the build_complete Lambda.
  *
- * The two Phase-2 Lambdas (orchestrator + build_complete) live in PipelineStack
- * under the same `transform` gate so the API->orchestrator wiring stays
+ * The two migration Lambdas (orchestrator + build_complete) live in
+ * PipelineStack so the API->orchestrator wiring stays
  * intra-stack; this stack depends on them one-directionally
  * (TransformStack -> PipelineStack), which is acyclic because nothing in
  * PipelineStack references a TransformStack output.
@@ -174,7 +174,7 @@ export class TransformStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // Outputs (read by deploy-transform)
+    // Outputs (read by deploy-all)
     // ------------------------------------------------------------------
     new cdk.CfnOutput(this, 'TransformProjectName', {
       value: project.projectName,
