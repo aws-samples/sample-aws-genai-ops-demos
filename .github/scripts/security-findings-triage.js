@@ -175,6 +175,8 @@ function cell(value) {
   return String(value == null || value === '' ? 'n/a' : value)
     .replace(/[\r\n]+/g, ' ')
     .replace(/`/g, "'")
+    // Escape backslashes first so an input ending in "\" can't cancel the pipe escape.
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|');
 }
 

@@ -162,6 +162,14 @@ test('body: table cells escape pipes and missing patched version', () => {
   assert.match(body, /`< 1\.0 \\\| >= 2\.0` \| none \|/);
 });
 
+test('body: backslashes are escaped before pipes', () => {
+  const a = alert(1, 'security/d/package.json');
+  a.security_vulnerability.vulnerable_version_range = 'a\\|b';
+  const body = t.renderBody({ demo: 'security/d', alerts: [a], mentions: [], maintainers: ['m'] });
+  // "a\|b" must render as "a\\\|b": escaped backslash, then escaped pipe.
+  assert.ok(body.includes('`a\\\\\\|b`'), body);
+});
+
 function desiredFor(demo, alerts, assignees = ['bquintas', 'benlec']) {
   const body = t.renderBody({ demo, alerts, mentions: [], maintainers: ['bquintas', 'benlec'] });
   return [demo, { title: t.issueTitle(demo), body, alertNumbers: alerts.map((x) => x.number).sort((x, y) => x - y), assignees, mentions: [] }];
