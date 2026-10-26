@@ -42,20 +42,34 @@ const countText = (p: ScanPhase): string => `${p.done} of ${p.total} ${countUnit
 const phaseNote = (p: ScanPhase): string =>
   p.label.startsWith('Discover') ? ' · via Trusted Advisor, then Amazon Nova prioritizes'
     : p.label.startsWith('Assess') ? ' · Amazon Nova assesses complexity'
+    : p.label.startsWith('Check each account') && typeof p.eligible === 'number'
+      ? ` · ${p.eligible} eligible for Trusted Advisor`
     : '';
 
 // The "Determine the accounts to scan" phase is a single poll of AWS
 // Organizations, so "1 of 1 account done" tells the user nothing. It reports a
 // result instead: how many accounts the scan found.
 const isAccountListing = (p: ScanPhase) => p.label.startsWith('Determine the accounts');
+// The summary step runs once per scan, not once per account: "1 of 1 account
+// done" would misread as an account count, so it just reports "Done".
+const isSummary = (p: ScanPhase) => p.label.startsWith('Summarize');
+
+// A phase that did not run. The backend owns the reason (skipped because its
+// prerequisite produced nothing, or not reached); the generic text is only a
+// fallback for runs whose history could not be read.
+const notRun = (p: ScanPhase) => (
+  <Box variant="small" color="text-body-secondary">{p.note ?? 'Not part of this run'}</Box>
+);
 
 const detailsFor = (p: ScanPhase) => {
-  if (isAccountListing(p)) {
-    if (p.status === 'in-progress') return <Box variant="small">Listing accounts…</Box>;
-    if ((p.status === 'success' || p.status === 'warning') && typeof p.accountsFound === 'number') {
+  if (isAccountListing(p) || isSummary(p)) {
+    if (p.status === 'in-progress') {
+      return <Box variant="small">{isAccountListing(p) ? 'Listing accounts…' : 'Summarizing…'}</Box>;
+    }
+    if (isAccountListing(p) && (p.status === 'success' || p.status === 'warning') && typeof p.accountsFound === 'number') {
       return <Box variant="small" color="text-body-secondary">{p.accountsFound} {countUnit(p.accountsFound, 'account')} found</Box>;
     }
-    if (p.status === 'stopped') return <Box variant="small" color="text-body-secondary">Not part of this run</Box>;
+    if (p.status === 'stopped') return notRun(p);
     if (p.status === 'success' || p.status === 'warning') return <Box variant="small" color="text-body-secondary">Done</Box>;
     return undefined;
   }
@@ -75,7 +89,7 @@ const detailsFor = (p: ScanPhase) => {
   if (p.total && p.total >= 1 && p.status !== 'pending' && p.status !== 'stopped') {
     return <Box variant="small" color={p.failed ? 'text-status-warning' : 'text-body-secondary'}>{countText(p)} done{p.failed ? `, ${p.failed} failed` : ''}{phaseNote(p)}</Box>;
   }
-  if (p.status === 'stopped') return <Box variant="small" color="text-body-secondary">Not part of this run</Box>;
+  if (p.status === 'stopped') return notRun(p);
   return undefined;
 };
 
@@ -106,7 +120,7 @@ export default function ScanSteps({ phases, running }: { phases: ScanPhase[]; ru
         </Header>
       }
     >
-      <LiveRegion>{current ? `${current.label}: ${!isAccountListing(current) && current.total ? `${countText(current)} done` : 'running'}` : ''}</LiveRegion>
+      <LiveRegion>{current ? `${current.label}: ${!isAccountListing(current) && !isSummary(current) && current.total ? `${countText(current)} done` : 'running'}` : ''}</LiveRegion>
       <Steps steps={steps} ariaLabel="Scan progress" />
     </Container>
   );

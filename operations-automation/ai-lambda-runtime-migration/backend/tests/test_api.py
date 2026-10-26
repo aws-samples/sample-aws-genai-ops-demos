@@ -130,6 +130,83 @@ def test_progress_phases_order_and_labels():
     assert progress["assess_done"] == 2
 
 
+def _succeeded(name, result):
+    """StepSucceeded carrying a result in the durable SDK's typed envelope."""
+    def enc(v):
+        if isinstance(v, dict):
+            return {"t": "m", "v": {k: enc(x) for k, x in v.items()}}
+        return {"t": "s", "v": v}
+    return {"EventType": "StepSucceeded", "Name": name,
+            "StepSucceededDetails": {"Result": {"Payload": json.dumps(enc(result))}}}
+
+
+def _by_label(progress, prefix):
+    return next(p for p in progress["phases"] if p["label"].startswith(prefix))
+
+
+def test_discover_and_assess_explain_skip_when_no_account_has_ta():
+    # The colleague's case: one account on Basic Support, so nothing is
+    # TA-eligible and Discover/Assess never checkpoint a step.
+    events = [
+        _step("StepStarted", "start-run"), _step("StepSucceeded", "start-run"),
+        _step("StepStarted", "support-hub"),
+        _succeeded("support-hub", {"tier": "basic", "ta_eligible": False}),
+        _step("StepStarted", "summarize"), _step("StepSucceeded", "summarize"),
+    ]
+    progress = api._progress_from_history(_HistoryClient(events), "arn:x", "SUCCEEDED")
+    assert _by_label(progress, "Check each account")["eligible"] == 0
+    discover = _by_label(progress, "Discover")
+    assess = _by_label(progress, "Assess")
+    assert discover["status"] == "stopped"
+    assert "Business or Enterprise Support plan" in discover["note"]
+    assert discover["note"].startswith("Skipped")
+    assert assess["note"] == "Skipped: no functions were discovered"
+
+
+def test_failed_tier_check_is_explained_as_unconfirmed():
+    events = [
+        _step("StepStarted", "start-run"), _step("StepSucceeded", "start-run"),
+        _step("StepStarted", "support-hub"), _step("StepFailed", "support-hub"),
+        _step("StepStarted", "summarize"), _step("StepSucceeded", "summarize"),
+    ]
+    progress = api._progress_from_history(_HistoryClient(events), "arn:x", "SUCCEEDED")
+    assert _by_label(progress, "Check each account")["eligible"] == 0
+    assert "could be confirmed" in _by_label(progress, "Discover")["note"]
+
+
+def test_assess_explains_skip_when_discover_found_nothing():
+    events = [
+        _step("StepStarted", "start-run"), _step("StepSucceeded", "start-run"),
+        _step("StepStarted", "support-hub"),
+        _succeeded("support-hub", {"tier": "enterprise", "ta_eligible": True}),
+        _step("StepStarted", "discover-hub-eu-west-3"),
+        _succeeded("discover-hub-eu-west-3", {"discovered": 0}),
+        _step("StepStarted", "summarize"), _step("StepSucceeded", "summarize"),
+    ]
+    progress = api._progress_from_history(_HistoryClient(events), "arn:x", "SUCCEEDED")
+    assert _by_label(progress, "Check each account")["eligible"] == 1
+    discover = _by_label(progress, "Discover")
+    assert discover["status"] == "success" and "note" not in discover
+    assert _by_label(progress, "Assess")["note"] == \
+        "Skipped: no functions using deprecated runtimes were found"
+
+
+def test_phases_not_reached_when_run_ends_early():
+    events = [_step("StepStarted", "start-run"), _step("StepFailed", "start-run")]
+    progress = api._progress_from_history(_HistoryClient(events), "arn:x", "FAILED")
+    assert _by_label(progress, "Discover")["note"] == "Not reached: the run ended early"
+    assert _by_label(progress, "Assess")["note"] == "Not reached: the run ended early"
+
+
+def test_running_scan_has_no_skip_notes():
+    events = [
+        _step("StepStarted", "start-run"), _step("StepSucceeded", "start-run"),
+        _step("StepStarted", "support-hub"),
+    ]
+    progress = api._progress_from_history(_HistoryClient(events), "arn:x", "RUNNING")
+    assert all("note" not in p for p in progress["phases"])
+
+
 # --- rollup series read + rollup-aware filtering ---------------------------
 
 def _inventory_with_rollups():

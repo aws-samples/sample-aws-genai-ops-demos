@@ -212,6 +212,12 @@ export interface ScanPhase {
   // its count is always "1 of 1"; the backend instead reports how many accounts
   // it resolved. Only present on that phase.
   accountsFound?: number;
+  // Support-tier phase only: how many accounts are eligible for Trusted Advisor
+  // (Business/Enterprise), i.e. the subset Discover scans.
+  eligible?: number;
+  // Backend-owned explanation for a phase that did not run (skipped because its
+  // prerequisite produced nothing, or not reached because the run ended early).
+  note?: string;
 }
 
 interface RefreshProgress {

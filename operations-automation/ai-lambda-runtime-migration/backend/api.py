@@ -21,7 +21,7 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import boto3
 
@@ -381,6 +381,7 @@ def _progress_from_history(client, execution_arn: str, status: str) -> dict:
     (Prepare / Discover / Assess / Summarize)."""
     steps = {}          # name -> "started" | "succeeded" | "failed"
     accounts_found = None  # count of accounts resolved by the start-run step
+    results = {}        # support-* / discover-* step name -> decoded result
     try:
         paginator = client.get_paginator("get_durable_execution_history")
         for page in paginator.paginate(DurableExecutionArn=execution_arn, IncludeExecutionData=True):
@@ -390,8 +391,11 @@ def _progress_from_history(client, execution_arn: str, status: str) -> dict:
                     steps.setdefault(name, "started")
                 elif et == "StepSucceeded":
                     steps[name] = "succeeded"
+                    payload = ((ev.get("StepSucceededDetails") or {}).get("Result") or {}).get("Payload") or ""
+                    if name.startswith(("support-", "discover-")):
+                        results[name] = _decode_step_result(payload)
                     if name == "start-run":
-                        run = _decode_step_result(((ev.get("StepSucceededDetails") or {}).get("Result") or {}).get("Payload") or "")
+                        run = _decode_step_result(payload)
                         accts = run.get("accounts") or []
                         # The hub-only default is a single placeholder account with an
                         # empty id; count it as one account found.
@@ -434,12 +438,55 @@ def _progress_from_history(client, execution_arn: str, status: str) -> dict:
     # meaningless; surface the number of accounts it resolved instead.
     if accounts_found is not None:
         phases[0]["accountsFound"] = accounts_found
+    # How many accounts the Support-tier step cleared for Trusted Advisor: the
+    # subset Discover scans. Failed tier checks count as not eligible, exactly as
+    # pipeline.select_candidates treats them.
+    if phases[1]["done"] or phases[1]["failed"]:
+        phases[1]["eligible"] = sum(
+            1 for n, r in results.items() if n.startswith("support-") and r.get("ta_eligible"))
     if status != "RUNNING":
         for ph in phases:
             if ph["status"] == "pending":
                 ph["status"] = "stopped"
+        _explain_skipped(phases, results)
     return {"support_done": phases[1]["done"], "discover_done": phases[2]["done"],
             "assess_done": phases[3]["done"], "phases": phases}
+
+
+_SETTLED = ("success", "warning", "error")
+
+
+def _explain_skipped(phases: List[dict], results: dict) -> None:
+    """Attach a `note` to Discover/Assess when they had nothing to run.
+
+    A finished run leaves a phase with no checkpointed step as "stopped". That
+    is either a skip (its prerequisite produced nothing to work on) or a run
+    that ended before reaching it; the note tells the user which, so the UI
+    never shows a bare "Not part of this run"."""
+    support, discover, assess = phases[1], phases[2], phases[3]
+
+    if discover["status"] == "stopped":
+        if support["status"] in _SETTLED and support.get("eligible") == 0:
+            discover["note"] = (
+                "Skipped: no account's Support tier could be confirmed, and Trusted Advisor "
+                "requires a Business or Enterprise Support plan"
+                if support["failed"] else
+                "Skipped: Trusted Advisor requires a Business or Enterprise Support plan, "
+                "and no account in scope has one")
+        else:
+            discover["note"] = "Not reached: the run ended early"
+
+    if assess["status"] == "stopped":
+        discovered = sum(int(r.get("discovered") or 0)
+                         for n, r in results.items() if n.startswith("discover-"))
+        if discover.get("note", "").startswith("Skipped"):
+            assess["note"] = "Skipped: no functions were discovered"
+        elif discover["status"] in ("success", "warning") and discovered == 0:
+            assess["note"] = "Skipped: no functions using deprecated runtimes were found"
+        elif discover["status"] == "error":
+            assess["note"] = "Skipped: discovery failed in every account, so there is nothing to assess"
+        else:
+            assess["note"] = "Not reached: the run ended early"
 
 
 # ---------------------------------------------------------------------------
