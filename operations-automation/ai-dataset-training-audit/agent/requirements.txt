@@ -7,5 +7,5 @@ pyarrow==23.0.1
 tiktoken==0.8.0
 datasketch==1.6.5
 chardet==5.2.0
-urllib3==2.7.0
+urllib3==2.8.0
 python-dateutil==2.9.0.post0
