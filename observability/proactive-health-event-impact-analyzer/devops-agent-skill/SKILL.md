@@ -153,9 +153,13 @@ finding — ignore it. Findings have no maintenance window (the trigger emits
 `Not specified` for this line by design).
 
 The defining difference from the Health path: **the impacted resource ARNs are
-already known** — they are listed in the prompt's `Affected Resources` block
-(one per `Resources[].Id` on the finding). You do **not** need to discover the
-affected resources. Instead:
+already known** — they are listed in the prompt's `Affected Resources` block.
+A single investigation may now represent multiple CRITICAL findings
+aggregated onto the same primary resource (plus any resources those findings
+jointly reference) rather than exactly one finding — treat the full `Affected
+Resources` list and the finding count implied by the description as the scope
+of this investigation. You do **not** need to discover the affected resources.
+Instead:
 
 1. **Start from the given finding ARNs** as the impacted resource set.
 2. **Correlate each ARN with the application topology and owning teams** using
