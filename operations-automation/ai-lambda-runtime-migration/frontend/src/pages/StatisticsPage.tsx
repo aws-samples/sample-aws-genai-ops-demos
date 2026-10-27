@@ -60,7 +60,7 @@ const COLOR_GREY_LIGHT = '#8d99a8';
 
 // Header copy shared by the loaded page and its skeleton (Cloudscape: headers
 // keep their real text while loading), so the two can never drift.
-const HERO_DESCRIPTION = 'Active backlog, upgrade branches ready for merge, and functions migrated to date, over successive scans.';
+const HERO_DESCRIPTION = 'Active backlog, upgrade branches ready for merge, and functions migrated to date, over successive Discover runs.';
 const PIPELINE_DESCRIPTION = 'Where every active function stands in the migration flow. Branch ready means an upgrade branch was pushed to the repository; the pull request, review and merge happen there.';
 const BRANCHES_READY_LABEL = 'Branches ready (awaiting merge)';
 
@@ -92,7 +92,7 @@ function RemediationOverTimeChart({ rollups }: { rollups: RollupRecord[] }) {
   if (rollups.length < 2) {
     return (
       <Box color="text-body-secondary" textAlign="center" padding="l">
-        Not enough history yet — run at least two scans to chart remediation over time.
+        Not enough history yet — run Discover at least twice to chart remediation over time.
       </Box>
     );
   }
@@ -106,10 +106,10 @@ function RemediationOverTimeChart({ rollups }: { rollups: RollupRecord[] }) {
         { title: 'Migrated', type: 'area', data: series.migrated, color: COLOR_GREEN },
       ]}
       xScaleType="time"
-      xTitle="Scan time"
+      xTitle="Discover run time"
       yTitle="Functions"
       ariaLabel="Area chart showing the fleet backlog, branches ready and migrated functions over time"
-      ariaDescription="Stacked area chart showing the active deprecated backlog, the upgrade branches ready for merge, and the functions migrated to date over successive scans."
+      ariaDescription="Stacked area chart showing the active deprecated backlog, the upgrade branches ready for merge, and the functions migrated to date over successive Discover runs."
       hideFilter
       statusType="finished"
       empty={CHART_I18N.empty}

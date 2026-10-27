@@ -6,7 +6,7 @@
 // Steps with status 'log', a fixed-width timestamp column, a status icon, and a
 // concise past-tense label; grouped by day with Divider; an optional Select
 // filter (All / Today / Yesterday). Each entry is ONE compact line (timestamp +
-// message, as in a Cloudscape event log); a short 'Scan ·' / 'Migration ·' text prefix
+// message, as in a Cloudscape event log); a short 'Discover ·' / 'Migration ·' text prefix
 // tells the two kinds apart, and any detail is folded into the same line.
 // Rendered as the "Activity log" nav page (ScanLogPage); loads on open, no
 // manual refresh button.
@@ -56,27 +56,27 @@ type Outcome = { stepStatus: StepsProps.Step['status']; iconLabel: string };
 const outcomeFor = (scan: ScanRecord): Outcome => {
   switch (scan.status) {
     case 'SUCCEEDED':
-      return { stepStatus: 'success', iconLabel: 'Scan succeeded' };
+      return { stepStatus: 'success', iconLabel: 'Discover succeeded' };
     case 'FAILED':
     case 'TIMED_OUT':
-      return { stepStatus: 'error', iconLabel: 'Scan failed' };
+      return { stepStatus: 'error', iconLabel: 'Discover failed' };
     case 'STOPPED':
-      return { stepStatus: 'stopped', iconLabel: 'Scan stopped' };
+      return { stepStatus: 'stopped', iconLabel: 'Discover stopped' };
     case 'RUNNING':
     default:
-      return { stepStatus: 'loading', iconLabel: 'Scan running' };
+      return { stepStatus: 'loading', iconLabel: 'Discover running' };
   }
 };
 
-// Past-tense, action-oriented label describing what the scan did or skipped.
+// Past-tense, action-oriented label describing what the Discover run did or skipped.
 const scanHeader = (scan: ScanRecord): string => {
-  if (scan.status === 'RUNNING') return 'Started a scan';
-  if (scan.status === 'STOPPED') return 'Scan stopped before it finished';
-  if (scan.status === 'FAILED' || scan.status === 'TIMED_OUT') return 'Scan failed';
+  if (scan.status === 'RUNNING') return 'Started Discover';
+  if (scan.status === 'STOPPED') return 'Discover stopped before it finished';
+  if (scan.status === 'FAILED' || scan.status === 'TIMED_OUT') return 'Discover failed';
 
   const disc = scan.summary?.discover;
   const asmt = scan.summary?.assess;
-  if (!disc) return 'Completed a scan';
+  if (!disc) return 'Completed Discover';
 
   const scanned = disc.accounts_scanned?.length ?? disc.cells_succeeded ?? 0;
   const discovered = disc.discovered ?? 0;
@@ -194,7 +194,7 @@ const renderStep = (entry: Entry): StepsProps.Step => {
       statusIconAriaLabel: outcome.iconLabel,
       annotation,
       header: (
-        <StatusIndicator type={stepTypeToIndicator(outcome.stepStatus)}>{`Scan · ${text}`}</StatusIndicator>
+        <StatusIndicator type={stepTypeToIndicator(outcome.stepStatus)}>{`Discover · ${text}`}</StatusIndicator>
       ),
     } as StepsProps.Step;
   }
@@ -268,7 +268,7 @@ export default function ScanLog() {
       {error && <StatusIndicator type="error">{error}</StatusIndicator>}
 
       {!error && !loading && entries.length === 0 && (
-        <Box color="text-body-secondary">No activity recorded yet. Scan or migrate functions to populate the log.</Box>
+        <Box color="text-body-secondary">No activity recorded yet. Run Discover or migrate functions to populate the log.</Box>
       )}
 
       {!error && loading && entries.length === 0 && (

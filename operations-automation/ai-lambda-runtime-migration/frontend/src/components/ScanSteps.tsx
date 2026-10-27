@@ -107,8 +107,8 @@ export default function ScanSteps({ phases, running }: { phases: ScanPhase[]; ru
 
   if (!running) {
     return (
-      <ExpandableSection variant="container" headerText={`Last refresh: ${done} of ${phases.length} steps done${failed ? `, ${failed} failed` : ''}`}>
-        <Steps steps={steps} ariaLabel="Last refresh steps" />
+      <ExpandableSection variant="container" headerText={`Last Discover run: ${done} of ${phases.length} steps done${failed ? `, ${failed} failed` : ''}`}>
+        <Steps steps={steps} ariaLabel="Last Discover run steps" />
       </ExpandableSection>
     );
   }
@@ -116,12 +116,12 @@ export default function ScanSteps({ phases, running }: { phases: ScanPhase[]; ru
     <Container
       header={
         <Header variant="h3" description="Runs server-side: you can navigate away, the page re-attaches when you come back.">
-          Scan in progress
+          Discover in progress
         </Header>
       }
     >
       <LiveRegion>{current ? `${current.label}: ${!isAccountListing(current) && !isSummary(current) && current.total ? `${countText(current)} done` : 'running'}` : ''}</LiveRegion>
-      <Steps steps={steps} ariaLabel="Scan progress" />
+      <Steps steps={steps} ariaLabel="Discover progress" />
     </Container>
   );
 }

@@ -215,10 +215,10 @@ The React dashboard calls the HTTP API with the Cognito **ID token** — the bro
 | Surface | Description |
 |---------|-------------|
 | **My Functions** | Labelled summary strip (including an "N accounts not checked" counter when any account was skipped for Support tier) plus a sortable, property-filtered inventory table ranked by urgency |
-| **Scan steps** | Per-step view of the 5-step durable pipeline (determine accounts → check Support tier → discover → assess → summarize) driven by the execution history |
+| **Discover steps** | Per-step view of the 5-step durable pipeline (determine accounts → check Support tier → discover → assess → summarize) driven by the execution history |
 | **Migration steps** | Collapsible card for the latest migration batch (prepare → resolve → transform); expands on Migrate, collapses once the builds are running, persists across navigation and reloads (`GET /migrate-runs`), refreshes every 30 s |
-| **Activity log** | Scans and migration batches interleaved newest-first, one line per batch ("Migration · 2 selected, 1 rejected, 1 branch ready") |
-| **How it works** | Reference page: scan steps, migration steps, function statuses, rejection/failure codes, where the data comes from |
+| **Activity log** | Discover runs and migration batches interleaved newest-first, one line per batch ("Migration · 2 selected, 1 rejected, 1 branch ready") |
+| **How it works** | Reference page: Discover steps, migration steps, function statuses, rejection/failure codes, where the data comes from |
 
 Each data point is labeled with its source (Trusted Advisor, Lambda API, CloudWatch, or Amazon Bedrock) and AI-generated content uses the Cloudscape GenAI label pattern.
 

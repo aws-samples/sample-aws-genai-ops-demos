@@ -28,11 +28,11 @@ export const PRIORITY_INDICATOR: Record<string, StatusIndicatorProps.Type> = {
 
 // Trusted Advisor alert colours, shown with their meaning in the PropertyFilter
 // token instead of the raw colour: Red = already past EOL, Yellow = approaching,
-// Green = resolved.
+// Green = migrated (Trusted Advisor stopped reporting it; stored as MIGRATED).
 export const ALERT_STATUS_LABEL: Record<string, string> = {
   Red: 'Already deprecated (past EOL)',
   Yellow: 'Approaching deprecation',
-  Green: 'Resolved',
+  Green: 'Migrated',
 };
 
 // Deprecation axis (the fn# row's own migration_status, written by the scan).

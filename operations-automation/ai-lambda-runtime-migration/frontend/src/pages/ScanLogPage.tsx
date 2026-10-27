@@ -13,7 +13,7 @@ export default function ScanLogPage() {
       header={
         <Header
           variant="h1"
-          description="The most recent organization-wide scans and migration batches, interleaved newest-first — what each scan discovered, assessed, or skipped, and how each migration batch ended."
+          description="The most recent organization-wide Discover runs and migration batches, interleaved newest-first — what each Discover run found, assessed, or skipped, and how each migration batch ended."
         >
           Activity log
         </Header>

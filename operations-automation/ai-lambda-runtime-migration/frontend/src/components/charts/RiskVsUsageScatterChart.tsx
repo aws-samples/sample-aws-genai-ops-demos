@@ -2,7 +2,7 @@
 //
 // Cloudscape v3 has no scatter chart, so this uses Highcharts. One point per
 // function: x = days to deprecation, y = average daily invokes, colored by its
-// Deprecation state (Deprecated = red, Approaching EOL = yellow, Resolved =
+// Deprecation state (Deprecated = red, Approaching EOL = yellow, Migrated =
 // green). Bottom-left = soonest EOL and busiest — the functions to fix first.
 import { useMemo } from 'react';
 import Highcharts from './highcharts-setup';
@@ -16,7 +16,7 @@ import { deprecationState, DeprecationState } from '../../migration-tallies';
 const STATE_COLOR: Record<string, string> = {
   Deprecated: '#d91515',
   'Approaching EOL': '#e07941',
-  Resolved: '#037f0c',
+  Migrated: '#037f0c',
 };
 
 type DeprecationLabel = DeprecationState['label'];
@@ -30,7 +30,7 @@ function buildSeries(functions: MigrationFunction[]): ScatterSeries[] {
   const buckets: Record<DeprecationLabel, ScatterSeries> = {
     Deprecated: { name: 'Deprecated', data: [] },
     'Approaching EOL': { name: 'Approaching EOL', data: [] },
-    Resolved: { name: 'Resolved', data: [] },
+    Migrated: { name: 'Migrated', data: [] },
   };
   for (const f of functions) {
     const label = deprecationState(f)?.label ?? null;

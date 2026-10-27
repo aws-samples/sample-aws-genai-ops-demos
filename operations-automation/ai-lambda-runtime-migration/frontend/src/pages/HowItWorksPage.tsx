@@ -1,4 +1,4 @@
-// How it works: what a scan and a migration do step by step, what every status
+// How it works: what Discover and Migrate do step by step, what every status
 // and code means, and where the data comes from. Static reference content,
 // Cloudscape only (no custom CSS). The status and code tables read the SAME
 // maps the My functions page renders from (constants.ts), so the two pages can
@@ -58,12 +58,12 @@ const SCAN_STEPS: StepRow[] = [
     durableStep: 'list-discovered, assess-<account>-<i>',
     what: 'Downloads each deployment package (source plus manifests such as package.json or requirements.txt) and asks Nova for the complexity, deprecated APIs, breaking changes, dependency issues and risks; the target runtime is fixed per language family by the managed transformation.',
     service: 'Lambda, Amazon Bedrock',
-    fails: 'The function is counted as skipped in the scan summary.',
+    fails: 'The function is counted as skipped in the Discover summary.',
   },
   {
     step: 'Summarize findings and update the inventory',
     durableStep: 'summarize',
-    what: 'Writes the scan rollup and marks the functions Trusted Advisor no longer reports as Migrated.',
+    what: 'Writes the Discover rollup and marks the functions Trusted Advisor no longer reports as Migrated (see Function statuses).',
     service: 'DynamoDB',
     fails: 'The run is reported failed; the inventory keeps the previous rollup.',
   },
@@ -101,12 +101,12 @@ const MIGRATION_STEPS: StepRow[] = [
   },
 ];
 
-// Deprecation axis meanings (the fn# row's migration_status, written by the scan).
+// Deprecation axis meanings (the fn# row's migration_status, written by Discover).
 const DEPRECATION_MEANING: Record<string, string> = {
   DISCOVERED: 'Found by Trusted Advisor on a deprecated runtime; not yet assessed.',
   ASSESSED: 'Assessed by Nova: complexity, deprecated APIs, breaking changes and dependency issues are known.',
   SKIPPED: 'Container image or unreadable package; cannot be assessed or transformed.',
-  MIGRATED: 'No longer reported by Trusted Advisor (inferred after your merged branch is deployed).',
+  MIGRATED: 'No longer reported by Trusted Advisor, so Discover infers it is migrated (Trusted Advisor gives no reason). Usually your merged branch was deployed, but the function may also have been deleted, or Trusted Advisor may have stopped flagging its runtime: it flags a runtime at least 180 days before its deprecation date and can drop one that is just outside that window. If Trusted Advisor flags the function again, the next Discover run makes it active again.',
 };
 
 // Migration-run axis meanings (the mig# item, merged as migration_run_status).
@@ -198,7 +198,7 @@ export default function HowItWorksPage() {
       header={
         <Header
           variant="h1"
-          description="What a scan and a migration do, step by step, and what every status and code means."
+          description="What Discover and Migrate do, step by step, and what every status and code means."
         >
           How it works
         </Header>
@@ -208,19 +208,19 @@ export default function HowItWorksPage() {
         <Container>
           <TextContent>
             <p>
-              A <strong>scan</strong> finds the Lambda functions running a deprecated runtime across your
-              accounts and assesses each one. A <strong>migration</strong> runs AWS Transform on the source
+              <strong>Discover</strong> finds the Lambda functions running a deprecated runtime across your
+              accounts and assesses each one. <strong>Migrate</strong> runs AWS Transform on the source
               repository of the functions you select and pushes an upgrade branch; it never touches{' '}
               <code>main</code>. Jump to:{' '}
-              <a href="#scan-steps">Scan steps</a> · <a href="#migration-steps">Migration steps</a> ·{' '}
+              <a href="#discover-steps">Discover steps</a> · <a href="#migration-steps">Migration steps</a> ·{' '}
               <a href="#statuses">Function statuses</a> · <a href="#codes">Rejection and failure codes</a> ·{' '}
               <a href="#data-sources">Where the data comes from</a> · <a href="#git-hosts">Other git hosts</a>
             </p>
           </TextContent>
         </Container>
 
-        <Section id="scan-steps" title="Scan steps" description="What Discover does, in the order the Steps card shows. Each row is one durable step of the scan execution.">
-          <Table variant="embedded" wrapLines items={SCAN_STEPS} columnDefinitions={STEP_COLUMNS} trackBy="durableStep" ariaLabels={{ tableLabel: 'Scan steps' }} />
+        <Section id="discover-steps" title="Discover steps" description="What Discover does, in the order the Steps card shows. Each row is one durable step of the Discover execution.">
+          <Table variant="embedded" wrapLines items={SCAN_STEPS} columnDefinitions={STEP_COLUMNS} trackBy="durableStep" ariaLabels={{ tableLabel: 'Discover steps' }} />
         </Section>
 
         <Section id="migration-steps" title="Migration steps" description="What Migrate does for each selected function, in the order the Steps card shows.">
@@ -229,7 +229,7 @@ export default function HowItWorksPage() {
             <Box variant="p">
               The flow ends with a pushed branch. <Box variant="code">main</Box> is never changed. Opening the
               pull request, reviewing and merging happen in your repository host. Once the merged code is
-              deployed, Trusted Advisor stops reporting the function and the next scan marks it Migrated.
+              deployed, Trusted Advisor stops reporting the function and the next Discover run marks it Migrated.
             </Box>
           </SpaceBetween>
         </Section>
@@ -237,7 +237,7 @@ export default function HowItWorksPage() {
         <Section id="statuses" title="Function statuses" description="Two independent axes: where the function stands with Trusted Advisor, and where its migration run stands.">
           <SpaceBetween size="l">
             <SpaceBetween size="xs">
-              <Header variant="h3">Deprecation (from the scan)</Header>
+              <Header variant="h3">Deprecation (from Discover)</Header>
               <Table variant="embedded" wrapLines items={deprecationRows} columnDefinitions={STATUS_COLUMNS} trackBy="key" ariaLabels={{ tableLabel: 'Deprecation statuses' }} />
             </SpaceBetween>
             <SpaceBetween size="xs">

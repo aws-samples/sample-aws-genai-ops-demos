@@ -50,7 +50,7 @@ const URGENCY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, 
 const urgencyRank = (f: MigrationFunction) => URGENCY_RANK[f.priority_label || ''] ?? 4;
 // Backend priority labels are UPPERCASE (CRITICAL/HIGH/...), used as data keys
 // above. Display them in sentence case to match the rest of the UI (Deprecated,
-// Not started, Resolved) — "CRITICAL" -> "Critical".
+// Not started, Migrated) — "CRITICAL" -> "Critical".
 const titleCase = (s: string): string => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
 
 // Default sort: urgency descending, tiebreak days-to-deprecation ascending.
@@ -228,7 +228,7 @@ const propertyItems = (f: MigrationFunction): KeyValuePairsProps.Item[] => {
           ? (f.days_to_deprecation < 0 ? `${Math.abs(f.days_to_deprecation)} days past EOL` : `${f.days_to_deprecation} days`)
           : dash,
       },
-      ...pair('Resolved', f.resolved_at, (v) => (
+      ...pair('Migrated', f.resolved_at, (v) => (
         <Box variant="small" color="text-body-secondary">{`Inferred — no longer reported by Trusted Advisor as of ${v}`}</Box>
       )),
     ]),
@@ -483,12 +483,12 @@ export default function MyFunctions() {
         if (status.status === 'RUNNING') {
           pollRef.current = setTimeout(tick, SCAN_POLL_MS);
         } else {
-          flash(status.status === 'SUCCEEDED' ? 'success' : 'warning', `Scan ${status.status.toLowerCase()}`);
+          flash(status.status === 'SUCCEEDED' ? 'success' : 'warning', `Discover ${status.status.toLowerCase()}`);
           if (status.summary) setLatestSummary(status.summary as ScanSummary);
           load();
         }
       } catch (err) {
-        if (!cancelled) flash('error', `Could not read the scan status: ${errorMessage(err)}`);
+        if (!cancelled) flash('error', `Could not read the Discover status: ${errorMessage(err)}`);
       }
     };
     pollRef.current = setTimeout(tick, FIRST_TICK_MS);
@@ -499,9 +499,9 @@ export default function MyFunctions() {
     try {
       const { executionArn, alreadyRunning } = await startScan();
       setRefreshArn(executionArn);
-      if (alreadyRunning) flash('info', 'A scan is already running — re-attaching to it.');
+      if (alreadyRunning) flash('info', 'Discover is already running — re-attaching to it.');
     } catch (err) {
-      flash('error', `Could not start the scan: ${errorMessage(err)}`);
+      flash('error', `Could not start Discover: ${errorMessage(err)}`);
     }
   };
 
@@ -638,7 +638,7 @@ export default function MyFunctions() {
 
   // The toggled set drives BOTH the table and the summary strip, so the counters
   // always describe the rows the user can see. Resolved (inferred-green /
-  // migrated) rows only enter either when "Include resolved" is on.
+  // migrated) rows only enter either when "Include migrated" is on.
   const visibleRows = useMemo(
     () => (includeResolved ? rows : rows.filter(isActiveBacklog)),
     [rows, includeResolved],
@@ -682,7 +682,7 @@ export default function MyFunctions() {
     // Labelled so the operator reads intent, not the raw TA colour.
     { propertyKey: 'alert_status', value: 'Red', label: 'Already deprecated (past EOL)' },
     { propertyKey: 'alert_status', value: 'Yellow', label: 'Approaching deprecation' },
-    { propertyKey: 'alert_status', value: 'Green', label: 'Resolved' },
+    { propertyKey: 'alert_status', value: 'Green', label: 'Migrated' },
     ...runStatuses.map((v) => ({ propertyKey: 'migration_run_status', value: v, label: migrationRunLabel(v) })),
     ...complexities.map((v) => ({ propertyKey: 'migration_complexity', value: v, label: complexityLabel(v) })),
     ...(multipleAccounts ? accounts.map((a) => ({ propertyKey: 'account_id', value: a.id, label: a.name })) : []),
@@ -698,7 +698,7 @@ export default function MyFunctions() {
   // ---- summary strip facts (the toggled set, same as the table) ----
   // Deprecation and Priority only ever count the active backlog, so the toggle
   // does not move them. The Migration group does move: Migrated lives on
-  // resolved rows, which are hidden unless "Include resolved" is on, and the
+  // resolved rows, which are hidden unless "Include migrated" is on, and the
   // counters must agree with what the table shows.
   // The Deprecation and Migration counts come from the shared tally helper
   // (migration-tallies.ts) the Statistics page reads too, so the two pages can
@@ -812,7 +812,7 @@ export default function MyFunctions() {
                       controls what that count (and the table) includes. */}
                   <Box padding={{ top: 'xxs' }}>
                     <Toggle checked={includeResolved} onChange={({ detail }) => setIncludeResolved(detail.checked)} disabled={resolvedCount === 0}>
-                      Include resolved{resolvedCount ? ` (${resolvedCount})` : ''}
+                      Include migrated{resolvedCount ? ` (${resolvedCount})` : ''}
                     </Toggle>
                   </Box>
                 </SpaceBetween>
@@ -971,7 +971,7 @@ export default function MyFunctions() {
               const st = deprecationState(f);
               if (!st) return <Box color="text-body-secondary">—</Box>;
               const indicator = <StatusIndicator type={st.type}>{st.label}</StatusIndicator>;
-              // The green Resolved state is INFERRED (TA never reports green), so
+              // The green Migrated state is INFERRED (TA never reports green), so
               // it carries a transparency note naming when it dropped out of TA.
               if (st.resolved && f.resolved_at) {
                 return (
