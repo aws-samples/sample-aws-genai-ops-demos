@@ -1,10 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Mock Node.js Lambda on a deprecated runtime (nodejs16.x). The Runtime line
-  below is what AWS Transform (AWS/lambda-nodejs-runtime-upgrade) rewrites to a
-  supported version, producing the diff the migration demo opens as a pull
-  request.
+  Order token service on a deprecated runtime (nodejs16.x). AWS Transform
+  (AWS/lambda-nodejs-runtime-upgrade) is expected to update the Runtime below
+  along with the code changes in index.js and package.json.
 
 Resources:
   MockNodejsFunction:
@@ -16,3 +15,9 @@ Resources:
       MemorySize: 128
       Timeout: 10
       CodeUri: .
+      Environment:
+        Variables:
+          TOKEN_SECRET_PARAM: /order-token-service/token-secret
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: order-token-service/token-secret

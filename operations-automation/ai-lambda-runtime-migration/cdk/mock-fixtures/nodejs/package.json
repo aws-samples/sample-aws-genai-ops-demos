@@ -1,0 +1,16 @@
+{
+  "name": "order-token-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mock fixture: decrypts and validates partner order tokens (written for the nodejs16.x Lambda runtime)",
+  "main": "index.js",
+  "engines": {
+    "node": "16.x"
+  },
+  "scripts": {
+    "test": "node test/handler.test.js"
+  },
+  "devDependencies": {
+    "aws-sdk": "2.1693.0"
+  }
+}

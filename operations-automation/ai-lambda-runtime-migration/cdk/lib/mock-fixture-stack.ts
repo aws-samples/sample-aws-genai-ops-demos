@@ -7,10 +7,12 @@ import * as path from 'path';
 /**
  * MockFixtureStack — optional, self-contained test fixture for the demo.
  *
- * It stands up a CodeCommit repository seeded with three trivial handlers and
+ * It stands up a CodeCommit repository seeded with three small functions and
  * three Lambda functions on DEPRECATED runtimes (one each for .NET, Node.js and
- * Python). Each function is tagged so the demo's code-behind detection resolves
- * it to the fixture repository:
+ * Python). Each function uses APIs that were removed or blocked on its current
+ * runtime, with a test that proves it, so a migration has real code to fix
+ * (docs/mock-fixture.md lists every one). Each function is tagged so the demo's
+ * code-behind detection resolves it to the fixture repository:
  *   - source-repo = lambda-migration-demo-fixture  (the repo tag; backend
  *     `resolve_repo_from_tags` reads tags[repo_tag], and the Settings UI default
  *     repo tag key is 'source-repo')
@@ -33,14 +35,14 @@ import * as path from 'path';
  * deploy fails — at which point bump the affected language to the next-newer
  * still-creatable runtime (nodejs18.x, python3.10/3.11, dotnet8).
  *
- * --- .NET asset is a discovery-only STUB ---
- * A real dotnet6 Lambda needs a compiled DLL + bootstrap, which we cannot
- * produce without a .NET build toolchain, and Docker bundling is not allowed.
- * The mock is meant to be DISCOVERED BY RUNTIME, never invoked, so the .NET
- * function ships the placeholder source under mock-fixtures/dotnet/ zipped via
- * lambda.Code.fromAsset(...). The create call validates the runtime id and that
- * a package exists; it does not validate the .NET handler. Python and Node ship
- * genuine trivial handlers.
+ * --- The deployed .NET function is NOT compiled ---
+ * The repository holds a real .NET 6 project (dotnet/src/MockDotnet + tests),
+ * but deploying it would need a compiled assembly, which we cannot produce
+ * without a .NET build toolchain, and Docker bundling is not allowed. The mock
+ * is meant to be DISCOVERED BY RUNTIME, never invoked, so the .NET function
+ * ships the project source zipped via lambda.Code.fromAsset(...). The create
+ * call validates the runtime id and that a package exists; it does not validate
+ * the .NET handler. The Python and Node.js functions run the repository code.
  */
 
 // Fixture repository name. The Pipeline and Transform stacks scope their
@@ -61,7 +63,11 @@ export class MockFixtureStack extends cdk.Stack {
     // (a) CodeCommit repository seeded (on branch `main`) from the parent
     // mock-fixtures/ directory, so the repo lands with dotnet/, nodejs/ and
     // python/ subfolders in one initial commit — the same sources the Lambdas
-    // run below.
+    // run below — plus the repository-level entry points AWS Transform's
+    // validation runs from the root (package.json for `npm test`,
+    // MockFunctions.sln for `dotnet test`; pytest finds python/ on its own).
+    // CodeCommit applies `code` only when the repository is CREATED: a later
+    // stack update does not reseed `main`.
     const repo = new codecommit.Repository(this, 'FixtureRepo', {
       repositoryName: FIXTURE_REPO_NAME,
       description: 'Mock fixture repository holding the source for the three deprecated-runtime demo Lambda functions',
@@ -71,11 +77,14 @@ export class MockFixtureStack extends cdk.Stack {
 
     // (b) Three Lambda functions on deprecated runtimes, one per language.
     // NO Docker bundling: each uses an inline asset from its fixture dir.
+    // Local install / build / test output never ships (the repo's .gitignore
+    // keeps it out of the seeded repository the same way).
+    const assetExclude = ['node_modules', '__pycache__', '.pytest_cache', 'bin', 'obj', 'TestResults'];
     const pythonFn = new lambda.Function(this, 'MockPython', {
       functionName: 'lambda-migration-mock-python',
       runtime: lambda.Runtime.PYTHON_3_9,
       handler: 'lambda_function.handler',
-      code: lambda.Code.fromAsset(pythonDir),
+      code: lambda.Code.fromAsset(pythonDir, { exclude: assetExclude }),
       memorySize: 128,
       timeout: cdk.Duration.seconds(10),
     });
@@ -85,19 +94,20 @@ export class MockFixtureStack extends cdk.Stack {
       functionName: 'lambda-migration-mock-nodejs',
       runtime: lambda.Runtime.NODEJS_16_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(nodejsDir),
+      // aws-sdk (v2) is a devDependency only: the nodejs16.x runtime provides it.
+      code: lambda.Code.fromAsset(nodejsDir, { exclude: assetExclude }),
       memorySize: 128,
       timeout: cdk.Duration.seconds(10),
     });
     nodejsFn.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
-    // .NET: discovery-only stub (see the stub note in the class comment). The
-    // handler string is Assembly::Namespace.Class::Method; it is never invoked.
+    // .NET: project source, not compiled (see the note in the class comment).
+    // The handler string is Assembly::Namespace.Class::Method; it is never invoked.
     const dotnetFn = new lambda.Function(this, 'MockDotnet', {
       functionName: 'lambda-migration-mock-dotnet',
       runtime: lambda.Runtime.DOTNET_6,
       handler: 'MockDotnet::MockDotnet.Function::Handler',
-      code: lambda.Code.fromAsset(dotnetDir),
+      code: lambda.Code.fromAsset(dotnetDir, { exclude: assetExclude }),
       memorySize: 128,
       timeout: cdk.Duration.seconds(10),
     });

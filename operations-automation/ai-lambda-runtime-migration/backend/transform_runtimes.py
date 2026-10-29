@@ -56,10 +56,10 @@ TRANSFORMS = {
 # upgrade before producing a result (per the AWS "Automate Lambda runtime
 # upgrades with AWS Transform custom" blog, which passes validationCommands=pytest).
 # A green validation is the quality gate before the upgrade branch is pushed.
-# NOTE: the AWS guidance assumes tests exist; what atx does when a repo has NO
-# tests is NOT documented and is to be settled empirically by the first real
-# run (the python fixture carries one test so the tested happy-path is
-# exercised first).
+# The commands run from the repository root, so a repository holding several
+# functions needs a root entry point (the mock fixture ships package.json and
+# MockFunctions.sln for that; pytest finds the python/ tests on its own). The
+# buildspec installs the target Node.js / .NET runtime so the tests run on it.
 
 
 def _family(runtime: str):

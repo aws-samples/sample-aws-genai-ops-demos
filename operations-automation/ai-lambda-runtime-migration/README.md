@@ -164,6 +164,8 @@ The mock fixture (`LambdaRuntimeMigrationMock-<region>`) is self-contained test 
 - An AWS CodeCommit repository `lambda-migration-demo-fixture`, seeded with `python/`, `nodejs/` and `dotnet/` sources
 - Three Lambda functions on deprecated runtimes (`python3.9`, `nodejs16.x`, `dotnet6`), each tagged `source-repo` and `git-branch` so Migrate resolves them to the fixture repository with the default Settings
 
+[docs/mock-fixture.md](docs/mock-fixture.md) describes each function and the code AWS Transform is expected to fix.
+
 Trusted Advisor's deprecated-runtime check refreshes on its own schedule, so it can take hours before the new functions are listed and show up in the inventory after a **Discover**.
 
 **Deploy** it with the rest of the demo, or add it later on its own:
@@ -231,6 +233,8 @@ ai-lambda-runtime-migration/
 ├── deploy-all.ps1                      # Deployment script (PowerShell)
 ├── deploy-all.sh                       # Deployment script (Bash)
 ├── validation.yaml                     # Demo validation contract
+├── docs/
+│   └── mock-fixture.md                 # What the optional mock fixture contains and what Migrate should fix
 ├── backend/                            # Python Lambda bundle (one bundle, four handlers)
 │   ├── api.py                          # Plain API handler (UI actions, scan + migration control)
 │   ├── pipeline.py                     # Durable discover + assess handler
@@ -261,7 +265,7 @@ ai-lambda-runtime-migration/
 │   │   ├── spoke-stack.ts              # Multi-account: read-only role in each member account
 │   │   ├── org-stack.ts                # Multi-account: StackSet rolling the Spoke stack out
 │   │   └── scan-permissions.ts         # Shared scan/read IAM statements (hub + spoke)
-│   ├── mock-fixtures/                  # Sources of the mock fixture functions (dotnet, nodejs, python)
+│   ├── mock-fixtures/                  # Mock fixture repository content (dotnet, nodejs, python; see docs/mock-fixture.md)
 │   ├── cdk.json
 │   ├── package.json
 │   └── tsconfig.json
@@ -308,7 +312,7 @@ Discover and Assess cost nothing more once they have run. Each **Migrate** adds 
 - **AWS Transform custom**: $0.035 per agent-minute, the time the Transform agent actively works on the transformation ([AWS Transform pricing](https://aws.amazon.com/transform/pricing/)).
 - **AWS CodeBuild**: the `general1.medium` Linux build that hosts the Transform CLI, about $0.01 per build minute in us-east-1; the rate varies by region ([CodeBuild pricing](https://aws.amazon.com/codebuild/pricing/)).
 
-The agent-minutes a function needs depend on its size and on how far the runtime jump goes; we have not measured them per function. The table assumes **10 agent-minutes and 5 build minutes per function**. For reference, a small Node.js mock function took about 3.5 minutes end to end on our test run, of which about 1.5 minutes in CodeBuild.
+The agent-minutes a function needs depend on its size and on how far the runtime jump goes. The table assumes **10 agent-minutes and 5 build minutes per function**. For reference, the three mock functions, each with 4 or 5 removed APIs to fix, used 14 to 31 agent-minutes and 4 to 6 build minutes ([docs/mock-fixture.md](docs/mock-fixture.md#cost-and-cleanup)).
 
 | Item | Per function | ×100 functions |
 |------|-------------|----------------|
