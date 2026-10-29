@@ -11,8 +11,15 @@ version: 0.2
 # than assembling YAML-in-YAML in the shell.
 #
 # ALWAYS writes a result.json so the EventBridge handler has an authoritative
-# outcome. PATH is re-exported in EVERY phase (atx installs to /root/.local/bin
-# and the export does not persist across CodeBuild phases).
+# outcome. PATH is re-exported in EVERY phase (atx installs to /root/.local/bin,
+# the .NET SDKs to /root/.dotnet, and the export does not persist across
+# CodeBuild phases).
+#
+# atx commits its work on a branch of its own (atx-result-staging-<timestamp>),
+# not on the upgrade branch cut below. post_build therefore pushes the commit
+# that holds atx's work TO the upgrade branch name, and checks the remote
+# branch landed on that commit: pushing the upgrade branch by name once
+# published a branch identical to main while reporting a diff.
 #
 # Env (all PLAINTEXT start-build overrides): REPOSITORY_URL, SOURCE_BRANCH
 # (branch to clone and cut the upgrade branch from; empty = default branch),
@@ -23,11 +30,34 @@ phases:
     runtime-versions:
       # Only the two runtimes the AMAZON_LINUX_2_5 image provides. A
       # runtime-versions entry for a runtime the image lacks fails the whole
-      # build for every language, so dotnet is deliberately NOT added (the .NET
-      # fixture is a discovery-only stub).
+      # build for every language, so dotnet is NOT listed here: the .NET SDKs
+      # are installed below, only for a .NET migration.
       python: 3.12
       nodejs: 22
     commands:
+      # AWS Transform validates the upgrade by running the repository's tests
+      # (validationCommands) on the TARGET runtime, so that runtime must exist
+      # in the build. Installed only for the family being migrated, to keep the
+      # other builds fast.
+      - |
+        case "$TARGET_RUNTIME" in
+          nodejs*)
+            NODE_MAJOR=$(echo "$TARGET_RUNTIME" | sed -E 's/^nodejs([0-9]+).*/\1/')
+            echo "Installing Node.js $NODE_MAJOR for validation..."
+            n "$NODE_MAJOR"
+            node --version
+            ;;
+          dotnet*)
+            # .NET 6 builds the project as it is today, the target SDK validates
+            # the upgrade. dotnet-install.sh is Microsoft's official installer.
+            DOTNET_TARGET=$(echo "$TARGET_RUNTIME" | sed -E 's/^dotnet([0-9]+).*/\1/')
+            echo "Installing the .NET 6 and .NET $DOTNET_TARGET SDKs for validation..."
+            curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+            bash /tmp/dotnet-install.sh --channel 6.0 --install-dir /root/.dotnet
+            bash /tmp/dotnet-install.sh --channel "$DOTNET_TARGET.0" --install-dir /root/.dotnet
+            /root/.dotnet/dotnet --list-sdks
+            ;;
+        esac
       - echo "Installing AWS Transform CLI (atx)..."
       # Literal us-east-1 is the CLI distribution endpoint, NOT the deploy region.
       - curl -fsSL https://desktop-release.transform.us-east-1.api.aws/install.sh | bash
@@ -36,7 +66,7 @@ phases:
 
   pre_build:
     commands:
-      - export PATH="/root/.local/bin:$PATH"
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
       - echo "Job ID - $JOB_ID"
       - echo "Repository URL - $REPOSITORY_URL"
       - echo "Transform - $TRANSFORM_NAME  Target - $TARGET_RUNTIME"
@@ -52,7 +82,7 @@ phases:
 
   build:
     commands:
-      - export PATH="/root/.local/bin:$PATH"
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
       - cd "$CODEBUILD_SRC_DIR/target-repo"
       # Upgrade branch name; JOB_ID keeps it unique per run.
       - UPGRADE_BRANCH="lambda-migration/${TARGET_RUNTIME}-${JOB_ID}"
@@ -123,7 +153,7 @@ phases:
 
   post_build:
     commands:
-      - export PATH="/root/.local/bin:$PATH"
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
       # Anchor on $CODEBUILD_SRC_DIR: do NOT depend on the build phase's cwd.
       - ATX_STATUS=$(cat "$CODEBUILD_SRC_DIR/atx.status" 2>/dev/null || echo "1")
       - UPGRADE_BRANCH=$(cat "$CODEBUILD_SRC_DIR/upgrade.branch" 2>/dev/null || echo "")
@@ -138,26 +168,45 @@ phases:
           FAILURE_CODE="TRANSFORM_FAILED"
           DIFF_SUMMARY=$(tail -c 4000 "$CODEBUILD_SRC_DIR/atx.log" 2>/dev/null || echo "AWS Transform exited with status $ATX_STATUS")
         else
-          # Commit anything atx left uncommitted, then compare the branch with
-          # the commit it was cut from: atx may commit its own edits, so a clean
-          # working tree does NOT mean "no changes".
+          # Commit anything atx left uncommitted, then compare the commit that
+          # holds atx's work with the commit the upgrade branch was cut from: a
+          # clean working tree does NOT mean "no changes".
           BASE_SHA=$(cat "$CODEBUILD_SRC_DIR/base.sha")
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
             git -c user.email="migration@example.com" -c user.name="Lambda Runtime Migration" commit -m "AWS Transform runtime upgrade to $TARGET_RUNTIME" >/dev/null 2>&1 || true
           fi
+          # atx leaves HEAD on its staging branch; if it restored the original
+          # branch instead, its work is at the tip of the newest staging branch.
+          RESULT_SHA=$(git rev-parse HEAD)
+          if [ "$RESULT_SHA" = "$BASE_SHA" ]; then
+            STAGING=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' 'refs/heads/atx-result-staging-*' | head -n 1)
+            if [ -n "$STAGING" ]; then
+              RESULT_SHA=$(git rev-parse "$STAGING")
+            fi
+          fi
+          echo "Base commit $BASE_SHA, AWS Transform result commit $RESULT_SHA"
         fi
-        if [ -z "$STATUS" ] && git diff --quiet "$BASE_SHA" HEAD; then
+        if [ -z "$STATUS" ] && git diff --quiet "$BASE_SHA" "$RESULT_SHA"; then
           STATUS="NO_CHANGES"
           DIFF_SUMMARY="AWS Transform produced no changes for this runtime upgrade."
         elif [ -z "$STATUS" ]; then
-          DIFF_SUMMARY=$(git diff --stat "$BASE_SHA" HEAD 2>/dev/null | tail -c 4000 || echo "changes committed")
+          DIFF_SUMMARY=$(git diff --stat "$BASE_SHA" "$RESULT_SHA" 2>/dev/null | tail -c 4000 || echo "changes committed")
           # The pushed branch IS the deliverable; a failed push must never be
           # silent. It is a business FAILED result with its own code so the
           # orchestrator and the UI can tell it from a transform failure.
-          if git push origin "$UPGRADE_BRANCH" > "$CODEBUILD_SRC_DIR/push.log" 2>&1; then
+          if git push origin "$RESULT_SHA:refs/heads/$UPGRADE_BRANCH" > "$CODEBUILD_SRC_DIR/push.log" 2>&1; then
             cat "$CODEBUILD_SRC_DIR/push.log" 2>/dev/null || true
-            STATUS="TRANSFORMED"
+            # Trust the remote, not the exit code: the branch must point at
+            # the commit that holds atx's work.
+            REMOTE_SHA=$(git ls-remote origin "refs/heads/$UPGRADE_BRANCH" | cut -f1)
+            if [ "$REMOTE_SHA" = "$RESULT_SHA" ]; then
+              STATUS="TRANSFORMED"
+            else
+              STATUS="FAILED"
+              FAILURE_CODE="PUSH_FAILED"
+              DIFF_SUMMARY="git push reported success but origin/$UPGRADE_BRANCH is at ${REMOTE_SHA:-<missing>}, expected $RESULT_SHA"
+            fi
           else
             cat "$CODEBUILD_SRC_DIR/push.log" 2>/dev/null || true
             STATUS="FAILED"
