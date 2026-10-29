@@ -19,8 +19,7 @@
       "required_fields": [
         "name",
         "identifier",
-        "deprecation_date",
-        "status"
+        "deprecation_date"
       ],
       "enabled": true
     },
@@ -215,8 +214,7 @@
       "required_fields": [
         "name",
         "identifier",
-        "version",
-        "status"
+        "version"
       ],
       "enabled": true
     },
@@ -239,8 +237,7 @@
       "required_fields": [
         "name",
         "identifier",
-        "glue_version",
-        "status"
+        "glue_version"
       ],
       "enabled": true
     },
@@ -264,8 +261,7 @@
       "required_fields": [
         "name",
         "identifier",
-        "version",
-        "status"
+        "version"
       ],
       "enabled": true
     }

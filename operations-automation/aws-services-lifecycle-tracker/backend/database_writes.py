@@ -225,6 +225,12 @@ def categorize_item_status(item: Dict[str, Any], service_name: str = None) -> st
     return 'supported'
 
 
+# Item fields computed by the pipeline, so never required from the model.
+# 'status' is derived from the lifecycle dates by categorize_item_status(); the
+# model's value is only a hint when the docs give no dates.
+DERIVED_FIELDS = frozenset({'status'})
+
+
 def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Validate an extracted item against the service configuration.
@@ -238,9 +244,14 @@ def validate_item_against_config(item: Dict[str, Any], config: Dict[str, Any]) -
     """
     errors = []
     
-    # Check required fields - these MUST be present
+    # Check required fields - these MUST be present. Fields the pipeline derives
+    # itself (DERIVED_FIELDS) are never required from the model: a config that
+    # still lists one must not reject every item when the model omits it (the
+    # Lambda extraction dropped all of its items this way).
     required_fields = config.get('required_fields', [])
     for field in required_fields:
+        if field in DERIVED_FIELDS:
+            continue
         if field not in item or item[field] is None or item[field] == '':
             errors.append(f"Missing required field: {field}")
     
