@@ -47,10 +47,23 @@ const FLAT_SCOPE_OPTIONS: { label: string; value: string }[] = SCOPE_OPTIONS.fla
 const PREFS_KEY = 'lifecycle-resources-preferences';
 const DEFAULT_PREFS: CollectionPreferencesProps.Preferences = {
   pageSize: 50,
-  contentDisplay: ['service', 'version', 'status', 'deadline', 'resources', 'cost', 'account', 'region', 'plan', 'verified'].map((id) => ({ id, visible: true })),
+  contentDisplay: ['service', 'version', 'status', 'deadline', 'resources', 'cost', 'account', 'account_id', 'region', 'plan', 'verified'].map((id) => ({ id, visible: true })),
 };
 const loadPrefs = (): CollectionPreferencesProps.Preferences => {
-  try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch { return DEFAULT_PREFS; }
+  try {
+    const prefs = { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') } as CollectionPreferencesProps.Preferences;
+    // Columns added after the preferences were saved (e.g. Account ID) are not in the
+    // stored list, so the table would never show them: add each missing one, visible,
+    // right after the column that precedes it in the defaults.
+    const display = [...(prefs.contentDisplay || [])];
+    const defaults = DEFAULT_PREFS.contentDisplay || [];
+    defaults.forEach((col, i) => {
+      if (display.some((c) => c.id === col.id)) return;
+      const prev = i > 0 ? display.findIndex((c) => c.id === defaults[i - 1].id) : -1;
+      display.splice(prev + 1, 0, col);
+    });
+    return { ...prefs, contentDisplay: display };
+  } catch { return DEFAULT_PREFS; }
 };
 
 // Property filter: one free-text token plus Service / Region / Account properties.
@@ -290,7 +303,7 @@ export default function MyResources() {
               options: [
                 { id: 'service', label: 'Service', alwaysVisible: true }, { id: 'version', label: 'Version', alwaysVisible: true },
                 { id: 'status', label: 'Status' }, { id: 'deadline', label: 'Deadline' }, { id: 'resources', label: 'Resources' },
-                { id: 'cost', label: 'Cost exposure' }, { id: 'account', label: 'Account' }, { id: 'region', label: 'Region' },
+                { id: 'cost', label: 'Cost exposure' }, { id: 'account', label: 'Account' }, { id: 'account_id', label: 'Account ID' }, { id: 'region', label: 'Region' },
                 { id: 'plan', label: 'Plan' }, { id: 'verified', label: 'Seen' },
               ],
             }}
@@ -445,15 +458,16 @@ export default function MyResources() {
               );
             },
           },
-          ...(multiAccount ? [{
-            id: 'account', header: 'Account', sortingField: 'account_id',
-            cell: (r: DeprecationItem) => r.account_id
-              ? <SpaceBetween size="xxxs">
-                  <Box>{r.account_name || r.account_id}</Box>
-                  {r.account_name && <Box variant="small" color="text-body-secondary">{r.account_id}</Box>}
-                </SpaceBetween>
-              : <Box color="text-body-secondary">-</Box>,
-          } as TableProps.ColumnDefinition<DeprecationItem>] : []),
+          ...(multiAccount ? [
+            {
+              id: 'account', header: 'Account', sortingField: 'account_name',
+              cell: (r: DeprecationItem) => r.account_name || <Box color="text-body-secondary">-</Box>,
+            } as TableProps.ColumnDefinition<DeprecationItem>,
+            {
+              id: 'account_id', header: 'Account ID', sortingField: 'account_id',
+              cell: (r: DeprecationItem) => r.account_id || <Box color="text-body-secondary">-</Box>,
+            } as TableProps.ColumnDefinition<DeprecationItem>,
+          ] : []),
           { id: 'region', header: 'Region', cell: (r) => r.region || '-', sortingField: 'region' },
           {
             id: 'plan', header: 'Plan', cell: (r) => {
