@@ -35,8 +35,9 @@ const BUILDSPEC_KEY = 'config/buildspec.yml';
 // orchestrator keeps the only Pipeline<->Transform edge the EventBridge rule
 // target (Transform -> Pipeline), so the graph stays acyclic. Referencing the
 // project construct instead would make the orchestrator's role (in Pipeline)
-// depend on a Transform output, forming a cycle with the rule target.
-const PROJECT_NAME = 'lambda-runtime-migration-transform';
+// depend on a Transform output, forming a cycle with the rule target. Exported
+// so the Pipeline stack can grant the API read access to the builds by name.
+export const PROJECT_NAME = 'lambda-runtime-migration-transform';
 
 /**
  * TransformStack — build plane for the migration (always deployed).

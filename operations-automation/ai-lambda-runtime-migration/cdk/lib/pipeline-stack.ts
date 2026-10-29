@@ -7,6 +7,9 @@ import { Construct } from 'constructs';
 import { DISCOVER_READ_ACTIONS, hubPipelineRoleName, SPOKE_ROLE_NAME } from './scan-permissions';
 // The orchestrator's verify reads are scoped to the fixture repository.
 import { FIXTURE_REPO_NAME } from './mock-fixture-stack';
+// The API reads the migration builds' phase; a name constant, not a construct
+// reference, so no cross-stack dependency.
+import { PROJECT_NAME as TRANSFORM_PROJECT_NAME } from './transform-stack';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -453,6 +456,14 @@ export class PipelineStack extends cdk.Stack {
         'lambda:ListDurableExecutionsByFunction',
       ],
       resources: [migrateFunction.functionArn, `${migrateFunction.functionArn}:*`],
+    }));
+    // The migration Steps card shows what the running builds are doing
+    // (cloning, AWS Transform, pushing), read from each build's current phase.
+    // Read-only, on the migration build project only.
+    this.apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'MigrationBuildRead',
+      actions: ['codebuild:BatchGetBuilds'],
+      resources: [`arn:${this.partition}:codebuild:${this.region}:${this.account}:project/${TRANSFORM_PROJECT_NAME}`],
     }));
 
     // ------------------------------------------------------------------

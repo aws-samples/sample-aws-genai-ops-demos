@@ -350,6 +350,9 @@ export interface MigrationPhase {
   note?: string;          // backend-owned explanation for a skipped/zero phase
   noChanges?: number;     // Transform phase: units that succeeded with no changes
   branchesReady?: number; // Transform phase: units whose upgrade branch is pushed
+  // Transform phase, while the batch runs: what the running builds are doing,
+  // from their CodeBuild phase, in build order ("Running AWS Transform": 2).
+  activity?: { label: string; count: number }[];
 }
 
 interface MigrationRunProgress {

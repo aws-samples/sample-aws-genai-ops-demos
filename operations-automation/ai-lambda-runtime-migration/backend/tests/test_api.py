@@ -825,6 +825,87 @@ def _phases(events, status="SUCCEEDED"):
     return progress["phases"], progress
 
 
+# --- What the running migration builds are doing (Steps card) --------------
+
+def _resolve_ok_keyed(i):
+    return [_step("StepStarted", f"resolve-{i}"),
+            _resolve_step("StepSucceeded", f"resolve-{i}", {"ok": True, "mig_key": f"mig#{i}"})]
+
+
+def _transform_running(i):
+    return [_ctx("ContextStarted", f"transform-{i}")]
+
+
+class _MigTable:
+    """get_item fake: mig#<i> is IN_PROGRESS with build b-<i>."""
+    def __init__(self, error=None):
+        self.error = error
+
+    def get_item(self, Key):
+        if self.error:
+            raise self.error
+        i = Key["item_key"].split("#")[1]
+        return {"Item": {"item_key": Key["item_key"], "migration_status": "IN_PROGRESS",
+                         "migration_build_id": f"b-{i}"}}
+
+
+class _PhaseCodeBuild:
+    def __init__(self, phases=None, error=None):
+        self.phases, self.error, self.calls = phases or {}, error, []
+
+    def batch_get_builds(self, ids):
+        self.calls.append(list(ids))
+        if self.error:
+            raise self.error
+        return {"builds": [{"id": i, "currentPhase": self.phases.get(i)} for i in ids]}
+
+
+def _running_batch(monkeypatch, codebuild, table=None, status="RUNNING"):
+    monkeypatch.setattr(api, "_table", lambda: table or _MigTable())
+    monkeypatch.setattr(api, "_codebuild_client", lambda: codebuild)
+    events = (_PREPARE_OK + _resolve_ok_keyed(0) + _resolve_ok_keyed(1) + _resolve_ok_keyed(2)
+              + _transform_running(0) + _transform_running(1) + _transform_done(2))
+    return api._migration_progress(_HistoryClient(events), "arn:x", status)["phases"][2]
+
+
+def test_transform_step_counts_what_the_running_builds_do(monkeypatch):
+    codebuild = _PhaseCodeBuild({"b-0": "BUILD", "b-1": "POST_BUILD"})
+    p2 = _running_batch(monkeypatch, codebuild)
+    assert p2["activity"] == [{"label": "Running AWS Transform", "count": 1},
+                              {"label": "Pushing the upgrade branch", "count": 1}]
+    # Only the running units are looked up, the finished one is not.
+    assert codebuild.calls == [["b-0", "b-1"]]
+
+
+def test_transform_step_groups_builds_in_the_same_phase(monkeypatch):
+    p2 = _running_batch(monkeypatch, _PhaseCodeBuild({"b-0": "INSTALL", "b-1": "INSTALL"}))
+    assert p2["activity"] == [{"label": "Installing AWS Transform", "count": 2}]
+
+
+def test_transform_step_has_no_activity_once_the_batch_is_over(monkeypatch):
+    codebuild = _PhaseCodeBuild({"b-0": "BUILD", "b-1": "BUILD"})
+    p2 = _running_batch(monkeypatch, codebuild, status="SUCCEEDED")
+    assert "activity" not in p2
+    assert codebuild.calls == []
+
+
+def test_transform_step_ignores_an_unknown_phase(monkeypatch):
+    p2 = _running_batch(monkeypatch, _PhaseCodeBuild({"b-0": "SOMETHING_NEW"}))
+    assert "activity" not in p2
+
+
+def test_transform_step_loads_when_codebuild_cannot_be_read(monkeypatch):
+    p2 = _running_batch(monkeypatch, _PhaseCodeBuild(error=RuntimeError("AccessDenied")))
+    assert p2["status"] == "in-progress" and "activity" not in p2
+
+
+def test_transform_step_loads_when_the_mig_item_cannot_be_read(monkeypatch):
+    codebuild = _PhaseCodeBuild({"b-0": "BUILD"})
+    p2 = _running_batch(monkeypatch, codebuild, table=_MigTable(error=RuntimeError("throttled")))
+    assert "activity" not in p2
+    assert codebuild.calls == []
+
+
 def test_context_string_payload_matches_sdk_serdes():
     """The fixture encoder is pinned to the installed SDK: a str result is
     serialized as a bare JSON string (primitive fast path), never as an

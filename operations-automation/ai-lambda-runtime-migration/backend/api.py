@@ -39,6 +39,7 @@ PIPELINE_FUNCTION_ARN = os.environ.get("PIPELINE_FUNCTION_ARN")  # qualified (al
 MIGRATE_FUNCTION_ARN = os.environ.get("MIGRATE_FUNCTION_ARN")   # qualified (alias) ARN, Phase 2
 
 _lambda = None
+_codebuild = None
 
 
 def _lambda_client():
@@ -46,6 +47,13 @@ def _lambda_client():
     if _lambda is None:
         _lambda = boto3.client("lambda", region_name=get_region())
     return _lambda
+
+
+def _codebuild_client():
+    global _codebuild
+    if _codebuild is None:
+        _codebuild = boto3.client("codebuild", region_name=get_region())
+    return _codebuild
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +703,15 @@ def _migration_progress(client, execution_arn: str, status: str) -> dict:
                 _running_list(transform))
     if no_changes:
         p2["noChanges"] = no_changes
+    # While builds run, say what they are doing: one build clones the repository,
+    # runs AWS Transform and pushes the branch, which the durable step alone
+    # cannot tell apart. Each running unit's mig# key is in its resolve result.
+    if status == "RUNNING" and p2_in_progress:
+        running_keys = [(resolve_result.get(i) or {}).get("mig_key")
+                        for i, st in transform.items() if st == "started"]
+        activity = _transform_activity([k for k in running_keys if k])
+        if activity:
+            p2["activity"] = activity
     # Branches ready = transforms done minus the no-change ones, computed here so
     # the UI never subtracts.
     p2["branchesReady"] = p2_done - no_changes
@@ -727,6 +744,55 @@ def _migration_progress(client, execution_arn: str, status: str) -> dict:
                 ph["note"] = _NOTE_ENDED_BEFORE_DONE
     return {"phases": phases, "rejected_by_code": rejected_by_code,
             "total_selected": total_selected, "accepted": accepted}
+
+
+# CodeBuild phase of a migration build -> what it is doing, in the order of
+# cdk/buildspec/transform-migrate.buildspec.yml. A phase not listed here (or no
+# phase yet) is left out, never shown as a wrong activity.
+_BUILD_ACTIVITY = {
+    "SUBMITTED": "Starting the build",
+    "QUEUED": "Starting the build",
+    "PROVISIONING": "Starting the build",
+    "DOWNLOAD_SOURCE": "Starting the build",
+    "INSTALL": "Installing AWS Transform",
+    "PRE_BUILD": "Cloning the repository",
+    "BUILD": "Running AWS Transform",
+    "POST_BUILD": "Pushing the upgrade branch",
+    "UPLOAD_ARTIFACTS": "Finishing",
+    "FINALIZING": "Finishing",
+    "COMPLETED": "Finishing",
+}
+_ACTIVITY_ORDER = list(dict.fromkeys(_BUILD_ACTIVITY.values()))
+_BATCH_GET_BUILDS_MAX = 100
+
+
+def _transform_activity(mig_keys: List[str]) -> List[dict]:
+    """[{label, count}] of what the running migration builds are doing, in
+    build order. Reads each mig# item's build id, then the builds' current
+    phase. Best effort, never raises: the Steps card must load even when
+    DynamoDB or CodeBuild cannot be read; it then shows no activity."""
+    build_ids = []
+    for key in mig_keys:
+        try:
+            item = _table().get_item(Key={"item_key": key}).get("Item") or {}
+        except Exception:  # best effort: see the docstring
+            logger.warning("could not read migration item %s", key, exc_info=True)
+            continue
+        if item.get("migration_status") == "IN_PROGRESS" and item.get("migration_build_id"):
+            build_ids.append(item["migration_build_id"])
+
+    counts: dict = {}
+    for start in range(0, len(build_ids), _BATCH_GET_BUILDS_MAX):
+        try:
+            resp = _codebuild_client().batch_get_builds(ids=build_ids[start:start + _BATCH_GET_BUILDS_MAX])
+        except Exception:  # best effort: see the docstring
+            logger.warning("could not read the migration builds' phases", exc_info=True)
+            continue
+        for build in resp.get("builds", []):
+            label = _BUILD_ACTIVITY.get(build.get("currentPhase"))
+            if label:
+                counts[label] = counts.get(label, 0) + 1
+    return [{"label": label, "count": counts[label]} for label in _ACTIVITY_ORDER if label in counts]
 
 
 def migration_run_status(execution_arn: str) -> tuple:

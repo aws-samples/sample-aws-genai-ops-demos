@@ -83,7 +83,22 @@ const detailsFor = (p: MigrationPhase) => {
   if (p.status === 'in-progress' && p.total && p.total >= 1) {
     const pct = Math.round(((p.done + p.failed) / p.total) * 100);
     const info = `${countText(p)}${gapText(p)}`;
-    return <ProgressBar value={pct} additionalInfo={info} ariaLabel={`${p.label}: ${info}`} />;
+    // Transform: what the running builds are doing (one build clones, runs AWS
+    // Transform and pushes). All in one phase: "Installing AWS Transform".
+    // Several phases: "2 installing AWS Transform · 1 starting the build".
+    const activity = isTransform(p) && p.activity?.length
+      ? (p.activity.length === 1
+        ? p.activity[0].label
+        : p.activity.map((a) => `${a.count} ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}`).join(' · '))
+      : undefined;
+    return (
+      <ProgressBar
+        value={pct}
+        description={activity}
+        additionalInfo={info}
+        ariaLabel={`${p.label}: ${info}${activity ? `. ${activity}` : ''}`}
+      />
+    );
   }
   if (p.status === 'in-progress') return <Box variant="small">Running</Box>;
   if (p.total && p.total >= 1 && p.status !== 'pending' && p.status !== 'stopped') {
