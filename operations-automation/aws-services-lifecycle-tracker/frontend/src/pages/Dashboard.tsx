@@ -367,7 +367,10 @@ export default function Dashboard() {
                       ? <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&details=${encodeURIComponent(r.item_id)}`); }} href="#">{n} {resourceWord(n)}</Link>
                       : <Box color="text-body-secondary">0</Box>;
                   } },
-                  ...(multiAccount ? [{ id: 'account', header: 'Account', cell: (r: DeprecationItem) => r.account_name || r.account_id || '-' }] : []),
+                  ...(multiAccount ? [
+                    { id: 'account', header: 'Account', cell: (r: DeprecationItem) => r.account_name || '-' },
+                    { id: 'account_id', header: 'Account ID', cell: (r: DeprecationItem) => r.account_id || '-' },
+                  ] : []),
                   { id: 'region', header: 'Region', cell: (r) => r.region || '-' },
                 ]}
                 footer={exposure.concerns.length > deadlines.length && (
@@ -406,11 +409,9 @@ export default function Dashboard() {
                 trackBy={([k]) => k}
                 columnDefinitions={[
                   { id: 'account', header: 'Account', cell: ([k, v]) => (
-                    <SpaceBetween size="xxxs">
-                      <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&account=${k}`); }} href="#">{v.name || k}</Link>
-                      {v.name && <Box variant="small" color="text-body-secondary">{k}</Box>}
-                    </SpaceBetween>
+                    <Link onFollow={(e) => { e.preventDefault(); navigate(`/resources?status=all&account=${k}`); }} href="#">{v.name || k}</Link>
                   ) },
+                  { id: 'account_id', header: 'Account ID', cell: ([k]) => k },
                   { id: 'resources', header: 'Resources', cell: ([, v]) => v.resources },
                   { id: 'versions', header: 'Versions in use', cell: ([, v]) => v.rows },
                   { id: 'concerns', header: 'Need attention', cell: ([, v]) => v.concerns
