@@ -448,12 +448,31 @@ export default function MyFunctions() {
   const flash = (type: FlashbarProps.Type, content: string) =>
     setFlashbarItems([{ type, content, dismissible: true, dismissLabel: 'Dismiss', onDismiss: () => setFlashbarItems([]), id: `${type}-${Date.now()}` }]);
 
+  // Rows shown QUEUED right after Migrate, before the batch has written their
+  // mig# item: function ARN -> when Migrate was clicked (ms). Until the server
+  // reports a record written after the click, a reload would show the PREVIOUS
+  // run's outcome (e.g. Branch ready) for a few seconds, so the optimistic QUEUED
+  // is kept. Cleared per row once the server catches up, and entirely when the
+  // batch execution is over.
+  const optimisticQueued = useRef<Map<string, number>>(new Map());
+
   // Background reload: refresh the rows WITHOUT flipping the Table into its
   // loading state (the 30 s migration poll must not flicker the page).
   const reload = useCallback(async () => {
     try {
       const { functions } = await getFunctions();
-      setRows(functions);
+      const pending = optimisticQueued.current;
+      setRows(pending.size === 0 ? functions : functions.map((r) => {
+        const clickedAt = pending.get(r.function_arn);
+        if (clickedAt === undefined) return r;
+        const live = r.migration_run_status === 'QUEUED' || r.migration_run_status === 'IN_PROGRESS';
+        const updatedAt = r.migration_run_updated_at ? Date.parse(r.migration_run_updated_at) : NaN;
+        if (live || (!Number.isNaN(updatedAt) && updatedAt >= clickedAt)) {
+          pending.delete(r.function_arn);   // the server has this run's record
+          return r;
+        }
+        return { ...r, migration_run_status: 'QUEUED' as MigrationRunStatus };
+      }));
     } catch (err) {
       flash('error', `Failed to load functions: ${errorMessage(err)}`);
     }
@@ -568,6 +587,8 @@ export default function MyFunctions() {
           if (cancelled) return;
           setMigrationRun(run);
           if (run.status === 'RUNNING') flashEligibleFor.current = migrationRunArn;
+          // The batch is over: every row's record is final, show it as is.
+          else optimisticQueued.current.clear();
         }
         await reload();
         if (cancelled) return;
@@ -608,8 +629,12 @@ export default function MyFunctions() {
       setMigrationRun(null);
       setStepsExpanded(true);
       autoCollapsedFor.current = null;
-      // Optimistic QUEUED on the started rows so the Migration column reacts now.
+      // Optimistic QUEUED on the started rows so the Migration column reacts now,
+      // kept across reloads until the batch writes this run's record (see
+      // optimisticQueued).
+      const clickedAt = Date.now();
       for (const f of fns.slice(0, batchSize)) {
+        optimisticQueued.current.set(f.function_arn, clickedAt);
         mergeMigrationRow(f.function_arn, { migration_run_status: 'QUEUED' } as MigrationFunction);
       }
       setSelected([]);
