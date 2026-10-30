@@ -194,15 +194,16 @@ if [ "$SKIP_BOOTSTRAP" = false ]; then
     echo -e "\033[0;32m      OK: CDK bootstrap is up to date\033[0m"
 fi
 
-# Deploy or destroy stack
+# Deploy or destroy stack. Context is forwarded to both: a stack that the app
+# only instantiates under a context key must see it on destroy too.
 if [ "$DESTROY_STACK" = true ]; then
     echo ""
     echo -e "\033[0;33mDestroying CDK stack...\033[0m"
     set +e
     if [ -z "$STACK_NAME" ]; then
-        eval npx -y cdk destroy --force --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+        eval npx -y cdk destroy --force --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
     else
-        eval npx -y cdk destroy "$STACK_NAME" --force --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+        eval npx -y cdk destroy "$STACK_NAME" --force --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
     fi
     cdk_exit=$?
     set -e

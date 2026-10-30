@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Order token service on a deprecated runtime (nodejs16.x). AWS Transform
+  (AWS/lambda-nodejs-runtime-upgrade) is expected to update the Runtime below
+  along with the code changes in index.js and package.json.
+
+Resources:
+  MockNodejsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-migration-mock-nodejs
+      Handler: index.handler
+      Runtime: nodejs16.x
+      MemorySize: 128
+      Timeout: 10
+      CodeUri: .
+      Environment:
+        Variables:
+          TOKEN_SECRET_PARAM: /order-token-service/token-secret
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: order-token-service/token-secret

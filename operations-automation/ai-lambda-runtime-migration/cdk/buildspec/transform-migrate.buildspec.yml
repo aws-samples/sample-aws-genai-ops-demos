@@ -1,0 +1,229 @@
+version: 0.2
+
+# AWS Transform (atx) runtime-migration build.
+#
+# Runs a managed runtime-upgrade transformation against a target CodeCommit repo
+# and pushes the upgrade branch `lambda-migration/<target>-<job_id>` to `origin`
+# whenever the transformation produced a diff. The pushed branch is the
+# deliverable: nothing opens a pull request, `main` is never written. The
+# orchestrator writes transform-config.yaml to S3 and sets all the env vars
+# below as start-build overrides; this buildspec reads the config back rather
+# than assembling YAML-in-YAML in the shell.
+#
+# ALWAYS writes a result.json so the EventBridge handler has an authoritative
+# outcome. PATH is re-exported in EVERY phase (atx installs to /root/.local/bin,
+# the .NET SDKs to /root/.dotnet, and the export does not persist across
+# CodeBuild phases).
+#
+# atx commits its work on a branch of its own (atx-result-staging-<timestamp>),
+# not on the upgrade branch cut below. post_build therefore pushes the commit
+# that holds atx's work TO the upgrade branch name, and checks the remote
+# branch landed on that commit: pushing the upgrade branch by name once
+# published a branch identical to main while reporting a diff.
+#
+# Env (all PLAINTEXT start-build overrides): REPOSITORY_URL, SOURCE_BRANCH
+# (branch to clone and cut the upgrade branch from; empty = default branch),
+# TARGET_RUNTIME, TRANSFORM_NAME, TRANSFORM_FALLBACK_REGION, JOB_ID, OUTPUT_BUCKET.
+
+phases:
+  install:
+    runtime-versions:
+      # Only the two runtimes the AMAZON_LINUX_2_5 image provides. A
+      # runtime-versions entry for a runtime the image lacks fails the whole
+      # build for every language, so dotnet is NOT listed here: the .NET SDKs
+      # are installed below, only for a .NET migration.
+      python: 3.12
+      nodejs: 22
+    commands:
+      # AWS Transform validates the upgrade by running the repository's tests
+      # (validationCommands) on the TARGET runtime, so that runtime must exist
+      # in the build. Installed only for the family being migrated, to keep the
+      # other builds fast.
+      - |
+        case "$TARGET_RUNTIME" in
+          nodejs*)
+            NODE_MAJOR=$(echo "$TARGET_RUNTIME" | sed -E 's/^nodejs([0-9]+).*/\1/')
+            echo "Installing Node.js $NODE_MAJOR for validation..."
+            n "$NODE_MAJOR"
+            node --version
+            ;;
+          dotnet*)
+            # .NET 6 builds the project as it is today, the target SDK validates
+            # the upgrade. dotnet-install.sh is Microsoft's official installer.
+            DOTNET_TARGET=$(echo "$TARGET_RUNTIME" | sed -E 's/^dotnet([0-9]+).*/\1/')
+            echo "Installing the .NET 6 and .NET $DOTNET_TARGET SDKs for validation..."
+            curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+            bash /tmp/dotnet-install.sh --channel 6.0 --install-dir /root/.dotnet
+            bash /tmp/dotnet-install.sh --channel "$DOTNET_TARGET.0" --install-dir /root/.dotnet
+            /root/.dotnet/dotnet --list-sdks
+            ;;
+        esac
+      - echo "Installing AWS Transform CLI (atx)..."
+      # Literal us-east-1 is the CLI distribution endpoint, NOT the deploy region.
+      - curl -fsSL https://desktop-release.transform.us-east-1.api.aws/install.sh | bash
+      - export PATH="/root/.local/bin:$PATH"
+      - atx --version
+
+  pre_build:
+    commands:
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
+      - echo "Job ID - $JOB_ID"
+      - echo "Repository URL - $REPOSITORY_URL"
+      - echo "Transform - $TRANSFORM_NAME  Target - $TARGET_RUNTIME"
+      # Pull the orchestrator-rendered Transform config.
+      - aws s3 cp "s3://$OUTPUT_BUCKET/migrations/$JOB_ID/transform-config.yaml" "$CODEBUILD_SRC_DIR/transform-config.yaml"
+      # CodeCommit HTTPS auth via the AWS CLI credential helper (role creds).
+      - git config --global credential.helper '!aws codecommit credential-helper $@'
+      - git config --global credential.UseHttpPath true
+      - echo "Cloning target repository (branch ${SOURCE_BRANCH:-<default>})..."
+      # SOURCE_BRANCH set: clone that branch so the upgrade branch is cut from
+      # it. Empty: the repository's default branch.
+      - git clone ${SOURCE_BRANCH:+-b "$SOURCE_BRANCH"} "$REPOSITORY_URL" "$CODEBUILD_SRC_DIR/target-repo"
+
+  build:
+    commands:
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
+      - cd "$CODEBUILD_SRC_DIR/target-repo"
+      # Upgrade branch name; JOB_ID keeps it unique per run.
+      - UPGRADE_BRANCH="lambda-migration/${TARGET_RUNTIME}-${JOB_ID}"
+      - echo "Creating branch $UPGRADE_BRANCH"
+      - git checkout -b "$UPGRADE_BRANCH"
+      # Remember where the branch was cut: post_build decides "changed or not"
+      # against THIS commit, because atx commits its own edits, so a clean
+      # working tree after the run does not mean nothing changed.
+      - git rev-parse HEAD > "$CODEBUILD_SRC_DIR/base.sha"
+      - echo "Running AWS Transform..."
+      # AWS Transform custom is not offered in every region, and there is NO way
+      # to query its region availability ahead of time: the AWS CLI has no
+      # transform service, and `transform-custom` is not published in SSM
+      # global-infrastructure. A static list can only pick the fallback; the
+      # deploy region is still tried first, with atx as the source of truth.
+      # Attempt the deploy region (AWS_REGION) FIRST; only if atx rejects it as
+      # not-a-Transform-region do we retry once in a geo fallback
+      # (TRANSFORM_FALLBACK_REGION, derived at start-build from the deploy
+      # region's geo so Bedrock inference stays in-geo). This is self-correcting:
+      # when AWS adds Transform to the deploy region, the first attempt simply
+      # succeeds and the fallback is never used.
+      #
+      # atx has been observed to EXIT 0 even on a hard failure (unresolvable
+      # endpoint, config validation), so success is decided by scanning the log,
+      # not the exit code.
+      #
+      # ONE block on purpose: CodeBuild carries environment variables and the
+      # cwd from one `commands:` entry to the next, but NOT shell functions.
+      # Defining run_atx in one entry and calling it from the next produced
+      # "run_atx: command not found" and a FAILED result although atx never ran.
+      - |
+        ATX_CFG="file://$CODEBUILD_SRC_DIR/transform-config.yaml"
+        FALLBACK_REGION="${TRANSFORM_FALLBACK_REGION:-eu-central-1}"
+        # $1 = region to run atx in; returns 0 only when the log shows no error.
+        run_atx() {
+          local region="$1"
+          echo "Attempting AWS Transform in region $region"
+          set +e
+          AWS_REGION="$region" AWS_DEFAULT_REGION="$region" \
+            atx custom def exec -n "$TRANSFORM_NAME" -p "." -x -t --configuration "$ATX_CFG" 2>&1 | tee "$CODEBUILD_SRC_DIR/atx.log"
+          set -e
+          if grep -Eiq 'Could not resolve the AWS Transform endpoint|ENOTFOUND|DNS lookup failed|Error executing transformation|^Fatal error:|validation error detected|^Error:' "$CODEBUILD_SRC_DIR/atx.log"; then
+            return 1
+          fi
+          return 0
+        }
+        # "deploy region is not a Transform region" — the only error that warrants
+        # retrying elsewhere (a config/transform error would just repeat).
+        region_unsupported() {
+          grep -Eiq 'Could not resolve the AWS Transform endpoint|ENOTFOUND|DNS lookup failed|is not an AWS Transform region' "$CODEBUILD_SRC_DIR/atx.log"
+        }
+        ATX_STATUS=0
+        if run_atx "$AWS_REGION"; then
+          echo "AWS Transform succeeded in the deploy region $AWS_REGION"
+        elif region_unsupported && [ "$FALLBACK_REGION" != "$AWS_REGION" ]; then
+          echo "Deploy region $AWS_REGION is not an AWS Transform region; retrying in $FALLBACK_REGION"
+          if run_atx "$FALLBACK_REGION"; then
+            echo "AWS Transform succeeded in the fallback region $FALLBACK_REGION"
+          else
+            ATX_STATUS=1
+          fi
+        else
+          ATX_STATUS=1
+        fi
+        echo "atx effective status $ATX_STATUS"
+        echo "$ATX_STATUS" > "$CODEBUILD_SRC_DIR/atx.status"
+      - echo "$UPGRADE_BRANCH" > "$CODEBUILD_SRC_DIR/upgrade.branch"
+
+  post_build:
+    commands:
+      - export PATH="/root/.local/bin:/root/.dotnet:$PATH" DOTNET_ROOT=/root/.dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1
+      # Anchor on $CODEBUILD_SRC_DIR: do NOT depend on the build phase's cwd.
+      - ATX_STATUS=$(cat "$CODEBUILD_SRC_DIR/atx.status" 2>/dev/null || echo "1")
+      - UPGRADE_BRANCH=$(cat "$CODEBUILD_SRC_DIR/upgrade.branch" 2>/dev/null || echo "")
+      - RESULT_KEY="migrations/$JOB_ID/result.json"
+      - cd "$CODEBUILD_SRC_DIR/target-repo"
+      - DIFF_SUMMARY=""
+      - STATUS=""
+      - FAILURE_CODE=""
+      - |
+        if [ "$ATX_STATUS" != "0" ]; then
+          STATUS="FAILED"
+          FAILURE_CODE="TRANSFORM_FAILED"
+          DIFF_SUMMARY=$(tail -c 4000 "$CODEBUILD_SRC_DIR/atx.log" 2>/dev/null || echo "AWS Transform exited with status $ATX_STATUS")
+        else
+          # Commit anything atx left uncommitted, then compare the commit that
+          # holds atx's work with the commit the upgrade branch was cut from: a
+          # clean working tree does NOT mean "no changes".
+          BASE_SHA=$(cat "$CODEBUILD_SRC_DIR/base.sha")
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git -c user.email="migration@example.com" -c user.name="Lambda Runtime Migration" commit -m "AWS Transform runtime upgrade to $TARGET_RUNTIME" >/dev/null 2>&1 || true
+          fi
+          # atx leaves HEAD on its staging branch; if it restored the original
+          # branch instead, its work is at the tip of the newest staging branch.
+          RESULT_SHA=$(git rev-parse HEAD)
+          if [ "$RESULT_SHA" = "$BASE_SHA" ]; then
+            STAGING=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' 'refs/heads/atx-result-staging-*' | head -n 1)
+            if [ -n "$STAGING" ]; then
+              RESULT_SHA=$(git rev-parse "$STAGING")
+            fi
+          fi
+          echo "Base commit $BASE_SHA, AWS Transform result commit $RESULT_SHA"
+        fi
+        if [ -z "$STATUS" ] && git diff --quiet "$BASE_SHA" "$RESULT_SHA"; then
+          STATUS="NO_CHANGES"
+          DIFF_SUMMARY="AWS Transform produced no changes for this runtime upgrade."
+        elif [ -z "$STATUS" ]; then
+          DIFF_SUMMARY=$(git diff --stat "$BASE_SHA" "$RESULT_SHA" 2>/dev/null | tail -c 4000 || echo "changes committed")
+          # The pushed branch IS the deliverable; a failed push must never be
+          # silent. It is a business FAILED result with its own code so the
+          # orchestrator and the UI can tell it from a transform failure.
+          if git push origin "$RESULT_SHA:refs/heads/$UPGRADE_BRANCH" > "$CODEBUILD_SRC_DIR/push.log" 2>&1; then
+            cat "$CODEBUILD_SRC_DIR/push.log" 2>/dev/null || true
+            # Trust the remote, not the exit code: the branch must point at
+            # the commit that holds atx's work.
+            REMOTE_SHA=$(git ls-remote origin "refs/heads/$UPGRADE_BRANCH" | cut -f1)
+            if [ "$REMOTE_SHA" = "$RESULT_SHA" ]; then
+              STATUS="TRANSFORMED"
+            else
+              STATUS="FAILED"
+              FAILURE_CODE="PUSH_FAILED"
+              DIFF_SUMMARY="git push reported success but origin/$UPGRADE_BRANCH is at ${REMOTE_SHA:-<missing>}, expected $RESULT_SHA"
+            fi
+          else
+            cat "$CODEBUILD_SRC_DIR/push.log" 2>/dev/null || true
+            STATUS="FAILED"
+            FAILURE_CODE="PUSH_FAILED"
+            DIFF_SUMMARY="git push failed: $(tail -c 3000 "$CODEBUILD_SRC_DIR/push.log" 2>/dev/null || echo "no output")"
+          fi
+        fi
+      - echo "Result status $STATUS"
+      - |
+        python3 - "$CODEBUILD_SRC_DIR/result.json" "$STATUS" "$FAILURE_CODE" "$UPGRADE_BRANCH" "$DIFF_SUMMARY" <<'PY'
+        import json, sys
+        path, status, failure_code, branch, diff_summary = sys.argv[1:6]
+        out = {"status": status, "branch": branch, "diff_summary": diff_summary}
+        if failure_code:
+            out["failure_code"] = failure_code
+        with open(path, "w") as f:
+            json.dump(out, f)
+        PY
+      - aws s3 cp "$CODEBUILD_SRC_DIR/result.json" "s3://$OUTPUT_BUCKET/$RESULT_KEY" --no-cli-pager
+      - echo "Result written to s3://$OUTPUT_BUCKET/$RESULT_KEY"

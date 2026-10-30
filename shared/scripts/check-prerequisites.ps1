@@ -319,9 +319,13 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             Write-Host "      OK: Amazon Nova Act is available in $currentRegion" -ForegroundColor Green
         }
         "transform" {
-            Write-Host "      INFO: AWS Transform service check (informational)" -ForegroundColor Cyan
-            Write-Host "      AWS Transform must be available in $currentRegion" -ForegroundColor Gray
-            Write-Host "      https://docs.aws.amazon.com/transform/latest/userguide/regions.html" -ForegroundColor Gray
+            # AWS Transform has no describe/list API and is not in the SSM region
+            # list, so availability cannot be verified here. Each demo picks the
+            # region where AWS Transform runs (the deploy region, or its own
+            # fallback) at run time; this line only points at the reference.
+            Write-Host "      INFO: AWS Transform region availability is not verifiable from the CLI" -ForegroundColor Cyan
+            Write-Host "      The demo selects the AWS Transform region at run time (deploy region $currentRegion first)" -ForegroundColor Gray
+            Write-Host "      Supported regions: https://docs.aws.amazon.com/transform/latest/userguide/regions.html" -ForegroundColor Gray
         }
         default {
             Write-Host "      WARN: Unknown service '$RequiredService', skipping service check..." -ForegroundColor Yellow

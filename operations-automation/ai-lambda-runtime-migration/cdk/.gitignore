@@ -3,3 +3,7 @@ node_modules
 *.js
 *.d.ts
 !jest.config.js
+
+# Mock fixture Lambda/repo source is real source, not compiled TS output.
+!mock-fixtures/
+!mock-fixtures/**

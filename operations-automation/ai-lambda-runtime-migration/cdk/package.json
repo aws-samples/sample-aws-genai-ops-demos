@@ -1,14 +1,14 @@
 {
   "name": "lambda-runtime-migration-cdk",
   "version": "1.0.0",
-  "description": "CDK deployment for AI Lambda Runtime Migration Assistant on Bedrock AgentCore",
+  "description": "CDK deployment for the AI Lambda Runtime Migration Assistant (Lambda durable functions + HTTP API)",
   "main": "app.ts",
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
     "cdk": "cdk"
   },
-  "keywords": ["aws", "cdk", "bedrock", "agentcore", "lambda", "runtime-migration"],
+  "keywords": ["aws", "cdk", "bedrock", "lambda", "durable-functions", "runtime-migration"],
   "author": "",
   "license": "MIT",
   "devDependencies": {

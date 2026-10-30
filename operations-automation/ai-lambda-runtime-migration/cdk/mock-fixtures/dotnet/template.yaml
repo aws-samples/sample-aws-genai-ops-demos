@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Partner session gateway on a deprecated runtime (dotnet6). AWS Transform
+  (AWS/dotnet-lambda-upgrade) is expected to update the Runtime below along
+  with the target framework, packages and code in src/MockDotnet.
+
+Resources:
+  MockDotnetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-migration-mock-dotnet
+      Handler: MockDotnet::MockDotnet.Function::Handler
+      Runtime: dotnet6
+      MemorySize: 256
+      Timeout: 10
+      CodeUri: src/MockDotnet/

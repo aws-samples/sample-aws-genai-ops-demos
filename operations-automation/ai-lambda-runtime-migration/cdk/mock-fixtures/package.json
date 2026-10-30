@@ -1,0 +1,9 @@
+{
+  "name": "lambda-migration-demo-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Repository-level entry point: `npm test` runs the Node.js function's tests in nodejs/",
+  "scripts": {
+    "test": "npm --prefix nodejs install --no-audit --no-fund && npm --prefix nodejs test"
+  }
+}
