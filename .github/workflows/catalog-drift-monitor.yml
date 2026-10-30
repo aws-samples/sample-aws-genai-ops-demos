@@ -81,7 +81,7 @@ jobs:
             --json number --jq '.[0].number' 2>/dev/null || true)
 
           if [ "$DRIFT" = "true" ]; then
-            FULL_BODY=$(printf "%b\n\n---\n_Detected by the Catalog Drift Monitor ([run](%s)). cc @bquintas @benlec. This issue auto-updates on the next run and auto-closes when the catalog is back in sync._" "$DRIFT_BODY" "$RUN_URL")
+            FULL_BODY=$(printf "%b\n\n---\n_Detected by the Catalog Drift Monitor ([run](%s)). cc @bquintas @benlec @emenguy. This issue auto-updates on the next run and auto-closes when the catalog is back in sync._" "$DRIFT_BODY" "$RUN_URL")
             if [ -n "$EXISTING" ]; then
               echo "Updating existing drift issue #$EXISTING"
               gh issue edit "$EXISTING" --repo "$REPO" --body "$FULL_BODY"

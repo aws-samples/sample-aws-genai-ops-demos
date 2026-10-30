@@ -15,7 +15,7 @@ const PILLARS = [
   'security',
 ];
 const SHARED_KEY = 'shared';
-const DEFAULT_MAINTAINERS = ['bquintas', 'benlec'];
+const DEFAULT_MAINTAINERS = ['bquintas', 'benlec', 'emenguy'];
 const LABEL = 'security-finding';
 const MARKER_RE = /<!-- security-triage:(\S+?) -->/;
 const ALERTS_MARKER_RE = /<!-- security-triage-alerts:([\d,]*) -->/;

@@ -73,8 +73,8 @@ test('CODEOWNERS: teams and e-mails are not treated as assignable users', () => 
 
 test('maintainers come from the /.github/ line, with a default fallback', () => {
   assert.deepEqual(t.maintainersFrom(t.parseCodeowners('/.github/ @m1 @m2\n')), ['m1', 'm2']);
-  assert.deepEqual(t.maintainersFrom(t.parseCodeowners('/x/ @a\n')), ['bquintas', 'benlec']);
-  assert.deepEqual(t.maintainersFrom([]), ['bquintas', 'benlec']);
+  assert.deepEqual(t.maintainersFrom(t.parseCodeowners('/x/ @a\n')), ['bquintas', 'benlec', 'emenguy']);
+  assert.deepEqual(t.maintainersFrom([]), ['bquintas', 'benlec', 'emenguy']);
 });
 
 test('grouping: demo = first two segments; outside the pillars goes to shared', () => {
