@@ -195,7 +195,7 @@ By default the tracker scans the region it is deployed in (your AWS CLI region: 
    aws lambda get-durable-execution-history --durable-execution-arn <arn> --query 'Events[].[EventType,Name]' --output text
    ```
 
-5. **Subscribe to run summaries (optional):**
+5. **Subscribe to run summaries (optional):** the Pipeline stack creates an SNS topic, but nobody is subscribed to it, so nothing is delivered until you subscribe. The topic carries one message per finished refresh (fact and inventory counts, failed services and scanners). It does not carry Plan of Action changes.
    ```bash
    aws sns subscribe --topic-arn <NotificationTopicArn output> --protocol email --notification-endpoint you@example.com
    ```
@@ -932,12 +932,14 @@ Plan of Action bridges the gap between awareness and action.
 
 | Feature | Description |
 |---------|-------------|
-| **Ownership Assignment** | Assign deprecations to team members by email/alias |
+| **Ownership Assignment** | Assign deprecations to team members by email/alias. The owner is a label stored with the plan; nobody is notified (see below) |
 | **Priority Levels** | Low, Medium, High, Critical - prioritize what matters most |
 | **Status Tracking** | Not Started, In Progress, Completed, Blocked |
 | **Target Dates** | Set deadlines for remediation completion |
 | **Notes** | Add migration plans, blockers, or context |
 | **Bulk Selection** | Select multiple deprecations from the Deprecations page and add them to Plan of Action in one action |
+
+**No notification on assignment.** Creating or changing a plan stores it (and shows the owner on the row in My resources) but sends nothing: the owner is not emailed. The tracker's only SNS message is the run summary after each refresh (step 5 of the deployment instructions), and that topic has no subscribers until you add one. Tell the owner yourself, or send them the link to the Plan of Action page.
 
 ### Two Ways to Create Action Plans
 
