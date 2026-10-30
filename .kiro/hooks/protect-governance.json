@@ -3,9 +3,9 @@
   "hooks": [
     {
       "name": "Protect Governance Files",
-      "description": "Block agent writes to .kiro/steering/ and .kiro/hooks/ (hard enforcement via exit code 2, path-based)",
+      "description": "Governance set = CODEOWNERS = governance-guard CI. Blocks .kiro/steering/ and .kiro/hooks/ (exit 2); asks for approval on the rest of .kiro/, .github/, root .ash/, bandit.yaml, .secrets.baseline; best-effort ask on shell writes to them. Kiro's local folders (.kiro/specs, settings, workflow-runs) and paths outside the repo are allowed.",
       "trigger": "PreToolUse",
-      "matcher": "^(fs_write|fs_append|str_replace|delete_file|smart_relocate|code)$",
+      "matcher": "^(fs_write|fs_append|str_replace|delete_file|smart_relocate|code|execute_bash|control_bash_process)$",
       "action": {
         "type": "command",
         "command": "bash .kiro/hooks/scripts/protect-governance.sh"

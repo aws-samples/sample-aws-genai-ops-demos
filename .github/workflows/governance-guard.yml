@@ -19,10 +19,13 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: files } = await github.rest.pulls.listFiles({
+            // Every page: listFiles returns 30 files per page by default, so a large
+            // PR could otherwise hide a governance change past the first page.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number,
+              per_page: 100,
             });
 
             // --- Governance file changes ---
@@ -31,11 +34,19 @@ jobs:
             // references (bandit.yaml): they govern whether/how the security scan runs,
             // so weakening them (disabling scanners, raising the severity threshold,
             // broadening ignore paths) must get the same maintainer-review gate.
+            // .secrets.baseline is the detect-secrets allow-list: adding to it silences
+            // the secret scan for that value. Same set as CODEOWNERS' governance lines.
+            // A rename is checked under its old name too, so moving a file OUT of a
+            // governance path is flagged as well.
+            const isGovernance = (name) => !!name && (
+              name.startsWith('.kiro/') ||
+              name.startsWith('.github/') ||
+              name.startsWith('.ash/') ||
+              name === 'bandit.yaml' ||
+              name === '.secrets.baseline'
+            );
             const governanceFiles = files.filter(f =>
-              f.filename.startsWith('.kiro/') ||
-              f.filename.startsWith('.github/') ||
-              f.filename.startsWith('.ash/') ||
-              f.filename === 'bandit.yaml'
+              isGovernance(f.filename) || isGovernance(f.previous_filename)
             );
 
             if (governanceFiles.length > 0) {
