@@ -1,2 +1,2 @@
 # Test dependencies only. The function itself uses the standard library alone.
-pytest==8.3.5
+pytest==9.0.3
