@@ -147,7 +147,7 @@ const HELP: Record<string, { header: string; content: ReactNode }> = {
           ['Blocked', 'Waiting on something; sorted first.'],
           ['Completed', 'Done; the row disappears from My resources after the next scan if the old version is gone.'],
         ]} />
-        <p>Plans are stored in this demo's DynamoDB table only.</p>
+        <p>Plans are stored in this demo's DynamoDB table only. Assigning a plan does not notify the owner.</p>
       </>
     ),
   },

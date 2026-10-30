@@ -180,5 +180,5 @@ Date fields recognized: `target_retirement_date`, `retirement_date`, `end_of_sup
 
 - **Durable execution history**: every run's steps, retries and errors (`aws lambda get-durable-execution-history`, or the Lambda console's Durable executions tab)
 - **CloudWatch Logs**: `/aws/lambda/aws-services-lifecycle-pipeline`, `/aws/lambda/aws-services-lifecycle-api` (1-month retention)
-- **SNS**: run summary after every refresh (facts and inventory counts, failed services/scanners)
+- **SNS**: run summary after every refresh (facts and inventory counts, failed services/scanners). The topic has no subscribers by default, and Plan of Action changes publish nothing
 - **SQS DLQ**: failed scheduler invocations
