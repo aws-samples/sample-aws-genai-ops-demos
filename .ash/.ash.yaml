@@ -143,77 +143,77 @@ global_settings:
       line_end: 137
       reason: "False positive: documentation placeholder, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 313
       line_end: 313
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 317
       line_end: 317
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 319
       line_end: 319
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 322
       line_end: 322
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 324
       line_end: 324
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 326
       line_end: 326
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 328
       line_end: 328
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 330
       line_end: 330
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 332
       line_end: 332
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 335
       line_end: 335
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/account_discovery.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/account_discovery.py"
       line_start: 536
       line_end: 536
       reason: "False positive: matches on service_key string literals, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_data_ownership.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/tests/test_data_ownership.py"
       line_start: 110
       line_end: 110
       reason: "False positive: test fixture value, not a secret"
     - rule_id: "SECRET-SECRET-KEYWORD"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_data_ownership.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/tests/test_data_ownership.py"
       line_start: 132
       line_end: 132
       reason: "False positive: test fixture value, not a secret"
     - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_property_dynamo_keys.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/tests/test_property_dynamo_keys.py"
       line_start: 58
       line_end: 58
       reason: "False positive: alphabet test fixture string, not a secret"
     - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
-      path: "operations-automation/aws-services-lifecycle-tracker/backend/tests/test_property_dynamo_keys.py"
+      path: "operations-automation/aws-services-lifecycle-tracker-v2/backend/tests/test_property_dynamo_keys.py"
       line_start: 67
       line_end: 67
       reason: "False positive: alphabet test fixture string, not a secret"

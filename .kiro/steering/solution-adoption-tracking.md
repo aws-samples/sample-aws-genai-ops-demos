@@ -298,7 +298,8 @@ GravitonAssessmentStack(
 - `ai-documentation-generation`: `(tag:doc-generation,operations-automation)`
 - `ai-legacy-system-browser-automation`: `(tag:legacy-automation,operations-automation)`
 - `ai-password-reset-chatbot`: `(tag:password-reset,operations-automation)`
-- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)`
+- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)` (moved to awslabs/support-solutions-aws)
+- `aws-services-lifecycle-tracker-v2`: `(tag:lifecycle-tracker-v2,operations-automation)`
 - `anycompany-it-demo-portal`: `(tag:it-portal-demo,operations-automation)`
 
 ### Cost Optimization Pillar
