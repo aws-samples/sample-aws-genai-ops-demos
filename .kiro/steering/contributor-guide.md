@@ -61,7 +61,7 @@ Why CDK:
 
 #### Optional: a Terraform path on top of CDK
 
-A demo MAY ship a Terraform deployment **in addition to** its CDK one (examples: `observability/saas-status-mcp`, `operations-automation/aws-services-lifecycle-tracker`). CDK stays the primary, documented-first path; Terraform is a mirror for teams that standardize on it. If you ship one:
+A demo MAY ship a Terraform deployment **in addition to** its CDK one (examples: `observability/saas-status-mcp`, `operations-automation/ai-dataset-training-audit`). CDK stays the primary, documented-first path; Terraform is a mirror for teams that standardize on it. If you ship one:
 
 - **Layout**: a single root module next to the CDK code (`terraform/` or `infrastructure/terraform/`), one `.tf` file per CDK stack, plus `variables.tf`, `outputs.tf` and a committed `terraform.tfvars.example`. State, lock file, `terraform.tfvars` and any staging/zip directories go in `.gitignore`.
 - **Scripts**: `deploy-all-terraform.ps1` and `deploy-all-terraform.sh` (or `<custom-name>-terraform.*` matching the CDK script name). Same rules as every deploy script: call the shared prerequisites script first, take the region from it (never hardcode), end with the same user-friendly summary as the CDK script.
@@ -374,8 +374,7 @@ For container code only, the sanctioned pattern is:
 
 This keeps "use shared utilities everywhere" intact for CDK/deploy code while
 giving container code a documented, consistent path instead of per-demo
-precedent. Existing examples: `aws-services-lifecycle-tracker/backend/aws_utils.py`,
-`ai-password-reset-chatbot/agent/aws_utils.py`,
+precedent. Existing examples: `ai-password-reset-chatbot/agent/aws_utils.py`,
 `ai-load-test-generation-with-dlt/aws_utils.py`.
 
 > Note: hand-copied files can drift (an APAC CRIS-prefix bug once diverged
@@ -457,7 +456,7 @@ In `app.ts` / `app.py`, instantiate the optional stack only when its context key
 
 ### Multi-Account Deployments (hub-and-spoke)
 
-Single-account is always the default: a user deploying into one account must not have to know that multi-account exists. When a demo can also work across an AWS Organization, follow the pattern established by the lifecycle tracker (#143, #144):
+Single-account is always the default: a user deploying into one account must not have to know that multi-account exists. When a demo can also work across an AWS Organization, follow the pattern established by the lifecycle tracker, now maintained at [awslabs/support-solutions-aws](https://github.com/awslabs/support-solutions-aws/tree/main/Operations/service-lifecycle-tracker) (#143, #144):
 
 1. **Opt-in flag**: `deploy-all.ps1 -MultiAccount [-OrgTargets r-...,ou-...]` / `deploy-all.sh --multi-account [--org-targets ...]`. Not `-SkipSetup`, not a second script.
 2. **Preflight first, read-only**: call `shared/scripts/check-org-access.ps1|.sh` and branch on its exit code. `0`: deploy the rollout stack. `3`: deploy the hub, skip the rollout, print the one command a management-account admin runs. `2`: stop with the fix it printed and point to the manual account list. It prints the exact management-account commands; never try to fix org-level settings from a deploy script.
@@ -540,7 +539,7 @@ path, which would blind the scanner to real secrets of that type going forward.
 - AWS security best practices
 - Include troubleshooting guidance
 - Cost documentation with estimates
-- **Say what was not checked.** When a result depends on something per account (a Support plan for the Health API, an opt-in, a quota), record the per-account outcome and show it next to the result, so an empty badge reads "not checked" and not "nothing found". Example: the Health cross-check needs a Business-tier plan *in the account being checked*; the lifecycle tracker infers each account's Support tier the way AWS documents it (ceiling of `support:DescribeSeverityLevels`: exception → Basic, `normal` → Developer, `urgent` → Business tier, `critical` → Enterprise tier) and displays it with an (i) explaining why.
+- **Say what was not checked.** When a result depends on something per account (a Support plan for the Health API, an opt-in, a quota), record the per-account outcome and show it next to the result, so an empty badge reads "not checked" and not "nothing found". Example: the Health cross-check needs a Business-tier plan *in the account being checked*; the lifecycle tracker (now maintained upstream) infers each account's Support tier the way AWS documents it (ceiling of `support:DescribeSeverityLevels`: exception → Basic, `normal` → Developer, `urgent` → Business tier, `critical` → Enterprise tier) and displays it with an (i) explaining why.
 
 ---
 
