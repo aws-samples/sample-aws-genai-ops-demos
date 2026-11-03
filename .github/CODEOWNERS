@@ -15,6 +15,7 @@
 /operations-automation/ai-password-reset-chatbot/                      @benlec @bquintas @emenguy
 /operations-automation/anycompany-it-demo-portal/                      @benlec @bquintas @emenguy
 /operations-automation/aws-services-lifecycle-tracker/                 @benlec @bquintas @emenguy
+/operations-automation/aws-services-lifecycle-tracker-v2/              @benlec @bquintas @emenguy
 /resilience/ai-chaos-engineering-with-fis/                             @benlec @bquintas @emenguy
 /resilience/ai-load-test-generation-with-dlt/                          @OHsechun @hunmini @bquintas @benlec @emenguy
 /resilience/fsx-windows-sla-review-devops-agent/                       @benlec @bquintas @emenguy

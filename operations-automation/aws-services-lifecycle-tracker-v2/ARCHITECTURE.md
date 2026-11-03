@@ -1,0 +1,184 @@
+# Architecture
+
+## Overview
+
+The AWS Services Lifecycle Tracker is a serverless application that keeps two things in sync: the **public deprecation facts** published in the AWS documentation, and the **inventory of resources in your account** that those facts affect. Both are refreshed by a single [AWS Lambda durable function](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) execution: extract → scan → reconcile → notify. Extraction combines HTML parsing (BeautifulSoup) with AI normalization (Amazon Nova via Amazon Bedrock).
+
+## High-Level Architecture
+
+```
+┌────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ Admin user │──▶│ CloudFront + S3 (React SPA)  │──▶│ Cognito User Pool (ID token) │
+└────────────┘   └──────────────┬───────────────┘   └──────────────────────────────┘
+                                │ HTTPS, Authorization: Bearer <ID token>
+                                ▼
+                 ┌──────────────────────────────────────────────────────────────┐
+                 │ API Gateway HTTP API + Cognito JWT authorizer                │
+                 │   POST /actions · POST /refresh · GET /refresh/{arn}         │
+                 └──────────────┬───────────────────────────────────────────────┘
+                                ▼
+                 ┌──────────────────────────────────────────────────────────────┐
+                 │ aws-services-lifecycle-api-v2 (Lambda)                          │
+                 │  action router · start/adopt/observe pipeline · schedule     │
+                 └──────────────┬───────────────────────────────────────────────┘
+                                │ lambda:Invoke (Event, DurableExecutionName)
+                                ▼
+┌───────────────┐ ┌──────────────────────────────────────────────────────────────┐
+│ AWS docs      │◀┤ aws-services-lifecycle-pipeline-v2:live (durable function)      │
+│ Bedrock/Nova  │◀┤  start-run → map extract-<svc> → map scan-<Scanner>-<region> │
+│ Account APIs  │◀┤  → reconcile-inventory → summarize-and-notify (SNS)          │
+└───────────────┘ └──────────────┬───────────────────────────────────────────────┘
+        ▲ sts:AssumeRole LifecycleTrackerScanRoleV2 (multi-account: one per spoke account)
+                                 ▼
+                 ┌──────────────────────────────────────────────────────────────┐
+                 │ DynamoDB                                                     │
+                 │  aws-services-lifecycle-v2 (facts) · aws-account-inventory-v2      │
+                 │  service-extraction-config-v2 · service-extraction-state-v2        │
+                 │  deprecation-action-plans-v2                                    │
+                 └──────────────────────────────────────────────────────────────┘
+
+EventBridge Scheduler ──▶ API Lambda:  weekly {"action":"start_refresh"}
+```
+
+## CDK Stack Decomposition
+
+| Stack | Purpose | Key Resources |
+|-------|---------|---------------|
+| **Data** | Storage | 6 DynamoDB tables + GSIs, deploy-time config populator |
+| **Auth** | Authentication | Cognito User Pool + web client |
+| **Pipeline** (main) | Refresh pipeline | Durable Lambda (`durableConfig` 2 h / 14 d) + `live` alias, API Lambda, shared data-access managed policy, SNS topic, SQS DLQ, EventBridge schedules, log groups |
+| **Api** | UI API | HTTP API, JWT authorizer, Lambda integration, CORS |
+| **Frontend** | Admin UI | S3 static hosting, CloudFront distribution with OAC |
+| **Spoke** *(multi-account, per spoke account)* | Read-only scan role | `LifecycleTrackerScanRoleV2` (`scan-permissions.ts`: scanner List/Describe + Health read), trust = hub account root + `aws:PrincipalArn` = hub pipeline role, optional ExternalId. `BootstraplessSynthesizer`: plain IAM, no CDK bootstrap |
+| **Org** *(multi-account, hub, only with `--context orgTargets=`)* | Spoke rollout | Service-managed, auto-deploying `CfnStackSet` targeting the given root/OUs minus the hub; its `TemplateBody` is the Spoke stack synthesized in-process, so a hand-deployed and a StackSet-deployed spoke are identical |
+
+### Dependency Graph
+
+```
+Data ──▶ Pipeline ──▶ Api ──▶ Frontend
+Auth ────────────────▶ Api
+Auth ─────────────────────────▶ Frontend
+Org (hub) ──StackSet──▶ Spoke (every member account)      # multi-account only
+```
+
+Both Lambda functions are built from the same `backend/` directory. `pipeline-stack.ts` bundles it without Docker: `pip install --platform manylinux2014_aarch64 --only-binary=:all:` resolves Linux wheels for the arm64 Python 3.14 runtime (all dependencies are pure Python), then the `.py` sources are copied in. CDK falls back to its Docker bundling image if pip is unavailable.
+
+## The Refresh Pipeline
+
+`backend/pipeline.py`, one `@durable_execution` handler.
+
+| Step | Kind | What it does |
+|------|------|--------------|
+| `start-run` | step | Mints `run_id`, timestamp, resolves enabled services and the **scan targets** (`org_targets.resolve_targets`: `_scan_targets` row → accounts via Organizations for `organization`/`ou`, manual list otherwise; hub always first; result persisted as `_scan_accounts`) - the only place non-deterministic values are produced |
+| `extract` | map, `max_concurrency=5`, `tolerated_failure_percentage=100` | One step `extract-<service>` per service (3 attempts, backoff): fetch docs → BeautifulSoup → Nova normalization → write facts + metadata. Returns counts only |
+| `scan` | map, `max_concurrency=10`, same policy | One step `scan-<Scanner>-<account>-<region>` per scanner × account × region (2 attempts): `discover_*()` against account APIs with the hub credentials or an assumed spoke-role session (`session_for_account`), matched against the facts via `LifecycleIndex`. Returns the discovered items stamped with `account_id`/`account_name` |
+| `reconcile-inventory` | step | `save_to_dynamodb(items, run_id, scanned_scopes)`: upserts this run's rows (`inventory#<account>#<region>#<id>`) and removes stale rows **only** for (account, region, service) scopes whose scan step succeeded |
+| `summarize-and-notify` | step | Builds the run summary (execution result read by the UI) and publishes it to SNS |
+
+Input contract: `{"mode": "full" | "extract" | "scan", "services"?: [...], "regions"?: [...], "refresh_origin": "manual" | "Auto"}`.
+
+Execution names are the idempotency key: `refresh-weekly-<YYYY-MM-DD>` for the schedule, `refresh-manual-<epoch>` for the UI, arbitrary for CLI tests. The API function refuses to start a second run while one is RUNNING and returns the running execution instead.
+
+Replay-model rules observed: no `datetime.now()`/`uuid4()` outside steps; each step is self-contained (module-level clients are recreated on cold start); no durable operation inside a step; checkpoints carry counts and identifiers, not extracted content.
+
+## Data Flow
+
+### Refresh (UI button, weekly schedule, or CLI)
+
+1. `POST /refresh` (or the scheduler payload) reaches the API Lambda
+2. It lists RUNNING executions of the pipeline function; if one exists it is adopted
+3. Otherwise `lambda:Invoke` with `InvocationType=Event` and a `DurableExecutionName` on the `live` alias
+4. The UI stores the execution ARN in `sessionStorage` and polls `GET /refresh/{arn}`, which returns status, progress (count of succeeded `extract-*`/`scan-*` steps from the execution history) and, on success, the summary
+5. The pipeline runs to completion regardless of the browser; the SNS message is the offline record
+
+### AWS Health cross-check (part of every scan)
+
+1. `reconcile_inventory` calls `account_discovery.cross_check_health()` before writing the inventory
+2. `health_match.py` lists open/upcoming `scheduledChange` + `accountNotification` events for the scanned region (`DescribeEvents`, global endpoint) and their affected entities (`DescribeAffectedEntities`)
+3. Entities are joined with the inventory by ARN (or identifier): each matching resource gets a `health` block (event type, PENDING/RESOLVED, console link) and each row a `health_flagged` count
+4. The outcome (available, reason, events seen, resources flagged) is stored as the `_health_match` control row of the state table and shown on Sources & coverage. No Support plan → `SubscriptionRequiredException` → reported, never fatal
+
+### Extended Support cost exposure (part of every scan, #142)
+
+1. The RDS scanner records class, Multi-AZ, engine/version and (Aurora Serverless v2) the cluster's min/max ACU on each resource
+2. `reconcile_inventory` calls `account_discovery.estimate_cost_exposure()`: `cost_estimator.PriceBook` loads Extended Support unit prices for the scanned region from the Price List API (one call per year tier), `VcpuBook` resolves vCPUs per instance class via EC2, the catalog's major-version row gives the dates
+3. Each RDS/Aurora resource gets an `extended_support` block (inputs, unit price and source, monthly Yr1-2 / Yr3, 12-month forecast, dates); each row a `cost_exposure` aggregate; the outcome is stored as `_cost_exposure` control row. Pricing never fails a scan
+
+### Multi-account scan (hub-and-spoke, #144)
+
+Optional; default is the deploying account only.
+
+1. **Targets.** `_scan_targets` (state table) says what to scan: `source` `hub` | `manual` | `organization` | `ou`, plus `accounts`, `ou_ids`, `exclude_accounts`, `regions`. `deploy-all --multi-account` seeds it; the UI edits it
+2. **Resolution** (`start-run`). `organization` → `ListAccounts`; `ou` → `ListAccountsForParent` recursively; ACTIVE accounts only; `ListParents`/`DescribeOrganizationalUnit` give each account its OU path. `AccessDenied` → manual list + error in the summary, never fatal. The hub (caller identity) is always included and scanned first with its own credentials
+3. **Credentials.** For a spoke, `session_for_account()` assumes `arn:<partition>:iam::<account>:role/LifecycleTrackerScanRoleV2` (env `SPOKE_ROLE_NAME`, optional `SPOKE_EXTERNAL_ID`). The hub pipeline role has `sts:AssumeRole` on that role name in any account and the Organizations read actions
+4. **Trust.** The spoke role trusts the hub account root with `aws:PrincipalArn` = the hub pipeline role's fixed name (`aws-services-lifecycle-pipeline-role-v2`), so the trust policy is valid before the hub role exists, and only that role can use it
+5. **Rollout.** `OrgStack` deploys a service-managed StackSet from the hub (management account or StackSets delegated administrator) to the root/OUs; auto-deployment covers accounts joining later; `accountFilterType: DIFFERENCE` keeps the hub out. Preflight `shared/scripts/check-org-access` (exit 0 / 2 / 3) drives what `deploy-all` does; without StackSets rights the Spoke stack can be deployed per account by hand (no bootstrap)
+6. **Blast radius.** Each (account, region, scanner) cell is its own durable step: a spoke that cannot be assumed fails its own cells only and is listed in `accounts_failed`; reconciliation never deletes rows of a scope that was not scanned successfully. Health cross-check and Extended Support pricing run per account with the assumed session (Health needs a Support plan in that account); pricing data comes from the hub (public)
+
+### Reads (dashboard, services, plans)
+
+1. Frontend calls `POST /actions` with `{"action": "list_services" | "get_metrics" | "list_deprecations" | ...}`
+2. API Gateway validates the Cognito ID token, the API Lambda dispatches to `actions.py` → `database_reads.py` / `action_plans.py`
+
+## DynamoDB Tables
+
+```
+service-extraction-config-v2   PK service_name        What to extract (URLs, focus, schema, enabled). Repo-owned:
+                                                   populated at deploy; the Lambdas may only read/UpdateItem.
+service-extraction-state-v2    PK service_name        Runtime state owned by the Lambdas: extraction metadata,
+                                                   control rows `_health_match`, `_cost_exposure`,
+                                                   `_scan_targets` (what to scan), `_scan_accounts` (last resolution).
+aws-services-lifecycle-v2      PK service_name        Public deprecation facts (one row per version/runtime/
+                            SK item_id             platform), GSI status-index.
+aws-account-inventory-v2       PK service_name        Resources found in the scanned account(s), tagged with run_id,
+                            SK item_id             account_id/account_name, matched to a fact (status, days remaining).
+                                                   item_id = inventory#<account>#<region>#<identifier>.
+deprecation-action-plans-v2    PK plan_id             Remediation tracking; GSIs owner-index, plan-status-index.
+```
+
+The facts table and the inventory table are deliberately separate: `save_to_dynamodb()` refuses to write to the facts table.
+
+## Authentication
+
+```
+User ──▶ Cognito User Pool (email/password, no self-signup)
+              │ JWT ID token (kept in the SPA)
+              ▼
+         API Gateway HTTP API ── Cognito user-pool JWT authorizer
+              │
+              ▼
+         API Lambda (the only principal with DynamoDB / Bedrock / Lambda permissions)
+```
+
+The browser never receives AWS credentials. IAM boundaries: backend-owned tables full access; configuration table read + `UpdateItem` only; Bedrock invoke; Health `DescribeEvents`/`DescribeAffectedEntities`; `pricing:GetProducts` + `ec2:DescribeInstanceTypes`; discovery List/Describe only; the API function may invoke/observe the pipeline function.
+
+## Backend Module Structure
+
+| Module | Responsibility |
+|--------|----------------|
+| `pipeline.py` | Durable function handler, steps and maps |
+| `api.py` | HTTP routes, pipeline start/adopt/status, scheduler entry points |
+| `actions.py` | Action router used by the API function |
+| `workflow_orchestrator.py` | Single-service extraction workflow |
+| `data_extractor.py` | HTML parsing + AI normalization engine |
+| `account_discovery.py` | Scanners, `LifecycleIndex`, inventory reconciliation |
+| `health_match.py` | AWS Health cross-check: open notices joined with the inventory by ARN |
+| `cost_estimator.py` | RDS/Aurora Extended Support surcharge: Price List prices, EC2 vCPUs, catalog dates |
+| `database_reads.py` | Read operations (metrics, configs, listings) |
+| `database_writes.py` | Write operations + status categorization |
+| `action_plans.py` | Plan of Action CRUD |
+
+## Status Categorization Logic
+
+- **`deprecated`**: Announced for deprecation, retirement date > 1 year away
+- **`extended_support`**: Within 1 year of retirement date (extra costs may apply)
+- **`end_of_life`**: Past retirement date (immediate action required)
+
+Date fields recognized: `target_retirement_date`, `retirement_date`, `end_of_support_date`, `end_of_life_date`, `block_function_create_date`, `block_function_update_date`, `end_of_extended_support_date`.
+
+## Observability
+
+- **Durable execution history**: every run's steps, retries and errors (`aws lambda get-durable-execution-history`, or the Lambda console's Durable executions tab)
+- **CloudWatch Logs**: `/aws/lambda/aws-services-lifecycle-pipeline-v2`, `/aws/lambda/aws-services-lifecycle-api-v2` (1-month retention)
+- **SNS**: run summary after every refresh (facts and inventory counts, failed services/scanners). The topic has no subscribers by default, and Plan of Action changes publish nothing
+- **SQS DLQ**: failed scheduler invocations

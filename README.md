@@ -12,7 +12,8 @@ This repository contains deployable code samples demonstrating how generative AI
 | AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Operations Automation | Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
 | AI Password Reset Chatbot | Operations Automation | Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
-| AWS Services Lifecycle Tracker | Operations Automation | Track AWS service deprecations and the account resources they affect with one Lambda durable function refresh pipeline, intelligent status categorization and an admin dashboard | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
+| AWS Services Lifecycle Tracker (moved) | Operations Automation | Moved to [awslabs/support-solutions-aws](https://github.com/awslabs/support-solutions-aws/tree/main/Operations/service-lifecycle-tracker). Track AWS service deprecations and the account resources they affect with one Lambda durable function refresh pipeline, intelligent status categorization and an admin dashboard | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
+| AWS Services Lifecycle Tracker V2 (work in progress) | Operations Automation | Next version of the lifecycle tracker, starting from the same code base. Under active development | [operations-automation/aws-services-lifecycle-tracker-v2/](operations-automation/aws-services-lifecycle-tracker-v2/README.md) |
 | AWS GenAI Cost Optimization Kiro Power | Cost Optimization | MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration | [cost-optimization/aws-genai-cost-optimization-mcp-server/](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md) |
 | AI Lambda Runtime Migration Assistant | Operations Automation | Assess deprecated-runtime Lambda functions across an AWS Organization: org-wide multi-account discovery via Trusted Advisor, AI assessment with Amazon Nova, a durable 5-step Refresh pipeline and a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
@@ -40,7 +41,8 @@ operations-automation/
 ├── ai-legacy-system-browser-automation/
 ├── ai-password-reset-chatbot/
 ├── anycompany-it-demo-portal/
-└── aws-services-lifecycle-tracker/
+├── aws-services-lifecycle-tracker/
+└── aws-services-lifecycle-tracker-v2/
 observability/
 ├── aws-feature-relevance-notification-system/
 ├── aws-site-to-site-vpn-tunnel-investigation-devops-agent/
