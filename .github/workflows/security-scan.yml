@@ -67,10 +67,16 @@ jobs:
           import json, os, sys
           path = ".ash/output/ash_aggregated_results.json"
           results = json.load(open(path)).get("scanner_results", {})
+          required = os.environ["REQUIRED_SCANNERS"].split()
           bad = []
-          for name in os.environ["REQUIRED_SCANNERS"].split():
+          # Required scanners must have completed: PASSED, or FAILED (= completed with findings).
+          # Any other scanner may be SKIPPED (disabled in config) but never ERROR or MISSING.
+          for name in sorted(set(required) | set(results)):
               status = (results.get(name) or {}).get("status", "NOT RUN")
-              ok = status in ("PASSED", "FAILED")   # FAILED = completed with findings
+              if name in required:
+                  ok = status in ("PASSED", "FAILED")
+              else:
+                  ok = status not in ("ERROR", "MISSING")
               print(f"{'ok ' if ok else 'BAD'} {name}: {status}")
               if not ok:
                   bad.append(f"{name}={status}")
