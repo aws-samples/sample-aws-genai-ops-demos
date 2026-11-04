@@ -129,7 +129,7 @@ Write-Host "  File system $fileSystemId is AVAILABLE." -ForegroundColor Green
 Write-Host ""
 Write-Host "[4/5] Demo Lab..." -ForegroundColor Cyan
 if (-not $LabPassword) {
-    $alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    $alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # pragma: allowlist secret
     $bytes = New-Object byte[] 16
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $LabPassword = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })

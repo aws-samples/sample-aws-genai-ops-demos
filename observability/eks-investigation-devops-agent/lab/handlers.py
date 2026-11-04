@@ -206,7 +206,7 @@ def environment() -> List[Dict[str, Any]]:
 # Scenario: database connection failure
 # ---------------------------------------------------------------------------
 
-WRONG_PASSWORD = 'wrong-password'
+WRONG_PASSWORD = 'wrong-password'  # pragma: allowlist secret
 
 
 def inject_db_connection_failure() -> Dict[str, Any]:

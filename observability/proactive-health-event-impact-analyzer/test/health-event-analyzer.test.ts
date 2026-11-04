@@ -20,7 +20,7 @@ function createTestStack(app: cdk.App, id: string): HealthEventAnalyzerStack {
   return new HealthEventAnalyzerStack(app, id, {
     env: { account: '123456789012', region: 'us-east-1' },
     devOpsAgentWebhookUrl: 'https://example.com/webhook',
-    devOpsAgentWebhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
+    devOpsAgentWebhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',  // pragma: allowlist secret
   });
 }
 
@@ -202,7 +202,7 @@ describe('HealthEventAnalyzerStack - Secrets Manager and SSM Parameter Store Sec
       Environment: {
         Variables: Match.objectLike({
           WEBHOOK_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
-          WEBHOOK_SECRET_REGION: 'us-east-1',
+          WEBHOOK_SECRET_REGION: 'us-east-1',  // pragma: allowlist secret
         }),
       },
     });

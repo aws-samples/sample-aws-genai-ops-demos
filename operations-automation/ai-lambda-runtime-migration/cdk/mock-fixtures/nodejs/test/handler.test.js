@@ -4,7 +4,7 @@ const assert = require('assert');
 const path = require('path');
 const { NODE_MAJOR, unresolvableRequires, invoke } = require('./lambda-runtime');
 
-process.env.TOKEN_SECRET = 'test-secret-do-not-use';
+process.env.TOKEN_SECRET = 'test-secret-do-not-use';  // pragma: allowlist secret
 const SECRET = process.env.TOKEN_SECRET;
 
 const tests = [];

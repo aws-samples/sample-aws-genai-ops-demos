@@ -338,29 +338,29 @@ def console_url(service_key: str, region: str, res: Dict) -> str:
     base = f"https://{region}.console.aws.amazon.com"
     name, arn = res.get("name", ""), res.get("arn", "")
     q = quote(name, safe="")
-    if service_key == "lambda":
+    if service_key == "lambda":  # pragma: allowlist secret
         return f"{base}/lambda/home?region={region}#/functions/{q}"
     if service_key in ("rds", "aurora"):
         return f"{base}/rds/home?region={region}#database:id={q};is-cluster=false"
-    if service_key == "eks":
+    if service_key == "eks":  # pragma: allowlist secret
         return f"{base}/eks/home?region={region}#/clusters/{q}"
-    if service_key == "elasticache":
+    if service_key == "elasticache":  # pragma: allowlist secret
         engine = res.get("engine", "redis")
         return f"{base}/elasticache/home?region={region}#/{engine}/{q}"
-    if service_key == "opensearch":
+    if service_key == "opensearch":  # pragma: allowlist secret
         return f"{base}/aos/home?region={region}#opensearch/domains/{q}"
-    if service_key == "msk":
+    if service_key == "msk":  # pragma: allowlist secret
         return f"{base}/msk/home?region={region}#/cluster/{quote(arn, safe='')}/view"
-    if service_key == "documentdb":
+    if service_key == "documentdb":  # pragma: allowlist secret
         return f"{base}/docdb/home?region={region}#cluster-details/{q}"
-    if service_key == "neptune":
+    if service_key == "neptune":  # pragma: allowlist secret
         return f"{base}/neptune/home?region={region}#database:ids={q};is-cluster=true"
-    if service_key == "glue":
+    if service_key == "glue":  # pragma: allowlist secret
         return f"{base}/gluestudio/home?region={region}#/editor/job/{q}/details"
-    if service_key == "elasticbeanstalk":
+    if service_key == "elasticbeanstalk":  # pragma: allowlist secret
         env_id = res.get("environment_id", "")
         return f"{base}/elasticbeanstalk/home?region={region}#/environment/dashboard?environmentId={quote(env_id, safe='')}"
-    if service_key == "ec2":
+    if service_key == "ec2":  # pragma: allowlist secret
         return f"{base}/ec2/home?region={region}#InstanceDetails:instanceId={q}"
     return ""
 
@@ -561,7 +561,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 # The minor's own end of standard support = the date RDS auto-upgrades
                 # this exact version to a newer minor. Kept per resource, not as the
                 # row's deadline (that one is the major's).
-                service_key = "aurora" if engine.startswith("aurora") else "rds"
+                service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
                 minor = index.lookup(service_key, [_rds_match_candidates(engine, version)[0]])
                 if minor and minor.get("end_of_support_date") not in (None, "", "N/A"):
                     resource["minor_version"] = version

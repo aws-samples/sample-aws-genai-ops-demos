@@ -11,7 +11,7 @@ const ADMIN_API_BASE = '/admin'
 
 // CloudFront signs requests to the Lambda function URL (origin access control) and requires
 // the viewer to state the payload hash on POST/DELETE. Our mutations carry no body.
-const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'  // pragma: allowlist secret
 
 export type PhaseStatus = 'pending' | 'in-progress' | 'success' | 'error' | 'stopped'
 

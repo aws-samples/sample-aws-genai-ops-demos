@@ -44,7 +44,7 @@ public class FunctionTests
         var request = new SessionRequest
         {
             PartnerId = "partner-42",
-            Password = "s3cret",
+            Password = "s3cret",  // pragma: allowlist secret
             CertificateBase64 = Convert.ToBase64String(SelfSignedCertificate()),
         };
         var first = function.Handler(request, null!);
