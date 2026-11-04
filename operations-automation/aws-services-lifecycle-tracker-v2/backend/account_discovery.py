@@ -447,7 +447,7 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
         
         for runtime, functions in runtime_functions.items():
             items.append(build_inventory_item(
-                service_key="lambda",
+                service_key="lambda",  # pragma: allowlist secret
                 identifier=runtime,
                 display_name=f"Lambda {runtime} Runtime",
                 candidates=[runtime],
@@ -570,7 +570,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
         
         for (engine, major), instances in engine_instances.items():
             # Aurora engines have their own extraction source/config key
-            service_key = "aurora" if engine.startswith("aurora") else "rds"
+            service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
             engine_key = f"{engine}-{major}"
             items.append(build_inventory_item(
                 service_key=service_key,
@@ -607,7 +607,7 @@ def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> L
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="eks",
+                service_key="eks",  # pragma: allowlist secret
                 identifier=f"k8s-{version}",
                 display_name=f"Kubernetes {version}",
                 candidates=[version, f"k8s-{version}", f"eks-{version}"],
@@ -644,7 +644,7 @@ def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = No
         
         for engine_key, clusters in engine_clusters.items():
             items.append(build_inventory_item(
-                service_key="elasticache",
+                service_key="elasticache",  # pragma: allowlist secret
                 identifier=engine_key,
                 display_name=f"ElastiCache {engine_key.replace('-', ' ').title()}",
                 candidates=[engine_key],
@@ -681,7 +681,7 @@ def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None
         for version, domain_names in version_domains.items():
             bare_version = version.split("_")[-1] if "_" in version else version
             items.append(build_inventory_item(
-                service_key="opensearch",
+                service_key="opensearch",  # pragma: allowlist secret
                 identifier=version,
                 display_name=f"OpenSearch {version}",
                 candidates=[version, bare_version, f"opensearch-{bare_version}"],
@@ -719,7 +719,7 @@ def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> L
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="msk",
+                service_key="msk",  # pragma: allowlist secret
                 identifier=f"kafka-{version}",
                 display_name=f"Apache Kafka {version}",
                 candidates=[f"kafka-{version}", version],
@@ -756,7 +756,7 @@ def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = Non
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="documentdb",
+                service_key="documentdb",  # pragma: allowlist secret
                 identifier=f"docdb-{version}",
                 display_name=f"DocumentDB {version} (MongoDB compatibility)",
                 candidates=[f"docdb-{version}", f"documentdb-{version}", version],
@@ -793,7 +793,7 @@ def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) 
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="neptune",
+                service_key="neptune",  # pragma: allowlist secret
                 identifier=f"neptune-{version}",
                 display_name=f"Neptune {version}",
                 candidates=[f"neptune-{version}", version],
@@ -830,7 +830,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
         
         for version_key, job_names in version_jobs.items():
             items.append(build_inventory_item(
-                service_key="glue",
+                service_key="glue",  # pragma: allowlist secret
                 identifier=version_key,
                 display_name=f"Glue {version_key.replace('glue-', '')}",
                 candidates=[version_key, version_key.replace('glue-', '')],
@@ -883,7 +883,7 @@ def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = 
         
         for platform_key, env_names in platform_envs.items():
             items.append(build_inventory_item(
-                service_key="elasticbeanstalk",
+                service_key="elasticbeanstalk",  # pragma: allowlist secret
                 identifier=platform_key,
                 display_name=f"Beanstalk {platform_key}",
                 candidates=[platform_key, platform_key.replace('-', ' ')],
@@ -932,7 +932,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
             if family not in EC2_PREVIOUS_GENERATION_FAMILIES:
                 continue
             items.append(build_inventory_item(
-                service_key="ec2",
+                service_key="ec2",  # pragma: allowlist secret
                 identifier=family,
                 display_name=f"EC2 {family.upper()} Instance Family",
                 candidates=[family, f"ec2-{family}"],

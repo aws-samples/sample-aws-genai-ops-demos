@@ -201,7 +201,7 @@ describe('HealthEventAnalyzerStack - Secrets Manager and SSM Parameter Store Sec
       Description: Match.stringLikeRegexp('Triggers AWS DevOps Agent investigation'),
       Environment: {
         Variables: Match.objectLike({
-          WEBHOOK_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',
+          WEBHOOK_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-abc123',  // pragma: allowlist secret
           WEBHOOK_SECRET_REGION: 'us-east-1',  // pragma: allowlist secret
         }),
       },

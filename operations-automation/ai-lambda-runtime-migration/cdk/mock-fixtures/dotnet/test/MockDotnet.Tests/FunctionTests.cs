@@ -58,7 +58,7 @@ public class FunctionTests
     [Fact]
     public void HandlerRequiresACertificate()
     {
-        var response = new Function().Handler(new SessionRequest { PartnerId = "partner-42", Password = "s3cret" }, null!);
+        var response = new Function().Handler(new SessionRequest { PartnerId = "partner-42", Password = "s3cret" }, null!);  // pragma: allowlist secret
         Assert.Equal(401, response.StatusCode);
     }
 }

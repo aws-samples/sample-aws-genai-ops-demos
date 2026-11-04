@@ -120,7 +120,7 @@ class TestBuildInventoryItem:
     def test_unknown_fallback_when_unmatched(self):
         index = _index_with_rows(EKS_ROWS)
         item = ad.build_inventory_item(
-            service_key="eks", identifier="k8s-9.99", display_name="Kubernetes 9.99",
+            service_key="eks", identifier="k8s-9.99", display_name="Kubernetes 9.99",  # pragma: allowlist secret
             candidates=["9.99"], affected_resources="x", total_affected=1,
             source_url="https://example", index=index)
         assert item["status"] == "unknown"
