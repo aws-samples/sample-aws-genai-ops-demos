@@ -1,71 +1,95 @@
 name: Security Scan (ASH)
-
+# Required check on main (protect-main ruleset). Red means the scan could not run or a
+# scanner did not complete. Findings are reported in the job summary and the uploaded
+# artifact but do not fail the check yet: the repo has a backlog of existing findings,
+# and failing on the total would block every PR for findings it did not introduce.
 on:
   pull_request:
     branches: [main]
-  # Manual trigger so the workflow can be validated on a branch (real ubuntu-latest run)
-  # before it becomes a required check on other PRs.
+  # Manual trigger so a change to this workflow can be proven on a branch before merge.
   workflow_dispatch: {}
-
+permissions:
+  contents: read
+env:
+  # ASH is pinned: a new release must not change the gate under open PRs.
+  # Bump both values together, on purpose, in their own PR.
+  ASH_COMMIT: af1206aff596f1288ad066828058b3011de2a998   # tag v3.7.1 (CLI installed by uvx)
+  ASH_TAG: v3.7.1                                        # revision cloned into the scan image
+  # Scanners that must finish (PASSED or FAILED) on every run. cdk-nag and cfn-nag are
+  # disabled in .ash/.ash.yaml (they need synthesized templates). If ASH adds or renames a
+  # scanner, update this list when bumping ASH_COMMIT.
+  REQUIRED_SCANNERS: bandit checkov detect-secrets grype npm-audit opengrep semgrep syft
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
       - name: Install UV
         run: curl -LsSf https://astral.sh/uv/0.11.19/install.sh | sh
-
       - name: Run ASH security scan
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          # ASH v3 uses subcommands: `ash scan ...` (v2's flat `--fail-on-findings false`
-          # value syntax is gone -- in v3 `false` parsed as a bogus COMMAND, which is why
-          # earlier runs died with `No such command 'false'` and exit 2, masked green by
-          # continue-on-error). Notes on the flags:
-          #   scan                          -> the v3 command (default, but explicit here)
-          #   --mode container              -> run scanners inside ASH's image, which bundles
-          #                                    the full toolset (cfn-nag, grype, syft,
-          #                                    git-secrets, checkov, bandit, semgrep, ...).
-          #                                    ubuntu-latest ships Docker. In `local` mode the
-          #                                    non-Python scanners are absent -> MISSING ->
-          #                                    silently green, which we do NOT want.
-          #   --fail-on-incomplete-scanners -> an incomplete scan is NOT a clean scan: exit 1
-          #                                    if any selected scanner is ERROR/MISSING,
-          #                                    instead of the default exit 0.
-          # We intentionally do NOT pass --fail-on-findings, so *findings* stay report-only.
-          # FIRST-ITERATION SAFETY: continue-on-error below keeps this from hard-blocking every
-          # open PR while we confirm it behaves on real ubuntu-latest runs. A follow-up PR will
-          # remove continue-on-error to make crashes / incomplete scans a true gate.
-          uvx git+https://github.com/awslabs/automated-security-helper.git@v3 scan \
-            --mode container \
-            --fail-on-incomplete-scanners \
-            --source-dir . \
-            --output-dir .ash/output
-        continue-on-error: true
-
+          # --mode container        scanners run in ASH's image, which bundles the full toolset.
+          #                         In local mode the non-Python scanners are MISSING.
+          # --ash-revision-to-install  the image clones this tag, not the moving v3 branch.
+          # --no-fail-on-findings   ASH v3 exits 2 on findings by default; findings are
+          #                         report-only here (see the header). ASH then exits non-zero
+          #                         only if it produced no results at all.
+          # ASH ignores unknown options silently: keep to flags listed in `ash scan --help`.
+          #
+          # Retry only when ASH produced no results (crash, or the image build failed, e.g.
+          # 429 Too Many Requests from public.ecr.aws). A completed scan is never re-run.
+          for attempt in 1 2 3; do
+            rm -rf .ash/output
+            set +e
+            uvx --from "git+https://github.com/awslabs/automated-security-helper.git@${ASH_COMMIT}" \
+              ash scan \
+              --mode container \
+              --ash-revision-to-install "$ASH_TAG" \
+              --no-fail-on-findings \
+              --source-dir . \
+              --output-dir .ash/output
+            rc=$?
+            set -e
+            if [ -f .ash/output/ash_aggregated_results.json ]; then
+              echo "ASH finished (exit $rc) on attempt $attempt"
+              exit $rc
+            fi
+            echo "::warning::ASH produced no results (exit $rc) on attempt $attempt"
+            if [ "$attempt" -lt 3 ]; then sleep 60; fi
+          done
+          echo "::error::ASH produced no results after 3 attempts"
+          exit 1
+      - name: Check every scanner completed
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+          path = ".ash/output/ash_aggregated_results.json"
+          results = json.load(open(path)).get("scanner_results", {})
+          bad = []
+          for name in os.environ["REQUIRED_SCANNERS"].split():
+              status = (results.get(name) or {}).get("status", "NOT RUN")
+              ok = status in ("PASSED", "FAILED")   # FAILED = completed with findings
+              print(f"{'ok ' if ok else 'BAD'} {name}: {status}")
+              if not ok:
+                  bad.append(f"{name}={status}")
+          if bad:
+              print(f"::error::Scanners did not complete: {', '.join(bad)}")
+              sys.exit(1)
+          EOF
       - name: Report findings
-        # Run even when the scan step failed, so a crash / incomplete scan still surfaces a
-        # diagnostic in the job summary instead of silently vanishing.
+        # Run even when a previous step failed, so the reason still reaches the job summary.
         if: always()
         run: |
-          echo "## ASH Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          # ASH v3 writes reports under <output-dir>/reports/. Prefer the markdown summary,
-          # fall back to the text one.
-          SUMMARY=""
-          for f in .ash/output/reports/ash.summary.md .ash/output/reports/ash.summary.txt; do
-            if [ -f "$f" ]; then SUMMARY="$f"; break; fi
-          done
-          if [ -n "$SUMMARY" ]; then
-            cat "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+          echo "## ASH Security Scan Results" >> "$GITHUB_STEP_SUMMARY"
+          SUMMARY=.ash/output/reports/ash.summary.md
+          if [ -f "$SUMMARY" ]; then
+            cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
           else
-            # No summary means the scan did not complete normally (e.g. it errored before
-            # producing a report). Say so plainly rather than implying success, and point to
-            # the uploaded artifact / step logs.
-            echo "⚠️ No ASH summary report was produced — the scan likely did not complete." >> $GITHUB_STEP_SUMMARY
-            echo "See the failed 'Run ASH security scan' step logs and the uploaded 'ash-scan-results' artifact." >> $GITHUB_STEP_SUMMARY
+            echo "No ASH summary report was produced: the scan did not complete." >> "$GITHUB_STEP_SUMMARY"
+            echo "See the 'Run ASH security scan' step logs and the 'ash-scan-results' artifact." >> "$GITHUB_STEP_SUMMARY"
           fi
-
       - name: Upload scan results
         if: always()
         uses: actions/upload-artifact@v4
