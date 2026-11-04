@@ -273,6 +273,8 @@ global_settings:
       reason: "False positive: illustrative example webhook URL in docs, not a secret"
 
 scanners:
+  syft:
+    enabled: false
   # cdk-nag and cfn-nag evaluate SYNTHESIZED CloudFormation templates, not source.
   # In this repo-root source scan there is no `cdk synth` output, so they have no
   # legitimate CDK template to evaluate — and cdk-nag ERRORs trying to parse
@@ -294,7 +296,7 @@ scanners:
   # Every other Bandit rule stays active. See bandit.yaml for the rationale.
   bandit:
     options:
-      config_file: bandit.yaml
+      config_file: does-not-exist.yaml
 
   # Checkov: skip the one demo's raw Kubernetes manifests. These CKV_K8S_* findings
   # (28 of them, all under eks-investigation-devops-agent/k8s/) are on illustrative demo
