@@ -13,7 +13,8 @@ permissions:
 env:
   # ASH is pinned: a new release must not change the gate under open PRs.
   # Bump both values together, on purpose, in their own PR.
-  ASH_COMMIT: af1206aff596f1288ad066828058b3011de2a998   # tag v3.7.1 (CLI installed by uvx)
+  # Tag v3.7.1 (CLI installed by uvx). A commit SHA, not a secret.
+  ASH_COMMIT: af1206aff596f1288ad066828058b3011de2a998  # pragma: allowlist secret
   ASH_TAG: v3.7.1                                        # revision cloned into the scan image
   # Scanners that must finish (PASSED or FAILED) on every run. cdk-nag and cfn-nag are
   # disabled in .ash/.ash.yaml (they need synthesized templates). If ASH adds or renames a
@@ -24,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install UV
         run: curl -LsSf https://astral.sh/uv/0.11.19/install.sh | sh
       - name: Run ASH security scan
@@ -98,7 +99,7 @@ jobs:
           fi
       - name: Upload scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ash-scan-results
           path: .ash/output/
