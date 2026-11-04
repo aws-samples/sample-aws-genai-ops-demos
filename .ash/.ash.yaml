@@ -283,7 +283,7 @@ scanners:
   # Real IaC coverage is a separate follow-up: a synth stage that runs `cdk synth`
   # and scans the resulting templates. See the tracking issue.
   cdk-nag:
-    enabled: false
+    enabled: true
   cfn-nag:
     enabled: false
 
