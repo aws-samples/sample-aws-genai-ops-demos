@@ -1,9 +1,2 @@
 # Test dependencies only. The function itself uses the standard library alone.
-#
-# pytest 9.0.3 fixes GHSA-6w46-j5rx-g56g (predictable /tmp/pytest-of-<user>
-# directories) but requires Python 3.10+. This fixture is a python3.9 function
-# whose tests must still pass on 3.9 before the migration, and no 8.x release
-# carries the fix, so 3.9 keeps the last pytest that supports it. Every newer
-# interpreter, including the one AWS Transform validates with, gets the fix.
-pytest==9.0.3; python_version >= "3.10"
-pytest==8.4.2; python_version < "3.10"
+pytest==8.3.5
