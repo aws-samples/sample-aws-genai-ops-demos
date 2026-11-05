@@ -19,6 +19,8 @@ A React dashboard built with the Cloudscape Design System provides the inventory
 
 ## Architecture
 
+![Architecture](docs/architecture.drawio.svg)
+
 The browser holds no AWS credentials. The React SPA calls an HTTP API protected by a Cognito JWT authorizer; the API Lambda starts (or adopts) the durable scan execution and reads the inventory. The durable pipeline Lambda runs the org-wide discovery and assessment as checkpointed steps, so a mid-run failure resumes rather than restarts; a separate durable function runs each migration (resolve, AWS Transform in CodeBuild, push the upgrade branch). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Prerequisites
@@ -234,6 +236,8 @@ ai-lambda-runtime-migration/
 ├── deploy-all.sh                       # Deployment script (Bash)
 ├── validation.yaml                     # Demo validation contract
 ├── docs/
+│   ├── architecture.drawio             # Architecture diagram (editable draw.io source)
+│   ├── architecture.drawio.svg         # Architecture diagram image (draw.io export with the source embedded)
 │   └── mock-fixture.md                 # What the optional mock fixture contains and what Migrate should fix
 ├── backend/                            # Python Lambda bundle (one bundle, four handlers)
 │   ├── api.py                          # Plain API handler (UI actions, scan + migration control)
