@@ -234,7 +234,7 @@ def test_execution(tmpdir: Path) -> None:
 
     # the mock's core trap: wrong password -> HTTP 200 + null token
     broken = copy.deepcopy(spec)
-    broken["variables"]["LOGIN_PASSWORD"] = "wrong"
+    broken["variables"]["LOGIN_PASSWORD"] = "wrong"  # pragma: allowlist secret
 
     if have_k6:
         print("k6 execution (real run against mock target)")

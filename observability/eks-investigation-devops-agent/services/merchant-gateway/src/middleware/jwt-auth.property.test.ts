@@ -25,7 +25,7 @@ import { correlationMiddleware } from './correlation';
 
 // Test secret for JWT signing
 // nosemgrep: javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret -- test-only secret, not used in production
-const TEST_SECRET = 'test-secret-key-for-property-testing';
+const TEST_SECRET = 'test-secret-key-for-property-testing';  // pragma: allowlist secret
 
 // Set environment variable for test mode
 process.env.JWT_SECRET = TEST_SECRET;

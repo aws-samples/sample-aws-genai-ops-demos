@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$Username = "demo-merchant-1",
     [string]$Email = "demo@helios-electronics.com",
-    [string]$Password = "DemoPass2026!",
+    [string]$Password = "DemoPass2026!",  # pragma: allowlist secret
     [string]$FullName = "Helios Electronics Demo Merchant",
     [string]$GroupName = "Merchants"
 )

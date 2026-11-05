@@ -93,7 +93,7 @@ def handler(event, context=None):
             "KMSKey": "AwsKmsKey",
             "LambdaFunction": "AwsLambdaFunction",
             "SQSQueue": "AwsSqsQueue",
-            "SecretsManager": "AwsSecretsManagerSecret",
+            "SecretsManager": "AwsSecretsManagerSecret",  # pragma: allowlist secret
         }
         mapped_type = resource_type_map.get(resource_type, resource_type)
         filters["ResourceType"] = [{"Value": mapped_type, "Comparison": "EQUALS"}]

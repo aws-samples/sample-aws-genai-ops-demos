@@ -34,7 +34,7 @@ scenarios:
       envVar: ALARM_NAME                    # CloudWatch alarm name is injected by CDK
       expectFiringWithinSeconds: 120
     inject:
-      summary: "Sets DB_PASSWORD=wrong-password on payment-processor and restarts it"
+      summary: "Sets DB_PASSWORD=wrong-password on payment-processor and restarts it"  # pragma: allowlist secret
     detect:
       summary: "payment-processor container env DB_PASSWORD is the literal wrong-password"
     autoRevertSeconds: 600

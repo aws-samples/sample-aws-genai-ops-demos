@@ -95,7 +95,7 @@ describe('secrets-cache', () => {
     });
 
     it('never exposes secret values in error messages', async () => {
-      const secretValue = 'super-secret-webhook-url-123';
+      const secretValue = 'super-secret-webhook-url-123';  // pragma: allowlist secret
       mockSend.mockResolvedValueOnce({
         Parameter: { Value: secretValue },
       });

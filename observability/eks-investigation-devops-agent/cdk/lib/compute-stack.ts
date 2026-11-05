@@ -137,7 +137,7 @@ export class ComputeStack extends cdk.Stack {
     const oidcProvider = new iam.CfnOIDCProvider(this, 'OIDCProvider', {
       url: cluster.attrOpenIdConnectIssuerUrl,
       clientIdList: ['sts.amazonaws.com'],
-      thumbprintList: ['9e99a48a9960b14926bb7f3b02e22da2b0ab7280'],
+      thumbprintList: ['9e99a48a9960b14926bb7f3b02e22da2b0ab7280'],  // pragma: allowlist secret
       tags: [
         { key: 'Name', value: `${projectName}-${environment}-eks-oidc-provider` },
         { key: 'Environment', value: environment },
