@@ -9,6 +9,12 @@ repository (see "Migration" below).
 
 ## Overview
 
+![Architecture](docs/architecture.drawio.svg)
+
+The editable source is [`docs/architecture.drawio`](docs/architecture.drawio). The SVG is a
+draw.io export with the source diagram embedded (`File > Export as > SVG > Include a copy of my
+diagram`), so you can also open the `.svg` directly in draw.io to edit it.
+
 The browser holds **no AWS credentials**. It authenticates against a Cognito
 User Pool and calls the HTTP API with the Cognito **ID token**; an API Gateway
 Cognito JWT authorizer validates every request. There is no Identity Pool and
