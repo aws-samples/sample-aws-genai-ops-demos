@@ -6,7 +6,7 @@ db_password = "not-a-real-password-gate-test"  # detect-secrets keyword: expecte
 
 
 def fetch(url):
-    return urllib.request.urlopen(url).read()  # Bandit B310, 8.0: expected KEPT
+    return urllib.request.urlopen(url).read()  # nosec B310 - test override
 
 
 def run(cmd):
