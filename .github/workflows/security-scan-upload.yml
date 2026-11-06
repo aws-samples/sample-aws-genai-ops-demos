@@ -5,8 +5,8 @@ name: Security Scan upload (PR)
 #
 # Why workflow_run: a fork PR's own run gets a read-only token and cannot upload.
 # This workflow runs from main with its own token. Safe-authoring:
-#   - nothing from the PR is executed, installed or sourced. Its files are checked out
-#     only as data: upload-sarif hashes lines to fingerprint alerts.
+#   - the PR's code is never checked out, run, installed or sourced. The findings arrive
+#     already fingerprinted (.github/scripts/ash_gate_filter.py, in the PR's own run).
 #   - the PR is looked up through the API from the run's head repo, branch and commit,
 #     never read from the artifact; the upload ref and commit are set here.
 #   - inputs from the triggering run are passed through env and validated.
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: read          # download the artifact of the triggering run
-      contents: read         # check out the PR head as data
+      contents: read         # upload-sarif reads repository metadata (no checkout)
       pull-requests: read    # find the PR for the head commit
       security-events: write # upload to code scanning
     steps:
@@ -79,20 +79,11 @@ jobs:
               sys.exit("::error::ash-gate SARIF must contain exactly one run")
           print(f"{len(runs[0].get('results', []))} gate finding(s) for {meta['head_sha']}")
           EOF
-      - name: Check out the PR head (data only, for fingerprints)
-        if: steps.pr.outputs.number
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
-          path: src
-          persist-credentials: false
       - name: Upload to code scanning
         if: steps.pr.outputs.number
         uses: github/codeql-action/upload-sarif@f3bbb05694c2f74569081c28664c0866d64dec21 # v4.39.3
         with:
           sarif_file: gate/ash.gate.sarif
           category: ash
-          checkout_path: src
           ref: refs/pull/${{ steps.pr.outputs.number }}/head
           sha: ${{ github.event.workflow_run.head_sha }}

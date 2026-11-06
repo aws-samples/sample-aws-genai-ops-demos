@@ -3,9 +3,8 @@ name: Security Scan (ASH)
 # scanner did not complete. Findings never fail this check: the full set is in the job
 # summary and the ash-scan-results artifact.
 #
-# Merge gate on NEW findings: the high/critical non-Checkov findings
-# (.github/scripts/ash-gate-filter.py) go to code scanning, and code scanning compares
-# a PR with main.
+# Merge gate on NEW findings: the high/critical non-Checkov findings, fingerprinted by
+# .github/scripts/ash_gate_filter.py, go to code scanning, which compares a PR with main.
 #   - push to main: the upload-baseline job uploads them for main.
 #   - pull request: saved as the ash-gate artifact; security-scan-upload.yml uploads them
 #     for the PR (that workflow has the write token a fork PR's run does not get).
@@ -104,7 +103,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p gate
-          python3 .github/scripts/ash-gate-filter.py .ash/output/reports/ash.ghas.sarif gate/ash.gate.sarif
+          python3 .github/scripts/ash_gate_filter.py .ash/output/reports/ash.ghas.sarif gate/ash.gate.sarif .
           # Cross-checked by security-scan-upload.yml; never used to choose what to upload.
           printf '{"head_sha": "%s"}\n' "$HEAD_SHA" > gate/meta.json
       - name: Save merge-gate findings
@@ -143,9 +142,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
+      # No checkout: the findings are already fingerprinted by ash_gate_filter.py.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ash-gate
