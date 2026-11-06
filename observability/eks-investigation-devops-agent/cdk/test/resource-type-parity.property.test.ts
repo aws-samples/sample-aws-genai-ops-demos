@@ -142,8 +142,8 @@ function synthesizeAll(env: string, arch: string) {
     env: cdkEnv, environment: env, projectName,
     eksClusterName: compute.clusterName,
     webhookUrl: 'https://example.com/webhook',
-    webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-AbCdEf',
-    webhookSecretRegion: 'us-east-1',
+    webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-webhook-secret-AbCdEf',  // pragma: allowlist secret
+    webhookSecretRegion: 'us-east-1',  // pragma: allowlist secret
     criticalAlarmsTopicArn: monitoring.criticalAlarmsTopicArn,
   });
   const agentSpace = new DevOpsAgentSpaceStack(app, `DevOpsAgentEksAgentSpace-${region}`, {

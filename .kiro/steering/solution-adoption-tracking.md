@@ -103,7 +103,7 @@ resource "aws_cloudformation_stack" "tracking" {
 }
 ```
 
-Reference implementation: `operations-automation/aws-services-lifecycle-tracker/terraform/tracking.tf`.
+Reference implementation: `observability/saas-status-mcp/infrastructure/terraform/tracking.tf`.
 
 #### CloudFormation Implementation (Not Accepted for New Demos)
 All new demos must use AWS CDK. The example below is for reference only if maintaining legacy demos:
@@ -113,7 +113,7 @@ Description: 'Brief demo description (uksb-do9bhieqqh)(tag:your-demo-name,pillar
 ```
 
 ### Demo Naming Convention
-- Use lowercase with hyphens: `ai-password-reset`, `lifecycle-tracker`
+- Use lowercase with hyphens: `ai-password-reset`, `it-portal-demo`
 - Keep names descriptive but concise
 - Avoid generic terms like `demo` or `sample` in the tag name
 
@@ -263,20 +263,7 @@ const infraStack = new PasswordResetInfraStack(app, 'PasswordResetInfra', {
 });
 ```
 
-### Example 2: Lifecycle Tracker (TypeScript)
-```typescript
-// operations-automation/aws-services-lifecycle-tracker/cdk/bin/app.ts
-new PipelineStack(app, `AWSServicesLifecycleTrackerPipeline-${region}`, {
-  env: { region },
-  lifecycleTable: dataStack.lifecycleTable,
-  configTable: dataStack.configTable,
-  description: 'AWS Services Lifecycle Tracker Pipeline: Lambda durable function refreshing deprecation data and account inventory (uksb-do9bhieqqh)(tag:lifecycle-tracker,operations-automation)',
-});
-```
-
-The same demo's Terraform path carries the identical tag pair on its marker stack (`terraform/tracking.tf`), see "Terraform path" above.
-
-### Example 3: IT Portal Demo (Python)
+### Example 2: IT Portal Demo (Python)
 ```python
 # operations-automation/anycompany-it-demo-portal/infrastructure/cdk/app.py
 from aws_cdk import App
@@ -293,7 +280,7 @@ AnyCompanyITPortalStack(
 app.synth()
 ```
 
-### Example 4: Graviton Migration (Python)
+### Example 3: Graviton Migration (Python)
 ```python
 # cost-optimization/ai-graviton-migration-assessment/infrastructure/cdk/app.py
 GravitonAssessmentStack(
@@ -311,7 +298,8 @@ GravitonAssessmentStack(
 - `ai-documentation-generation`: `(tag:doc-generation,operations-automation)`
 - `ai-legacy-system-browser-automation`: `(tag:legacy-automation,operations-automation)`
 - `ai-password-reset-chatbot`: `(tag:password-reset,operations-automation)`
-- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)`
+- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)` (moved to awslabs/support-solutions-aws)
+- `aws-services-lifecycle-tracker-v2`: `(tag:lifecycle-tracker-v2,operations-automation)`
 - `anycompany-it-demo-portal`: `(tag:it-portal-demo,operations-automation)`
 
 ### Cost Optimization Pillar

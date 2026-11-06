@@ -44,7 +44,7 @@ public class FunctionTests
         var request = new SessionRequest
         {
             PartnerId = "partner-42",
-            Password = "s3cret",
+            Password = "s3cret",  // pragma: allowlist secret
             CertificateBase64 = Convert.ToBase64String(SelfSignedCertificate()),
         };
         var first = function.Handler(request, null!);
@@ -58,7 +58,7 @@ public class FunctionTests
     [Fact]
     public void HandlerRequiresACertificate()
     {
-        var response = new Function().Handler(new SessionRequest { PartnerId = "partner-42", Password = "s3cret" }, null!);
+        var response = new Function().Handler(new SessionRequest { PartnerId = "partner-42", Password = "s3cret" }, null!);  // pragma: allowlist secret
         Assert.Equal(401, response.StatusCode);
     }
 }

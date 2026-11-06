@@ -127,7 +127,7 @@ echo -e "${GREEN}  File system $FILE_SYSTEM_ID is AVAILABLE.${NC}"
 echo ""
 echo -e "${CYAN}[4/5] Demo Lab...${NC}"
 if [ -z "$LAB_PASSWORD" ]; then
-    LAB_PASSWORD=$(LC_ALL=C tr -dc 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789' < /dev/urandom | head -c 16)
+    LAB_PASSWORD=$(LC_ALL=C tr -dc 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789' < /dev/urandom | head -c 16)  # pragma: allowlist secret
 fi
 LAB_STACK="FsxSlaReviewLab-$REGION"
 ../../shared/scripts/deploy-cdk.sh --cdk-directory cdk --stack-name "$LAB_STACK" --skip-bootstrap "${CONTEXT[@]}" \

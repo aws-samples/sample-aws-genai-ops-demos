@@ -1,0 +1,1735 @@
+"""
+Account Resource Discovery for AWS Services Lifecycle Tracker
+
+This module discovers actual AWS resources in the customer's account
+and checks them against known deprecation schedules. This provides
+personalized, relevant deprecation alerts based on what the customer
+is actually using.
+"""
+import boto3
+import json
+import os
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+
+# Get region from environment
+REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
+
+# ---------------------------------------------------------------------------
+# Lifecycle verdicts come from the extraction pipeline's DynamoDB rows.
+#
+# This module previously carried ~10 hand-written *_INFO dicts with hardcoded
+# deprecation dates and statuses (issue #99 I1/I2). Those went stale silently
+# (single commit, never maintained) while the extraction pipeline kept fresh,
+# correct data one table away. Discovery now only detects WHAT is running in
+# the account; WHETHER it is deprecated is answered by joining the extraction
+# rows. No match means status 'unknown' - never a stale hardcoded verdict.
+# ---------------------------------------------------------------------------
+
+import re
+
+from cost_estimator import major_version  # RDS rows are grouped at the Extended Support level (#142)
+
+# The one detection heuristic kept: which EC2 instance families count as
+# "previous generation" (per https://aws.amazon.com/ec2/previous-generation/).
+# This is membership knowledge (which families to flag), not lifecycle data -
+# families never leave this list. Dates/verdicts still come from the lifecycle
+# table when an 'ec2' extraction source exists; otherwise the row is reported
+# as deprecated with no dates.
+EC2_PREVIOUS_GENERATION_FAMILIES = {
+    "t1", "m1", "m2", "c1", "m3", "c3", "r3", "m4", "c4", "r4", "t2", "i2",
+}
+
+# RDS API engine names -> extraction 'engine' vocabulary
+_RDS_ENGINE_ALIASES = {
+    "postgres": "postgresql",
+    "docdb": "documentdb",
+}
+
+# SQL Server internal major version -> product year (immutable mapping facts)
+_SQLSERVER_VERSION_YEARS = {
+    "11": "2012", "12": "2014", "13": "2016",
+    "14": "2017", "15": "2019", "16": "2022", "17": "2025",
+}
+
+
+def _normalize(value) -> str:
+    """Normalize identifiers for matching: lowercase, dashes, alnum/dot only."""
+    if not value:
+        return ""
+    text = str(value).lower().replace("_", "-").replace(" ", "-")
+    return re.sub(r"[^a-z0-9.\-]", "", text)
+
+
+class LifecycleIndex:
+    """Per-service lookup of extraction-owned lifecycle rows (issue #99 I1).
+
+    Loads the lifecycle table rows for a service on first use (skipping
+    provenance-tagged inventory rows, including discovery's own) and indexes
+    them by normalized identifier/version/name. lookup() tries exact matches
+    first, then prefix containment either way (longest indexed key wins).
+    """
+
+    def __init__(self, table_name: str = None, region: str = None, account_id: str = None,
+                 account_name: str = "", session=None):
+        table_name = table_name or os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle-v2")
+        # The scope being scanned (issue #144): region + account, stamped on every
+        # inventory row. `session` holds the credentials to read THAT account
+        # (None = the hub's own); scanners build their clients from it. The facts
+        # table itself is always read with the hub's credentials.
+        self.region = region or REGION
+        self.account_id = account_id or _caller_identity().get("account", "")
+        self.account_name = account_name or ""
+        self.session = session
+        # The facts table is single-region, living in the hub's deploy region
+        # (REGION = this Lambda's own AWS_REGION), and the IAM policy grants
+        # access on its fixed ARN. self.region is the SCANNED region, which may
+        # differ (issue #144 multi-region); addressing the table through the
+        # scanned region's endpoint yields AccessDenied on the ARN mismatch.
+        # Always read the facts table in its home region, with the hub's creds.
+        dynamodb = boto3.resource("dynamodb", region_name=REGION)
+        self._table = dynamodb.Table(table_name)
+        self._cache: Dict[str, Dict[str, Dict]] = {}
+
+    def _load(self, service_key: str) -> Dict[str, Dict]:
+        rows = []
+        kwargs = {
+            "KeyConditionExpression": "service_name = :s",
+            "ExpressionAttributeValues": {":s": service_key},
+        }
+        try:
+            response = self._table.query(**kwargs)
+            rows.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self._table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+                rows.extend(response.get("Items", []))
+        except Exception as e:
+            print(f"Warning: could not load lifecycle rows for '{service_key}': {e}")
+            return {}
+
+        index: Dict[str, Dict] = {}
+        for row in rows:
+            if row.get("provenance"):
+                continue  # inventory rows are not lifecycle knowledge
+            specific = row.get("service_specific", {}) or {}
+            entry = {
+                "status": row.get("status", "unknown"),
+                "deprecation_date": str(specific.get("deprecation_date") or "") or "N/A",
+                "end_of_support_date": str(
+                    specific.get("end_of_support_date")
+                    or specific.get("end_of_standard_support_date")
+                    or specific.get("eol_date")
+                    or specific.get("end_of_life_date")
+                    or ""
+                ) or "N/A",
+                # RDS/Aurora only: when the paid Extended Support window closes (#142)
+                "end_of_extended_support_date": str(specific.get("end_of_extended_support_date") or "") or "N/A",
+                "item_id": row.get("item_id", ""),
+            }
+            for candidate in (specific.get("identifier"), specific.get("version"), specific.get("name")):
+                key = _normalize(candidate)
+                if key and key not in index:
+                    index[key] = entry
+        return index
+
+    def lookup(self, service_key: str, candidates: List) -> Dict:
+        """Best lifecycle match for any candidate identifier, or None."""
+        if service_key not in self._cache:
+            self._cache[service_key] = self._load(service_key)
+        index = self._cache[service_key]
+
+        normalized = [_normalize(c) for c in candidates if c]
+        for cand in normalized:
+            if cand in index:
+                return index[cand]
+
+        # Prefix fallback, restricted to VERSION boundaries: the shorter side
+        # must end where a version segment begins ('.', '-', or a digit->letter
+        # edge). Without this, Lambda's 'nodejs' row (Node.js 0.10) would claim
+        # every nodejs2x.x runtime as deprecated.
+        def _boundary_prefix(short: str, long: str) -> bool:
+            if not long.startswith(short) or len(long) == len(short):
+                return False
+            nxt = long[len(short)]
+            prev = short[-1]
+            return nxt in ".-" or (prev.isdigit() and not nxt.isdigit()) or (prev in ".-")
+
+        best, best_len = None, 0
+        for cand in normalized:
+            if len(cand) < 3:
+                continue
+            for key, entry in index.items():
+                if len(key) < 3:
+                    continue
+                if (_boundary_prefix(cand, key) or _boundary_prefix(key, cand)) and len(key) > best_len:
+                    best, best_len = entry, len(key)
+        return best
+
+
+# Upper bound on resources stored per inventory row (DynamoDB item limit is
+# 400 KB; 500 entries of name+ARN+console URL stay well below it).
+# total_affected is always exact.
+MAX_RESOURCE_NAMES = 500
+
+_CALLER = {}
+
+
+def _caller_identity() -> Dict[str, str]:
+    """Partition and account id of the scanning identity (cached per process).
+
+    Used to build ARNs for services whose list API does not return one
+    (Glue jobs, EC2 instances)."""
+    if not _CALLER:
+        try:
+            arn = boto3.client("sts").get_caller_identity()["Arn"]
+            _CALLER.update(partition=arn.split(":")[1], account=arn.split(":")[4])
+        except Exception:  # offline/unit tests: fall back to the public partition
+            _CALLER.update(partition="aws", account="")
+    return _CALLER
+
+
+def build_arn(service: str, region: str, resource: str, account: str = None) -> str:
+    """ARN for a regional resource, e.g. glue job/x (defaults to the caller's account)."""
+    ident = _caller_identity()
+    return f"arn:{ident['partition']}:{service}:{region}:{account or ident['account']}:{resource}"
+
+
+def _client(index: "LifecycleIndex", service: str, region: str):
+    """boto3 client for the account the index describes (hub or assumed spoke)."""
+    return (index.session or boto3).client(service, region_name=region)
+
+
+SPOKE_ROLE_NAME = os.environ.get("SPOKE_ROLE_NAME", "LifecycleTrackerScanRoleV2")
+
+
+def session_for_account(account_id: str, region: str = None):
+    """Credentials to scan `account_id`: None for the hub itself, otherwise a
+    boto3 Session from assuming the spoke role (#144, hub-and-spoke)."""
+    hub = _caller_identity().get("account", "")
+    if not account_id or account_id == hub:
+        return None
+    ident = _caller_identity()
+    kwargs = {
+        "RoleArn": f"arn:{ident['partition']}:iam::{account_id}:role/{SPOKE_ROLE_NAME}",
+        "RoleSessionName": "lifecycle-tracker-scan",
+        "DurationSeconds": 3600,
+    }
+    external_id = os.environ.get("SPOKE_EXTERNAL_ID")
+    if external_id:
+        kwargs["ExternalId"] = external_id
+    creds = boto3.client("sts", region_name=region or REGION).assume_role(**kwargs)["Credentials"]
+    return boto3.session.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+
+
+SCAN_TARGETS_KEY = "_scan_targets"      # control row: what to scan (see org_targets.py)
+SCAN_ACCOUNTS_KEY = "_scan_accounts"    # control row: what the last run resolved that into
+
+
+def save_resolved_accounts(resolved: Dict) -> None:
+    """Persist the account list of the last run (names, OU paths, source,
+    errors) so the UI can show coverage without calling Organizations."""
+    from datetime import datetime, timezone
+    _save_control_row(SCAN_ACCOUNTS_KEY, {**resolved, "resolved_at": datetime.now(timezone.utc).isoformat()})
+
+
+VALID_TARGET_SOURCES = ("hub", "manual", "organization", "ou")
+_ACCOUNT_ID = re.compile(r"^\d{12}$")
+_OU_ID = re.compile(r"^(r-[a-z0-9]{4,32}|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})$")
+# Scan cells multiply with accounts x regions x scanners: keep this a deliberate
+# cap, not a nuisance limit. Mirrored client-side in frontend/src/api.ts (MAX_REGIONS).
+MAX_SCAN_REGIONS = 5
+
+
+def save_scan_targets(targets: Dict) -> Dict:
+    """Validate and store the _scan_targets control row (UI editor, #144).
+
+    Returns {"success": True, "targets": <stored>} or {"success": False, "error": str}.
+    """
+    source = str(targets.get("source") or "hub").lower()
+    if source not in VALID_TARGET_SOURCES:
+        return {"success": False, "error": f"source must be one of {', '.join(VALID_TARGET_SOURCES)}"}
+    accounts, ou_ids, excluded, regions = [], [], [], []
+    for a in targets.get("accounts") or []:
+        aid = str((a or {}).get("id", "")).strip()
+        if not _ACCOUNT_ID.match(aid):
+            return {"success": False, "error": f"'{aid}' is not a 12-digit account id"}
+        accounts.append({"id": aid, "name": str((a or {}).get("name", "")).strip()[:120]})
+    for ou in targets.get("ou_ids") or []:
+        ou = str(ou).strip()
+        if not _OU_ID.match(ou):
+            return {"success": False, "error": f"'{ou}' is not an organization root or OU id"}
+        ou_ids.append(ou)
+    for aid in targets.get("exclude_accounts") or []:
+        aid = str(aid).strip()
+        if not _ACCOUNT_ID.match(aid):
+            return {"success": False, "error": f"'{aid}' is not a 12-digit account id"}
+        excluded.append(aid)
+    for r in targets.get("regions") or []:
+        r = str(r).strip().lower()
+        if not re.match(r"^[a-z]{2}(-[a-z]+)+-\d$", r):
+            return {"success": False, "error": f"'{r}' is not a region code"}
+        regions.append(r)
+    if len(set(regions)) > MAX_SCAN_REGIONS:
+        return {"success": False, "error": f"up to {MAX_SCAN_REGIONS} regions allowed: scan cells multiply with accounts and scanners"}
+    if source == "ou" and not ou_ids:
+        return {"success": False, "error": "source 'ou' needs at least one OU id"}
+    if source == "manual" and not accounts:
+        return {"success": False, "error": "source 'manual' needs at least one account"}
+    stored = {"source": source, "accounts": accounts, "ou_ids": ou_ids, "exclude_accounts": excluded, "regions": regions}
+    try:
+        from database_reads import state_table
+        state_table.put_item(Item={"service_name": SCAN_TARGETS_KEY, **stored})
+    except Exception as e:
+        return {"success": False, "error": f"could not save targets: {e}"}
+    return {"success": True, "targets": stored}
+
+
+def record_scan_outcome(accounts_scanned: List[str], accounts_failed: List[str]) -> None:
+    """Stamp the last run's per-account outcome on the _scan_accounts row so
+    the UI can show covered vs failed accounts without reading the execution."""
+    from datetime import datetime, timezone
+    row = load_control_row(SCAN_ACCOUNTS_KEY) or {}
+    row.update({"accounts_scanned": list(accounts_scanned), "accounts_failed": list(accounts_failed),
+                "scanned_at": datetime.now(timezone.utc).isoformat()})
+    _save_control_row(SCAN_ACCOUNTS_KEY, row)
+
+
+def load_scan_targets() -> Dict:
+    """Accounts and regions to scan (#144). Empty dict = hub account, deployment region."""
+    from decimal import Decimal
+    try:
+        from database_reads import state_table
+        row = state_table.get_item(Key={"service_name": SCAN_TARGETS_KEY}).get("Item") or {}
+    except Exception:
+        return {}
+    row.pop("service_name", None)
+    return {k: (int(v) if isinstance(v, Decimal) else v) for k, v in row.items()}
+
+
+def list_enabled_regions() -> Dict:
+    """Regions enabled for this account (Settings dropdown). describe_regions
+    without AllRegions: a disabled opt-in region cannot be scanned. The EC2
+    client follows the deploy region's partition; on failure the error is
+    reported, never a hardcoded list."""
+    try:
+        from aws_utils import get_region
+        deploy_region = get_region()
+        resp = boto3.client("ec2", region_name=deploy_region).describe_regions()
+        return {"success": True,
+                "regions": sorted(r["RegionName"] for r in resp.get("Regions", [])),
+                "deploy_region": deploy_region}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def console_url(service_key: str, region: str, res: Dict) -> str:
+    """Deep link to the AWS console page of one discovered resource.
+
+    Built from the deployment region, never hardcoded. `res` carries name and
+    arn plus optional service-specific hints (ElastiCache engine, Beanstalk
+    environment id). Partitions other than the public one are not mapped and
+    get the public console host.
+    """
+    from urllib.parse import quote
+    base = f"https://{region}.console.aws.amazon.com"
+    name, arn = res.get("name", ""), res.get("arn", "")
+    q = quote(name, safe="")
+    if service_key == "lambda":  # pragma: allowlist secret
+        return f"{base}/lambda/home?region={region}#/functions/{q}"
+    if service_key in ("rds", "aurora"):
+        return f"{base}/rds/home?region={region}#database:id={q};is-cluster=false"
+    if service_key == "eks":  # pragma: allowlist secret
+        return f"{base}/eks/home?region={region}#/clusters/{q}"
+    if service_key == "elasticache":  # pragma: allowlist secret
+        engine = res.get("engine", "redis")
+        return f"{base}/elasticache/home?region={region}#/{engine}/{q}"
+    if service_key == "opensearch":  # pragma: allowlist secret
+        return f"{base}/aos/home?region={region}#opensearch/domains/{q}"
+    if service_key == "msk":  # pragma: allowlist secret
+        return f"{base}/msk/home?region={region}#/cluster/{quote(arn, safe='')}/view"
+    if service_key == "documentdb":  # pragma: allowlist secret
+        return f"{base}/docdb/home?region={region}#cluster-details/{q}"
+    if service_key == "neptune":  # pragma: allowlist secret
+        return f"{base}/neptune/home?region={region}#database:ids={q};is-cluster=true"
+    if service_key == "glue":  # pragma: allowlist secret
+        return f"{base}/gluestudio/home?region={region}#/editor/job/{q}/details"
+    if service_key == "elasticbeanstalk":  # pragma: allowlist secret
+        env_id = res.get("environment_id", "")
+        return f"{base}/elasticbeanstalk/home?region={region}#/environment/dashboard?environmentId={quote(env_id, safe='')}"
+    if service_key == "ec2":  # pragma: allowlist secret
+        return f"{base}/ec2/home?region={region}#InstanceDetails:instanceId={q}"
+    return ""
+
+
+def build_inventory_item(service_key: str, identifier: str, display_name: str,
+                         candidates: List, affected_resources, total_affected: int,
+                         source_url: str, index: "LifecycleIndex",
+                         fallback_status: str = "unknown") -> Dict:
+    """Emit a unified inventory row keyed like extraction rows (#98 E7).
+
+    service_name uses the extraction config key (e.g. 'lambda', not
+    'AWS Lambda') and item_id is prefixed 'inventory#', so inventory shares
+    the key vocabulary of the rest of the system (UI filters, Health
+    enrichment) while staying distinguishable and provenance-tagged.
+
+    affected_resources (#141) is a list of resources, each either a name or a
+    dict {name, arn, ...hints}; a legacy summary string is still accepted. The
+    row stores (capped) affected_resource_names for compatibility and
+    affected_resource_details [{name, arn, console_url}] for the details view,
+    plus a 3-name summary string.
+    """
+    match = index.lookup(service_key, candidates)
+    now = datetime.now()
+    region = getattr(index, "region", None) or REGION
+    details: List[Dict] = []
+    if isinstance(affected_resources, (list, tuple)):
+        for r in affected_resources:
+            res = dict(r) if isinstance(r, dict) else {"name": str(r)}
+            res["name"] = str(res.get("name", ""))
+            res.setdefault("arn", "")
+            # Scanner-provided attributes (instance class, Multi-AZ, engine,
+            # Serverless v2 capacity, ...) travel with the resource so later
+            # enrichment (cost exposure #142) needs no second API call.
+            details.append({**res, "console_url": console_url(service_key, region, res)})
+        details.sort(key=lambda d: d["name"])
+        names = [d["name"] for d in details]
+        summary = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
+    else:
+        names = []
+        summary = str(affected_resources or "")
+    account_id = getattr(index, "account_id", "") or _caller_identity().get("account", "")
+    return {
+        "service_name": service_key,
+        # One row per (account, region, version): the same runtime in two
+        # accounts or regions must not overwrite each other (#144).
+        "item_id": f"inventory#{account_id}#{region}#{identifier}",
+        "status": match["status"] if match else fallback_status,
+        "region": region,
+        "account_id": account_id,
+        "account_name": getattr(index, "account_name", "") or "",
+        "source_url": source_url,
+        "extraction_date": now.strftime("%Y-%m-%d"),
+        "last_verified": now.isoformat() + "Z",
+        "service_specific": {
+            "name": display_name,
+            "identifier": identifier,
+            "deprecation_date": (match or {}).get("deprecation_date", "N/A"),
+            "end_of_support_date": (match or {}).get("end_of_support_date", "N/A"),
+            "affected_resources": summary,
+            "affected_resource_names": names[:MAX_RESOURCE_NAMES],
+            "affected_resource_details": details[:MAX_RESOURCE_NAMES],
+            "total_affected": total_affected,
+            "matched_lifecycle_item": (match or {}).get("item_id", ""),
+        },
+    }
+
+
+def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover Lambda functions and their runtimes in the account"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    lambda_client = _client(index, "lambda", region)
+    items = []
+    runtime_functions = {}
+    
+    try:
+        paginator = lambda_client.get_paginator("list_functions")
+        for page in paginator.paginate():
+            for func in page["Functions"]:
+                runtime = func.get("Runtime", "unknown")
+                if runtime not in runtime_functions:
+                    runtime_functions[runtime] = []
+                runtime_functions[runtime].append({"name": func["FunctionName"], "arn": func.get("FunctionArn", "")})
+        
+        for runtime, functions in runtime_functions.items():
+            items.append(build_inventory_item(
+                service_key="lambda",  # pragma: allowlist secret
+                identifier=runtime,
+                display_name=f"Lambda {runtime} Runtime",
+                candidates=[runtime],
+                affected_resources=functions,
+                total_affected=len(functions),
+                source_url="https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering Lambda functions: {e}")
+    
+    return items
+
+
+def _rds_match_candidates(engine: str, version: str, major: str = None) -> List[str]:
+    """Candidate identifiers to match an RDS engine/version against
+    extraction rows (which use slugs like 'mysql-8.0.35', 'postgresql-17.6',
+    'oracle-19c', 'sqlserver-2019').
+
+    With `major` (the level Extended Support applies to, see
+    cost_estimator.major_version) the major row is tried FIRST: its end of
+    standard support is the date that starts the Extended Support bill and
+    eventually forces a major upgrade. The minor row's date only means "this
+    minor is auto-upgraded to a newer one", which the row reports separately.
+    """
+    base = engine.split("-")[0] if engine.startswith(("oracle", "sqlserver")) else engine
+    base = _RDS_ENGINE_ALIASES.get(base, base)
+    if major:
+        rest = _rds_match_candidates(engine, version)
+        return [f"{base}-{major}"] + [c for c in rest if c != f"{base}-{major}"]
+    # Aurora MySQL reports '8.0.mysql_aurora.3.11.1' / '5.7.mysql_aurora.2.12.6':
+    # the part after 'mysql_aurora.' is the Aurora version the release
+    # calendar (and therefore the facts) are keyed on ('aurora-mysql-3.11').
+    # Without this the candidates were 'aurora-mysql-8.0' / 'aurora-mysql-8',
+    # which never match and can prefix-match the unrelated 'aurora-mysql-8.4'.
+    if "mysql_aurora." in version:
+        version = version.split("mysql_aurora.", 1)[1]
+    parts = version.split(".")
+    candidates = [f"{base}-{version}"]
+    if len(parts) >= 2:
+        candidates.append(f"{base}-{parts[0]}.{parts[1]}")
+    candidates.append(f"{base}-{parts[0]}")
+    if base == "sqlserver":
+        year = _SQLSERVER_VERSION_YEARS.get(parts[0])
+        if year:
+            candidates.insert(0, f"sqlserver-{year}")
+    if base == "oracle":
+        candidates.append(f"oracle-{parts[0]}c")
+    return candidates
+
+
+def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover RDS instances and their engine versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    rds_client = _client(index, "rds", region)
+    items = []
+    engine_instances = {}
+    
+    try:
+        # Aurora Serverless v2 capacity lives on the cluster (#142): one pass
+        # over clusters gives min/max ACU for every db.serverless member.
+        serverless_by_cluster = {}
+        try:
+            for page in rds_client.get_paginator("describe_db_clusters").paginate():
+                for cluster in page.get("DBClusters", []):
+                    cfg = cluster.get("ServerlessV2ScalingConfiguration")
+                    if cfg:
+                        serverless_by_cluster[cluster["DBClusterIdentifier"]] = {
+                            "min_acu": float(cfg.get("MinCapacity", 0)),
+                            "max_acu": float(cfg.get("MaxCapacity", 0)),
+                        }
+        except Exception as e:  # cost sizing is best effort; the scan itself must not fail
+            print(f"Warning: could not read Aurora cluster capacity: {e}")
+
+        paginator = rds_client.get_paginator("describe_db_instances")
+        for page in paginator.paginate():
+            for db in page["DBInstances"]:
+                engine = db["Engine"]
+                # DocumentDB and Neptune instances are returned by the RDS API too;
+                # their own scanners report them at cluster level with the right
+                # facts, so skip them here (they produced 'unknown' duplicates).
+                if engine in ("docdb", "neptune"):
+                    continue
+                version = db["EngineVersion"]
+                if "mysql_aurora." in version:
+                    # '8.0.mysql_aurora.3.11.1' -> '3.11.1' (see _rds_match_candidates)
+                    version = version.split("mysql_aurora.", 1)[1]
+                # Group at the level RDS attaches Extended Support (and its dates)
+                # to: mysql-8.4 vs mysql-8.0 (one is in Extended Support, the other
+                # has years left), postgres-14, aurora-mysql-3. Same rule as the
+                # cost estimate, so deadline and money come from the same date.
+                major = major_version(engine, db["EngineVersion"])
+                key = (engine, major)
+                
+                if key not in engine_instances:
+                    engine_instances[key] = []
+                resource = {
+                    "name": db["DBInstanceIdentifier"],
+                    "arn": db.get("DBInstanceArn", ""),
+                    # Sizing attributes for the Extended Support cost estimate (#142)
+                    "engine": engine,
+                    "engine_version": db["EngineVersion"],
+                    "instance_class": db.get("DBInstanceClass", ""),
+                    "multi_az": bool(db.get("MultiAZ", False)),
+                }
+                if db.get("DBClusterIdentifier"):
+                    resource["cluster"] = db["DBClusterIdentifier"]
+                    if db["DBClusterIdentifier"] in serverless_by_cluster:
+                        resource["serverless_v2"] = serverless_by_cluster[db["DBClusterIdentifier"]]
+                # The minor's own end of standard support = the date RDS auto-upgrades
+                # this exact version to a newer minor. Kept per resource, not as the
+                # row's deadline (that one is the major's).
+                service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
+                minor = index.lookup(service_key, [_rds_match_candidates(engine, version)[0]])
+                if minor and minor.get("end_of_support_date") not in (None, "", "N/A"):
+                    resource["minor_version"] = version
+                    resource["minor_end_of_support"] = minor["end_of_support_date"]
+                engine_instances[key].append(resource)
+        
+        for (engine, major), instances in engine_instances.items():
+            # Aurora engines have their own extraction source/config key
+            service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
+            engine_key = f"{engine}-{major}"
+            items.append(build_inventory_item(
+                service_key=service_key,
+                identifier=engine_key,
+                display_name=f"RDS {engine_key.replace('-', ' ').title()}",
+                candidates=_rds_match_candidates(engine, instances[0]["engine_version"], major),
+                affected_resources=instances,
+                total_affected=len(instances),
+                source_url="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering RDS instances: {e}")
+    
+    return items
+
+
+def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover EKS clusters and their Kubernetes versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    eks_client = _client(index, "eks", region)
+    items = []
+    version_clusters = {}
+    
+    try:
+        clusters = eks_client.list_clusters()["clusters"]
+        for cluster_name in clusters:
+            cluster = eks_client.describe_cluster(name=cluster_name)["cluster"]
+            version = cluster["version"]
+            if version not in version_clusters:
+                version_clusters[version] = []
+            version_clusters[version].append({"name": cluster_name, "arn": cluster.get("arn", "")})
+        
+        for version, cluster_names in version_clusters.items():
+            items.append(build_inventory_item(
+                service_key="eks",  # pragma: allowlist secret
+                identifier=f"k8s-{version}",
+                display_name=f"Kubernetes {version}",
+                candidates=[version, f"k8s-{version}", f"eks-{version}"],
+                affected_resources=cluster_names,
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering EKS clusters: {e}")
+    
+    return items
+
+
+def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover ElastiCache clusters and their engine versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    elasticache_client = _client(index, "elasticache", region)
+    items = []
+    engine_clusters = {}
+    
+    try:
+        paginator = elasticache_client.get_paginator("describe_cache_clusters")
+        for page in paginator.paginate():
+            for cluster in page["CacheClusters"]:
+                engine = cluster["Engine"]
+                version = cluster["EngineVersion"].split('.')[0]
+                key = f"{engine}-{version}"
+                
+                if key not in engine_clusters:
+                    engine_clusters[key] = []
+                engine_clusters[key].append({"name": cluster["CacheClusterId"], "arn": cluster.get("ARN", ""), "engine": engine})
+        
+        for engine_key, clusters in engine_clusters.items():
+            items.append(build_inventory_item(
+                service_key="elasticache",  # pragma: allowlist secret
+                identifier=engine_key,
+                display_name=f"ElastiCache {engine_key.replace('-', ' ').title()}",
+                candidates=[engine_key],
+                affected_resources=clusters,
+                total_affected=len(clusters),
+                source_url="https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering ElastiCache clusters: {e}")
+    
+    return items
+
+
+def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover OpenSearch domains and their versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    opensearch_client = _client(index, "opensearch", region)
+    items = []
+    version_domains = {}
+    
+    try:
+        domains = opensearch_client.list_domain_names()["DomainNames"]
+        for domain_info in domains:
+            domain_name = domain_info["DomainName"]
+            domain = opensearch_client.describe_domain(DomainName=domain_name)["DomainStatus"]
+            version = domain.get("EngineVersion", "unknown")
+            
+            if version not in version_domains:
+                version_domains[version] = []
+            version_domains[version].append({"name": domain_name, "arn": domain.get("ARN", "")})
+        
+        for version, domain_names in version_domains.items():
+            bare_version = version.split("_")[-1] if "_" in version else version
+            items.append(build_inventory_item(
+                service_key="opensearch",  # pragma: allowlist secret
+                identifier=version,
+                display_name=f"OpenSearch {version}",
+                candidates=[version, bare_version, f"opensearch-{bare_version}"],
+                affected_resources=domain_names,
+                total_affected=len(domain_names),
+                source_url="https://docs.aws.amazon.com/opensearch-service/latest/developerguide/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering OpenSearch domains: {e}")
+    
+    return items
+
+
+def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover MSK (Kafka) clusters and their versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    msk_client = _client(index, "kafka", region)
+    items = []
+    version_clusters = {}
+    
+    try:
+        paginator = msk_client.get_paginator("list_clusters_v2")
+        for page in paginator.paginate():
+            for cluster in page.get("ClusterInfoList", []):
+                cluster_name = cluster.get("ClusterName", "unknown")
+                # Get Kafka version from provisioned or serverless config
+                provisioned = cluster.get("Provisioned", {})
+                kafka_version = provisioned.get("CurrentBrokerSoftwareInfo", {}).get("KafkaVersion", "unknown")
+                
+                if kafka_version not in version_clusters:
+                    version_clusters[kafka_version] = []
+                version_clusters[kafka_version].append({"name": cluster_name, "arn": cluster.get("ClusterArn", "")})
+        
+        for version, cluster_names in version_clusters.items():
+            items.append(build_inventory_item(
+                service_key="msk",  # pragma: allowlist secret
+                identifier=f"kafka-{version}",
+                display_name=f"Apache Kafka {version}",
+                candidates=[f"kafka-{version}", version],
+                affected_resources=cluster_names,
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/msk/latest/developerguide/supported-kafka-versions.html",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering MSK clusters: {e}")
+    
+    return items
+
+
+def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover DocumentDB clusters and their engine versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    docdb_client = _client(index, "docdb", region)
+    items = []
+    version_clusters = {}
+    
+    try:
+        paginator = docdb_client.get_paginator("describe_db_clusters")
+        for page in paginator.paginate():
+            for cluster in page.get("DBClusters", []):
+                if cluster.get("Engine") == "docdb":
+                    cluster_id = cluster.get("DBClusterIdentifier", "unknown")
+                    version = cluster.get("EngineVersion", "unknown").split('.')[0] + "." + cluster.get("EngineVersion", "unknown").split('.')[1] if '.' in cluster.get("EngineVersion", "") else cluster.get("EngineVersion", "unknown")
+                    
+                    if version not in version_clusters:
+                        version_clusters[version] = []
+                    version_clusters[version].append({"name": cluster_id, "arn": cluster.get("DBClusterArn", "")})
+        
+        for version, cluster_names in version_clusters.items():
+            items.append(build_inventory_item(
+                service_key="documentdb",  # pragma: allowlist secret
+                identifier=f"docdb-{version}",
+                display_name=f"DocumentDB {version} (MongoDB compatibility)",
+                candidates=[f"docdb-{version}", f"documentdb-{version}", version],
+                affected_resources=cluster_names,
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/documentdb/latest/developerguide/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering DocumentDB clusters: {e}")
+    
+    return items
+
+
+def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover Neptune clusters and their engine versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    neptune_client = _client(index, "neptune", region)
+    items = []
+    version_clusters = {}
+    
+    try:
+        paginator = neptune_client.get_paginator("describe_db_clusters")
+        for page in paginator.paginate():
+            for cluster in page.get("DBClusters", []):
+                if cluster.get("Engine") == "neptune":
+                    cluster_id = cluster.get("DBClusterIdentifier", "unknown")
+                    version = cluster.get("EngineVersion", "unknown")
+                    
+                    if version not in version_clusters:
+                        version_clusters[version] = []
+                    version_clusters[version].append({"name": cluster_id, "arn": cluster.get("DBClusterArn", "")})
+        
+        for version, cluster_names in version_clusters.items():
+            items.append(build_inventory_item(
+                service_key="neptune",  # pragma: allowlist secret
+                identifier=f"neptune-{version}",
+                display_name=f"Neptune {version}",
+                candidates=[f"neptune-{version}", version],
+                affected_resources=cluster_names,
+                total_affected=len(cluster_names),
+                source_url="https://docs.aws.amazon.com/neptune/latest/userguide/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering Neptune clusters: {e}")
+    
+    return items
+
+
+def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover Glue jobs and their versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    glue_client = _client(index, "glue", region)
+    items = []
+    version_jobs = {}
+    
+    try:
+        paginator = glue_client.get_paginator("get_jobs")
+        for page in paginator.paginate():
+            for job in page.get("Jobs", []):
+                job_name = job.get("Name", "unknown")
+                glue_version = job.get("GlueVersion", "unknown")
+                key = f"glue-{glue_version}"
+                
+                if key not in version_jobs:
+                    version_jobs[key] = []
+                version_jobs[key].append({"name": job_name, "arn": build_arn("glue", region, f"job/{job_name}", account=index.account_id)})
+        
+        for version_key, job_names in version_jobs.items():
+            items.append(build_inventory_item(
+                service_key="glue",  # pragma: allowlist secret
+                identifier=version_key,
+                display_name=f"Glue {version_key.replace('glue-', '')}",
+                candidates=[version_key, version_key.replace('glue-', '')],
+                affected_resources=job_names,
+                total_affected=len(job_names),
+                source_url="https://docs.aws.amazon.com/glue/latest/dg/release-notes.html",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering Glue jobs: {e}")
+    
+    return items
+
+
+def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover Elastic Beanstalk environments and their platform versions"""
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    eb_client = _client(index, "elasticbeanstalk", region)
+    items = []
+    platform_envs = {}
+    
+    try:
+        envs = eb_client.describe_environments().get("Environments", [])
+        for env in envs:
+            env_name = env.get("EnvironmentName", "unknown")
+            platform = env.get("PlatformArn", "")
+            
+            # Extract platform info (e.g., python-3.8, nodejs-18)
+            platform_key = "unknown"
+            if "python" in platform.lower():
+                for ver in ["3.7", "3.8", "3.9", "3.11", "3.12"]:
+                    if ver in platform:
+                        platform_key = f"python-{ver}"
+                        break
+            elif "node" in platform.lower():
+                for ver in ["14", "16", "18", "20"]:
+                    if f"node.js {ver}" in platform.lower() or f"nodejs-{ver}" in platform.lower():
+                        platform_key = f"nodejs-{ver}"
+                        break
+            elif "java" in platform.lower() or "corretto" in platform.lower():
+                for ver in ["8", "11", "17", "21"]:
+                    if f"corretto {ver}" in platform.lower() or f"java-{ver}" in platform.lower():
+                        platform_key = f"java-{ver}"
+                        break
+            
+            if platform_key not in platform_envs:
+                platform_envs[platform_key] = []
+            platform_envs[platform_key].append({"name": env_name, "arn": env.get("EnvironmentArn", ""), "environment_id": env.get("EnvironmentId", "")})
+        
+        for platform_key, env_names in platform_envs.items():
+            items.append(build_inventory_item(
+                service_key="elasticbeanstalk",  # pragma: allowlist secret
+                identifier=platform_key,
+                display_name=f"Beanstalk {platform_key}",
+                candidates=[platform_key, platform_key.replace('-', ' ')],
+                affected_resources=env_names,
+                total_affected=len(env_names),
+                source_url="https://docs.aws.amazon.com/elasticbeanstalk/latest/platforms/",
+                index=index,
+            ))
+    except Exception as e:
+        print(f"Error discovering Elastic Beanstalk environments: {e}")
+    
+    return items
+
+
+def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> List[Dict]:
+    """Discover EC2 instances with previous-generation instance types.
+
+    EC2 has no extraction source today, so the verdict falls back to
+    'deprecated' for families on the previous-generation list (membership in
+    that list IS the deprecation signal); dates come from the lifecycle table
+    if an 'ec2' extraction source is ever configured.
+    """
+    region = region or REGION
+    index = index or LifecycleIndex(region=region)
+    ec2_client = _client(index, "ec2", region)
+    items = []
+    type_instances = {}
+    
+    try:
+        paginator = ec2_client.get_paginator("describe_instances")
+        for page in paginator.paginate(Filters=[{"Name": "instance-state-name", "Values": ["running", "stopped"]}]):
+            for reservation in page.get("Reservations", []):
+                for instance in reservation.get("Instances", []):
+                    instance_id = instance.get("InstanceId", "unknown")
+                    instance_type = instance.get("InstanceType", "unknown")
+                    
+                    # Extract instance family (e.g., t2, m4, c5)
+                    family = instance_type.split('.')[0] if '.' in instance_type else instance_type
+                    
+                    if family not in type_instances:
+                        type_instances[family] = []
+                    type_instances[family].append({"name": instance_id, "arn": build_arn("ec2", region, f"instance/{instance_id}", account=index.account_id)})
+        
+        for family, instance_ids in type_instances.items():
+            # Only report previous-generation instance families
+            if family not in EC2_PREVIOUS_GENERATION_FAMILIES:
+                continue
+            items.append(build_inventory_item(
+                service_key="ec2",  # pragma: allowlist secret
+                identifier=family,
+                display_name=f"EC2 {family.upper()} Instance Family",
+                candidates=[family, f"ec2-{family}"],
+                affected_resources=instance_ids,
+                total_affected=len(instance_ids),
+                source_url="https://aws.amazon.com/ec2/previous-generation/",
+                index=index,
+                fallback_status="deprecated",
+            ))
+    except Exception as e:
+        print(f"Error discovering EC2 instances: {e}")
+    
+    return items
+
+
+# Provenance tag identifying rows written by account discovery (issue #116).
+# Kept on every inventory row for traceability; will carry account/region
+# provenance dimensions when the multi-account roadmap (#99 I4) lands.
+DISCOVERY_PROVENANCE = "account_discovery"
+
+# Discovered assets live in their own table, fully decoupled from the public
+# deprecation facts in aws-services-lifecycle-v2 (issue #116 follow-on).
+INVENTORY_TABLE_NAME = os.environ.get("INVENTORY_TABLE_NAME", "aws-account-inventory-v2")
+
+# Scanner display label -> config service keys its inventory rows use.
+# The RDS scanner emits both rds and aurora rows (aurora engines route to the
+# aurora service key), so a successful RDS scan owns both reconciliation scopes.
+SCANNER_SERVICE_KEYS = {
+    "Lambda": ["lambda"],
+    "RDS": ["rds", "aurora"],
+    "EKS": ["eks"],
+    "ElastiCache": ["elasticache"],
+    "OpenSearch": ["opensearch"],
+    "MSK": ["msk"],
+    "DocumentDB": ["documentdb"],
+    "Neptune": ["neptune"],
+    "Glue": ["glue"],
+    "Elastic Beanstalk": ["elasticbeanstalk"],
+    "EC2": ["ec2"],
+}
+
+
+# Rows read per Query request when reconciling from the table (issue #225).
+# Bounds rows READ PER REQUEST (and so peak page memory), not matches: the
+# Query is on the service_name partition key only and buckets by scope in
+# memory, so a page may contain out-of-scope rows filtered after the read.
+PAGE_SIZE = 100
+
+
+class FactsTableRefusal(Exception):
+    """Raised when an inventory write would target the extraction facts table (#116)."""
+
+    def __init__(self, table_name: str):
+        self.table_name = table_name
+        super().__init__(table_name)
+
+
+def _inventory_table(table_name: str = None, region: str = None):
+    """Resolve the inventory table and REFUSE the facts table (issue #116).
+
+    Returns (table, resolved_table_name). Raises FactsTableRefusal if the
+    resolved name is the LIFECYCLE_TABLE_NAME facts table - callers map that
+    refusal back to their own externally-observable shape.
+
+    The `region` argument is the SCANNED region (callers pass cell["region"]
+    down from a multi-region run, #144) and is NOT the table's region. The
+    demo's own DynamoDB tables (inventory, facts, state) are single-region,
+    living in the hub's deploy region (REGION), and the pipeline role's IAM
+    policy grants access on their fixed ARNs. Addressing them through a scanned
+    region's endpoint (e.g. eu-west-1) yields AccessDenied on the ARN region
+    mismatch. Always bind the table in REGION; `region` is accepted but ignored
+    for endpoint selection so existing callers need no change."""
+    table_name = table_name or INVENTORY_TABLE_NAME
+    lifecycle_table_name = os.environ.get("LIFECYCLE_TABLE_NAME", "aws-services-lifecycle-v2")
+    if table_name == lifecycle_table_name:
+        raise FactsTableRefusal(table_name)
+    table = boto3.resource("dynamodb", region_name=REGION).Table(table_name)
+    return table, table_name
+
+
+def _facts_table_refusal_result(table_name: str) -> Dict:
+    """The exact facts-table refusal dict (issue #116), shared by every writer
+    so TestFactsTableGuard and callers' early-return contract stay unchanged."""
+    return {
+        "success": False,
+        "error": (
+            f"Refusing to write inventory to the extraction facts table "
+            f"'{table_name}'. Inventory belongs in '{INVENTORY_TABLE_NAME}' (issue #116)."
+        ),
+    }
+
+
+def save_scope_inventory(items: List[Dict], run_id: str, table_name: str = None,
+                         region: str = None) -> Dict:
+    """Upsert ONE scan cell's rows (issue #225): tag with run_id + provenance and
+    put them, trimmed to the row budget. No reconciliation and no enrichment here
+    - stale removal and tags/health/cost run once per RUN in reconcile_from_table.
+
+    Returns bounded facts only: {"saved": int} (never rows, never needs_attention).
+    Refuses the facts table the same way save_to_dynamodb does (returns
+    {"success": False, "error": "...facts table..."})."""
+    try:
+        table, _ = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
+
+    for item in items:
+        item["provenance"] = DISCOVERY_PROVENANCE
+        item["discovery_run_id"] = run_id
+    with table.batch_writer() as batch:
+        for item in items:
+            batch.put_item(Item=_dynamo_safe(fit_row_to_budget(item)))
+    return {"saved": len(items)}
+
+
+def reconcile_from_table(run_id: str, scanned_scopes: List[Dict],
+                         table_name: str = None, region: str = None) -> Dict:
+    """Reconcile the whole run from rows READ BACK from the table (issue #225),
+    never from an items argument. ONE pass per run:
+
+      1. For each service_key present across scanned_scopes, query that service's
+         partition (service_name = PK), paging with Limit=PAGE_SIZE + LastEvaluatedKey,
+         keeping rows whose (account_id, region) is a scanned scope -> working_set;
+         also collect stale item_ids (discovery_run_id != run_id, in a scanned scope).
+      2. Run enrichment ONCE over the whole working_set:
+         collect_resource_tags(working_set, scanned_scopes),
+         cross_check_health(working_set, scanned_scopes),
+         estimate_cost_exposure(working_set)
+         -> each writes its single control row exactly once (unchanged behavior).
+      3. Re-put the enriched working_set rows (fit_row_to_budget + _dynamo_safe).
+      4. Batch-delete the stale keys.
+
+    Returns bounded aggregates only:
+      {"success", "items_saved", "stale_removed", "run_id", "table_name",
+       "tags", "health", "cost_exposure", "scopes_failed"}."""
+    try:
+        table, resolved_name = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
+
+    scanned_scopes = scanned_scopes or []
+    # Which (account, region, service_key) scopes this run reconciles. Identical
+    # to how save_to_dynamodb derives scoped from scanned_scopes.
+    scoped = {(sc["account_id"], sc["region"], k)
+              for sc in scanned_scopes for k in sc.get("service_keys", [])}
+    scanned_services = sorted({k for sc in scanned_scopes for k in sc.get("service_keys", [])})
+
+    def _in_scope(row) -> bool:
+        # Same predicate as save_to_dynamodb: rows without an account_id
+        # (pre-#144 key format) are always reconciled away.
+        if not scoped or not row.get("account_id"):
+            return True
+        return (row.get("account_id"), row.get("region"), row["service_name"]) in scoped
+
+    working_set: List[Dict] = []
+    stale_keys: List[Dict] = []
+    scopes_failed = 0
+    for service_key in scanned_services:
+        try:
+            kwargs = {
+                "KeyConditionExpression": "service_name = :s",
+                "ExpressionAttributeValues": {":s": service_key},
+                "Limit": PAGE_SIZE,
+            }
+            response = table.query(**kwargs)
+            while True:
+                for row in response.get("Items", []):
+                    in_scope = _in_scope(row)
+                    if row.get("discovery_run_id") == run_id:
+                        if in_scope:
+                            working_set.append(row)
+                    elif in_scope:
+                        stale_keys.append({
+                            "service_name": row["service_name"],
+                            "item_id": row["item_id"],
+                        })
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+        except Exception:  # one unreadable service/scope must not abort reconcile
+            scopes_failed += 1
+
+    # Enrichment runs ONCE over the whole working set, never per scope and never
+    # per page: each control row is written exactly once per run (HIGH-1/HIGH-2).
+    tags = collect_resource_tags(working_set, scanned_scopes)
+    health = cross_check_health(working_set, scanned_scopes)
+    cost = estimate_cost_exposure(working_set)
+
+    items_saved = 0
+    try:
+        with table.batch_writer() as batch:
+            for row in working_set:
+                batch.put_item(Item=_dynamo_safe(fit_row_to_budget(row)))
+                items_saved += 1
+    except Exception:
+        scopes_failed += 1
+
+    try:
+        with table.batch_writer() as batch:
+            for key in stale_keys:
+                batch.delete_item(Key=key)
+    except Exception:
+        scopes_failed += 1
+
+    return {
+        "success": True,
+        "items_saved": items_saved,
+        "stale_removed": len(stale_keys),
+        "run_id": run_id,
+        "table_name": resolved_name,
+        "tags": tags,
+        "health": health,
+        "cost_exposure": cost,
+        "scopes_failed": scopes_failed,
+    }
+
+
+def save_to_dynamodb(items: List[Dict], table_name: str = None, region: str = None,
+                     run_id: str = None, scanned_services: List[str] = None,
+                     scanned_scopes: List[Dict] = None) -> Dict:
+    """
+    Upsert discovered inventory rows and reconcile stale ones (issue #116).
+
+    Writes go to the dedicated aws-account-inventory-v2 table - never to the
+    extraction facts table. Reconciliation is run-id based and scoped:
+    1. every item is tagged with this run's discovery_run_id and provenance,
+    2. items are upserted by key (idempotent re-runs),
+    3. stale rows (older run_id, i.e. resources no longer seen) are deleted
+       ONLY within the services this run actually scanned successfully.
+       A scanner that failed leaves its service's inventory untouched
+       instead of having it wiped as "stale".
+
+    Args:
+        items: Discovered inventory items to save
+        table_name: DynamoDB table override (defaults to INVENTORY_TABLE_NAME)
+        region: AWS region
+        run_id: Unique id for this discovery run (generated if omitted)
+        scanned_services: Service keys whose scanners completed successfully;
+            reconciliation is confined to these. Defaults to the service keys
+            present in items (which loses empty-result scopes - pass it).
+        scanned_scopes: Finer scoping (#144): [{account_id, region, service_keys}]
+            cells that completed. When given, a stale row is deleted only if its
+            (account_id, region) was actually rescanned for its service; rows of
+            an account whose scan failed are left untouched. Rows without an
+            account_id (pre-#144 key format) are always reconciled away.
+
+    Returns:
+        Dictionary with save results
+    """
+    import uuid
+
+    # Hard guard (issue #116): reconciliation below deletes rows outside the
+    # current run, so pointing this at the extraction facts table would destroy
+    # deprecation data. A caller passing the lifecycle table is always a bug -
+    # refuse rather than corrupt.
+    try:
+        table, table_name = _inventory_table(table_name, region)
+    except FactsTableRefusal as refusal:
+        return _facts_table_refusal_result(refusal.table_name)
+
+    run_id = run_id or str(uuid.uuid4())
+
+    try:
+        for item in items:
+            item["provenance"] = DISCOVERY_PROVENANCE
+            item["discovery_run_id"] = run_id
+
+        # Upsert this run's inventory (put on an existing key replaces it).
+        # Cost figures are floats; DynamoDB only takes Decimal. Oversized rows
+        # (tags + health + cost on hundreds of resources, #164) are trimmed
+        # rather than failing the whole batch.
+        with table.batch_writer() as batch:
+            for item in items:
+                batch.put_item(Item=_dynamo_safe(fit_row_to_budget(item)))
+
+        # Reconcile per successfully-scanned service: query that service's
+        # inventory rows and delete those not written by this run.
+        if scanned_services is None:
+            scanned_services = sorted({i["service_name"] for i in items})
+        if scanned_scopes:
+            scanned_services = sorted({k for sc in scanned_scopes for k in sc.get("service_keys", [])})
+            scoped = {(sc["account_id"], sc["region"], k) for sc in scanned_scopes for k in sc.get("service_keys", [])}
+        else:
+            scoped = None
+
+        def _in_scope(row) -> bool:
+            if scoped is None or not row.get("account_id"):
+                return True
+            return (row.get("account_id"), row.get("region"), row["service_name"]) in scoped
+
+        stale_keys = []
+        for service_key in scanned_services:
+            kwargs = {
+                "KeyConditionExpression": "service_name = :s",
+                "ExpressionAttributeValues": {":s": service_key},
+                "ProjectionExpression": "service_name, item_id, discovery_run_id, account_id, #r",
+                "ExpressionAttributeNames": {"#r": "region"},
+            }
+            response = table.query(**kwargs)
+            while True:
+                for row in response.get("Items", []):
+                    if row.get("discovery_run_id") != run_id and _in_scope(row):
+                        stale_keys.append({
+                            "service_name": row["service_name"],
+                            "item_id": row["item_id"],
+                        })
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+
+        with table.batch_writer() as batch:
+            for key in stale_keys:
+                batch.delete_item(Key=key)
+
+        return {
+            "success": True,
+            "items_saved": len(items),
+            "stale_removed": len(stale_keys),
+            "run_id": run_id,
+            "table_name": table_name
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def discover_all_resources(region: str = None, include_supported: bool = True) -> Dict:
+    """
+    Discover all AWS resources in the account and check for deprecations.
+    
+    Scans 11 AWS services:
+    - Lambda (runtimes)
+    - RDS (engine versions)
+    - EKS (Kubernetes versions)
+    - ElastiCache (Redis/Memcached versions)
+    - OpenSearch (engine versions)
+    - MSK (Kafka versions)
+    - DocumentDB (MongoDB compatibility versions)
+    - Neptune (graph DB versions)
+    - Glue (ETL job versions)
+    - Elastic Beanstalk (platform versions)
+    - EC2 (older instance families)
+    
+    Args:
+        region: AWS region to scan (defaults to environment variable)
+        include_supported: If True, include all resources. If False, only deprecated ones.
+    
+    Returns:
+        Dictionary with discovery results and summary
+    """
+    region = region or REGION
+    all_items = []
+    services_scanned = []
+    services_failed = []
+    
+    # One shared lifecycle index for the whole run: each service's extraction
+    # rows are loaded once and reused across discover_* calls (issue #99 I1).
+    index = LifecycleIndex(region=region)
+    
+    # Discover resources from each service
+    print(f"Discovering resources in {region}...")
+    
+    # Core services (most common)
+    try:
+        lambda_items = discover_lambda_functions(region, index)
+        all_items.extend(lambda_items)
+        services_scanned.append("Lambda")
+    except Exception as e:
+        services_failed.append(f"Lambda: {e}")
+    
+    try:
+        rds_items = discover_rds_instances(region, index)
+        all_items.extend(rds_items)
+        services_scanned.append("RDS")
+    except Exception as e:
+        services_failed.append(f"RDS: {e}")
+    
+    try:
+        eks_items = discover_eks_clusters(region, index)
+        all_items.extend(eks_items)
+        services_scanned.append("EKS")
+    except Exception as e:
+        services_failed.append(f"EKS: {e}")
+    
+    try:
+        elasticache_items = discover_elasticache_clusters(region, index)
+        all_items.extend(elasticache_items)
+        services_scanned.append("ElastiCache")
+    except Exception as e:
+        services_failed.append(f"ElastiCache: {e}")
+    
+    try:
+        opensearch_items = discover_opensearch_domains(region, index)
+        all_items.extend(opensearch_items)
+        services_scanned.append("OpenSearch")
+    except Exception as e:
+        services_failed.append(f"OpenSearch: {e}")
+    
+    # Additional services
+    try:
+        msk_items = discover_msk_clusters(region, index)
+        all_items.extend(msk_items)
+        services_scanned.append("MSK")
+    except Exception as e:
+        services_failed.append(f"MSK: {e}")
+    
+    try:
+        docdb_items = discover_documentdb_clusters(region, index)
+        all_items.extend(docdb_items)
+        services_scanned.append("DocumentDB")
+    except Exception as e:
+        services_failed.append(f"DocumentDB: {e}")
+    
+    try:
+        neptune_items = discover_neptune_clusters(region, index)
+        all_items.extend(neptune_items)
+        services_scanned.append("Neptune")
+    except Exception as e:
+        services_failed.append(f"Neptune: {e}")
+    
+    try:
+        glue_items = discover_glue_jobs(region, index)
+        all_items.extend(glue_items)
+        services_scanned.append("Glue")
+    except Exception as e:
+        services_failed.append(f"Glue: {e}")
+    
+    try:
+        beanstalk_items = discover_beanstalk_environments(region, index)
+        all_items.extend(beanstalk_items)
+        services_scanned.append("Elastic Beanstalk")
+    except Exception as e:
+        services_failed.append(f"Elastic Beanstalk: {e}")
+    
+    try:
+        ec2_items = discover_ec2_instances(region, index)
+        all_items.extend(ec2_items)
+        services_scanned.append("EC2")
+    except Exception as e:
+        services_failed.append(f"EC2: {e}")
+    
+    # Filter if needed
+    if not include_supported:
+        all_items = [i for i in all_items if i["status"] in ["deprecated", "end_of_life"]]
+    
+    # Service keys covered by the scanners that completed successfully -
+    # reconciliation must be confined to these (issue #116): a failed scanner
+    # keeps its previous inventory instead of having it wiped as stale.
+    scanned_service_keys = sorted({
+        key
+        for label in services_scanned
+        for key in SCANNER_SERVICE_KEYS.get(label, [])
+    })
+    
+    # Calculate summary
+    deprecated_count = len([i for i in all_items if i["status"] == "deprecated"])
+    eol_count = len([i for i in all_items if i["status"] == "end_of_life"])
+    supported_count = len([i for i in all_items if i["status"] == "supported"])
+    
+    return {
+        "success": True,
+        "region": region,
+        "items": all_items,
+        "summary": {
+            "total": len(all_items),
+            "end_of_life": eol_count,
+            "deprecated": deprecated_count,
+            "supported": supported_count,
+            "needs_attention": deprecated_count + eol_count,
+        },
+        "services_scanned": services_scanned,
+        "scanned_service_keys": scanned_service_keys,
+        "services_failed": services_failed,
+        "discovery_date": datetime.now().isoformat() + "Z"
+    }
+
+
+def discover_and_save(region: str = None, include_supported: bool = True, table_name: str = None) -> Dict:
+    """
+    Discover all resources and save to the inventory table in one operation.
+    This is the main entry point for the pipeline scan step.
+    
+    Args:
+        region: AWS region to scan
+        include_supported: Include supported resources (not just deprecated)
+        table_name: Inventory table override (defaults to INVENTORY_TABLE_NAME)
+    
+    Returns:
+        Dictionary with discovery and save results
+    """
+    # Discover resources
+    discovery_result = discover_all_resources(region, include_supported)
+    
+    if not discovery_result["success"]:
+        return discovery_result
+    
+    health_status = cross_check_health(discovery_result["items"])
+    
+    # Save to the inventory table; reconciliation is confined to the scopes
+    # whose scanners succeeded (issue #116).
+    save_result = save_to_dynamodb(
+        discovery_result["items"], table_name, region,
+        scanned_services=discovery_result["scanned_service_keys"],
+    )
+    
+    if not save_result["success"]:
+        return {
+            "success": False,
+            "error": f"Discovery succeeded but save failed: {save_result['error']}",
+            "discovery_result": discovery_result
+        }
+    
+    return {
+        "success": True,
+        "region": discovery_result["region"],
+        "items_discovered": len(discovery_result["items"]),
+        "items_saved": save_result["items_saved"],
+        "stale_removed": save_result.get("stale_removed", 0),
+        "summary": discovery_result["summary"],
+        "services_failed": discovery_result["services_failed"],
+        "health": health_status,
+        "discovery_date": discovery_result["discovery_date"]
+    }
+
+
+HEALTH_STATUS_KEY = "_health_match"  # control row in the backend-owned state table
+COST_STATUS_KEY = "_cost_exposure"   # outcome of the last Extended Support pricing pass (#142)
+TAGS_STATUS_KEY = "_resource_tags"   # outcome of the last user-tag pass (#164)
+
+
+# ---------------------------------------------------------------------------
+# Resource tags (#164): the user tags of every scanned resource, so the UI can
+# scope everything to "my team's resources" (organizations mark ownership with
+# tags such as BU or Team). One Resource Groups Tagging API pass per
+# (account, region), joined on the ARNs the scanners already record.
+# ---------------------------------------------------------------------------
+
+def _is_user_tag(key: str) -> bool:
+    """Keys AWS stamps itself (aws:cloudformation:stack-name, aws:autoscaling:groupName,
+    ...) are noise for ownership; customers cannot create 'aws:' keys."""
+    return bool(key) and not key.lower().startswith("aws:")
+
+
+def fetch_user_tags(region: str, session=None, client=None) -> Dict[str, Dict[str, str]]:
+    """{ARN: {key: value}} for every tagged resource in one account and region.
+
+    `client` is for tests; otherwise the client comes from `session` (spoke)
+    or the hub's own credentials. Raises on API errors: the caller decides
+    whether that is fatal (it is not: tags are best effort)."""
+    client = client or (session or boto3).client("resourcegroupstaggingapi", region_name=region)
+    out: Dict[str, Dict[str, str]] = {}
+    for page in client.get_paginator("get_resources").paginate(ResourcesPerPage=100):
+        for mapping in page.get("ResourceTagMappingList", []):
+            tags = {t["Key"]: t.get("Value", "") for t in mapping.get("Tags", []) if _is_user_tag(t.get("Key", ""))}
+            if tags:
+                out[mapping["ResourceARN"]] = tags
+    return out
+
+
+def apply_tags(items: List[Dict], tags_by_arn: Dict[str, Dict[str, str]]) -> Dict[str, int]:
+    """Stamp `tags` on each resource entry whose ARN is known, in place.
+
+    Entries without a match get no `tags` key (the UI reads that as not tagged).
+    Returns {"resources": n, "tagged": m, "keys": {key: resources carrying it}}."""
+    stats = {"resources": 0, "tagged": 0, "keys": {}}
+    for item in items:
+        for res in item.get("service_specific", {}).get("affected_resource_details", []):
+            stats["resources"] += 1
+            tags = tags_by_arn.get(res.get("arn") or "")
+            if tags:
+                res["tags"] = tags
+                stats["tagged"] += 1
+                for k in tags:
+                    stats["keys"][k] = stats["keys"].get(k, 0) + 1
+            else:
+                res.pop("tags", None)
+    return stats
+
+
+def collect_resource_tags(items: List[Dict], scanned_scopes: List[Dict] = None) -> Dict:
+    """Fetch and join user tags for every (account, region) the run scanned, in place.
+
+    Same contract as cross_check_health: never fails a scan; a region where the
+    Tagging API could not be called is reported, its resources simply stay
+    untagged. The outcome is stored in the state table for Sources & coverage."""
+    from datetime import datetime, timezone
+    hub = _caller_identity().get("account", "")
+    scopes = sorted({(sc.get("account_id") or hub, sc.get("region") or REGION) for sc in (scanned_scopes or [])}
+                    | {(item.get("account_id") or hub, item.get("region") or REGION) for item in items})
+    tags_by_arn: Dict[str, Dict[str, str]] = {}
+    reasons: List[str] = []
+    by_account: Dict[str, Dict] = {}
+    for account_id, region in scopes:
+        acct = by_account.setdefault(account_id, {"available": False, "reason": None, "tagged_resources": 0})
+        try:
+            found = fetch_user_tags(region, session=session_for_account(account_id, region))
+            tags_by_arn.update(found)
+            acct.update(available=True, tagged_resources=acct["tagged_resources"] + len(found))
+        except Exception as e:
+            reason = f"{account_id}/{region}: {type(e).__name__}: {str(e)[:120]}"
+            reasons.append(reason)
+            acct["reason"] = acct["reason"] or reason
+    stats = apply_tags(items, tags_by_arn)
+    status = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "available": any(a["available"] for a in by_account.values()),
+        "reason": "; ".join(reasons) or None,
+        "resources": stats["resources"],
+        "tagged": stats["tagged"],
+        # keys ranked by how many scanned resources carry them: the filter's suggestions
+        "keys": dict(sorted(stats["keys"].items(), key=lambda kv: (-kv[1], kv[0]))[:200]),
+        "by_account": by_account,
+    }
+    _save_control_row(TAGS_STATUS_KEY, status)
+    return status
+
+
+def load_tags_status() -> Optional[Dict]:
+    return load_control_row(TAGS_STATUS_KEY)
+
+
+# DynamoDB items are limited to 400 KB. Rows carry up to MAX_RESOURCE_NAMES
+# resource entries, each now with tags, health and cost blocks: a large row can
+# get close. Entries are dropped from the end (total_affected stays exact) until
+# the serialized row fits under this budget, and the row says so.
+ROW_BYTE_BUDGET = 350_000
+
+
+def _row_bytes(item: Dict) -> int:
+    return len(json.dumps(item, default=str).encode("utf-8"))
+
+
+def fit_row_to_budget(item: Dict, budget: int = ROW_BYTE_BUDGET) -> Dict:
+    """Trim affected_resource_details (and names) in place until the row fits."""
+    ss = item.get("service_specific")
+    if not isinstance(ss, dict):
+        return item
+    details = ss.get("affected_resource_details")
+    if not isinstance(details, list) or _row_bytes(item) <= budget:
+        return item
+    kept = len(details)
+    while kept > 0 and _row_bytes(item) > budget:
+        kept = kept // 2 if kept > 20 else kept - 1
+        ss["affected_resource_details"] = details[:kept]
+        names = ss.get("affected_resource_names")
+        if isinstance(names, list):
+            ss["affected_resource_names"] = names[:kept]
+    ss["details_truncated"] = True
+    ss["details_stored"] = kept
+    return item
+
+
+def estimate_cost_exposure(items: List[Dict]) -> Dict:
+    """Price the RDS/Aurora Extended Support surcharge of scanned resources, in place (#142).
+
+    Each RDS/Aurora resource gains an 'extended_support' block (unit price,
+    monthly Yr1-2 / Yr3, 12-month forecast, dates) and each row a
+    'cost_exposure' aggregate. Prices come from the Price List API for the
+    scanned region, vCPUs from EC2, dates from the catalog's major-version row.
+    Never fails a scan; returns a storable status.
+    """
+    from datetime import datetime, timezone
+    from cost_estimator import EXTENDED_SUPPORT_ENGINES, PriceBook, VcpuBook, estimate_resource, major_version, row_exposure
+
+    status = {"checked_at": datetime.now(timezone.utc).isoformat(), "available": False, "reason": None,
+              "resources_priced": 0, "monthly": 0.0, "forecast_12m": 0.0, "currency": "USD"}
+    books: Dict[str, tuple] = {}
+    indexes: Dict[str, "LifecycleIndex"] = {}
+    reasons: List[str] = []
+    try:
+        for item in items:
+            if item.get("service_name") not in ("rds", "aurora"):
+                continue
+            region = item.get("region") or REGION
+            if region not in books:
+                books[region] = (PriceBook(region), VcpuBook(region))
+                indexes[region] = LifecycleIndex(region=region)
+            prices, vcpus = books[region]
+            details = item.get("service_specific", {}).get("affected_resource_details", [])
+            for res in details:
+                engine = res.get("engine", "")
+                major_row = None
+                if engine in EXTENDED_SUPPORT_ENGINES:
+                    _, service_key, slug = EXTENDED_SUPPORT_ENGINES[engine]
+                    major = major_version(engine, res.get("engine_version", ""))
+                    major_row = indexes[region].lookup(service_key, [f"{slug}-{major}"])
+                try:
+                    res["extended_support"] = estimate_resource(res, prices, vcpus, major_row)
+                except Exception as e:  # one odd resource must not hide the others
+                    res["extended_support"] = {"eligible": False, "currency": "USD", "reason": "error",
+                                               "note": f"{type(e).__name__}: {str(e)[:120]}"}
+                    if str(e) not in reasons:
+                        reasons.append(f"{res.get('name')}: {type(e).__name__}: {str(e)[:100]}")
+            exposure = row_exposure(details)
+            item["service_specific"]["cost_exposure"] = exposure
+            status["resources_priced"] += exposure["resources_priced"]
+            status["monthly"] = round(status["monthly"] + exposure["monthly"], 2)
+            status["forecast_12m"] = round(status["forecast_12m"] + exposure["forecast_12m"], 2)
+            if prices.error and prices.error not in reasons:
+                reasons.append(prices.error)
+        status["available"] = any(b[0].available for b in books.values()) or not books
+        status["reason"] = "; ".join(reasons) or None
+    except Exception as e:  # pragma: no cover - defensive: pricing must never break a scan
+        status["reason"] = f"{type(e).__name__}: {str(e)[:160]}"
+    _save_control_row(COST_STATUS_KEY, status)
+    return status
+
+
+def _save_control_row(key: str, status: Dict) -> None:
+    try:
+        from database_reads import state_table
+        state_table.put_item(Item=_dynamo_safe({"service_name": key, **status}))
+    except Exception as e:  # pragma: no cover - never fail the scan on this
+        print(f"Could not save control row {key}: {e}")
+
+
+def load_control_row(key: str) -> Optional[Dict]:
+    try:
+        from database_reads import state_table
+        item = state_table.get_item(Key={"service_name": key}).get("Item")
+        if item:
+            item.pop("service_name", None)
+        return item
+    except Exception:
+        return None
+
+
+def _dynamo_safe(value):
+    """DynamoDB rejects Python floats: convert them (recursively) to Decimal."""
+    from decimal import Decimal
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {k: _dynamo_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dynamo_safe(v) for v in value]
+    return value
+
+
+def cross_check_health(items: List[Dict], scanned_scopes: List[Dict] = None) -> Dict:
+    """Cross-check inventory rows with AWS Health (issue #141), in place.
+
+    Marks resources that AWS itself names in an open planned-lifecycle notice
+    (one Health query per region present in the rows), records the outcome in
+    the state table and returns it. Never fails a scan: Health unavailable
+    (no Business/Enterprise Support, missing permission) is just reported.
+    """
+    from health_match import match_health_events, apply_health_flags, health_status_summary, health_client, support_tier
+    hub = _caller_identity().get("account", "")
+    # Every (account, region) the run scanned, even those with no resource: the
+    # Support tier is reported for all of them (#144). Falls back to the rows.
+    scopes = sorted({(sc.get("account_id") or hub, sc.get("region") or REGION) for sc in (scanned_scopes or [])}
+                    | {(item.get("account_id") or hub, item.get("region") or REGION) for item in items}) or [(hub, REGION)]
+    flagged, events, reasons, available = 0, 0, [], False
+    checked_at = None
+    by_account: Dict[str, Dict] = {}  # per-account transparency (#144): tier + whether Health answered
+    for account_id, region in scopes:
+        # Health is account-scoped: a spoke's notices are only visible with the
+        # spoke's own credentials (#144).
+        acct = by_account.setdefault(account_id, {"health_available": False, "reason": None, "events": 0, "flagged": 0})
+        try:
+            session = session_for_account(account_id, region)
+            if "tier" not in acct:
+                acct.update(support_tier(region, session))  # one Support call per account, not per region
+            match = match_health_events(region, client=health_client(region, session))
+        except Exception as e:
+            match = {"available": False, "reason": f"{account_id}: {type(e).__name__}: {str(e)[:120]}",
+                     "checked_at": None, "events": 0, "entities": {}}
+            acct.setdefault("tier", "unknown")
+        checked_at = match["checked_at"] or checked_at
+        if match["available"]:
+            available = True
+            events += match["events"]
+            n = apply_health_flags(
+                [i for i in items if (i.get("account_id") or hub) == account_id and (i.get("region") or REGION) == region], match)
+            flagged += n
+            acct.update({"health_available": True, "events": acct["events"] + match["events"], "flagged": acct["flagged"] + n})
+        else:
+            if match["reason"] and match["reason"] not in reasons:
+                reasons.append(match["reason"])
+            acct["reason"] = acct["reason"] or match["reason"]
+    status = health_status_summary(
+        {"available": available, "reason": "; ".join(reasons) or None, "checked_at": checked_at, "events": events},
+        flagged,
+    )
+    status["by_account"] = {k: {kk: vv for kk, vv in v.items() if kk != "severities"} for k, v in by_account.items()}
+    _save_health_status(status)
+    return status
+
+
+def _save_health_status(status: Dict) -> None:
+    """Persist the last Health cross-check outcome so the UI can explain
+    whether the Health column is live, and why not when it is not."""
+    _save_control_row(HEALTH_STATUS_KEY, status)
+
+
+def load_health_status() -> Optional[Dict]:
+    return load_control_row(HEALTH_STATUS_KEY)

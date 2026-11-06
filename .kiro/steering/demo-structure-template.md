@@ -80,7 +80,6 @@ See these live examples in the repository:
 
 ### Complete Demo Examples
 - **Password Reset Chatbot**: #[[file:operations-automation/ai-password-reset-chatbot/README.md]]
-- **Lifecycle Tracker**: #[[file:operations-automation/aws-services-lifecycle-tracker/README.md]]
 - **IT Portal Demo**: #[[file:operations-automation/anycompany-it-demo-portal/README.md]]
 - **Chaos Engineering**: #[[file:resilience/ai-chaos-engineering-with-fis/README.md]]
 
@@ -90,7 +89,7 @@ See these live examples in the repository:
 
 ### Architecture Documentation Examples
 - **Detailed Architecture**: #[[file:operations-automation/anycompany-it-demo-portal/ARCHITECTURE.md]]
-- **Technical Design**: #[[file:operations-automation/aws-services-lifecycle-tracker/ARCHITECTURE.md]]
+- **Technical Design**: #[[file:operations-automation/ai-dataset-training-audit/ARCHITECTURE.md]]
 
 ### Deployment Script Examples
 - **PowerShell**: #[[file:operations-automation/anycompany-it-demo-portal/deploy-all.ps1]]

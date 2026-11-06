@@ -113,7 +113,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1",
-    api_key="test-key"
+    api_key="test-key"  # pragma: allowlist secret
 )
 
 completion = client.chat.completions.create(
@@ -141,7 +141,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
-    api_key="test-key"
+    api_key="test-key"  # pragma: allowlist secret
 )
 
 response = client.chat.completions.create(

@@ -306,7 +306,7 @@ def test_put_settings_whitelists_and_strips_secret(monkeypatch):
         # Not settings fields: dropped like any unknown key.
         "platform": "gitlab",
         "org": "acme",
-        "secretRef": "my-git-token-secret",
+        "secretRef": "my-git-token-secret",  # pragma: allowlist secret
         # These must NEVER be persisted:
         "token": "should-be-dropped",
         "tokenValue": "should-be-dropped",

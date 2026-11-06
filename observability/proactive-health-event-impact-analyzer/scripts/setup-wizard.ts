@@ -1014,9 +1014,9 @@ async function ensureJiraMcp(state: SetupState, toolsOverride?: string[]): Promi
         description: 'Atlassian Rovo MCP Server — Jira integration for Health event tickets',
         authorizationConfig: {
           apiKey: {
-            apiKeyName: 'atlassian-api-token',
+            apiKeyName: 'atlassian-api-token',  // pragma: allowlist secret
             apiKeyValue: basicAuthValue,
-            apiKeyHeader: 'Authorization',
+            apiKeyHeader: 'Authorization',  // pragma: allowlist secret
           },
         },
       },

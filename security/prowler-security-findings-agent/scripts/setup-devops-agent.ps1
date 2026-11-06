@@ -94,7 +94,7 @@ function Invoke-SetupDevOpsAgent {
     # Writing the bundle to Secrets Manager is what makes the setup survive
     # partial redeploys — CloudFormation only honors the initial secretString
     # on resource CREATE, never on updates, so the webhook never gets wiped.
-    $SecretName = "prowler-security/devops-agent-webhook-secret"
+    $SecretName = "prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
     $secretExists = $false
     aws secretsmanager describe-secret --secret-id $SecretName --no-cli-pager *> $null
     if ($LASTEXITCODE -eq 0) { $secretExists = $true }

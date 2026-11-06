@@ -1,0 +1,209 @@
+<mxfile host="app.diagrams.net" modified="2026-11-05T10:00:00.000Z" agent="kiro" version="24.7.17" type="device">
+  <diagram id="lambda-runtime-migration" name="Architecture">
+    <mxGraphModel dx="1700" dy="1060" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="AI Lambda Runtime Migration Assistant" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=22;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="350" y="15" width="1000" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Discover and assess deprecated runtimes with a Lambda durable function and Amazon Nova, then upgrade with AWS Transform to a pushed branch" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=13;fontColor=#545B64;" parent="1" vertex="1">
+          <mxGeometry x="250" y="50" width="1200" height="24" as="geometry"/>
+        </mxCell>
+
+        <!-- User -->
+        <mxCell id="user" value="DevOps / platform&#10;engineer" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#232F3E;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;shape=mxgraph.aws4.user;" parent="1" vertex="1">
+          <mxGeometry x="55" y="370" width="50" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- Hub account container -->
+        <mxCell id="hub" value="AWS Cloud: hub account (the account you deploy into)" style="sketch=0;outlineConnect=0;html=1;whiteSpace=wrap;fontSize=13;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#232F3E;fillColor=none;verticalAlign=top;align=left;spacingLeft=36;fontColor=#232F3E;dashed=0;" parent="1" vertex="1">
+          <mxGeometry x="160" y="90" width="1260" height="900" as="geometry"/>
+        </mxCell>
+
+        <!-- Band A: dashboard and API -->
+        <mxCell id="band-ui" value="Dashboard and API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4ECFA;strokeColor=#8B5CB7;fontSize=12;fontStyle=1;fontColor=#8B5CB7;verticalAlign=top;spacingTop=6;arcSize=3;" parent="1" vertex="1">
+          <mxGeometry x="190" y="150" width="240" height="810" as="geometry"/>
+        </mxCell>
+        <mxCell id="cloudfront" value="CloudFront + S3&#10;React / Cloudscape SPA" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudfront;" parent="1" vertex="1">
+          <mxGeometry x="230" y="200" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="cognito" value="Cognito User Pool&#10;ID token" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cognito;" parent="1" vertex="1">
+          <mxGeometry x="230" y="360" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="apigw" value="HTTP API&#10;Cognito JWT authorizer" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" parent="1" vertex="1">
+          <mxGeometry x="230" y="520" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-lambda" value="API Lambda&#10;start runs, read inventory" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="230" y="690" width="60" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Band B: Discover + Assess -->
+        <mxCell id="band-discover" value="Discover + Assess (Lambda durable function, 5 checkpointed steps)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF5FB;strokeColor=#3B8AC4;fontSize=12;fontStyle=1;fontColor=#3B8AC4;verticalAlign=top;spacingTop=6;arcSize=3;" parent="1" vertex="1">
+          <mxGeometry x="460" y="150" width="620" height="440" as="geometry"/>
+        </mxCell>
+        <mxCell id="pipeline" value="Pipeline&#10;durable function" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;html=1;fontSize=11;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="580" y="200" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="steps" value="&lt;b&gt;Discover steps&lt;/b&gt;&lt;br&gt;1. Determine the accounts to scan&lt;br&gt;2. Check each account's Support tier&lt;br&gt;3. Discover deprecated runtimes via Trusted Advisor&lt;br&gt;4. Assess complexity and risks with Nova&lt;br&gt;5. Summarize and update the inventory&lt;br&gt;&lt;br&gt;&lt;i&gt;One unit per account and per function:&lt;br&gt;a failure fails only that unit&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B8AC4;fontSize=11;fontColor=#232F3E;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="480" y="320" width="270" height="240" as="geometry"/>
+        </mxCell>
+        <mxCell id="sources" value="Read by the steps" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B8AC4;dashed=1;fontSize=11;fontStyle=1;fontColor=#3B8AC4;verticalAlign=top;spacingTop=4;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="780" y="190" width="280" height="370" as="geometry"/>
+        </mxCell>
+        <mxCell id="organizations" value="Organizations&#10;member accounts" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.organizations;" parent="1" vertex="1">
+          <mxGeometry x="820" y="225" width="55" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="support" value="AWS Support&#10;tier check" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.support;" parent="1" vertex="1">
+          <mxGeometry x="965" y="225" width="55" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="ta" value="Trusted Advisor&#10;check L4dfs2Q4C5" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.trusted_advisor;" parent="1" vertex="1">
+          <mxGeometry x="820" y="345" width="55" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="cloudwatch" value="Lambda API +&#10;CloudWatch metrics" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#FF4F8B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch;" parent="1" vertex="1"><mxGeometry x="965" y="345" width="55" height="55" as="geometry"/></mxCell>
+        <mxCell id="bedrock" value="Amazon Bedrock&#10;Amazon Nova" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#01A88D;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.bedrock;" parent="1" vertex="1">
+          <mxGeometry x="892" y="460" width="55" height="55" as="geometry"/>
+        </mxCell>
+
+        <!-- Band D: state -->
+        <mxCell id="band-state" value="State (Data stack)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E9F5EB;strokeColor=#5AA65D;fontSize=12;fontStyle=1;fontColor=#5AA65D;verticalAlign=top;spacingTop=6;arcSize=3;" parent="1" vertex="1">
+          <mxGeometry x="1110" y="150" width="280" height="440" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3-artifacts" value="S3 artifacts bucket&#10;buildspec, transform config,&#10;result.json" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" parent="1" vertex="1">
+          <mxGeometry x="1220" y="210" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="dynamodb" value="DynamoDB inventory&#10;fn# functions, mig# migrations" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" parent="1" vertex="1">
+          <mxGeometry x="1220" y="410" width="60" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Band C: Migrate -->
+        <mxCell id="band-migrate" value="Migrate (Lambda durable function, AWS Transform in CodeBuild)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDF3E7;strokeColor=#ED7100;fontSize=12;fontStyle=1;fontColor=#C25E00;verticalAlign=top;spacingTop=6;arcSize=3;" parent="1" vertex="1">
+          <mxGeometry x="460" y="620" width="930" height="340" as="geometry"/>
+        </mxCell>
+        <mxCell id="migrate" value="Migrate orchestrator&#10;prepare, resolve, transform" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=top;verticalAlign=bottom;align=center;html=1;fontSize=11;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="530" y="690" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="codebuild" value="CodeBuild&#10;atx CLI on a fresh clone" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#4D72B8;strokeColor=#ffffff;dashed=0;verticalLabelPosition=top;verticalAlign=bottom;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.codebuild;" parent="1" vertex="1"><mxGeometry x="790" y="690" width="60" height="60" as="geometry"/></mxCell>
+        <mxCell id="transform" value="&lt;b&gt;AWS Transform&lt;/b&gt;&lt;br&gt;managed runtime upgrade&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;deploy region first, then in-geo fallback&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F6F3;strokeColor=#01A88D;strokeWidth=2;fontSize=11;fontColor=#232F3E;arcSize=8;" parent="1" vertex="1">
+          <mxGeometry x="1040" y="685" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="codecommit" value="CodeCommit repository&#10;branch lambda-migration/&amp;lt;target&amp;gt;-&amp;lt;job&amp;gt;" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#4D72B8;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.codecommit;" parent="1" vertex="1"><mxGeometry x="1110" y="835" width="60" height="60" as="geometry"/></mxCell>
+        <mxCell id="eventbridge" value="EventBridge rule&#10;build state change" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="1" vertex="1">
+          <mxGeometry x="790" y="835" width="60" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="build-complete" value="Build complete Lambda&#10;Branch ready, No changes, Failed" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="530" y="835" width="60" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Member accounts (optional) -->
+        <mxCell id="members" value="Member accounts&#10;(optional, -MultiAccount)" style="sketch=0;outlineConnect=0;html=1;whiteSpace=wrap;fontSize=12;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=none;verticalAlign=top;align=left;spacingLeft=36;fontColor=#CD2264;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="1450" y="150" width="220" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="spoke-role" value="LambdaRuntimeMigrationScanRole&#10;read-only spoke role&#10;(StackSet rollout)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.role;" parent="1" vertex="1">
+          <mxGeometry x="1525" y="250" width="70" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: user and API -->
+        <mxCell id="e-user-cf" value="HTTPS" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#8B5CB7;fontSize=10;fontColor=#8B5CB7;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="user" target="cloudfront" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="130" y="380"/>
+              <mxPoint x="130" y="230"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-user-cog" value="sign in" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#8B5CB7;fontSize=10;fontColor=#8B5CB7;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="user" target="cognito" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-user-api" value="API calls&#10;+ ID token" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#8B5CB7;fontSize=10;fontColor=#8B5CB7;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="user" target="apigw" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="130" y="410"/>
+              <mxPoint x="130" y="550"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-api-lambda" value="" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#8B5CB7;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="apigw" target="api-lambda" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-api-pipeline" value="Discover:&#10;start or adopt run" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="api-lambda" target="pipeline" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="445" y="705"/>
+              <mxPoint x="445" y="230"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-api-migrate" value="Migrate:&#10;start batch" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#ED7100;fontSize=10;fontColor=#C25E00;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="api-lambda" target="migrate" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: Discover -->
+        <mxCell id="e-pipe-steps" value="" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="pipeline" target="steps" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-steps-sources" value="steps 1 to 4" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#3B8AC4;fontSize=10;fontColor=#3B8AC4;exitX=1;exitY=0.4;exitDx=0;exitDy=0;entryX=0;entryY=0.6;entryDx=0;entryDy=0;" parent="1" source="steps" target="sources" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-steps-ddb" value="step 5: write inventory" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="steps" target="dynamodb" edge="1">
+          <mxGeometry x="0.1" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="615" y="605"/>
+              <mxPoint x="1095" y="605"/>
+              <mxPoint x="1095" y="440"/>
+            </Array>
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-sources-spoke" value="sts:AssumeRole (read-only)" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#CD2264;fontSize=10;fontColor=#CD2264;dashed=1;exitX=0.9;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="sources" target="spoke-role" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1032" y="125"/>
+              <mxPoint x="1435" y="125"/>
+              <mxPoint x="1435" y="270"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Edges: Migrate -->
+        <mxCell id="e-mig-cb" value="start build,&#10;wait for callback" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#ED7100;fontSize=10;fontColor=#C25E00;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="migrate" target="codebuild" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-cb-tr" value="atx transformation" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#01A88D;fontSize=10;fontColor=#01A88D;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="codebuild" target="transform" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-cb-cc" value="clone, push branch" style="endArrow=classic;startArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#4D72B8;fontSize=10;fontColor=#4D72B8;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="codebuild" target="codecommit" edge="1"><mxGeometry x="0.3" relative="1" as="geometry"><Array as="points"><mxPoint x="835" y="800"/><mxPoint x="1000" y="800"/><mxPoint x="1000" y="865"/></Array><mxPoint as="offset"/></mxGeometry></mxCell>
+        <mxCell id="e-cb-eb" value="" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#E7157B;dashed=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="codebuild" target="eventbridge" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-eb-bc" value="invoke" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#E7157B;dashed=1;fontSize=10;fontColor=#E7157B;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="eventbridge" target="build-complete" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-bc-mig" value="complete callback" style="endArrow=classic;html=1;rounded=1;strokeWidth=2;strokeColor=#ED7100;fontSize=10;fontColor=#C25E00;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="build-complete" target="migrate" edge="1">
+          <mxGeometry x="-0.2" relative="1" as="geometry">
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-bc-ddb" value="write mig# status" style="endArrow=classic;html=1;rounded=1;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;strokeColor=#5AA65D;fontSize=10;fontColor=#5AA65D;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="build-complete" target="dynamodb" edge="1">
+          <mxGeometry x="-0.4" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="445" y="865"/>
+              <mxPoint x="445" y="975"/>
+              <mxPoint x="1405" y="975"/>
+              <mxPoint x="1405" y="440"/>
+            </Array>
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;Solid: synchronous call&lt;br&gt;Dashed: event-driven or cross-account&lt;br&gt;&lt;br&gt;The browser holds no AWS credentials.&lt;br&gt;main is never written and no Lambda&lt;br&gt;function is modified: the flow ends&lt;br&gt;at a pushed upgrade branch." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8F9FA;strokeColor=#AAB7B8;fontSize=11;fontColor=#545B64;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;arcSize=4;" parent="1" vertex="1">
+          <mxGeometry x="1450" y="480" width="220" height="160" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

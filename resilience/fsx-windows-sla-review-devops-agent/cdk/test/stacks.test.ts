@@ -21,7 +21,7 @@ function synth(labPassword: string, region = 'eu-west-1') {
   const directory = new DirectoryStack(app, `FsxSlaReviewDirectory-${region}`, { env, projectName, description: 'Directory' });
   const fileSystem = new FileSystemStack(app, `FsxSlaReviewFileSystem-${region}`, {
     env, projectName, vpc: directory.vpc, directory: directory.directory,
-    webhookUrl: 'https://example.com/webhook', webhookSecretArn: 'arn:aws:secretsmanager:eu-west-1:123456789012:secret:test-AbCdEf',
+    webhookUrl: 'https://example.com/webhook', webhookSecretArn: 'arn:aws:secretsmanager:eu-west-1:123456789012:secret:test-AbCdEf',  // pragma: allowlist secret
     webhookSecretRegion: region, description: `FSx for Windows SLA review ${TRACKING}`,
   });
   const lab = new LabStack(app, `FsxSlaReviewLab-${region}`, {
