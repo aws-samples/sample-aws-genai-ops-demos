@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Inject an Aurora MySQL incident scenario. Run ON the bastion (via sudo).
+set -uo pipefail
+source "$(dirname "$0")/lib.sh"
+
+SCENARIO="${1:-}"
+case "$SCENARIO" in
+  connection-storm)
+    COUNT="${2:-200}"
+    echo "Opening $COUNT held connections on the writer..."
+    for _ in $(seq 1 "$COUNT"); do
+      ( mysql_w -e "SELECT SLEEP(1800);" >/dev/null 2>&1 ) &
+      record_pid "$!" connection-storm
+    done
+    echo "connection-storm active ($COUNT connections). DatabaseConnections will climb."
+    ;;
+  cpu-spike)
+    WORKERS="${2:-4}"
+    echo "Starting $WORKERS CPU-burn workers on the writer..."
+    for _ in $(seq 1 "$WORKERS"); do
+      ( while true; do mysql_w -e "SELECT BENCHMARK(50000000, MD5(RAND()));" >/dev/null 2>&1; done ) &
+      record_pid "$!" cpu-spike
+    done
+    echo "cpu-spike active. CPUUtilization will climb."
+    ;;
+  deadlock)
+    PAIRS="${2:-10}"
+    echo "Starting deadlock generator ($PAIRS concurrent transaction pairs) on the 'accounts' table..."
+    # Fire many conflicting transaction pairs at once so InnoDB records deadlocks
+    # at a high enough rate to cross the alarm threshold quickly. Each pair locks
+    # rows 1 and 2 in opposite order with a short overlap window (SLEEP 1).
+    ( while true; do
+        for _ in $(seq 1 "$PAIRS"); do
+          mysql_w >/dev/null 2>&1 <<'SQL' &
+START TRANSACTION;
+UPDATE accounts SET balance = balance - 1 WHERE id = 1;
+SELECT SLEEP(1);
+UPDATE accounts SET balance = balance - 1 WHERE id = 2;
+COMMIT;
+SQL
+          mysql_w >/dev/null 2>&1 <<'SQL' &
+START TRANSACTION;
+UPDATE accounts SET balance = balance - 1 WHERE id = 2;
+SELECT SLEEP(1);
+UPDATE accounts SET balance = balance - 1 WHERE id = 1;
+COMMIT;
+SQL
+        done
+        wait
+      done ) &
+    record_pid "$!" deadlock
+    echo "deadlock active. InnoDB deadlocks will be recorded on the writer."
+    ;;
+  memory-pressure)
+    WORKERS="${2:-3}"
+    echo "Starting $WORKERS large-sort workers (temp tables / memory pressure)..."
+    for _ in $(seq 1 "$WORKERS"); do
+      ( while true; do mysql_w -e "SELECT COUNT(*) FROM (SELECT payload FROM bigtab ORDER BY RAND()) t;" >/dev/null 2>&1; done ) &
+      record_pid "$!" memory-pressure
+    done
+    echo "memory-pressure active (best-effort). FreeableMemory should dip."
+    ;;
+  replica-lag)
+    echo "Starting heavy write churn to induce replica apply lag..."
+    ( while true; do
+        mysql_w -e "INSERT INTO churn (payload) SELECT REPEAT('x',1000) FROM bigtab LIMIT 20000;" >/dev/null 2>&1
+        mysql_w -e "DELETE FROM churn LIMIT 20000;" >/dev/null 2>&1
+      done ) &
+    record_pid "$!" replica-lag
+    echo "replica-lag active (best-effort). AuroraReplicaLag on the reader should rise."
+    ;;
+  failover)
+    echo "Triggering Aurora failover on cluster $CLUSTER_ID..."
+    aws rds failover-db-cluster --db-cluster-identifier "$CLUSTER_ID" --region "$REGION" --no-cli-pager >/dev/null
+    echo "failover requested. Writer/reader roles will swap and an RDS failover event will fire."
+    ;;
+  *)
+    echo "Unknown scenario: '$SCENARIO'"
+    "$(dirname "$0")/list"
+    exit 1
+    ;;
+esac
