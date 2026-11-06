@@ -1,0 +1,26 @@
+{
+  "name": "finops-gamification-cdk",
+  "version": "1.0.0",
+  "description": "CDK infrastructure for FinOps Gamification Console",
+  "bin": {
+    "app": "bin/app.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "~5.3.0",
+    "aws-cdk": "^2.170.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.3.0",
+    "source-map-support": "^0.5.21"
+  }
+}
