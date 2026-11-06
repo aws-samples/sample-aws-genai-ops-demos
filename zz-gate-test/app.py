@@ -2,7 +2,7 @@
 import subprocess  # Bandit B404, low: expected DROPPED
 import urllib.request
 
-db_password = "not-a-real-password-gate-test"  # detect-secrets keyword: expected KEPT if scored high
+db_password = "not-a-real-password-gate-test"  # pragma: allowlist secret
 
 
 def fetch(url):
