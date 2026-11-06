@@ -1,0 +1,72 @@
+/*
+ * Dark-mode token overrides for @cloudscape-design/chat-components.
+ *
+ * Cloudscape's chat-components package (used here for ChatBubble and
+ * Avatar) compiles its design tokens to CSS variable names with a
+ * DIFFERENT hash suffix than @cloudscape-design/components. Because the
+ * suffixes don't match, the dark-mode overrides that the main components
+ * package writes at .awsui-dark-mode never reach the tokens
+ * chat-components actually reads.
+ *
+ * Verified in node_modules (2026-09-23):
+ *
+ *   components:      --color-neutral-950-lxybh8
+ *                    --color-background-chat-bubble-incoming-j38cew
+ *   chat-components: --color-neutral-950-qa1l7j
+ *                    --color-background-chat-bubble-incoming-gkldma
+ *
+ * The chat-components CSS reads its own suffix, which is only present as
+ * a light-mode fallback in the scoped stylesheet — leaving the message
+ * bubble stuck at #f6f6f9 (light gray) in dark mode. Cloudscape does not
+ * publish a dark-mode CSS bundle for chat-components; this file is the
+ * bridge until they do.
+ *
+ * Values come from chat-components' theming preset
+ * (`internal/generated/theming/index.js`) resolved to the same concrete
+ * color values Cloudscape's main package uses for dark mode. Semantic
+ * → hex mapping used below:
+ *   - colorNeutral150 → #f6f6f9   (light-mode incoming bubble bg)
+ *   - colorNeutral350 → #c6c6cd   (dark-mode body text)
+ *   - colorNeutral700 → #333843   (dark-mode button active bg)
+ *   - colorNeutral800 → #1b232d   (dark-mode button hover bg)
+ *   - colorNeutral850 → #161d26   (dark-mode button default bg)
+ *   - colorNeutral950 → #0f141a   (dark-mode incoming bubble bg)
+ *   - colorPrimary300 → #75cfff   (dark-mode primary — hover/active/pressed)
+ *   - colorPrimary400 → #42b4ff   (dark-mode primary — default/focus ring)
+ *
+ * If a future release of @cloudscape-design/chat-components ships its
+ * own dark-mode stylesheet, delete this file and the import from
+ * `main.tsx` — this file exists to fill a version-mismatch gap.
+ */
+
+.awsui-dark-mode {
+  /* ChatBubble surface + text
+     (used by ChatBubble in MessageBubble and elsewhere) */
+  --color-background-chat-bubble-incoming-gkldma: #0f141a;
+  --color-text-chat-bubble-incoming-383aqi: #c6c6cd;
+  --color-text-chat-bubble-outgoing-225h2z: #c6c6cd;
+  /* chat-components' own copy of body-default text so anything inside a
+     ChatBubble that doesn't hit the chat-bubble-specific text token
+     still reads a light color. */
+  --color-text-body-default-b2us04: #c6c6cd;
+
+  /* SupportPromptGroup button tokens
+     (welcome-screen prompt buttons: Guided tour, Show my findings, etc.)
+     chat-components' scoped CSS references these hashed tokens; the
+     main components package writes DIFFERENT hashes in dark mode, so
+     without this bridge the buttons render with the light-mode
+     fallbacks (white bg + #006ce0 blue text/border) on a dark surface. */
+  --color-background-button-normal-default-3s2qeb: #161d26;
+  --color-background-button-normal-hover-1ajrtx: #1b232d;
+  --color-background-button-normal-active-yolxhj: #333843;
+  --color-border-button-normal-default-5u0s6m: #42b4ff;
+  --color-border-button-normal-hover-0pwlzm: #75cfff;
+  --color-border-button-normal-active-intpfi: #75cfff;
+  --color-text-button-normal-default-0rhdlx: #42b4ff;
+  --color-text-button-normal-hover-a8yjvb: #75cfff;
+  --color-text-button-normal-active-n48ns6: #75cfff;
+
+  /* Focus ring for SupportPromptGroup buttons AND Avatar
+     (chat-components/avatar/styles.scoped.css uses the same hash). */
+  --color-border-item-focused-sewkzn: #42b4ff;
+}

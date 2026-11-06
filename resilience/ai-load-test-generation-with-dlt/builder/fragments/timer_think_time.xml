@@ -1,0 +1,5 @@
+          <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think Time {{DELAY}}ms +-{{RANGE}}ms" enabled="true">
+            <stringProp name="ConstantTimer.delay">{{DELAY}}</stringProp>
+            <stringProp name="RandomTimer.range">{{RANGE}}</stringProp>
+          </UniformRandomTimer>
+          <hashTree/>

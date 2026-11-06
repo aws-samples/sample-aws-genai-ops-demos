@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Tool-contract tests: call every @tool directly, no Bedrock, no AWS writes.
+
+builder/tests/ proves the implementations; this file proves the wrapper
+contract the LLM depends on:
+  - every tool returns parseable JSON with an "ok" field
+  - errors come back as {ok:false, error} instead of exceptions
+  - the safety refusals (unapproved run, unconfirmed cancel) fire in code
+
+Run: python3 test/test_tools.py
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+_failures: list[str] = []
+_passes = 0
+
+
+def check(condition: bool, label: str) -> None:
+    global _passes
+    if condition:
+        _passes += 1
+    else:
+        _failures.append(label)
+        print(f"  FAIL {label}")
+
+
+def call(tool_fn, **kwargs) -> dict:
+    """Tools are Strands DecoratedFunctionTool objects but stay callable."""
+    return json.loads(tool_fn(**kwargs))
+
+
+def main() -> int:
+    from tools import ALL_TOOLS
+    from tools.script_tools import (
+        build_jmx, parse_spec_input, select_targets, validate_spec,
+        validate_script,
+    )
+    from tools.dlt_tools import (
+        cancel_test, create_scenario, run_scenario, upload_script,
+        poll_test_status, fetch_results,
+    )
+
+    print("tool registry")
+    check(len(ALL_TOOLS) == 15, f"15 tools registered (got {len(ALL_TOOLS)})")
+    for t in ALL_TOOLS:
+        spec = t.tool_spec
+        check(bool(spec.get("description")),
+              f"{spec.get('name')} has a docstring-derived description")
+
+    print("script pipeline (real implementations)")
+    swagger = ROOT / "sample-data" / "swagger-unified.json"
+    r = call(parse_spec_input, file_path=str(swagger))
+    check(r["ok"] and len(r["inventory"]["endpoints"]) == 16,
+          "parse_spec_input returns the 16-endpoint inventory")
+
+    check(r["origin"] == str(swagger), "origin records where the spec came from")
+
+    # Spec ingress: exactly one source. Deployed there is no local file, so a
+    # silent default either way would parse the wrong thing or nothing.
+    check(not call(parse_spec_input)["ok"],
+          "parse_spec_input with neither input is refused")
+    check(not call(parse_spec_input, file_path=str(swagger),
+                   spec_s3_uri="s3://b/k.json")["ok"],
+          "parse_spec_input with both inputs is refused")
+    r1b = call(parse_spec_input, spec_s3_uri="not-a-uri")
+    check(not r1b["ok"] and "s3://" in r1b["error"],
+          "a non-S3 URI is rejected with the expected form")
+    r1c = call(parse_spec_input, spec_s3_uri="s3://bucket-only")
+    check(not r1c["ok"] and "bucket and key" in r1c["error"],
+          "an S3 URI without a key is rejected before any AWS call")
+
+    # The S3 path end to end, with the download stubbed: parse the same swagger
+    # and confirm the staged temp file does not survive the call.
+    import tools.script_tools as st
+    staged: list[Path] = []
+    real_fetch = st._fetch_s3_to_tmp
+
+    def fake_fetch(uri: str) -> Path:
+        assert uri == "s3://spec-bucket/uploads/swagger-unified.json"
+        tmp = Path(str(ROOT / "out" / "s3-staged.json"))
+        tmp.parent.mkdir(exist_ok=True)
+        tmp.write_text(swagger.read_text(encoding="utf-8"), encoding="utf-8")
+        staged.append(tmp)
+        return tmp
+
+    st._fetch_s3_to_tmp = fake_fetch
+    try:
+        uri = "s3://spec-bucket/uploads/swagger-unified.json"
+        r1d = call(parse_spec_input, spec_s3_uri=uri)
+    finally:
+        st._fetch_s3_to_tmp = real_fetch
+    check(r1d["ok"] and len(r1d["inventory"]["endpoints"]) == 16,
+          "an S3-sourced spec parses to the same inventory as the local file")
+    check(r1d["origin"] == uri, "origin reports the S3 URI, not the temp path")
+    check(staged and not staged[0].exists(),
+          "the staged temp file is deleted — /tmp does not accumulate specs")
+
+    r2 = call(select_targets, inventory_json=json.dumps(r["inventory"]),
+              environment="test", authorized=True)
+    check(r2["ok"] and r2["selection"]["summary"]["measurable"] == 2,
+          "select_targets classifies the concert swagger (2 measurable)")
+    check(r2["selection"]["probe_performed"] is False,
+          "probe status is explicit in tool output")
+
+    # whole-T1-result tolerance
+    r2b = call(select_targets, inventory_json=json.dumps(r),
+               environment="test", authorized=True)
+    check(r2b["ok"], "select_targets tolerates the full T1 result envelope")
+
+    spec_path = ROOT / "builder" / "sample-data" / "concerts.spec.json"
+    spec_json = spec_path.read_text(encoding="utf-8")
+    r3 = call(validate_spec, spec_json=spec_json)
+    check(r3["ok"] and r3["errors"] == [], "validate_spec passes the known-good spec")
+    check("threads" in r3["load_plan"], "load plan is returned for the user")
+
+    broken = json.loads(spec_json)
+    broken["endpoints"][0]["success"] = {"status": 200}
+    r4 = call(validate_spec, spec_json=json.dumps(broken))
+    check(not r4["ok"] and any("body check" in e for e in r4["errors"]),
+          "status-only assertion is rejected through the wrapper")
+
+    r5 = call(build_jmx, spec_json=spec_json, output_name="tooltest")
+    check(r5["ok"] and Path(r5["jmx_path"]).exists(), "build_jmx writes the file")
+    check(not call(build_jmx, spec_json=json.dumps(broken),
+                   output_name="x")["ok"],
+          "build_jmx re-validates — a rejected spec cannot be built")
+
+    r6 = call(validate_script, script_path="/nonexistent.jmx")
+    check(not r6["ok"], "validate_script fails on a missing file")
+
+    print("DLT safety gates (no AWS calls)")
+    r7 = call(run_scenario, test_id="x", approval_summary="")
+    check(not r7["ok"] and "REFUSED" in r7["error"],
+          "run without approval summary is refused in code")
+    r8 = call(run_scenario, test_id="never-registered",
+              approval_summary="target X, 10 VUs, 30s — approved by user")
+    check(not r8["ok"] and "not registered" in r8["error"],
+          "run of an unregistered test_id is refused")
+    r9 = call(cancel_test, test_id="x", confirmed_running=False)
+    check(not r9["ok"] and "poll_test_status" in r9["error"],
+          "cancel without confirming running state is refused")
+    r10 = call(upload_script, script_path="/tmp/x.jmx", test_id="t")
+    check(not r10["ok"] and "discover_dlt_config" in r10["error"],
+          "upload before discovery is refused")
+    r11 = call(create_scenario, test_id="t", test_name="n",
+               test_description="d", concurrency=10,
+               ramp_up="10x", hold_for="30s")
+    check(not r11["ok"],
+          "bad ramp-up unit is rejected before any API call")
+    for fn, name in ((poll_test_status, "poll"), (fetch_results, "fetch")):
+        r = call(fn, test_id="t")
+        check(not r["ok"] and "discover_dlt_config" in r["error"],
+              f"{name} before discovery is refused")
+
+    print("run timing (no clock for the model to guess with)")
+    import datetime as dt
+    from tools.dlt_tools import _DLT_OVERHEAD_S, _parse_dlt_time, _run_timing
+
+    # DLT sends "2026-09-04 06:03:19" — no separator, no zone, value is UTC.
+    # fromisoformat would leave it naive and silently compare as local time.
+    t = _parse_dlt_time("2026-09-04 06:03:19")
+    check(t is not None and t.tzinfo == dt.timezone.utc and t.hour == 6,
+          "a DLT timestamp is parsed as UTC, not local time")
+    check(_parse_dlt_time(None) is None and _parse_dlt_time("nope") is None,
+          "an unparseable timestamp yields None rather than raising")
+
+    def body(started_ago: int, **over) -> dict:
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+            seconds=started_ago)
+        return {"startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+                "testScenario": {"execution": [{"ramp-up": "15s",
+                                                "hold-for": "60s"}]},
+                **over}
+
+    tm = _run_timing(body(30))
+    check(tm["expected_seconds"] == 15 + 60 + _DLT_OVERHEAD_S,
+          "expected_seconds is ramp-up + hold-for + measured overhead")
+    check(28 <= tm["elapsed_seconds"] <= 32,
+          f"elapsed_seconds comes from startTime (got {tm.get('elapsed_seconds')})")
+    check(tm["remaining_seconds"] == tm["expected_seconds"] - tm["elapsed_seconds"],
+          "remaining_seconds is the difference, not a guess")
+
+    # The load shape comes from the API response, never from _registered: a run
+    # longer than the idle timeout is polled by a fresh process with no state.
+    from tools import dlt_tools as dltm
+    check(not dltm._registered,
+          "run timing is derived without anything registered in this process")
+
+    over = _run_timing(body(9999))
+    check(over["remaining_seconds"] == 0,
+          "an overrun run clamps remaining to zero instead of going negative")
+
+    # Absent is not zero. A missing field must stay missing so the model has
+    # nothing to round off into a confident number.
+    check("elapsed_seconds" not in _run_timing({"status": "queued"}),
+          "a run that has not started reports no elapsed time at all")
+    no_shape = _run_timing({"startTime": "2026-09-04 06:03:19"})
+    check("elapsed_seconds" in no_shape and "expected_seconds" not in no_shape,
+          "elapsed is still reported when the load shape is unavailable")
+    check("expected_seconds" not in _run_timing(
+              body(30, testScenario={"execution": [{"ramp-up": "15x",
+                                                    "hold-for": "60s"}]})),
+          "an unparseable duration drops expected rather than assuming seconds")
+
+    done = _run_timing({"startTime": "2026-09-04 06:03:19",
+                        "endTime": "2026-09-04 06:06:58"})
+    check(done["elapsed_seconds"] == 219,
+          "a finished run measures to endTime, not to now")
+
+    check("Twenty to thirty seconds" not in poll_test_status.tool_spec[
+              "description"],
+          "the unfollowable polling-interval instruction is gone")
+
+    print("in-call waiting (a sleep costs no tokens; a re-read costs a round trip)")
+    # Stub the DLT call so the wait path runs without AWS or real time: the run
+    # reports `running` for the first few reads, then `complete`.
+    reads: list[float] = []
+    slept: list[float] = []
+
+    def fake_call(method, url, region, body=None):
+        reads.append(time.monotonic())
+        started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=200)
+        return 200, {
+            "status": "complete" if len(reads) >= 3 else "running",
+            "taskFailureCount": 0,
+            "startTime": started.strftime("%Y-%m-%d %H:%M:%S"),
+            "testScenario": {"execution": [{"ramp-up": "15s", "hold-for": "60s"}]},
+        }
+
+    real_call, real_sleep, real_cfg = dltm._sigv4_call, time.sleep, dict(dltm._config)
+    dltm._sigv4_call = fake_call
+    time.sleep = lambda s: slept.append(s)
+    dltm._config = {"api_endpoint": "https://example.invalid", "api_region": "us-east-2"}
+    try:
+        r = call(poll_test_status, test_id="t")
+        check(r["ok"] and len(reads) == 1 and not slept,
+              "the default reads once and never sleeps (cancel needs a fast read)")
+
+        reads.clear(); slept.clear()
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["status"] == "complete" and len(reads) == 3,
+              "waiting re-reads inside the one call until the run is terminal")
+        check(slept == [dltm._WAIT_GAP, dltm._WAIT_GAP],
+              f"it sleeps between reads, not between model calls (got {slept})")
+        check("waited_seconds" in r,
+              "the call reports how long it waited rather than leaving it implied")
+
+        # A run with more than _WAIT_OFFER_MAX left cannot be waited out inside
+        # one AgentCore request, so the wait path is declined -- but the read
+        # still succeeds, which is what keeps cancel_test reachable.
+        reads.clear(); slept.clear()
+        long_started = dt.datetime.now(dt.timezone.utc)
+
+        def long_run(method, url, region, body=None):
+            reads.append(time.monotonic())
+            return 200, {"status": "running", "taskFailureCount": 0,
+                         "startTime": long_started.strftime("%Y-%m-%d %H:%M:%S"),
+                         "testScenario": {"execution": [{"ramp-up": "30s",
+                                                         "hold-for": "40m"}]}}
+
+        dltm._sigv4_call = long_run
+        r = call(poll_test_status, test_id="t", wait_seconds=120)
+        check(r["ok"] and r["status"] == "running" and not slept,
+              "a run too long to wait out still returns its status, unrefused")
+        check(r["remaining_seconds"] > dltm._WAIT_OFFER_MAX and len(reads) == 1,
+              "no waiting happens when the run outlasts a single request")
+    finally:
+        dltm._sigv4_call, time.sleep, dltm._config = real_call, real_sleep, real_cfg
+
+    print("multi-engine dispatch")
+    r12 = call(validate_script, script_path="/nonexistent.xyz")
+    check(not r12["ok"] and "unknown script type" in r12["error"],
+          "unknown extension is rejected with the expected list")
+    r13 = call(create_scenario, test_id="t", test_name="n",
+               test_description="d", concurrency=10,
+               ramp_up="10s", hold_for="30s", test_type="gatling")
+    check(not r13["ok"] and "jmeter/k6/locust" in r13["error"],
+          "unsupported engine type is rejected before any API call")
+
+    print(f"\n{_passes} passed, {len(_failures)} failed")
+    for f in _failures:
+        print(f"  - {f}")
+    return 1 if _failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

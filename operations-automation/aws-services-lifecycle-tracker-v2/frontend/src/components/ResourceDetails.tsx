@@ -1,0 +1,294 @@
+// Details view for one inventory row, shown in the AppLayout split panel
+// (see split-panel.tsx): the only place the UI lists resources (tables show
+// counts only, see #141). Each resource shows its name, ARN and a deep link
+// to the AWS console page.
+import { useMemo, useState } from 'react';
+import Box from '@cloudscape-design/components/box';
+import ColumnLayout from '@cloudscape-design/components/column-layout';
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
+import Link from '@cloudscape-design/components/link';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import Table from '@cloudscape-design/components/table';
+import TextFilter from '@cloudscape-design/components/text-filter';
+import Header from '@cloudscape-design/components/header';
+import type { DeprecationItem, ActionPlan } from '../api';
+import Popover from '@cloudscape-design/components/popover';
+import GenAiLabel from './GenAiLabel';
+import {
+  statusMeta, getDeadline, formatDate, formatDaysLeft, serviceLabel, itemName,
+  resourceCount, resourceDetails, resourceWord, healthFlagged, healthEventLabel, ResourceRef,
+  costExposure, estimateFormula, formatUsd, HOURS_PER_MONTH, ExtendedSupportEstimate, costTimeline, formatMonth,
+} from '../lifecycle';
+
+// Why a resource has no Extended Support figure
+const NO_ESTIMATE: Record<string, string> = {
+  no_extended_support: 'No Extended Support for this engine: AWS upgrades it at end of standard support',
+  no_price: 'No Extended Support price published for this version',
+  unknown_instance_class: 'vCPU count unknown for this instance class',
+  no_capacity: 'Serverless v2 capacity unknown',
+  error: 'Could not estimate',
+};
+
+function EstimateCell({ e }: { e: ExtendedSupportEstimate }) {
+  if (!e.eligible) {
+    return <Box variant="small" color="text-body-secondary">{NO_ESTIMATE[e.reason || 'error'] || e.note || '-'}</Box>;
+  }
+  return (
+    <SpaceBetween size="xxxs">
+      <Popover dismissButton={false} position="left" size="large" triggerType="text"
+        content={
+          <SpaceBetween size="xs">
+            <Box variant="strong">How this is calculated</Box>
+            <Box variant="code">{estimateFormula(e)} = {formatUsd(e.monthly_yr1_2, 2)}/month</Box>
+            {e.serverless && <Box variant="small">Serverless v2 bills per ACU actually used; {formatUsd(e.monthly_yr1_2_min, 2)} at min ACU ({e.min_acu}), {formatUsd(e.monthly_yr1_2, 2)} at max ACU ({e.max_acu}).</Box>}
+            <Box variant="small">Year 3 rate ${e.price_yr3}/{e.unit === 'ACU-hour' ? 'ACU-h' : 'vCPU-h'} → {formatUsd(e.monthly_yr3, 2)}/month from {e.year3_start || 'n/a'}.</Box>
+            <Box variant="small">
+              Billed from {e.extended_support_start || 'a date not yet in the catalog'}
+              {e.extended_support_end ? ` until ${e.extended_support_end}` : ''}.
+              {e.monthly_yr1_2 ? ` Next 12 months: ${formatUsd(e.forecast_12m)} = ${Math.round(((e.forecast_12m ?? 0) / e.monthly_yr1_2) * 10) / 10} billable months.` : ''}
+            </Box>
+            <Box variant="small" color="text-body-secondary">
+              Rate: {e.price_source === 'sku' ? 'exact SKU for this version' : `no SKU for ${e.engine_family} ${e.major_version} yet, ${e.engine_family} family rate used`}.
+            </Box>
+          </SpaceBetween>
+        }>
+        <Box variant="strong" color={e.in_extended_support ? 'text-status-error' : 'inherit'}>
+          {formatUsd(e.monthly_yr1_2)}/mo <Box variant="span" fontWeight="normal" color="text-status-info">· how?</Box>
+        </Box>
+      </Popover>
+      <Box variant="small" color="text-body-secondary">
+        {e.in_extended_support ? 'billing now' : e.extended_support_start ? `from ${e.extended_support_start}` : 'start date unknown'}
+        {e.price_source === 'family-estimate' ? ' · estimate' : ''}
+      </Box>
+    </SpaceBetween>
+  );
+}
+
+interface Props {
+  row: DeprecationItem;
+  fact?: DeprecationItem;
+  plan?: ActionPlan;
+  // More than one account in the inventory: console deep links then depend on
+  // which account the browser is signed into, so the row's account is spelled out.
+  multiAccount?: boolean;
+}
+
+const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div>
+    <Box variant="awsui-key-label">{label}</Box>
+    <div>{children}</div>
+  </div>
+);
+
+// Panel title for a row
+export const resourceDetailsHeader = (row: DeprecationItem) => `${serviceLabel(row.service_name)} · ${itemName(row)}`;
+
+export default function ResourceDetails({ row, fact, plan, multiAccount = false }: Props) {
+  const [filter, setFilter] = useState('');
+  // Console links (resource pages, AWS Health events) open in the account the
+  // browser is signed into; Health events are only visible from their own
+  // account. Until an Identity Center deep link exists (#145), say which one.
+  const linkAccount = multiAccount && row.account_id ? `${row.account_name ? `${row.account_name} ` : ''}(${row.account_id})` : '';
+  const linkHint = linkAccount ? `Opens in the console of account ${linkAccount}; sign in to that account first.` : undefined;
+  const resources = useMemo<ResourceRef[]>(() => resourceDetails(row), [row]);
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return q ? resources.filter((r) => `${r.name} ${r.arn || ''}`.toLowerCase().includes(q)) : resources;
+  }, [resources, filter]);
+
+  const m = statusMeta(row.status);
+  const d = getDeadline(row);
+  const count = resourceCount(row);
+  const hasArns = resources.some((r) => r.arn);
+  const flagged = healthFlagged(row);
+  const exposure = costExposure(row);
+  const showCost = resources.some((r) => r.extended_support);
+  // Why $/month and the 12-month figure differ: billing starts at a date, so only
+  // part of the window bills. Months = forecast / monthly rate (approximate when
+  // the year 3 rate kicks in inside the window).
+  const timeline = costTimeline([row]);
+  const billableMonths = exposure && exposure.monthly > 0
+    ? Math.round((exposure.forecast_12m / exposure.monthly) * 10) / 10
+    : null;
+  const unpriced = resources.filter((r) => r.extended_support && !r.extended_support.eligible);
+  const dates = fact
+    ? Object.entries(fact.service_specific || {}).filter(([k, v]) => k.endsWith('_date') && v && v !== 'N/A')
+    : [];
+
+  return (
+      <SpaceBetween size="l">
+        <ColumnLayout columns={4} variant="text-grid">
+          <Field label="Status"><StatusIndicator type={m.indicator}>{m.label}</StatusIndicator></Field>
+          <Field label="Deadline">
+            {d ? <>{formatDate(d.date)} <Box variant="small" color="text-body-secondary">{formatDaysLeft(d)}</Box></> : '-'}
+          </Field>
+          <Field label="Account / Region">
+            {row.account_id ? <>{row.account_name || row.account_id}{row.account_name && <Box variant="small" color="text-body-secondary">{row.account_id}</Box>}</> : null}
+            <Box variant={row.account_id ? 'small' : 'span'} color={row.account_id ? 'text-body-secondary' : 'inherit'}>{row.region || '-'}</Box>
+          </Field>
+          <Field label="Plan">
+            {plan ? <StatusIndicator type={plan.plan_status === 'completed' ? 'success' : 'in-progress'}>{plan.owner}</StatusIndicator> : <Box color="text-body-secondary">unassigned</Box>}
+          </Field>
+          {exposure && exposure.resources_priced > 0 && (
+            <Field label="Extended Support exposure">
+              <Box variant="strong">
+                {formatUsd(exposure.monthly)}/month
+                <Box variant="span" fontWeight="normal">
+                  {timeline.now === timeline.priced ? ' billing now'
+                    : timeline.now ? ` (${formatUsd(timeline.monthlyNow)} billing now, the rest from ${formatMonth(timeline.nextStart) || 'a later date'})`
+                    : ` from ${formatMonth(timeline.nextStart) || 'a date not yet in the catalog'}`}
+                </Box>
+              </Box>
+              <Box variant="small" color="text-body-secondary">
+                {formatUsd(exposure.forecast_12m)} over the next 12 months
+                {billableMonths !== null ? ` = ${billableMonths} billable month${billableMonths === 1 ? '' : 's'}` : ''}
+                {exposure.monthly_yr3 > exposure.monthly ? ` · year 3 rate ${formatUsd(exposure.monthly_yr3)}/month` : ''}
+                {' · '}{exposure.resources_priced} of {exposure.resources_total} resource{exposure.resources_total === 1 ? '' : 's'} priced
+              </Box>
+              {unpriced.length > 0 && (
+                <Box variant="small" color="text-body-secondary">
+                  Not priced: {unpriced.map((r) => `${r.name} (${(NO_ESTIMATE[r.extended_support?.reason || 'error'] || 'no estimate').toLowerCase()})`).join(', ')}
+                </Box>
+              )}
+            </Field>
+          )}
+        </ColumnLayout>
+
+        {showCost && exposure && exposure.resources_priced > 0 && (
+          <Box variant="small" color="text-body-secondary">
+            Estimate: AWS list price for {row.region || 'this region'} from the Price List API{exposure.estimated ? ` (${exposure.estimated} at the engine family rate, no SKU for this version yet)` : ''},
+            {' '}{HOURS_PER_MONTH} h/month always on, Multi-AZ counts twice, Serverless v2 at max ACU, no Reserved Instances. Surcharge on top of the normal instance price,
+            {' '}computed at the scan of {formatDate(row.last_verified)}. Each figure in the table shows its own arithmetic.
+          </Box>
+        )}
+
+        {fact ? (
+          <Box>
+            <Box variant="awsui-key-label">Matched catalog entry</Box>
+            <SpaceBetween direction="horizontal" size="s">
+              <GenAiLabel />
+              <Box>{itemName(fact)}</Box>
+              {dates.map(([k, v]) => <Box key={k} variant="small">{k.replace(/_/g, ' ')}: {String(v)}</Box>)}
+              {fact.source_url && <Link href={fact.source_url} external fontSize="body-s">AWS documentation</Link>}
+            </SpaceBetween>
+          </Box>
+        ) : (
+          <Box color="text-body-secondary">No catalog entry matched this version.</Box>
+        )}
+
+        <Table
+          variant="embedded"
+          items={shown}
+          trackBy="name"
+          wrapLines
+          header={
+            <Header
+              variant="h3"
+              counter={`(${count})`}
+              description={[
+                flagged ? `${flagged} named in an open AWS Health notice.` : '',
+                resources.length < count ? `Showing the first ${resources.length}; the scan stores a capped list.` : '',
+                linkAccount ? `Console links open in account ${linkAccount}: sign in to that account first, AWS Health events are only visible there.` : '',
+              ].filter(Boolean).join(' ') || undefined}
+              actions={
+                <CopyToClipboard
+                  variant="button"
+                  copyButtonText={hasArns ? 'Copy ARNs' : 'Copy names'}
+                  copySuccessText="Copied"
+                  copyErrorText="Copy failed"
+                  textToCopy={shown.map((r) => r.arn || r.name).join('\n')}
+                />
+              }
+            >
+              {resourceWord(count).replace(/^r/, 'R')}
+            </Header>
+          }
+          filter={
+            resources.length > 10 ? (
+              <TextFilter filteringText={filter} filteringPlaceholder="Find by name or ARN" filteringAriaLabel="Filter resources"
+                countText={`${shown.length} match${shown.length === 1 ? '' : 'es'}`}
+                onChange={({ detail }) => setFilter(detail.filteringText)} />
+            ) : undefined
+          }
+          columnDefinitions={[
+            {
+              id: 'name', header: 'Name', cell: (r) => r.console_url
+                ? <Link href={r.console_url} external ariaLabel={linkHint ? `${r.name}. ${linkHint}` : undefined}>{r.name}</Link>
+                : <Box>{r.name}</Box>,
+            },
+            ...(resources.some((r) => r.minor_end_of_support) ? [{
+              id: 'minor', header: 'Minor version',
+              cell: (r: ResourceRef) => r.minor_end_of_support
+                ? <SpaceBetween size="xxxs"><Box>{r.minor_version}</Box><Box variant="small" color="text-body-secondary">auto-upgraded by RDS on {formatDate(r.minor_end_of_support)}</Box></SpaceBetween>
+                : <Box color="text-body-secondary">-</Box>,
+            }] : []),
+            ...(resources.some((r) => r.tags) ? [{
+              id: 'tags', header: 'Tags', minWidth: 160,
+              cell: (r: ResourceRef) => r.tags
+                ? <Box variant="small">{Object.entries(r.tags).map(([k, v]) => `${k}: ${v}`).join(' · ')}</Box>
+                : <Box variant="small" color="text-body-secondary">not tagged</Box>,
+            }] : []),
+            {
+              id: 'arn', header: 'ARN', cell: (r) => r.arn
+                ? <CopyToClipboard variant="inline" textToCopy={r.arn} copyButtonAriaLabel={`Copy ARN of ${r.name}`} copySuccessText="Copied" copyErrorText="Copy failed" />
+                : <Box color="text-body-secondary">-</Box>,
+            },
+            ...(showCost ? [
+              {
+                id: 'class', header: 'Class', width: 150, cell: (r: ResourceRef) => {
+                  const e = r.extended_support;
+                  if (!e?.instance_class) return <Box color="text-body-secondary">-</Box>;
+                  return (
+                    <SpaceBetween size="xxxs">
+                      <Box>{e.instance_class}</Box>
+                      <Box variant="small" color="text-body-secondary">
+                        {e.serverless ? `${e.min_acu ?? 0}–${e.max_acu ?? 0} ACU` : e.vcpus !== undefined ? `${e.vcpus} vCPU` : ''}
+                        {e.multi_az ? ' · Multi-AZ (×2)' : ''}
+                      </Box>
+                    </SpaceBetween>
+                  );
+                },
+              },
+              {
+                id: 'cost', header: 'Extended Support', width: 190, cell: (r: ResourceRef) =>
+                  r.extended_support ? <EstimateCell e={r.extended_support} /> : <Box color="text-body-secondary">-</Box>,
+              },
+            ] : []),
+            {
+              id: 'health', header: 'AWS Health', width: 220, cell: (r) => {
+                const h = r.health;
+                if (!h) return <Box color="text-body-secondary">-</Box>;
+                const resolved = h.entity_status === 'RESOLVED';
+                return (
+                  <SpaceBetween size="xxxs">
+                    <StatusIndicator type={resolved ? 'success' : 'warning'}>{resolved ? 'Resolved by AWS' : 'Flagged by AWS'}</StatusIndicator>
+                    <Box variant="small">
+                      {h.console_url
+                        ? <Link href={h.console_url} external fontSize="body-s" ariaLabel={linkHint ? `${healthEventLabel(h.event_type)}. ${linkHint}` : undefined}>{healthEventLabel(h.event_type)}</Link>
+                        : healthEventLabel(h.event_type)}
+                    </Box>
+                    {(h.start_time || h.end_time) && (
+                      <Box variant="small" color="text-body-secondary">
+                        {h.start_time ? `from ${formatDate(h.start_time)}` : ''}{h.end_time ? ` to ${formatDate(h.end_time)}` : ''}
+                      </Box>
+                    )}
+                    {linkAccount && <Box variant="small" color="text-body-secondary">visible in account {row?.account_id} only</Box>}
+                  </SpaceBetween>
+                );
+              },
+            },
+            {
+              id: 'console', header: linkAccount ? `Console (account ${row?.account_id})` : 'Console', width: linkAccount ? 200 : 110, cell: (r) => r.console_url
+                ? <Link href={r.console_url} external fontSize="body-s" ariaLabel={linkHint ? `Open ${r.name}. ${linkHint}` : undefined}>Open</Link>
+                : <Box color="text-body-secondary">-</Box>,
+            },
+          ]}
+          empty={<Box textAlign="center" color="text-body-secondary">No resources were recorded for this row.</Box>}
+        />
+        {!hasArns && resources.length > 0 && (
+          <Box variant="small" color="text-body-secondary">ARNs and console links appear after the next account scan.</Box>
+        )}
+      </SpaceBetween>
+  );
+}

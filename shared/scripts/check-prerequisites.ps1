@@ -6,9 +6,12 @@ param(
     [string]$MinAwsCliVersion = "2.31.13",
     [string]$MinPythonVersion = "",
     [string]$MinNodeVersion = "",
+    [string]$MinCdkVersion = "",
     [switch]$SkipServiceCheck = $false,
     [switch]$RequireCDK = $false,
-    [switch]$RequireKubectl = $false
+    [switch]$RequireKubectl = $false,
+    [switch]$RequireSAM = $false,
+    [switch]$RequireDocker = $false
 )
 
 Write-Host "=== GenAI Ops Demo Prerequisites Check (Shared Script) ===" -ForegroundColor Cyan
@@ -56,6 +59,35 @@ if ($RequireCDK -or -not [string]::IsNullOrEmpty($MinNodeVersion)) {
     }
 }
 
+# Check CDK CLI version (only when a demo needs a specific minimum, e.g. for
+# newer L2 constructs). -RequireCDK alone validates Node.js; pass
+# -MinCdkVersion to also gate on the CDK CLI itself.
+if (-not [string]::IsNullOrEmpty($MinCdkVersion)) {
+    Write-Host "`nChecking AWS CDK version..." -ForegroundColor Yellow
+    $cdkVersion = npx cdk --version 2>&1
+    if ($cdkVersion -match '(\d+)\.(\d+)\.(\d+)') {
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        $patch = [int]$Matches[3]
+        Write-Host "      Current version: cdk $major.$minor.$patch" -ForegroundColor Gray
+        $minParts = $MinCdkVersion.Split('.')
+        $minMajor = [int]$minParts[0]
+        $minMinor = [int]$minParts[1]
+        $minPatch = if ($minParts.Length -gt 2) { [int]$minParts[2] } else { 0 }
+        $isVersionValid = ($major -gt $minMajor) -or ($major -eq $minMajor -and $minor -gt $minMinor) -or ($major -eq $minMajor -and $minor -eq $minMinor -and $patch -ge $minPatch)
+        if (-not $isVersionValid) {
+            Write-Host "      ERROR: AWS CDK $MinCdkVersion or later is required (found $major.$minor.$patch)" -ForegroundColor Red
+            Write-Host "      Upgrade with: npm install -g aws-cdk@latest" -ForegroundColor Cyan
+            exit 1
+        }
+        Write-Host "      OK: AWS CDK version is compatible" -ForegroundColor Green
+    } else {
+        Write-Host "      ERROR: AWS CDK not found or version unreadable" -ForegroundColor Red
+        Write-Host "      Install with: npm install -g aws-cdk@latest" -ForegroundColor Cyan
+        exit 1
+    }
+}
+
 # Check kubectl (if required for EKS demos)
 if ($RequireKubectl) {
     Write-Host "`nChecking kubectl..." -ForegroundColor Yellow
@@ -68,6 +100,53 @@ if ($RequireKubectl) {
         }
     } catch {
         Write-Host "      ERROR: kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Check AWS SAM CLI (if required, e.g. for demos that deploy a SAM-based MCP server)
+if ($RequireSAM) {
+    Write-Host "`nChecking AWS SAM CLI..." -ForegroundColor Yellow
+    if (Get-Command sam -ErrorAction SilentlyContinue) {
+        Write-Host "      OK: AWS SAM CLI installed" -ForegroundColor Green
+    } else {
+        Write-Host "      ERROR: AWS SAM CLI not found." -ForegroundColor Red
+        Write-Host "      Install it: winget install Amazon.SAM-CLI" -ForegroundColor Cyan
+        Write-Host "      Other options: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html" -ForegroundColor Cyan
+        exit 1
+    }
+}
+
+# Check for a running container engine (if required). A SAM app whose build must run in a
+# container (`sam build --use-container`), or a CDK DockerImageAsset / local `docker build`,
+# needs a RUNNING container engine. Docker and Finch are both accepted; the check confirms the
+# daemon/VM responds, not just that the CLI is on PATH.
+#
+# Finch note: with Finch (and no Docker), CDK/SAM still shell out to a binary named `docker`.
+# Point them at Finch for the deploy with `$env:CDK_DOCKER = "finch"` (CDK) or a `docker`->`finch`
+# shim on PATH. This check passes on Finch alone; the deploy tooling needs that override.
+if ($RequireDocker) {
+    Write-Host "`nChecking container engine (Docker or Finch)..." -ForegroundColor Yellow
+    $dockerOk = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $null = docker info 2>$null
+        $dockerOk = ($LASTEXITCODE -eq 0)
+    }
+    $finchOk = $false
+    if (-not $dockerOk -and (Get-Command finch -ErrorAction SilentlyContinue)) {
+        $null = finch info 2>$null
+        $finchOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($dockerOk) {
+        Write-Host "      OK: Docker is installed and the engine is running" -ForegroundColor Green
+    } elseif ($finchOk) {
+        Write-Host "      OK: Finch is installed and its VM is running" -ForegroundColor Green
+        Write-Host "      Using Finch: for CDK deploys set '`$env:CDK_DOCKER = \"finch\"' so the" -ForegroundColor Cyan
+        Write-Host "      image build/push uses Finch (CDK/SAM otherwise call a 'docker' binary)." -ForegroundColor Cyan
+    } else {
+        Write-Host "      ERROR: A running container engine (Docker or Finch) is required." -ForegroundColor Red
+        Write-Host "      Docker: install Docker Desktop and start it, verify with 'docker info'." -ForegroundColor Cyan
+        Write-Host "      Finch:  'finch vm start', verify with 'finch info', then set `$env:CDK_DOCKER = 'finch'." -ForegroundColor Cyan
         exit 1
     }
 }
@@ -121,26 +200,65 @@ if ($versionMatch) {
 # Check AWS region configuration
 Write-Host "`nChecking AWS region configuration..." -ForegroundColor Yellow
 
+# Precedence matches shared/utils/aws-utils.* and the repo convention:
+#   AWS_DEFAULT_REGION -> AWS_REGION -> aws configure get region
+# (No us-east-1 fallback here: an unset region is a hard error so the user never
+# deploys somewhere they did not choose.)
 $currentRegion = $env:AWS_DEFAULT_REGION
+if ([string]::IsNullOrEmpty($currentRegion)) {
+    $currentRegion = $env:AWS_REGION
+}
 if ([string]::IsNullOrEmpty($currentRegion)) {
     $currentRegion = aws configure get region 2>$null
 }
 
 if ([string]::IsNullOrEmpty($currentRegion)) {
     Write-Host "      ERROR: No AWS region configured" -ForegroundColor Red
-    Write-Host "      Please configure your AWS region:" -ForegroundColor Yellow
-    Write-Host "        aws configure set region YOUR-REGION" -ForegroundColor Cyan
+    Write-Host "      Please configure your AWS region using one of:" -ForegroundColor Yellow
+    Write-Host '        $env:AWS_REGION = "<your-region>"' -ForegroundColor Cyan
+    Write-Host '        $env:AWS_DEFAULT_REGION = "<your-region>"' -ForegroundColor Cyan
+    Write-Host "        aws configure set region <your-region>" -ForegroundColor Cyan
     exit 1
 }
 
 Write-Host "      OK: Region configured: $currentRegion" -ForegroundColor Green
 
+# ─── AWS DevOps Agent region resolution ──────────────────────────────────────
+# An Agent Space is a regional resource and AWS DevOps Agent is available in a
+# subset of AWS Regions. Resolution is opt-in and deliberately simple:
+#
+#   1. DEVOPS_AGENT_REGION — explicit override, wins outright
+#   2. the resolved deploy region — same-region default
+#
+# Same-region is the default because an Agent Space discovers and monitors
+# resources across ALL Regions of an associated account. Splitting the two is
+# therefore only needed when the deploy Region cannot host an Agent Space, or
+# for data-residency / console-availability reasons.
+#
+# No hardcoded Region list lives here: the "devops-agent" service check below
+# probes the live API instead, so a Region stays usable the moment the service
+# reaches it. See shared/README.md ("AWS DevOps Agent Region") for the full
+# convention and its caveats.
+$devOpsAgentRegion = $env:DEVOPS_AGENT_REGION
+if ([string]::IsNullOrEmpty($devOpsAgentRegion)) {
+    $devOpsAgentRegion = $currentRegion
+} elseif ($devOpsAgentRegion -ne $currentRegion) {
+    Write-Host "      INFO: DevOps Agent region overridden: $devOpsAgentRegion (deploy region: $currentRegion)" -ForegroundColor Cyan
+}
+
 # Check specific AWS service availability (if specified)
 if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) {
-    Write-Host "`nChecking $RequiredService availability in $currentRegion..." -ForegroundColor Yellow
+    # DevOps Agent is probed in the Agent Space region (which may differ from the
+    # deploy region); every other service is probed in the deploy region.
+    $serviceCheckRegion = if ($RequiredService.ToLower() -eq "devops-agent") { $devOpsAgentRegion } else { $currentRegion }
+    Write-Host "`nChecking $RequiredService availability in $serviceCheckRegion..." -ForegroundColor Yellow
     switch ($RequiredService.ToLower()) {
         "bedrock" {
-            $null = aws bedrock list-foundation-models --region $currentRegion --max-results 1 2>&1
+            # NOTE: `aws bedrock list-foundation-models` does NOT support --max-results;
+            # passing it makes the CLI exit non-zero ("Unknown options"), which this check
+            # would misreport as Bedrock being unavailable in the region. Mirrors the bash
+            # twin, which calls the command without it.
+            $null = aws bedrock list-foundation-models --region $currentRegion 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "      ERROR: Amazon Bedrock is not available in region: $currentRegion" -ForegroundColor Red
                 Write-Host "      https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html" -ForegroundColor Gray
@@ -166,6 +284,31 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             }
             Write-Host "      OK: AgentCore Browser Tool is available in $currentRegion" -ForegroundColor Green
         }
+        "devops-agent" {
+            # Probe the actual AWS DevOps Agent service (aidevops) in the Agent
+            # Space region. A region with no reachable aidevops endpoint fails at
+            # endpoint resolution and we stop here. Probing the live service avoids
+            # a hardcoded region list, which rots and would reject regions where the
+            # service is already reachable ahead of the docs. (Different service
+            # from Bedrock AgentCore, which the "agentcore" case probes.)
+            $null = aws devops-agent list-agent-spaces --region $devOpsAgentRegion --no-cli-pager 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "      ERROR: AWS DevOps Agent is not available in region: $devOpsAgentRegion" -ForegroundColor Red
+                Write-Host "" -ForegroundColor Red
+                Write-Host "      Pin the Agent Space to a supported Region and re-run:" -ForegroundColor Yellow
+                Write-Host '        $env:DEVOPS_AGENT_REGION = "<supported-region>"' -ForegroundColor Cyan
+                Write-Host "" -ForegroundColor Yellow
+                Write-Host "      An Agent Space monitors resources in ALL Regions of an associated" -ForegroundColor Gray
+                Write-Host "      account, so it does not need to live in your deploy Region." -ForegroundColor Gray
+                Write-Host "      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html" -ForegroundColor Gray
+                exit 1
+            }
+            if ($devOpsAgentRegion -ne $currentRegion) {
+                Write-Host "      OK: AWS DevOps Agent is available in $devOpsAgentRegion (Agent Space region)" -ForegroundColor Green
+            } else {
+                Write-Host "      OK: AWS DevOps Agent is available in $devOpsAgentRegion" -ForegroundColor Green
+            }
+        }
         "nova-act" {
             $null = aws nova-act list-workflow-definitions --region $currentRegion 2>&1
             if ($LASTEXITCODE -ne 0) {
@@ -176,9 +319,13 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
             Write-Host "      OK: Amazon Nova Act is available in $currentRegion" -ForegroundColor Green
         }
         "transform" {
-            Write-Host "      INFO: AWS Transform service check (informational)" -ForegroundColor Cyan
-            Write-Host "      AWS Transform must be available in $currentRegion" -ForegroundColor Gray
-            Write-Host "      https://docs.aws.amazon.com/transform/latest/userguide/regions.html" -ForegroundColor Gray
+            # AWS Transform has no describe/list API and is not in the SSM region
+            # list, so availability cannot be verified here. Each demo picks the
+            # region where AWS Transform runs (the deploy region, or its own
+            # fallback) at run time; this line only points at the reference.
+            Write-Host "      INFO: AWS Transform region availability is not verifiable from the CLI" -ForegroundColor Cyan
+            Write-Host "      The demo selects the AWS Transform region at run time (deploy region $currentRegion first)" -ForegroundColor Gray
+            Write-Host "      Supported regions: https://docs.aws.amazon.com/transform/latest/userguide/regions.html" -ForegroundColor Gray
         }
         default {
             Write-Host "      WARN: Unknown service '$RequiredService', skipping service check..." -ForegroundColor Yellow
@@ -195,3 +342,12 @@ Write-Host "Ready to proceed with demo deployment." -ForegroundColor Cyan
 $global:AWS_ACCOUNT_ID = $accountId
 $global:AWS_REGION = $currentRegion
 $global:AWS_ARN = $arn
+# Agent Space region for AWS DevOps Agent demos — equals $global:AWS_REGION unless
+# DEVOPS_AGENT_REGION was set by the caller.
+#
+# Published ONLY when the caller requested the devops-agent check, mirroring the
+# Bash version. Demos that manage $env:DEVOPS_AGENT_REGION themselves (applying their
+# own default) must not have it decided for them here.
+if ($RequiredService.ToLower() -eq "devops-agent") {
+    $global:DEVOPS_AGENT_REGION = $devOpsAgentRegion
+}

@@ -15,6 +15,30 @@ import * as path from 'path';
 
 const WIZARD_PATH = path.resolve(__dirname, '../scripts/setup-wizard.ts');
 
+/**
+ * Extracts a top-level function's source text from the wizard.
+ *
+ * Slices from the function declaration to whichever comes first: the next
+ * top-level function declaration, the trailing `main().catch(...)` bootstrap, or
+ * end of file. Previously these assertions used a fixed 4000-character window,
+ * which silently truncated the body whenever the function grew — causing
+ * unrelated assertions to fail on content that was still present.
+ */
+function extractFunctionSource(source: string, declaration: string): string {
+  const startIdx = source.indexOf(declaration);
+  if (startIdx === -1) return '';
+
+  const searchFrom = startIdx + declaration.length;
+  const boundaries = [
+    source.indexOf('\nasync function ', searchFrom),
+    source.indexOf('\nfunction ', searchFrom),
+    source.indexOf('\nmain().catch(', searchFrom),
+  ].filter((idx) => idx !== -1);
+
+  const endIdx = boundaries.length > 0 ? Math.min(...boundaries) : source.length;
+  return source.slice(startIdx, endIdx);
+}
+
 describe('setup-wizard production readiness', () => {
   let wizardSource: string;
 
@@ -22,26 +46,37 @@ describe('setup-wizard production readiness', () => {
     wizardSource = fs.readFileSync(WIZARD_PATH, 'utf-8');
   });
 
-  describe('Requirement 16.2: Region prompt before deployment', () => {
-    it('prompts for region as the first step (Step 0) in the main flow', () => {
-      // The region selection should be Step 0, before any prerequisites or deployment
+  describe('Requirement 16.2: Region resolved before deployment', () => {
+    it('resolves the region as the first step (Step 0) in the main flow', () => {
+      // Region is established as Step 0, before any prerequisites or deployment.
+      // Per review feedback the wizard no longer prompts from a hardcoded region
+      // shortlist; it resolves the region from the environment / AWS CLI config
+      // and lets the shared prerequisites check verify AgentCore availability.
       const regionStepMatch = wizardSource.match(
-        /step\(0,\s*['"`]Select Target AWS Region['"`]\)/
+        /step\(0,\s*['"`]Resolve Target AWS Region['"`]\)/
       );
       expect(regionStepMatch).not.toBeNull();
     });
 
-    it('region selection occurs before CDK deployment step in source order', () => {
-      const regionPromptIdx = wizardSource.indexOf("'Select Target AWS Region'");
+    it('does not hardcode a region shortlist', () => {
+      // The old SUPPORTED_REGIONS picker rotted and was inaccurate; it must not
+      // return. Availability is proven at runtime by the shared prerequisites
+      // check (check-prerequisites --required-service agentcore).
+      expect(wizardSource).not.toContain('SUPPORTED_REGIONS');
+      expect(wizardSource).toContain('function resolveRegion');
+    });
+
+    it('region resolution occurs before CDK deployment step in source order', () => {
+      const regionPromptIdx = wizardSource.indexOf("'Resolve Target AWS Region'");
       const cdkDeployIdx = wizardSource.indexOf("'CDK Deployment'");
       expect(regionPromptIdx).toBeGreaterThan(-1);
       expect(cdkDeployIdx).toBeGreaterThan(-1);
       expect(regionPromptIdx).toBeLessThan(cdkDeployIdx);
     });
 
-    it('region selection occurs before any DevOps Agent API calls', () => {
-      // In the main flow, region is selected first (Step 0), prerequisites are Step 1
-      const regionStepIdx = wizardSource.indexOf("step(0, 'Select Target AWS Region')");
+    it('region resolution occurs before any DevOps Agent API calls', () => {
+      // In the main flow, region is resolved first (Step 0), prerequisites are Step 1
+      const regionStepIdx = wizardSource.indexOf("step(0, 'Resolve Target AWS Region')");
       const prerequisitesIdx = wizardSource.indexOf("step(1, 'Checking prerequisites')");
       expect(regionStepIdx).toBeGreaterThan(-1);
       expect(prerequisitesIdx).toBeGreaterThan(-1);
@@ -131,13 +166,26 @@ describe('setup-wizard production readiness', () => {
     });
 
     it('uses runStep for major wizard steps in main flow', () => {
-      // The main flow should use runStep for key steps
+      // The main flow should use runStep for key steps. DevOps Agent Space
+      // creation, IAM roles, the account association, and the webhook used
+      // to each be separate imperative runStep-wrapped steps here — they are
+      // now provisioned declaratively by CDK (DevOpsAgentSpaceStack) as part
+      // of the single 'CDK Deployment' step below.
       expect(wizardSource).toContain("runStep('Check prerequisites'");
-      expect(wizardSource).toContain("runStep('DevOps Agent Space'");
-      expect(wizardSource).toContain("runStep('IAM Roles'");
-      expect(wizardSource).toContain("runStep('Account Association'");
-      expect(wizardSource).toContain("runStep('Webhook Configuration'");
       expect(wizardSource).toContain("runStep('CDK Deployment'");
+      expect(wizardSource).toContain("runStep('Jira Integration'");
+      expect(wizardSource).not.toContain("runStep('DevOps Agent Space'");
+      expect(wizardSource).not.toContain("runStep('IAM Roles'");
+      expect(wizardSource).not.toContain("runStep('Account Association'");
+      expect(wizardSource).not.toContain("runStep('Webhook Configuration'");
+    });
+
+    it('Jira integration runs after the CDK deployment step (Agent Space must exist first)', () => {
+      const cdkDeployIdx = wizardSource.indexOf("runStep('CDK Deployment'");
+      const jiraIdx = wizardSource.indexOf("runStep('Jira Integration'");
+      expect(cdkDeployIdx).toBeGreaterThan(-1);
+      expect(jiraIdx).toBeGreaterThan(-1);
+      expect(cdkDeployIdx).toBeLessThan(jiraIdx);
     });
   });
 
@@ -208,36 +256,50 @@ describe('setup-wizard production readiness', () => {
   describe('deployCdk function resilience', () => {
     it('deployCdk throws errors instead of calling process.exit', () => {
       // Find the deployCdk function
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
       // Get the function body (until next top-level function or end of file)
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).not.toContain('process.exit');
       expect(fnBody).toContain("throw new Error");
     });
 
     it('deployCdk uses --require-approval broadening', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).toContain('--require-approval=broadening');
       expect(fnBody).not.toContain('--require-approval never');
     });
 
-    it('deployCdk stores secrets in SSM SecureString before deploying', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+    it('deployCdk stores the Slack/MS Teams secrets in SSM SecureString before deploying the main stack', () => {
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).toContain('putSsmSecureString');
-      expect(fnBody).toContain('webhook-secret');
       expect(fnBody).toContain('slack-webhook-url');
       expect(fnBody).toContain('msteams-webhook-url');
     });
 
+    it('deployCdk does NOT store the DevOps Agent webhook secret via SSM (it is Secrets Manager now)', () => {
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
+      expect(fnBody).not.toContain('webhook-secret');
+      expect(fnBody).not.toContain('DEVOPS_AGENT_WEBHOOK_SECRET');
+    });
+
+    it('deployCdk reads the Agent Space stack outputs (AgentSpaceId, WebhookUrl, WebhookSecretArn) instead of driving the AWS CLI directly', () => {
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
+      expect(fnBody).toContain('describeStackOutput');
+      expect(fnBody).toContain("'AgentSpaceId'");
+      expect(fnBody).toContain("'WebhookUrl'");
+      expect(fnBody).toContain("'WebhookSecretArn'");
+      expect(fnBody).toContain('devOpsAgentWebhookSecretArn=');
+      expect(fnBody).not.toContain('aws devops-agent create-agent-space');
+      expect(fnBody).not.toContain('aws devops-agent associate-service');
+    });
+
     it('deployCdk does not pass secrets as CloudFormation parameters', () => {
-      const fnIdx = wizardSource.indexOf('async function deployCdk');
-      expect(fnIdx).toBeGreaterThan(-1);
-      const fnBody = wizardSource.slice(fnIdx, fnIdx + 4000);
+      const fnBody = extractFunctionSource(wizardSource, 'async function deployCdk');
+      expect(fnBody).not.toBe('');
       expect(fnBody).not.toContain('--parameters DevOpsAgentWebhookSecret');
       expect(fnBody).not.toContain('--parameters SlackWebhookUrl');
       expect(fnBody).not.toContain('--parameters MsTeamsWebhookUrl');

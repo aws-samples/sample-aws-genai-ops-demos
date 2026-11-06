@@ -1,0 +1,7 @@
+# Test-only dependencies. Never add these to backend/requirements.txt: that file
+# is what the CDK and Terraform paths install into the Lambda bundle (Linux/arm64
+# wheels, --only-binary), and test packages either bloat it or break the resolve.
+pytest
+hypothesis
+moto[dynamodb]==5.*
+aws-durable-execution-sdk-python-testing

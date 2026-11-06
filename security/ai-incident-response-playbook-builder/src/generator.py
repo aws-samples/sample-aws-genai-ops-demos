@@ -3,8 +3,25 @@
 import argparse
 import json
 import os
+import sys
 
 import boto3
+
+# Reach the repo's shared utilities. generator.py runs as a standalone subprocess
+# (build-playbooks.sh invokes `python3 src/generator.py`) without the PYTHONPATH the
+# shared deploy script exports, so bootstrap sys.path to the repo root here. Repo layout:
+# <repo-root>/security/ai-incident-response-playbook-builder/src/generator.py -> 4 levels up.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from shared.utils import get_bedrock_model_id  # noqa: E402
+
+# Verified non-legacy default (base id, no CRIS prefix). get_bedrock_model_id() applies the
+# correct us/eu/apac/global prefix for the deploy region at runtime. NEVER hardcode a
+# region-prefixed id here (contributor-guide.md): any pinned model eventually goes Legacy and
+# Bedrock blocks new/inactive accounts from invoking it, which is exactly the bug this fixes.
+DEFAULT_MODEL_NAME = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 THREAT_ASSESSMENT_PROMPT = """You are an AWS security incident response expert. Analyze the following AWS architecture profile and identify the most likely and highest-impact threat scenarios for this specific environment.
 
@@ -152,33 +169,39 @@ def generate_playbook(bedrock, model_id, threat, profile, org_context=None):
 
 
 def extract_json(text):
-    """Robustly extract JSON from Bedrock response that may contain markdown or extra text."""
+    """Robustly extract JSON from a Bedrock response that may wrap it in prose or markdown.
+
+    Bedrock (Claude) commonly returns the SSM document wrapped in a ```json ... ``` fence, and
+    the JSON itself frequently contains embedded shell snippets -- i.e. NESTED ``` fences and
+    stray braces inside string values. The decisive step below scans for the first JSON value
+    (`{` or `[`) and uses json.JSONDecoder().raw_decode(), which consumes exactly one complete,
+    balanced JSON value and ignores whatever trails it (a closing fence, prose, a nested code
+    block). That is immune to the nested-fence / trailing-`}` problems that broke the previous
+    rfind('```')- and rfind('}')-based slicing.
+    """
     text = text.strip()
-    # Try direct parse first
+
+    # Fast path: the whole response is already valid JSON.
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Strip markdown code fences
-    if "```" in text:
-        # Find content between first ``` and last ```
-        start = text.find("```")
-        first_newline = text.find("\n", start)
-        end = text.rfind("```")
-        if first_newline != -1 and end > first_newline:
-            text = text[first_newline + 1:end].strip()
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-    # Find first { and last } to extract JSON object
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace > first_brace:
+
+    # Scan forward for the first JSON value opener and let raw_decode() consume one balanced
+    # value from there. Trying each candidate handles a leading ```json fence, a prose preamble,
+    # or any other junk before the JSON without depending on where it ENDS.
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch not in "{[":
+            continue
         try:
-            return json.loads(text[first_brace:last_brace + 1])
+            value, _ = decoder.raw_decode(text, i)
+            return value
         except json.JSONDecodeError:
-            pass
+            # This opener did not start a complete JSON value (e.g. a stray '{' in prose);
+            # keep scanning for the next candidate.
+            continue
+
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
@@ -213,12 +236,24 @@ def slugify(name):
 def main():
     parser = argparse.ArgumentParser(description="Generate IR playbooks via Amazon Bedrock")
     parser.add_argument("--profile", required=True, help="Path to architecture profile JSON")
-    parser.add_argument("--model-id", default="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    parser.add_argument(
+        "--model-id",
+        default=None,
+        help="Bedrock model ID to invoke. Omit to use the region-correct default resolved "
+             "via the shared get_bedrock_model_id() helper (a current, non-legacy Sonnet).",
+    )
     parser.add_argument("--region", required=True)
     parser.add_argument("--output-dir", default="./output")
     parser.add_argument("--output-format", default="both", choices=["ssm", "markdown", "both"])
     parser.add_argument("--org-context", default=None, help="Path to org context JSON")
     args = parser.parse_args()
+
+    # Resolve the model id: an explicit --model-id always wins; otherwise route through the
+    # shared helper so the CRIS prefix matches AWS_REGION/args.region at invoke time.
+    if not args.model_id:
+        os.environ.setdefault("AWS_REGION", args.region)
+        args.model_id = get_bedrock_model_id(DEFAULT_MODEL_NAME)
+    print(f"  Using model: {args.model_id}")
 
     with open(args.profile) as f:
         profile = json.load(f)
@@ -247,6 +282,8 @@ def main():
     os.makedirs(playbooks_dir, exist_ok=True)
     os.makedirs(ssm_dir, exist_ok=True)
 
+    ssm_attempted = 0
+    ssm_failures = []  # (threat_name, error) for an end-of-run summary
     for i, threat in enumerate(threats, 1):
         name = threat.get("threat_name", f"threat-{i}")
         slug = slugify(name)
@@ -260,6 +297,7 @@ def main():
 
         # Generate SSM document
         if args.output_format in ("ssm", "both"):
+            ssm_attempted += 1
             try:
                 playbook_text = playbook_md if args.output_format == "both" else generate_playbook(
                     bedrock, args.model_id, threat, profile, org_context
@@ -267,10 +305,31 @@ def main():
                 ssm_doc = generate_ssm_document(bedrock, args.model_id, playbook_text, profile)
                 with open(os.path.join(ssm_dir, f"{slug}.json"), "w") as f:
                     json.dump(ssm_doc, f, indent=2)
-            except (json.JSONDecodeError, KeyError, Exception) as e:
+            # Catch only the failure mode SSM generation is expected to produce (an unparseable
+            # model response). We deliberately do NOT catch bare Exception here: an unexpected
+            # error (e.g. a Bedrock ClientError/throttle, a bug) should surface loudly rather
+            # than be silently counted as "SSM failed" -- that broad catch is what previously
+            # hid a systemic parse failure behind a per-item warning.
+            except json.JSONDecodeError as e:
                 print(f"    ⚠ SSM document generation failed for {name}: {e}")
+                ssm_failures.append((name, str(e)))
 
     print(f"  Generated {len(threats)} playbooks")
+
+    # Make partial SSM failure VISIBLE. Previously every SSM doc could fail and the run still
+    # looked successful; surface a clear count, and fail loudly if EVERY attempt failed (which
+    # indicates a systemic problem rather than one bad response).
+    if ssm_attempted:
+        ssm_ok = ssm_attempted - len(ssm_failures)
+        print(f"  Generated {ssm_ok}/{ssm_attempted} SSM documents")
+        if ssm_failures:
+            print(f"  ⚠ {len(ssm_failures)} SSM document(s) failed to generate:")
+            for tname, err in ssm_failures:
+                print(f"      - {tname}: {err}")
+            if ssm_ok == 0:
+                print("  ERROR: ALL SSM document generations failed -- this indicates a "
+                      "systemic problem (e.g. response parsing), not a one-off bad response.")
+                sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+cdk.out*
+node_modules
+.lab-stage/
+__pycache__/
+.pytest_cache/
+frontend/dist/
+# Skill package produced by deploy-all (shared deploy-skill.*)
+*.zip

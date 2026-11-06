@@ -20,6 +20,13 @@ target/
 **/cdk/bin/*.js
 **/cdk/bin/*.d.ts
 
+# TypeScript compilation outputs (shared utils): aws-utils.ts is the source;
+# tsc emits aws-utils.js / aws-utils.d.ts next to it on every CDK build, which
+# otherwise show up as perpetually-untracked files. The .ts/.py/.sh sources are
+# tracked; the compiled JS/d.ts are not.
+shared/utils/*.js
+shared/utils/*.d.ts
+
 # CDK outputs
 **/cdk.out/
 **/cdk.out*/
@@ -131,3 +138,15 @@ samples/
 .Trashes
 ehthumbs.db
 Thumbs.db
+# Kiro workflow run artifacts (per-run reviews, deployment records with demo credentials)
+.kiro/workflow-runs/
+
+# Agent task artifacts (plans, reviews, verifications produced while working;
+# internal workflow scratch, not demo deliverables)
+**/.agents/
+# Local git worktrees created by agents and maintainers
+.worktrees/
+
+# Scratch directory for files staged for deletion (never a deliverable)
+DELETE/
+

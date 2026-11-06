@@ -1,129 +1,255 @@
-# AI Lambda Runtime Migration Assistant - Deployment Script
-$ErrorActionPreference = "Stop"
+# AI Lambda Runtime Migration Assistant - Complete Deployment Script
+#
+# Stacks (in order): Data -> Auth -> Pipeline -> Api -> Transform -> Frontend
+# The Transform stack is the migration build plane (CodeBuild running AWS
+# Transform); its buildspec is uploaded to the artifacts bucket right after it
+# deploys, so Migrate works as soon as the script finishes.
+# No Docker needed: the Lambda bundle is built locally with pip by the
+# Pipeline stack (pure-Python dependencies resolved as Linux/arm64 wheels).
+#
+# Default (single-account): discovers and assesses Lambda functions in the
+# account you deploy into. The hub pipeline ALWAYS scans whatever AWS
+# Organization it can read at runtime — no deploy flag is needed for that, and
+# no flag can make the scan drift out of sync after a redeploy. A standalone
+# account simply scans itself.
+# -MultiAccount: additionally rolls the read-only spoke role out to every member
+#   account of an AWS Organization, so the hub can also scan them. Runs
+#   shared/scripts/check-org-access.ps1 first (read-only preflight). When the hub
+#   may run service-managed StackSets, the Org stack performs the rollout;
+#   otherwise the one command a management-account admin has to run is printed.
+#   The pipeline stack itself is deployed identically with or without this flag.
+# -OrgTargets: comma-separated organization root (r-xxxx) and/or OU ids to roll
+#   the spoke role out to. Default: the whole organization (its root).
+# -Mock: also deploys the optional mock fixture (LambdaRuntimeMigrationMock-<region>):
+#   a CodeCommit repository and three deprecated-runtime Lambda functions tagged
+#   so Migrate works with the default Settings. Remove it later with
+#   scripts\deploy-mock.ps1 -Destroy.
+param(
+    [switch]$MultiAccount,
+    [string]$OrgTargets = "",
+    [switch]$Mock
+)
 
-Write-Host "=== AI Lambda Runtime Migration Assistant ===" -ForegroundColor Cyan
+Write-Host "=== AI Lambda Runtime Migration Assistant Deployment ===" -ForegroundColor Cyan
 
-# Check prerequisites using shared script
-& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "agentcore"
+# Run shared prerequisites check (transform service: points at the AWS Transform
+# region reference; the demo picks the Transform region at run time).
+Write-Host "`nRunning prerequisites check..." -ForegroundColor Yellow
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "transform" -MinAwsCliVersion "2.31.13" -MinPythonVersion "3.12" -RequireCDK -MinCdkVersion "2.1030.0"
 
-# Use region from shared prerequisites
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Prerequisites check failed" -ForegroundColor Red
+    exit 1
+}
+
+# Install frontend dependencies
+Write-Host "`nInstalling frontend dependencies..." -ForegroundColor Yellow
+Write-Host "      (Installing React, Vite, Cognito SDK, and UI component libraries)" -ForegroundColor Gray
+Push-Location frontend
+npm install
+Pop-Location
+
+# Create placeholder dist BEFORE any CDK commands
+# (CDK synthesizes all stacks even when deploying one, so frontend/dist must exist)
+Write-Host "`nCreating placeholder frontend build..." -ForegroundColor Yellow
+Write-Host "      (Generating temporary HTML file - required for CDK synthesis)" -ForegroundColor Gray
+if (-not (Test-Path "frontend/dist")) {
+    New-Item -ItemType Directory -Path "frontend/dist" -Force | Out-Null
+    echo "<!DOCTYPE html><html><body><h1>Building...</h1></body></html>" > frontend/dist/index.html
+} else {
+    Write-Host "      Placeholder already exists, skipping..." -ForegroundColor Gray
+}
+
+# Get region for stack names
 $region = $global:AWS_REGION
 
 # Set stack names with region suffix
 $dataStackName = "LambdaRuntimeMigrationData-$region"
 $authStackName = "LambdaRuntimeMigrationAuth-$region"
-$runtimeStackName = "LambdaRuntimeMigrationRuntime-$region"
+$pipelineStackName = "LambdaRuntimeMigrationPipeline-$region"
+$apiStackName = "LambdaRuntimeMigrationApi-$region"
 $frontendStackName = "LambdaRuntimeMigrationFrontend-$region"
+$transformStackName = "LambdaRuntimeMigrationTransform-$region"
+$mockStackName = "LambdaRuntimeMigrationMock-$region"
 
-    # Step 1: Install CDK dependencies
-    Write-Host "`n[1/9] Installing CDK dependencies..." -ForegroundColor Yellow
-    if (-not (Test-Path "cdk/node_modules")) {
-        Push-Location cdk
-        npm install
-        Pop-Location
-    } else {
-        Write-Host "       CDK dependencies already installed" -ForegroundColor Gray
+# Multi-account preflight (read-only; exit codes documented in check-org-access.ps1).
+# This only drives the OPTIONAL Org/Spoke StackSet rollout below — the pipeline
+# stack is deployed identically whether or not -MultiAccount is passed, because
+# the pipeline decides multi-account vs single-account at runtime.
+$orgRollout = $false
+if ($MultiAccount) {
+    Write-Host "`nChecking multi-account (organization) access..." -ForegroundColor Yellow
+    & "..\..\shared\scripts\check-org-access.ps1"
+    $orgCheck = $LASTEXITCODE
+    if ($orgCheck -eq 2) {
+        Write-Host "This account cannot list the organization's accounts, so -MultiAccount is not possible from here." -ForegroundColor Red
+        Write-Host "Apply the fix printed above, or deploy without -MultiAccount to scan just this account." -ForegroundColor Yellow
+        exit 1
+    } elseif ($orgCheck -ne 0 -and $orgCheck -ne 3) {
+        Write-Host "Multi-account preflight failed" -ForegroundColor Red
+        exit 1
     }
-
-    # Step 2: Install frontend dependencies
-    Write-Host "`n[2/9] Installing frontend dependencies..." -ForegroundColor Yellow
-    Push-Location frontend
-    npm install
-    Pop-Location
-
-    # Step 3: Create placeholder frontend build
-    Write-Host "`n[3/9] Creating placeholder frontend build..." -ForegroundColor Yellow
-    if (-not (Test-Path "frontend/dist")) {
-        New-Item -ItemType Directory -Path "frontend/dist" -Force | Out-Null
-        echo "<!DOCTYPE html><html><body><h1>Building...</h1></body></html>" > frontend/dist/index.html
+    $orgRollout = ($orgCheck -eq 0)
+    if ([string]::IsNullOrEmpty($OrgTargets)) {
+        $OrgTargets = aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager
     }
+    Write-Host "      Spoke role rollout enabled (member accounts the hub will be able to scan)" -ForegroundColor Gray
+    Write-Host "      Scan targets: $OrgTargets $(if ($orgRollout) { '(spoke role rolled out from this account)' } else { '(spoke role rollout must be run by the management account)' })" -ForegroundColor Gray
+}
 
-    # Step 4: Package 3 agent zips
-    Write-Host "`n[4/9] Packaging agent code (3 agents)..." -ForegroundColor Yellow
-    & .\scripts\package-agent.ps1
-    if ($LASTEXITCODE -ne 0) { Write-Host "Agent packaging failed" -ForegroundColor Red; exit 1 }
+# Deploy data stack
+Write-Host "`nDeploying data stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the DynamoDB inventory table and S3 bucket for migration artifacts)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $dataStackName
+if ($LASTEXITCODE -ne 0) { Write-Host "Data stack deployment failed" -ForegroundColor Red; exit 1 }
 
-    # Step 5: Bootstrap CDK and deploy Data stack
-    Write-Host "`n[5/9] Bootstrapping CDK and deploying Data stack..." -ForegroundColor Yellow
-    Push-Location cdk
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    npx cdk bootstrap --output "cdk.out.$timestamp" --no-cli-pager
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Host "CDK bootstrap failed" -ForegroundColor Red; exit 1 }
+# Deploy auth stack
+Write-Host "`nDeploying authentication stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the Cognito User Pool and app client)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $authStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "Auth stack deployment failed" -ForegroundColor Red; exit 1 }
 
-    Push-Location cdk
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    npx cdk deploy $dataStackName --output "cdk.out.$timestamp" --no-cli-pager --require-approval never
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Host "Data stack deployment failed" -ForegroundColor Red; exit 1 }
+# Deploy pipeline stack (durable discover+assess function + API function)
+Write-Host "`nDeploying pipeline stack..." -ForegroundColor Yellow
+Write-Host "      (Bundling Python code with pip, creating the Lambda durable function and API function)" -ForegroundColor Gray
+# Deployed identically with or without -MultiAccount: the pipeline role always
+# carries the org-read + spoke-assume grants and decides scope at runtime.
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $pipelineStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "Pipeline stack deployment failed" -ForegroundColor Red; exit 1 }
 
-    # Upload 3 agent zips to S3
-    Write-Host "`nUploading agent zips to S3..." -ForegroundColor Yellow
-    $bucketName = aws cloudformation describe-stacks --stack-name $dataStackName --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --no-cli-pager
-    $agents = @("discover", "analyze", "transform")
-    foreach ($agent in $agents) {
-        $zipPath = "agent/$agent/deployment_package.zip"
-        aws s3 cp $zipPath s3://$bucketName/agent/$agent/deployment_package.zip --no-cli-pager
-        if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed for $agent" -ForegroundColor Red; exit 1 }
-        Write-Host "       Uploaded $agent agent zip" -ForegroundColor Green
-    }
+# Multi-account: roll the read-only spoke role out to every member account via a
+# service-managed StackSet (the Org stack). Only when this account may run them;
+# otherwise the ACTION REQUIRED command is printed in the summary below.
+if ($MultiAccount -and $orgRollout) {
+    $hubAccount = aws sts get-caller-identity --query Account --output text --no-cli-pager
+    $orgStackName = "LambdaRuntimeMigrationOrg-$region"
+    Write-Host "`nDeploying org stack (spoke role StackSet)..." -ForegroundColor Yellow
+    Write-Host "      (Service-managed StackSet placing the read-only LambdaRuntimeMigrationScanRole in every account under $OrgTargets)" -ForegroundColor Gray
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -CdkContext @("orgTargets=$OrgTargets", "hubAccountId=$hubAccount")
+    if ($LASTEXITCODE -ne 0) { Write-Host "Org stack deployment failed" -ForegroundColor Red; exit 1 }
+}
 
-    # Step 6: Deploy Auth stack
-    Write-Host "`n[6/9] Deploying Auth stack (Cognito)..." -ForegroundColor Yellow
-    Push-Location cdk
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    npx cdk deploy $authStackName --output "cdk.out.$timestamp" --no-cli-pager --require-approval never
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Host "Auth stack deployment failed" -ForegroundColor Red; exit 1 }
+# Deploy API stack (HTTP API + Cognito JWT authorizer)
+Write-Host "`nDeploying API stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the HTTP API with Cognito JWT authorization in front of the API function)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $apiStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "API stack deployment failed" -ForegroundColor Red; exit 1 }
 
-    # Step 7: Deploy Runtime stack (3 AgentCore Runtimes)
-    Write-Host "`n[7/9] Deploying Runtime stack (3 AgentCore Runtimes)..." -ForegroundColor Yellow
-    Push-Location cdk
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    npx cdk deploy $runtimeStackName --output "cdk.out.$timestamp" --no-cli-pager --require-approval never
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Host "Runtime stack deployment failed" -ForegroundColor Red; exit 1 }
+# Deploy Transform stack (migration build plane). It imports Pipeline and Data
+# exports, so it goes after them.
+Write-Host "`nDeploying Transform stack..." -ForegroundColor Yellow
+Write-Host "      (Creating the CodeBuild project running AWS Transform, its build role and EventBridge rule)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $transformStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "Transform stack deployment failed" -ForegroundColor Red; exit 1 }
 
-    # Step 8: Build frontend with runtime ARNs
-    Write-Host "`n[8/9] Building frontend with stack outputs..." -ForegroundColor Yellow
-    $userPoolId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
-    $userPoolClientId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
-    $identityPoolId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text --no-cli-pager
-    $discoverArn = aws cloudformation describe-stacks --stack-name $runtimeStackName --query "Stacks[0].Outputs[?OutputKey=='DiscoverRuntimeArn'].OutputValue" --output text --no-cli-pager
-    $analyzeArn = aws cloudformation describe-stacks --stack-name $runtimeStackName --query "Stacks[0].Outputs[?OutputKey=='AnalyzeRuntimeArn'].OutputValue" --output text --no-cli-pager
-    $transformArn = aws cloudformation describe-stacks --stack-name $runtimeStackName --query "Stacks[0].Outputs[?OutputKey=='TransformRuntimeArn'].OutputValue" --output text --no-cli-pager
+# Read the artifacts bucket name from the Data stack output, then upload the
+# buildspec the CodeBuild project reads from config/.
+$bucket = aws cloudformation describe-stacks --stack-name $dataStackName --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --no-cli-pager
+$transformProjectName = aws cloudformation describe-stacks --stack-name $transformStackName --query "Stacks[0].Outputs[?OutputKey=='TransformProjectName'].OutputValue" --output text --no-cli-pager
+if ([string]::IsNullOrEmpty($bucket) -or $bucket -eq "None") {
+    Write-Host "Failed to get the artifacts bucket name from stack outputs" -ForegroundColor Red
+    exit 1
+}
+if ([string]::IsNullOrEmpty($transformProjectName) -or $transformProjectName -eq "None") {
+    Write-Host "Failed to get the AWS Transform CodeBuild project name from stack outputs" -ForegroundColor Red
+    exit 1
+}
 
-    & .\scripts\build-frontend.ps1 -Region $region -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -IdentityPoolId $identityPoolId -DiscoverRuntimeArn $discoverArn -AnalyzeRuntimeArn $analyzeArn -TransformRuntimeArn $transformArn
-    if ($LASTEXITCODE -ne 0) { Write-Host "Frontend build failed" -ForegroundColor Red; exit 1 }
+Write-Host "`nUploading the migration buildspec to the artifacts bucket..." -ForegroundColor Yellow
+# Object MUST be named buildspec.yml: CodeBuild's S3 single-file source looks for
+# a file named buildspec.yml in the downloaded source root.
+aws s3 cp cdk/buildspec/transform-migrate.buildspec.yml "s3://$bucket/config/buildspec.yml" --no-cli-pager
+if ($LASTEXITCODE -ne 0) { Write-Host "Buildspec upload failed" -ForegroundColor Red; exit 1 }
 
-    # Step 9: Deploy Frontend stack (CloudFront)
-    Write-Host "`n[9/9] Deploying Frontend stack (CloudFront)..." -ForegroundColor Yellow
-    Push-Location cdk
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    npx cdk deploy $frontendStackName --output "cdk.out.$timestamp" --no-cli-pager --require-approval never
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { Write-Host "Frontend stack deployment failed" -ForegroundColor Red; exit 1 }
-
-# Retrieve stack outputs
-
-$websiteUrl = aws cloudformation describe-stacks --stack-name $frontendStackName --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
-$bucketName = aws cloudformation describe-stacks --stack-name $dataStackName --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --no-cli-pager
-$tableName = aws cloudformation describe-stacks --stack-name $dataStackName --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text --no-cli-pager
+# Build frontend with API URL and Cognito config (after backend is complete)
+Write-Host "`nBuilding frontend with stack outputs..." -ForegroundColor Yellow
+Write-Host "      (Retrieving API URL and Cognito config, building the React app)" -ForegroundColor Gray
+$apiUrl = aws cloudformation describe-stacks --stack-name $apiStackName --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text --no-cli-pager
 $userPoolId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
+$userPoolClientId = aws cloudformation describe-stacks --stack-name $authStackName --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
 
-Write-Host ""
-Write-Host "========================================" -ForegroundColor Green
+if ([string]::IsNullOrEmpty($apiUrl) -or $apiUrl -eq "None") {
+    Write-Host "Failed to get API URL from stack outputs" -ForegroundColor Red
+    exit 1
+}
+
+if ([string]::IsNullOrEmpty($userPoolId) -or $userPoolId -eq "None" -or [string]::IsNullOrEmpty($userPoolClientId) -or $userPoolClientId -eq "None") {
+    Write-Host "Failed to get Cognito config from stack outputs" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "API URL: $apiUrl" -ForegroundColor Green
+Write-Host "User Pool ID: $userPoolId" -ForegroundColor Green
+Write-Host "User Pool Client ID: $userPoolClientId" -ForegroundColor Green
+
+& .\scripts\build-frontend.ps1 -ApiUrl $apiUrl -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId
+if ($LASTEXITCODE -ne 0) { Write-Host "Frontend build failed" -ForegroundColor Red; exit 1 }
+
+# Deploy frontend stack (CloudFront + S3)
+Write-Host "`nDeploying frontend stack..." -ForegroundColor Yellow
+Write-Host "      (Deploying the built React app to S3 behind CloudFront)" -ForegroundColor Gray
+& "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $frontendStackName -SkipBootstrap
+if ($LASTEXITCODE -ne 0) { Write-Host "Frontend stack deployment failed" -ForegroundColor Red; exit 1 }
+
+# Optional mock fixture (-Mock): CodeCommit repo + three deprecated-runtime
+# Lambda functions, gated behind the mockFixture CDK context.
+if ($Mock) {
+    Write-Host "`nDeploying mock fixture stack..." -ForegroundColor Yellow
+    Write-Host "      (Creating the CodeCommit repo and the three deprecated-runtime Lambda functions)" -ForegroundColor Gray
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $mockStackName -SkipBootstrap -CdkContext "mockFixture=true"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Mock fixture deployment failed" -ForegroundColor Red; exit 1 }
+
+    $repoUrl = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='FixtureRepoCloneUrlHttp'].OutputValue" --output text --no-cli-pager
+    $pythonFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockPythonFunctionName'].OutputValue" --output text --no-cli-pager
+    $nodejsFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockNodejsFunctionName'].OutputValue" --output text --no-cli-pager
+    $dotnetFn = aws cloudformation describe-stacks --stack-name $mockStackName --query "Stacks[0].Outputs[?OutputKey=='MockDotnetFunctionName'].OutputValue" --output text --no-cli-pager
+}
+
+# Gather outputs
+$websiteUrl = aws cloudformation describe-stacks --stack-name $frontendStackName --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text --no-cli-pager
+
+Write-Host "`n========================================" -ForegroundColor Green
 Write-Host "  Deployment Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
-Write-Host ""
 Write-Host "  Dashboard URL:   $websiteUrl" -ForegroundColor Cyan
-Write-Host "  S3 Bucket:       $bucketName" -ForegroundColor Cyan
-Write-Host "  DynamoDB Table:  $tableName" -ForegroundColor Cyan
+Write-Host "  API URL:         $apiUrl" -ForegroundColor Cyan
 Write-Host "  Region:          $region" -ForegroundColor Cyan
+Write-Host "  User Pool ID:    $userPoolId" -ForegroundColor Cyan
+Write-Host "  CodeBuild project (AWS Transform): $transformProjectName" -ForegroundColor Cyan
+if ($Mock) {
+    Write-Host "`nMock fixture:" -ForegroundColor Yellow
+    Write-Host "  CodeCommit repo URL: $repoUrl" -ForegroundColor Cyan
+    Write-Host "  Functions:" -ForegroundColor Cyan
+    Write-Host "    - $pythonFn  (python3.9)" -ForegroundColor Cyan
+    Write-Host "    - $nodejsFn  (nodejs16.x)" -ForegroundColor Cyan
+    Write-Host "    - $dotnetFn  (dotnet6)" -ForegroundColor Cyan
+    Write-Host "  Trusted Advisor's deprecated-runtime detection has a lag, so these functions" -ForegroundColor DarkGray
+    Write-Host "  may take time (often hours) to appear in the inventory after the next Discover." -ForegroundColor DarkGray
+    Write-Host "  Remove the fixture with: .\scripts\deploy-mock.ps1 -Destroy" -ForegroundColor DarkGray
+}
+Write-Host "`nNext Steps:" -ForegroundColor Yellow
+Write-Host "  1. Create a dashboard user (copy-paste these two commands):" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  To create a dashboard user:" -ForegroundColor Yellow
-Write-Host "  aws cognito-idp admin-create-user --user-pool-id $userPoolId --username your.email@example.com --user-attributes Name=email,Value=your.email@example.com --message-action SUPPRESS --no-cli-pager" -ForegroundColor Gray
+Write-Host "     aws cognito-idp admin-create-user --user-pool-id $userPoolId --username admin@example.com --user-attributes Name=email,Value=admin@example.com Name=email_verified,Value=true --message-action SUPPRESS --no-cli-pager" -ForegroundColor White
 Write-Host ""
-Write-Host "  Then set a permanent password:" -ForegroundColor Yellow
-Write-Host "  aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username your.email@example.com --password YourPass123! --permanent --no-cli-pager" -ForegroundColor Gray
+Write-Host "     aws cognito-idp admin-set-user-password --user-pool-id $userPoolId --username admin@example.com --password ""YourSecurePassword123!"" --permanent --no-cli-pager" -ForegroundColor White
 Write-Host ""
+Write-Host "     (The username is the email address; replace it and the password with your own values)" -ForegroundColor DarkGray
+Write-Host "  2. Sign in at the Dashboard URL above and click Discover to run the first discover + assess pipeline" -ForegroundColor Gray
+Write-Host "     The hub always scans whatever organization it can read at runtime; a standalone account scans itself." -ForegroundColor DarkGray
+Write-Host "  3. Migrate is available right away: select functions and click Migrate to run AWS Transform in CodeBuild" -ForegroundColor Gray
+Write-Host "     and push an upgrade branch to each function's repository (tens of minutes per function)." -ForegroundColor DarkGray
+if ($MultiAccount) {
+    $hubAccount = aws sts get-caller-identity --query Account --output text --no-cli-pager
+    Write-Host "`nMulti-account:" -ForegroundColor Yellow
+    Write-Host "  Spoke role rolled out so hub account $hubAccount can also scan every active account under $OrgTargets" -ForegroundColor Gray
+    if ($orgRollout) {
+        Write-Host "  Spoke role: StackSet ai-lambda-runtime-migration-spoke (auto-deploys to accounts joining later)" -ForegroundColor Gray
+        Write-Host "     aws cloudformation list-stack-instances --stack-set-name ai-lambda-runtime-migration-spoke --region $region" -ForegroundColor White
+    } else {
+        Write-Host "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:" -ForegroundColor Yellow
+        Write-Host "     cd cdk; npx cdk deploy LambdaRuntimeMigrationOrg-$region --context orgTargets=$OrgTargets --context hubAccountId=$hubAccount --require-approval never" -ForegroundColor White
+        Write-Host "     (or register this account as a StackSets delegated administrator, see the preflight output above, and re-run with -MultiAccount)" -ForegroundColor DarkGray
+        Write-Host "  Until then, member accounts are reported as failed in each scan; the hub itself is scanned normally." -ForegroundColor Gray
+    }
+}

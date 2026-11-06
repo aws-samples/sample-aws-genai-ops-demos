@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+#
+# Repo-root ASH configuration for the Security Scan (ASH) GitHub workflow
+# (.github/workflows/security-scan.yml), which scans the whole repo with
+# `ash scan --mode container --source-dir .`.
+#
+# Purpose of this file: make the repo-wide scan COMPLETE cleanly so it can be a
+# true gate. Two adjustments, both explained inline:
+#   1. Disable the CDK/CloudFormation *template* scanners (cdk-nag, cfn-nag) for
+#      this source scan.
+#   2. Ignore build artifacts and demo-owned ASH content that are not this
+#      repo's source to validate.
+#
+# NOTE: this is NOT the same as security/prowler-security-findings-agent/.ash/.ash.yaml,
+# which is that DEMO's own content (the demo demonstrates ASH as a feature). This
+# file is repo-level config for our CI security scan.
+project_name: sample-aws-genai-ops-demos
+
+global_settings:
+  severity_threshold: MEDIUM
+  ignore_paths:
+    # Build artifacts / generated output — regenerated each build, not our source.
+    - path: "**/node_modules/**"
+      reason: "Transitive JS dependencies — covered via npm-audit + lockfile review"
+    - path: "**/cdk.out/**"
+      reason: "Generated CloudFormation from cdk synth — regenerated each deploy"
+    - path: "**/.venv/**"
+      reason: "Python virtualenvs created by demo deploy scripts"
+    - path: "**/dist/**"
+      reason: "Frontend build output — regenerated each deploy"
+    - path: "**/__pycache__/**"
+      reason: "Python bytecode caches"
+    # Demo-owned ASH content: the prowler demo ships its own .ash config/outputs to
+    # DEMONSTRATE ASH. Scanning another tool's demonstration content as if it were our
+    # infra is noise (and its config/outputs are not ours to validate).
+    - path: "**/prowler-security-findings-agent/.ash/**"
+      reason: "Demo-owned ASH config/outputs — the demo demonstrates ASH itself"
+
+  # detect-secrets false positives. Prefer an inline comment on the flagged line in
+  # code: `# pragma: allowlist secret` (or `// pragma: allowlist secret`). It moves with
+  # the line and covers that line only. Line-number entries here broke whenever code
+  # above them moved (16 of 45 had stopped matching), so none are used.
+  # The entries below cover a WHOLE FILE for one rule: only for files that cannot carry
+  # an inline comment (docs, a line continued with a backslash). Each one was audited.
+  suppressions:
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: ".kiro/steering/contributor-guide.md"
+      reason: "Anti-pattern example in the placeholder convention itself, not a secret"
+    - rule_id: "SECRET-SLACK-TOKEN"
+      path: "observability/proactive-health-event-impact-analyzer/docs/slack-integration.md"
+      reason: "Docs: placeholder webhook URL (TXXXXXXXXX/BXXXXXXXXX), not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/proactive-health-event-impact-analyzer/docs/jira-integration.md"
+      reason: "Docs: <base64(email:token)> placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "operations-automation/ai-legacy-system-browser-automation/README.md"
+      reason: "Docs: your-secret-key placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "security/ai-iam-access-analyzer-assistant/README.md"
+      reason: "Docs: your-oidc-client-secret placeholder, not a secret"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "observability/eks-investigation-devops-agent/deploy-all.sh"
+      reason: "Variable-name check DEVOPS_WEBHOOK_SECRET_ARN on a backslash-continued line (no inline comment possible), not a secret"
+scanners:
+  # cdk-nag and cfn-nag evaluate SYNTHESIZED CloudFormation templates, not source.
+  # In this repo-root source scan there is no `cdk synth` output, so they have no
+  # legitimate CDK template to evaluate — and cdk-nag ERRORs trying to parse
+  # unrelated multi-document Kubernetes / Spring / buildspec YAML
+  # (ComposerError: expected a single document), which marks the whole scan
+  # incomplete. Disable them here (SKIPPED, not ERROR) so the scan completes.
+  #
+  # Real IaC coverage is a separate follow-up: a synth stage that runs `cdk synth`
+  # and scans the resulting templates. See the tracking issue.
+  cdk-nag:
+    enabled: false
+  cfn-nag:
+    enabled: false
+
+  # Bandit: point at the repo-root bandit.yaml, which skips ONLY B101 (assert_used).
+  # B101 alone is ~1,065 of ~1,240 findings (86%) — LOW-severity `assert` hygiene, not a
+  # security issue — and it buries the actionable (>=MEDIUM) findings in the report. This
+  # affects report READABILITY only; the scan gates on incomplete scanners, not findings.
+  # Every other Bandit rule stays active. See bandit.yaml for the rationale.
+  bandit:
+    options:
+      config_file: bandit.yaml
+
+  # Checkov: skip the one demo's raw Kubernetes manifests. These CKV_K8S_* findings
+  # (28 of them, all under eks-investigation-devops-agent/k8s/) are on illustrative demo
+  # manifests, not deployed infrastructure. Each skip_path entry is an object with a
+  # `path` regex (matched against file paths) and a `reason` -- ASH v3.7.1 validates
+  # skip_path as IgnorePathWithReason and rejects a bare string with a schema error.
+  checkov:
+    options:
+      skip_path:
+        - path: ".*/eks-investigation-devops-agent/k8s/.*"
+          reason: "Illustrative demo Kubernetes manifests, not deployed infrastructure (CKV_K8S_*)"

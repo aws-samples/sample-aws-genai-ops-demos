@@ -9,9 +9,12 @@ REQUIRED_SERVICE=""
 MIN_AWS_CLI_VERSION="2.31.13"
 MIN_PYTHON_VERSION=""
 MIN_NODE_VERSION=""
+MIN_CDK_VERSION=""
 SKIP_SERVICE_CHECK=false
 REQUIRE_CDK=false
 REQUIRE_KUBECTL=false
+REQUIRE_SAM=false
+REQUIRE_DOCKER=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -31,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             MIN_NODE_VERSION="$2"
             shift 2
             ;;
+        --min-cdk-version)
+            MIN_CDK_VERSION="$2"
+            shift 2
+            ;;
         --skip-service-check)
             SKIP_SERVICE_CHECK=true
             shift
@@ -41,6 +48,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --require-kubectl)
             REQUIRE_KUBECTL=true
+            shift
+            ;;
+        --require-sam)
+            REQUIRE_SAM=true
+            shift
+            ;;
+        --require-docker)
+            REQUIRE_DOCKER=true
             shift
             ;;
         *)
@@ -98,6 +113,35 @@ if [ "$REQUIRE_CDK" = true ] || [ -n "$MIN_NODE_VERSION" ]; then
     fi
 fi
 
+# Check CDK CLI version (only when a demo needs a specific minimum, e.g. for
+# newer L2 constructs). --require-cdk alone validates Node.js; pass
+# --min-cdk-version to also gate on the CDK CLI itself.
+if [ -n "$MIN_CDK_VERSION" ]; then
+    echo -e "\n\033[0;33mChecking AWS CDK version...\033[0m"
+    CDK_VERSION=$(npx cdk --version 2>&1 || echo "NOT_FOUND")
+    if [[ $CDK_VERSION =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        CDK_MAJOR=${BASH_REMATCH[1]}
+        CDK_MINOR=${BASH_REMATCH[2]}
+        CDK_PATCH=${BASH_REMATCH[3]}
+        echo -e "\033[0;90m      Current version: cdk $CDK_MAJOR.$CDK_MINOR.$CDK_PATCH\033[0m"
+        IFS='.' read -r MIN_CDK_MAJOR MIN_CDK_MINOR MIN_CDK_PATCH <<< "$MIN_CDK_VERSION"
+        MIN_CDK_PATCH=${MIN_CDK_PATCH:-0}
+        if [ "$CDK_MAJOR" -gt "$MIN_CDK_MAJOR" ] || \
+           { [ "$CDK_MAJOR" -eq "$MIN_CDK_MAJOR" ] && [ "$CDK_MINOR" -gt "$MIN_CDK_MINOR" ]; } || \
+           { [ "$CDK_MAJOR" -eq "$MIN_CDK_MAJOR" ] && [ "$CDK_MINOR" -eq "$MIN_CDK_MINOR" ] && [ "$CDK_PATCH" -ge "$MIN_CDK_PATCH" ]; }; then
+            echo -e "\033[0;32m      ✓ AWS CDK version is compatible\033[0m"
+        else
+            echo -e "\033[0;31m      ❌ AWS CDK $MIN_CDK_VERSION or later is required (found $CDK_MAJOR.$CDK_MINOR.$CDK_PATCH)\033[0m"
+            echo -e "\033[0;36m      Upgrade with: npm install -g aws-cdk@latest\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[0;31m      ❌ AWS CDK not found or version unreadable\033[0m"
+        echo -e "\033[0;36m      Install with: npm install -g aws-cdk@latest\033[0m"
+        exit 1
+    fi
+fi
+
 # Check kubectl (if required for EKS demos)
 if [ "$REQUIRE_KUBECTL" = true ]; then
     echo -e "\n\033[0;33mChecking kubectl...\033[0m"
@@ -105,6 +149,43 @@ if [ "$REQUIRE_KUBECTL" = true ]; then
         echo -e "\033[0;32m      ✓ kubectl installed\033[0m"
     else
         echo -e "\033[0;31m      ❌ kubectl not found. Install from https://kubernetes.io/docs/tasks/tools/\033[0m"
+        exit 1
+    fi
+fi
+
+# Check AWS SAM CLI (if required, e.g. for demos that deploy a SAM-based MCP server)
+if [ "$REQUIRE_SAM" = true ]; then
+    echo -e "\n\033[0;33mChecking AWS SAM CLI...\033[0m"
+    if command -v sam &> /dev/null; then
+        echo -e "\033[0;32m      ✓ AWS SAM CLI installed\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ AWS SAM CLI not found.\033[0m"
+        echo -e "\033[0;36m      Install it: brew install aws-sam-cli  (macOS)\033[0m"
+        echo -e "\033[0;36m      Other options: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html\033[0m"
+        exit 1
+    fi
+fi
+
+# Check for a running container engine (if required). A SAM app whose build must run in a
+# container (`sam build --use-container`), or a CDK DockerImageAsset / local `docker build`,
+# needs a RUNNING container engine. Docker and Finch are both accepted; the check confirms the
+# daemon/VM responds, not just that the CLI is on PATH.
+#
+# Finch note: with Finch (and no Docker), CDK/SAM still shell out to a binary named `docker`.
+# Point them at Finch for the deploy with `export CDK_DOCKER=finch` (CDK) or a `docker`->`finch`
+# shim on PATH. This check passes on Finch alone; the deploy tooling needs that override.
+if [ "$REQUIRE_DOCKER" = true ]; then
+    echo -e "\n\033[0;33mChecking container engine (Docker or Finch)...\033[0m"
+    if command -v docker &> /dev/null && docker info &> /dev/null; then
+        echo -e "\033[0;32m      ✓ Docker is installed and the engine is running\033[0m"
+    elif command -v finch &> /dev/null && finch info &> /dev/null; then
+        echo -e "\033[0;32m      ✓ Finch is installed and its VM is running\033[0m"
+        echo -e "\033[0;36m      Using Finch: for CDK deploys set 'export CDK_DOCKER=finch' so the\033[0m"
+        echo -e "\033[0;36m      image build/push uses Finch (CDK/SAM otherwise call a 'docker' binary).\033[0m"
+    else
+        echo -e "\033[0;31m      ❌ A running container engine (Docker or Finch) is required.\033[0m"
+        echo -e "\033[0;36m      Docker: install and start it, verify with 'docker info'.\033[0m"
+        echo -e "\033[0;36m      Finch:  'finch vm start', verify with 'finch info', then 'export CDK_DOCKER=finch'.\033[0m"
         exit 1
     fi
 fi
@@ -187,10 +268,44 @@ if [ -z "$REGION_FROM_ENV" ] && [ -z "$REGION_FROM_CLI" ]; then
 fi
 echo -e "\033[0;90m      Target region: $CURRENT_REGION\033[0m"
 
+# ─── AWS DevOps Agent region resolution ──────────────────────────────────────
+# An Agent Space is a regional resource and AWS DevOps Agent is available in a
+# subset of AWS Regions. Resolution is opt-in and deliberately simple:
+#
+#   1. DEVOPS_AGENT_REGION — explicit override, wins outright
+#   2. the resolved deploy region — same-region default
+#
+# Same-region is the default because an Agent Space discovers and monitors
+# resources across ALL Regions of an associated account. Splitting the two is
+# therefore only needed when the deploy Region cannot host an Agent Space, or
+# for data-residency / console-availability reasons.
+#
+# No hardcoded Region list lives here: the "devops-agent" service check below
+# probes the live API instead, so a Region stays usable the moment the service
+# reaches it. See shared/README.md ("AWS DevOps Agent Region") for the full
+# convention and its caveats.
+#
+# IMPORTANT: this script is *sourced* by most demos, so any assignment lands in the
+# caller's shell. The resolved value is therefore held in an internal variable and
+# published as DEVOPS_AGENT_REGION only when the caller actually asked for the
+# devops-agent check (see the export block at the end). Demos that do their own
+# `${DEVOPS_AGENT_REGION:-<default>}` defaulting must keep seeing it unset.
+_DEVOPS_AGENT_REGION_EFFECTIVE="${DEVOPS_AGENT_REGION:-$CURRENT_REGION}"
+if [ "$_DEVOPS_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+    echo -e "\033[0;36m      ℹ DevOps Agent region overridden: $_DEVOPS_AGENT_REGION_EFFECTIVE (deploy region: $CURRENT_REGION)\033[0m"
+fi
+
 # Check specific AWS service availability (if specified)
 if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
-    echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $CURRENT_REGION...\033[0m"
-    
+    # DevOps Agent is probed in the Agent Space region (which may differ from the
+    # deploy region); every other service is probed in the deploy region.
+    if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent" ]; then
+        SERVICE_CHECK_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
+    else
+        SERVICE_CHECK_REGION="$CURRENT_REGION"
+    fi
+    echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $SERVICE_CHECK_REGION...\033[0m"
+
     case "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" in
         "bedrock")
             if ! aws bedrock list-foundation-models --region "$CURRENT_REGION" --no-cli-pager > /dev/null 2>&1; then
@@ -222,6 +337,30 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             fi
             echo -e "\033[0;32m      ✓ AgentCore Browser Tool is available in $CURRENT_REGION\033[0m"
             ;;
+        "devops-agent")
+            # Probe the actual AWS DevOps Agent service (aidevops) in the Agent
+            # Space region. A region with no reachable aidevops endpoint fails at
+            # endpoint resolution and we stop here. Probing the live service avoids
+            # a hardcoded region list, which rots and would reject regions where the
+            # service is already reachable ahead of the docs. (This is a different
+            # service from Bedrock AgentCore, which the "agentcore" case probes.)
+            if ! aws devops-agent list-agent-spaces --region "$_DEVOPS_AGENT_REGION_EFFECTIVE" --no-cli-pager > /dev/null 2>&1; then
+                echo -e "\033[0;31m      ❌ AWS DevOps Agent is not available in region: $_DEVOPS_AGENT_REGION_EFFECTIVE\033[0m"
+                echo -e ""
+                echo -e "\033[0;33m      Pin the Agent Space to a supported Region and re-run:\033[0m"
+                echo -e "\033[0;36m        export DEVOPS_AGENT_REGION=<supported-region>\033[0m"
+                echo -e ""
+                echo -e "\033[0;90m      An Agent Space monitors resources in ALL Regions of an associated\033[0m"
+                echo -e "\033[0;90m      account, so it does not need to live in your deploy Region.\033[0m"
+                echo -e "\033[0;90m      https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html\033[0m"
+                exit 1
+            fi
+            if [ "$_DEVOPS_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+                echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $_DEVOPS_AGENT_REGION_EFFECTIVE (Agent Space region)\033[0m"
+            else
+                echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $_DEVOPS_AGENT_REGION_EFFECTIVE\033[0m"
+            fi
+            ;;
         "nova-act")
             if ! aws nova-act list-workflow-definitions --region "$CURRENT_REGION" > /dev/null 2>&1; then
                 echo -e "\033[0;31m      ❌ Amazon Nova Act is not available in region: $CURRENT_REGION\033[0m"
@@ -233,11 +372,13 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
             echo -e "\033[0;32m      ✓ Amazon Nova Act is available in $CURRENT_REGION\033[0m"
             ;;
         "transform")
-            # AWS Transform service availability (informational only)
-            echo -e "\033[0;36m      ℹ AWS Transform service check (informational)\033[0m"
-            echo -e "\033[0;90m        AWS Transform service must be available in $CURRENT_REGION\033[0m"
-            echo -e "\033[0;90m        Please check the documentation for AWS Transform supported regions:\033[0m"
-            echo -e "\033[0;90m        https://docs.aws.amazon.com/transform/latest/userguide/regions.html\033[0m"
+            # AWS Transform has no describe/list API and is not in the SSM region
+            # list, so availability cannot be verified here. Each demo picks the
+            # region where AWS Transform runs (the deploy region, or its own
+            # fallback) at run time; this line only points at the reference.
+            echo -e "\033[0;36m      ℹ AWS Transform region availability is not verifiable from the CLI\033[0m"
+            echo -e "\033[0;90m        The demo selects the AWS Transform region at run time (deploy region $CURRENT_REGION first)\033[0m"
+            echo -e "\033[0;90m        Supported regions: https://docs.aws.amazon.com/transform/latest/userguide/regions.html\033[0m"
             ;;
         *)
             echo -e "\033[0;33m      ⚠ Unknown service '$REQUIRED_SERVICE', skipping service check...\033[0m"
@@ -254,3 +395,15 @@ echo -e "\033[0;36mReady to proceed with demo deployment.\033[0m"
 export AWS_ACCOUNT_ID="$ACCOUNT_ID"
 export AWS_REGION="$CURRENT_REGION"
 export AWS_ARN="$ARN"
+# Agent Space region for AWS DevOps Agent demos — equals $AWS_REGION unless
+# DEVOPS_AGENT_REGION was set by the caller.
+#
+# Published ONLY when the caller requested the devops-agent check. This script is
+# sourced, so unconditionally setting this name would pre-empt a demo's own
+# `${DEVOPS_AGENT_REGION:-<default>}` defaulting and silently relocate its Agent
+# Space. Demos that want the resolved value ask for the check; demos that manage
+# the variable themselves keep seeing it unset.
+if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent" ]; then
+    export DEVOPS_AGENT_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
+fi
+unset _DEVOPS_AGENT_REGION_EFFECTIVE

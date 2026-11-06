@@ -107,15 +107,29 @@ const JIRA_SSM_PARAMS = [
   SSM_PARAM_JIRA_SITE_URL,
 ];
 
-// SSM SecureString parameters for secrets (created by setup wizard)
+// SSM SecureString parameters for the Slack/MS Teams webhook secrets (created
+// by the setup wizard). The DevOps Agent webhook secret is no longer among
+// these — it now lives in a CDK-managed Secrets Manager secret (RemovalPolicy
+// DESTROY), which `cdk destroy` on the Agent Space stack removes automatically.
 const SECRET_SSM_PARAMS = [
-  '/health-analyzer/production/webhook-secret',
   '/health-analyzer/production/slack-webhook-url',
   '/health-analyzer/production/msteams-webhook-url',
-  '/health-analyzer/staging/webhook-secret',
   '/health-analyzer/staging/slack-webhook-url',
   '/health-analyzer/staging/msteams-webhook-url',
 ];
+
+/**
+ * Resolves the Agent Space region, mirroring scripts/setup-wizard.ts's
+ * resolveAgentRegion(): DEVOPS_AGENT_REGION overrides, otherwise same as the
+ * deploy region. Destroying HealthEventAnalyzerAgentSpace-<region> requires
+ * this to match whatever region it was actually deployed to, since `cdk
+ * destroy` re-synthesizes the app to resolve stack names before deleting.
+ */
+function resolveAgentRegion(deployRegion: string): string {
+  const override = process.env.DEVOPS_AGENT_REGION;
+  if (override && override.trim()) return override.trim();
+  return deployRegion;
+}
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
@@ -142,10 +156,14 @@ async function main(): Promise<void> {
   // Select region
   const regionIdx = await askChoice('Which region do you want to clean up?', SUPPORTED_REGIONS);
   const region = SUPPORTED_REGIONS[regionIdx];
+  const agentRegion = resolveAgentRegion(region);
   info(`Region: ${region}`);
+  if (agentRegion !== region) {
+    info(`Agent Space region: ${agentRegion} (from DEVOPS_AGENT_REGION)`);
+  }
 
   const confirmAll = await askYesNo(
-    `\n  Are you sure you want to delete ALL resources in ${region} for account ${accountId}?`
+    `\n  Are you sure you want to delete ALL resources in ${region}${agentRegion !== region ? ` and ${agentRegion}` : ''} for account ${accountId}?`
   );
   if (!confirmAll) {
     console.log('\n  Cleanup cancelled.');
@@ -153,11 +171,19 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ─── Step 1: Destroy CDK Stack ──────────────────────────────────────────
-  console.log('\n┌─ Step 1: CDK Stack');
+  // ─── Step 1: Destroy CDK Stacks ─────────────────────────────────────────
+  // The DevOps Agent Space, its IAM roles, the AWS account association, the
+  // operator app, and the eventChannel webhook (including its Secrets
+  // Manager secret) are all now CDK-managed — destroying
+  // HealthEventAnalyzerAgentSpace-<agentRegion> tears them all down, replacing
+  // what used to be separate imperative "delete Agent Space" / "deregister
+  // service" / "delete IAM roles" steps here.
+  console.log('\n┌─ Step 1: CDK Stacks');
   console.log('└' + '─'.repeat(55));
 
   const stackName = `HealthEventAnalyzerStack-${region}`;
+  const agentSpaceStackName = `HealthEventAnalyzerAgentSpace-${agentRegion}`;
+  const cdkDir = path.resolve(__dirname, '../infrastructure/cdk');
 
   try {
     exec(`aws cloudformation describe-stacks --stack-name ${stackName} --region ${region} --no-cli-pager`, true);
@@ -165,11 +191,10 @@ async function main(): Promise<void> {
 
     const destroyStack = await askYesNo(`  Destroy CDK stack ${stackName}?`);
     if (destroyStack) {
-      info('Destroying CDK stack (this may take a few minutes)...');
-      const cdkDir = path.resolve(__dirname, '../infrastructure/cdk');
+      info('Destroying main CDK stack (this may take a few minutes)...');
       try {
         execSync(
-          `npx cdk destroy --all --force`,
+          `npx cdk destroy ${stackName} -c devOpsAgentRegion=${agentRegion} --force`,
           { cwd: cdkDir, encoding: 'utf-8', stdio: 'inherit', env: { ...process.env, AWS_REGION: region, AWS_DEFAULT_REGION: region } }
         );
         success(`Stack destroyed: ${stackName}`);
@@ -177,149 +202,47 @@ async function main(): Promise<void> {
         warn('CDK destroy had issues. You may need to delete the stack manually from CloudFormation console.');
       }
     } else {
-      skipped('CDK stack preserved');
+      skipped('Main CDK stack preserved');
     }
   } catch {
     info(`Stack ${stackName} not found — nothing to destroy`);
   }
 
-  // ─── Step 2: Delete DevOps Agent Space ──────────────────────────────────
-  console.log('\n┌─ Step 2: DevOps Agent Space');
-  console.log('└' + '─'.repeat(55));
-
   try {
-    const spaces = execJson(
-      `aws devops-agent list-agent-spaces --region ${region} --no-cli-pager`
+    exec(`aws cloudformation describe-stacks --stack-name ${agentSpaceStackName} --region ${agentRegion} --no-cli-pager`, true);
+    info(`Found stack: ${agentSpaceStackName}`);
+
+    const destroySpaceStack = await askYesNo(
+      `  ⚠️  Destroy DevOps Agent Space stack ${agentSpaceStackName}? This deletes the Agent Space and ALL its associations, webhooks, and investigations.`
     );
-
-    if (spaces.agentSpaces && spaces.agentSpaces.length > 0) {
-      const spaceOptions = spaces.agentSpaces.map(
-        (s: any) => `${s.name} (${s.agentSpaceId})`
-      );
-      spaceOptions.push('Skip — do not delete any space');
-
-      const spaceIdx = await askChoice('Which Agent Space do you want to delete?', spaceOptions);
-
-      if (spaceIdx < spaces.agentSpaces.length) {
-        const spaceId = spaces.agentSpaces[spaceIdx].agentSpaceId;
-        const spaceName = spaces.agentSpaces[spaceIdx].name;
-
-        const confirmSpace = await askYesNo(
-          `  ⚠️  Delete Agent Space "${spaceName}" and ALL its associations, webhooks, investigations?`
+    if (destroySpaceStack) {
+      info('Destroying DevOps Agent Space stack (this may take a few minutes)...');
+      try {
+        // -c devOpsAgentRegion must match the value used at deploy time so CDK
+        // resolves the same stack ID (HealthEventAnalyzerAgentSpace-<agentRegion>).
+        execSync(
+          `npx cdk destroy ${agentSpaceStackName} -c devOpsAgentRegion=${agentRegion} --force`,
+          { cwd: cdkDir, encoding: 'utf-8', stdio: 'inherit', env: { ...process.env, AWS_REGION: agentRegion, AWS_DEFAULT_REGION: agentRegion } }
         );
-
-        if (confirmSpace) {
-          // First, disassociate all services
-          info('Removing associations...');
-          try {
-            const associations = execJson(
-              `aws devops-agent list-associations --agent-space-id ${spaceId} --region ${region} --no-cli-pager`
-            );
-            for (const assoc of associations.associations || []) {
-              try {
-                exec(
-                  `aws devops-agent disassociate-service --agent-space-id ${spaceId} --association-id ${assoc.associationId} --region ${region} --no-cli-pager`,
-                  true
-                );
-                success(`Disassociated: ${assoc.serviceId} (${assoc.associationId})`);
-              } catch {
-                warn(`Failed to disassociate ${assoc.associationId}`);
-              }
-            }
-          } catch {
-            // No associations
-          }
-
-          // Disable operator app
-          info('Disabling operator app...');
-          try {
-            exec(
-              `aws devops-agent disable-operator-app --agent-space-id ${spaceId} --region ${region} --no-cli-pager`,
-              true
-            );
-            success('Operator app disabled');
-          } catch {
-            // Already disabled or doesn't exist
-          }
-
-          // Delete the space
-          info('Deleting Agent Space...');
-          try {
-            exec(
-              `aws devops-agent delete-agent-space --agent-space-id ${spaceId} --region ${region} --no-cli-pager`,
-              true
-            );
-            success(`Agent Space deleted: ${spaceName}`);
-          } catch (error: any) {
-            warn(`Failed to delete Agent Space. You may need to delete it from the console.`);
-          }
-        } else {
-          skipped('Agent Space preserved');
-        }
-      } else {
-        skipped('No Agent Space deleted');
+        success(`Stack destroyed: ${agentSpaceStackName}`);
+      } catch {
+        warn('CDK destroy had issues. You may need to delete the stack manually from CloudFormation console.');
       }
     } else {
-      info('No Agent Spaces found in this region');
+      skipped('DevOps Agent Space stack preserved');
     }
   } catch {
-    info('Could not list Agent Spaces');
+    info(`Stack ${agentSpaceStackName} not found — nothing to destroy`);
   }
 
-  // ─── Step 3: Deregister eventChannel service ────────────────────────────
-  console.log('\n┌─ Step 3: Registered Services');
-  console.log('└' + '─'.repeat(55));
-
-  try {
-    const services = execJson(
-      `aws devops-agent list-services --region ${region} --no-cli-pager`
-    );
-
-    if (services.services && services.services.length > 0) {
-      const deleteServices = await askYesNo('  Delete registered DevOps Agent services (eventChannel, etc.)?');
-      if (deleteServices) {
-        for (const svc of services.services) {
-          try {
-            exec(
-              `aws devops-agent deregister-service --service-id ${svc.serviceId} --region ${region} --no-cli-pager`,
-              true
-            );
-            success(`Deregistered service: ${svc.serviceType || svc.serviceId}`);
-          } catch {
-            warn(`Failed to deregister service ${svc.serviceId}`);
-          }
-        }
-      } else {
-        skipped('Services preserved');
-      }
-    } else {
-      info('No registered services found');
-    }
-  } catch {
-    info('Could not list services');
-  }
-
-  // ─── Step 4: Delete IAM Roles ───────────────────────────────────────────
-  console.log('\n┌─ Step 4: IAM Roles');
-  console.log('└' + '─'.repeat(55));
-
-  const deleteRoles = await askYesNo('  Delete DevOps Agent IAM roles?');
-  if (deleteRoles) {
-    await deleteIamRole('DevOpsAgentRole-AgentSpace');
-    await deleteIamRole('DevOpsAgentRole-WebappAdmin');
-  } else {
-    skipped('IAM roles preserved');
-  }
-
-  // ─── Step 5: Jira routing config (SSM Parameter Store) ──────────────────
-  console.log('\n┌─ Step 5: Jira routing config (SSM Parameter Store)');
+  // ─── Step 2: Jira routing config (SSM Parameter Store) ──────────────────
+  console.log('\n┌─ Step 2: Jira routing config (SSM Parameter Store)');
   console.log('└' + '─'.repeat(55));
 
   await deleteJiraSsmParams(region);
-  await removeJiraSsmReadGrant();
 
-  // ─── Step 6: Secret SSM Parameters ──────────────────────────────────────
-  console.log('\n┌─ Step 6: Secret SSM Parameters');
+  // ─── Step 3: Slack/MS Teams Secret SSM Parameters ───────────────────────
+  console.log('\n┌─ Step 3: Slack/MS Teams Secret SSM Parameters');
   console.log('└' + '─'.repeat(55));
 
   await deleteSsmParams(region, SECRET_SSM_PARAMS, 'secret');
@@ -367,69 +290,12 @@ async function deleteSsmParams(region: string, params: string[], label: string):
   }
 }
 
-async function removeJiraSsmReadGrant(): Promise<void> {
-  const roleName = 'DevOpsAgentRole-AgentSpace';
-  const policyName = 'AllowReadHealthAnalyzerJiraSsmParams';
-  let exists = false;
-  try {
-    exec(
-      `aws iam get-role-policy --role-name ${roleName} --policy-name ${policyName} --no-cli-pager`,
-      true
-    );
-    exists = true;
-  } catch {
-    // not present, nothing to clean up
-  }
-  if (!exists) return;
-  try {
-    exec(
-      `aws iam delete-role-policy --role-name ${roleName} --policy-name ${policyName} --no-cli-pager`,
-      true
-    );
-    success(`Removed inline policy: ${policyName} from ${roleName}`);
-  } catch {
-    warn(`Failed to remove inline policy ${policyName} from ${roleName} — delete manually if needed.`);
-  }
-}
-
-async function deleteIamRole(roleName: string): Promise<void> {
-  try {
-    exec(`aws iam get-role --role-name ${roleName} --no-cli-pager`, true);
-  } catch {
-    info(`Role ${roleName} does not exist — skipping`);
-    return;
-  }
-
-  try {
-    // Detach managed policies
-    const policies = execJson(
-      `aws iam list-attached-role-policies --role-name ${roleName} --no-cli-pager`
-    );
-    for (const policy of policies.AttachedPolicies || []) {
-      exec(
-        `aws iam detach-role-policy --role-name ${roleName} --policy-arn ${policy.PolicyArn} --no-cli-pager`,
-        true
-      );
-    }
-
-    // Delete inline policies
-    const inlinePolicies = execJson(
-      `aws iam list-role-policies --role-name ${roleName} --no-cli-pager`
-    );
-    for (const policyName of inlinePolicies.PolicyNames || []) {
-      exec(
-        `aws iam delete-role-policy --role-name ${roleName} --policy-name ${policyName} --no-cli-pager`,
-        true
-      );
-    }
-
-    // Delete the role
-    exec(`aws iam delete-role --role-name ${roleName} --no-cli-pager`, true);
-    success(`Deleted role: ${roleName}`);
-  } catch {
-    warn(`Failed to delete role ${roleName}. It may have dependencies.`);
-  }
-}
+// removeJiraSsmReadGrant() and deleteIamRole() (for DevOpsAgentRole-AgentSpace
+// / DevOpsAgentRole-WebappAdmin) used to live here. Both are gone now: the
+// IAM roles are CDK-managed under different, project-prefixed names
+// (health-event-analyzer-AgentSpaceRole / -OperatorRole — see
+// infrastructure/cdk/lib/constructs/devops-agent-space.ts) and are deleted
+// automatically when HealthEventAnalyzerAgentSpace-<region> is destroyed above.
 
 // ─── Entry Point ────────────────────────────────────────────────────────────
 

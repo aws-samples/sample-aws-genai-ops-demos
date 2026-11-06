@@ -1,0 +1,10 @@
+              <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="EXTRACT_{{VAR_NAME}}" enabled="true">
+                <stringProp name="RegexExtractor.useHeaders">true</stringProp>
+                <stringProp name="RegexExtractor.refname">{{VAR_NAME}}</stringProp>
+                <stringProp name="RegexExtractor.regex">{{EXPRESSION}}</stringProp>
+                <stringProp name="RegexExtractor.template">$1$</stringProp>
+                <stringProp name="RegexExtractor.match_number">{{MATCH_NUMBER}}</stringProp>
+                <stringProp name="RegexExtractor.default">{{DEFAULT_VALUE}}</stringProp>
+                <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
+              </RegexExtractor>
+              <hashTree/>

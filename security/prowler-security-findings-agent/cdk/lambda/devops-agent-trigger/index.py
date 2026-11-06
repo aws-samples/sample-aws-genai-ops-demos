@@ -129,7 +129,7 @@ def handler(event, context):
     webhook_secret = bundle.get('webhookSecret') or ''
     space_id = bundle.get('agentSpaceId') or ''
     if not webhook_url or webhook_url == 'NOT_CONFIGURED' \
-            or webhook_secret == 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE':
+            or webhook_secret == 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE':  # pragma: allowlist secret
         logger.warning(
             'DevOps Agent webhook bundle not configured yet; skipping dispatch. '
             'Run scripts/setup-devops-agent.sh to finish setup.'

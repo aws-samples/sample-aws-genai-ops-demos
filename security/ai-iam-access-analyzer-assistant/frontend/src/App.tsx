@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useLayoutEffect, useCallback } from "react";
 import { Amplify } from "aws-amplify";
 import { Authenticator } from "@aws-amplify/ui-react";
 import "@aws-amplify/ui-react/styles.css";
@@ -18,12 +18,49 @@ Amplify.configure({
   },
 });
 
-// Apply theme immediately on load (before React renders) to prevent flash
-const savedMode = localStorage.getItem("iam-analyzer-dark-mode");
+const DARK_MODE_CLASS = "awsui-dark-mode";
+const DARK_MODE_STORAGE_KEY = "iam-analyzer-dark-mode";
+
+/**
+ * Cloudscape's design tokens flip to dark mode when an ancestor of the
+ * rendered tree carries the ``awsui-dark-mode`` class. `applyMode` from
+ * `@cloudscape-design/global-styles` handles that, but under
+ * `<Authenticator>` (Amplify UI) we observed the class going missing —
+ * the outer TopNavigation darkened through other paths while the
+ * AppLayout content stayed on the light tokens. Root cause was a mix of
+ * a module-scope `applyMode` call running before `document.body` exists
+ * and Authenticator's re-render timing. Apply the class to both
+ * `<html>` and `<body>` ourselves, in addition to calling `applyMode`,
+ * so no matter which element downstream code is watching, the tokens
+ * flip together.
+ */
+function applyDarkModeClasses(isDark: boolean): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const targets = [document.documentElement, document.body].filter(
+    (el): el is HTMLElement => Boolean(el)
+  );
+  for (const el of targets) {
+    if (isDark) {
+      el.classList.add(DARK_MODE_CLASS);
+    } else {
+      el.classList.remove(DARK_MODE_CLASS);
+    }
+  }
+  applyMode(isDark ? Mode.Dark : Mode.Light);
+}
+
+// Compute the initial mode + write the class BEFORE React renders so
+// there's no light-mode flash on first paint. This runs synchronously as
+// the module loads; `document.documentElement` exists at this point even
+// if `document.body` doesn't yet.
+const savedMode = localStorage.getItem(DARK_MODE_STORAGE_KEY);
 const initialDark = savedMode !== null
   ? savedMode === "true"
-  : window.matchMedia("(prefers-color-scheme: dark)").matches;
-applyMode(initialDark ? Mode.Dark : Mode.Light);
+  : (typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+applyDarkModeClasses(initialDark);
 
 function App() {
   const [darkMode, setDarkMode] = useState(initialDark);
@@ -31,15 +68,17 @@ function App() {
   const toggleDarkMode = useCallback(() => {
     setDarkMode((prev) => {
       const next = !prev;
-      applyMode(next ? Mode.Dark : Mode.Light);
-      localStorage.setItem("iam-analyzer-dark-mode", String(next));
+      localStorage.setItem(DARK_MODE_STORAGE_KEY, String(next));
       return next;
     });
   }, []);
 
-  // Re-apply on mount in case Authenticator re-renders
-  useEffect(() => {
-    applyMode(darkMode ? Mode.Dark : Mode.Light);
+  // Re-apply on every darkMode change AND after each Authenticator
+  // re-render (which triggers this component to re-render, running the
+  // effect). useLayoutEffect fires before browser paint so the class
+  // change is atomic with the render.
+  useLayoutEffect(() => {
+    applyDarkModeClasses(darkMode);
   }, [darkMode]);
 
   return (

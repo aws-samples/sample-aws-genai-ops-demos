@@ -1,0 +1,12 @@
+      <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
+        <stringProp name="HTTPSampler.domain">{{HOST}}</stringProp>
+        <stringProp name="HTTPSampler.port">{{PORT}}</stringProp>
+        <stringProp name="HTTPSampler.protocol">{{PROTOCOL}}</stringProp>
+        <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+        <stringProp name="HTTPSampler.connect_timeout">{{CONNECT_TIMEOUT}}</stringProp>
+        <stringProp name="HTTPSampler.response_timeout">{{RESPONSE_TIMEOUT}}</stringProp>
+        <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+          <collectionProp name="Arguments.arguments"/>
+        </elementProp>
+      </ConfigTestElement>
+      <hashTree/>

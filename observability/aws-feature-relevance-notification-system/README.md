@@ -72,6 +72,13 @@ EventBridge (daily) → RSS Lambda → DynamoDB (dedup) → Step Functions
 | New Capability | 🚀 | Unlocks previously impossible patterns |
 
 ---
+## Interactive Demo
+
+Experience this demo in an interactive click-through walkthrough:
+
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/qqsstuvzsxw4)
+
+---
 
 ## Prerequisites
 

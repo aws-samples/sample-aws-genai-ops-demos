@@ -7,11 +7,16 @@ This directory contains shared utilities, scripts, and resources used across all
 ```
 shared/
 ├── README.md                           # This file
-├── scripts/                            # Shared deployment and utility scripts
-│   ├── check-prerequisites.ps1         # Prerequisites validation (PowerShell)
-│   ├── check-prerequisites.sh          # Prerequisites validation (Bash)
-│   ├── deploy-cdk.ps1                  # CDK deployment automation (PowerShell)
-│   └── deploy-cdk.sh                   # CDK deployment automation (Bash)
+├── scripts/                            # Generic deployment scripts, called by every demo
+│   ├── check-prerequisites.ps1 | .sh   # Tooling, credentials, region, service availability
+│   ├── check-org-access.ps1 | .sh      # Multi-account (hub-and-spoke) prerequisites
+│   └── deploy-cdk.ps1 | .sh            # CDK bootstrap, dependencies, deploy
+├── devops-agent/                       # Everything a demo of an AWS DevOps Agent capability consumes
+│   ├── README.md                       # The bricks and how to wire them; the one entry point
+│   ├── agent-tools/                    # deploy-skill.*, deploy-mcp.*: fetch a capability from the Agent Tools repository
+│   ├── agent-space/                    # DevOpsAgentSpace and AlarmTrigger CDK constructs with their Lambda code
+│   ├── lab/                            # The Lab mechanism: durable engine, agent data-plane calls, LabEngine CDK construct
+│   └── examples/scenarios.yaml         # A Lab scenario file to adapt
 └── utils/                              # Shared utility functions
     ├── __init__.py                     # Python package initialization
     ├── aws_utils.py                    # AWS utilities (Python)
@@ -86,9 +91,71 @@ For scripts that skip prerequisites (e.g., with `-SkipSetup`), detect region dir
 ```powershell
 $currentRegion = $env:AWS_DEFAULT_REGION
 if ([string]::IsNullOrEmpty($currentRegion)) {
+    $currentRegion = $env:AWS_REGION
+}
+if ([string]::IsNullOrEmpty($currentRegion)) {
     $currentRegion = aws configure get region 2>$null
 }
 ```
+
+## AWS DevOps Agent Region
+
+DevOps Agent demos involve two regions, and they may differ:
+
+| Variable | Controls |
+|---|---|
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | Where the CDK stacks deploy |
+| `DEVOPS_AGENT_REGION` | Where the **Agent Space** is created |
+
+**Default: same region.** `DEVOPS_AGENT_REGION` is opt-in — leave it unset and the Agent
+Space is created in the deploy region. That is safe because an Agent Space monitors
+resources across *all* regions of an associated account, so it never needs to sit with
+your stack.
+
+**Override** when the deploy region cannot host an Agent Space
+([supported Regions](https://docs.aws.amazon.com/devopsagent/latest/userguide/about-aws-devops-agent-supported-regions.html)),
+or when the Agent Space's own data (investigations, topology, recommendations) must stay
+in a specific region:
+
+```bash
+export DEVOPS_AGENT_REGION=eu-west-1
+```
+
+```powershell
+$env:DEVOPS_AGENT_REGION = "eu-west-1"
+```
+
+### For demo authors
+
+Ask for the check, then read the resolved value — do not re-derive it:
+
+```powershell
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "devops-agent" -MinAwsCliVersion "2.34.20"
+$region      = $global:AWS_REGION             # deploy the stacks here
+$agentRegion = $global:DEVOPS_AGENT_REGION    # create the Agent Space here
+```
+
+```bash
+source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.20
+# $AWS_REGION           — deploy the stacks here
+# $DEVOPS_AGENT_REGION  — create the Agent Space here
+```
+
+The check resolves the Agent Space region, probes the live API
+(`aws devops-agent list-agent-spaces`) there, fails with guidance naming
+`DEVOPS_AGENT_REGION` if it is unreachable, and publishes the resolved value. Pass
+`--region "$DEVOPS_AGENT_REGION"` explicitly on every `aws devops-agent` call so behavior
+never depends on ambient CLI config.
+
+Two rules to preserve:
+
+- **The value is published only when you request the `devops-agent` check.** The Bash
+  script is *sourced*, so setting this name unconditionally would pre-empt a demo's own
+  `${DEVOPS_AGENT_REGION:-<default>}` and silently relocate its Agent Space.
+- **Never hardcode a region list**, in code or in prose — lists rot and reject regions the
+  moment AWS adds them. Availability is proven by probing. Note the API can respond in
+  regions that are not yet documented, so the probe catches unreachable regions, not
+  undocumented-but-reachable ones.
 
 ## Bedrock Model ID (Cross-Region Inference)
 
@@ -115,6 +182,22 @@ model_id = get_bedrock_model_id("anthropic.claude-sonnet-4-5-20250929-v1:0")
 | `eu-*` | `eu.` | EU only |
 | `ap-*` | `apac.` | APAC only |
 | Others (`ca-`, `me-`, `af-`, `sa-`, `il-`, `mx-`) | `global.` | Worldwide |
+
+### Transform region selection
+
+AWS Transform custom (code transformation) is offered in a handful of regions, and nothing lets a deployment probe that availability ahead of time (no `transform` service in the AWS CLI, no service id in SSM global-infrastructure). `get_transform_region(region)` (Python) and `getTransformRegion(region)` (TypeScript) return the deploy region itself when AWS Transform is available there, otherwise the geographically nearest entry of the static `TRANSFORM_REGIONS` list (eu-* to Frankfurt, ap-south-* to Mumbai, ap-southeast-* to Sydney, other ap-* to Tokyo, everything else to N. Virginia).
+
+The list is static because no API lists Transform availability; it only chooses a *fallback*, a build that uses it still tries the deploy region first. Python and TypeScript have identical semantics and the same 8-entry list; the full rationale and the documentation source live in the Python docstring (`shared/utils/aws_utils.py`). Keep the two lists in sync.
+
+```python
+from shared.utils.aws_utils import get_transform_region
+get_transform_region("eu-west-3")   # -> "eu-central-1"
+```
+
+```typescript
+import { getTransformRegion } from '../../../../shared/utils/aws-utils';
+getTransformRegion('eu-west-3');   // -> 'eu-central-1'
+```
 
 ### CDK pattern for Lambdas
 
@@ -156,15 +239,52 @@ Validates common requirements before deployment:
 ```
 
 **Parameters**:
-- `-RequiredService` / `--required-service`: AWS service to check (bedrock, agentcore, transform)
+- `-RequiredService` / `--required-service`: AWS service to check — `bedrock`, `agentcore`, `agentcore-browser`, `devops-agent`, `nova-act`, `transform`
 - `-MinAwsCliVersion` / `--min-aws-cli-version`: Minimum AWS CLI version required
 - `-RequireCDK` / `--require-cdk`: Validate CDK installation
+- `-RequireKubectl` / `--require-kubectl`: Validate kubectl installation
 - `-SkipServiceCheck` / `--skip-service-check`: Skip service availability check
 
-**Exports** (PowerShell only):
-- `$global:AWS_REGION`: Detected AWS region
-- `$global:AWS_ACCOUNT_ID`: AWS account ID
-- `$global:AWS_ARN`: Caller identity ARN
+**Exports**:
+- `$global:AWS_REGION` / `AWS_REGION`: Detected AWS region (deploy region)
+- `$global:AWS_ACCOUNT_ID` / `AWS_ACCOUNT_ID`: AWS account ID
+- `$global:AWS_ARN` / `AWS_ARN`: Caller identity ARN
+- `$global:DEVOPS_AGENT_REGION` / `DEVOPS_AGENT_REGION`: Agent Space region — equals the
+  deploy region unless overridden. See [AWS DevOps Agent Region](#aws-devops-agent-region).
+
+> `devops-agent` probes the **Agent Space region**, not the deploy region — the two can
+> differ. Every other service is probed in the deploy region.
+
+### Multi-account (hub-and-spoke) Check
+
+For demos that look across an AWS Organization from one **hub** account, with a read-only role in every member account (**spoke**) rolled out by a CloudFormation StackSet. Three management-account prerequisites must be in place, and a deploy script cannot fix them itself, so this check reports each one with the exact command an administrator has to run in the management account:
+
+| # | Prerequisite | How the hub gets it |
+|---|---|---|
+| 1 | List the organization's accounts (`organizations:ListAccounts`) | Hub is the management account, or the management account delegated the Organizations read APIs through the [organization resource policy](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_delegate_policies.html) |
+| 2 | Trusted access between Organizations and CloudFormation StackSets | `aws organizations enable-aws-service-access --service-principal member.org.stacksets.cloudformation.amazonaws.com` |
+| 3 | Run service-managed StackSets from the hub | Hub is the management account, or a [StackSets delegated administrator](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-delegated-admin.html) |
+
+The check is **read-only** and never changes anything.
+
+**PowerShell**:
+```powershell
+& "..\..\shared\scripts\check-org-access.ps1"          # report; -Json for machine-readable output
+switch ($LASTEXITCODE) {
+    0 { <# multi-account scan + StackSet rollout possible #> }
+    2 { <# cannot list accounts: single-account mode or a manual account list #> }
+    3 { <# accounts listable; management account must deploy the spoke StackSet once #> }
+}
+$global:ORG_ID; $global:ORG_IS_MANAGEMENT; $global:ORG_CAN_LIST_ACCOUNTS; $global:ORG_CAN_ROLLOUT_STACKSETS
+```
+
+**Bash**:
+```bash
+source ../../shared/scripts/check-org-access.sh       # or ./check-org-access.sh --json
+# exit/return code 0 | 2 | 3 as above; exports ORG_ID, ORG_IS_MANAGEMENT, ORG_CAN_LIST_ACCOUNTS, ORG_CAN_ROLLOUT_STACKSETS
+```
+
+Convention for demos: make multi-account **opt-in** (`-MultiAccount` / `--multi-account` on `deploy-all`). Without the switch the check may run informationally but the demo deploys single-account; with it, exit code 2 is blocking and exit code 3 deploys and prints the StackSet instruction. The hub's Lambda role still needs the same `organizations:*` read actions in its own IAM policy; the resource policy alone is not enough. AWS recommends not running the hub in the management account itself.
 
 ### CDK Deployment
 
@@ -198,6 +318,33 @@ Automates CDK bootstrap, dependency installation, and deployment:
 - Ensures CDK bootstrap is up to date
 - Sets `PYTHONPATH` for Python projects to enable clean imports
 - Handles deployment with proper error checking
+
+### Agent Tools: Skills and MCP Servers
+
+For demos that use a capability from the public [Agent Tools repository](https://github.com/aws/tools-for-devops-agent)
+(skills, custom agents and MCP servers for AWS DevOps Agent). The capability stays in that
+repository; the demo fetches it at deploy time and never copies it — one artefact, one home.
+
+**PowerShell**:
+```powershell
+& "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill eks-upgrade-readiness -Ref main
+& "..\..\shared\devops-agent\agent-tools\deploy-mcp.ps1" -Server aws-vpc-dns-diagnostics-mcp -Ref main `
+    -Parameters @{ AllowedAccounts = "111111111111" }
+```
+
+**Bash**:
+```bash
+../../shared/devops-agent/agent-tools/deploy-skill.sh --skill eks-upgrade-readiness --ref main
+../../shared/devops-agent/agent-tools/deploy-mcp.sh --server aws-vpc-dns-diagnostics-mcp --ref main \
+    --param AllowedAccounts=111111111111
+```
+
+`deploy-skill` fetches one skill at a ref and builds the upload zip per the Agent Tools
+upload rules. `deploy-mcp` fetches one MCP server at a ref, deploys it from its
+`mcp-server.yaml` manifest, reads the endpoint from the declared stack output and prints
+the DevOps Agent registration step; `-Destroy` / `--destroy` tears it down. Full usage,
+exports, the manifest schema, the Agent Space and trigger-chain constructs and the Lab
+mechanism for DevOps Agent demos: [shared/devops-agent/README.md](devops-agent/README.md).
 
 ## Best Practices
 

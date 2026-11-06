@@ -1,0 +1,52 @@
+# validation.yaml — security/ai-iam-access-analyzer-assistant
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)") for the schema.
+
+# The demo's own deploy command, run zero-arg exactly as the README's Quick Start shows.
+# deploy-all.sh takes no required args. It runs the FULL pipeline under `set -euo pipefail`:
+# React frontend build -> shared/scripts/deploy-cdk.sh (CDK dep install + bootstrap + deploy)
+# -> frontend S3 sync + CloudFront invalidation -> create a demo Cognito user. A failure in any
+# step fails deploy_command. Bedrock model access only matters at RUNTIME (the assistant invokes
+# the model); the CDK deploy itself does not require it, and the script only WARNS if access
+# isn't enabled.
+deploy_command: ["./deploy-all.sh"]
+
+# Install this demo's OWN CDK deps explicitly BEFORE deploy_command runs -- the same
+# failure-derived guard used by the other Python CDK demos that go through the shared
+# deploy-cdk.sh (see contributor-guide.md, "Python CDK demos: declare your own deps"). It also
+# guarantees `aws_cdk` is importable for the destroy_command below, which bypasses the shared
+# script and re-synthesizes app.py (cdk.json: "app": "python3 app.py") on its own.
+setup_commands:
+  - ["pip", "install", "-r", "infrastructure/cdk/requirements.txt"]
+
+# Default destroy: `npx cdk destroy` from infrastructure/cdk (schema default).
+# NOTE: app.py does its OWN region detection (AWS_REGION -> AWS_DEFAULT_REGION -> us-east-1) and
+# does NOT import the repo's `shared` package, so pythonpath_repo_root is NOT needed here.
+destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+destroy_subdir: "infrastructure/cdk"
+
+# infrastructure/cdk/app.py: IamAnalyzerAssistantStack(app, f"IamAnalyzerAssistantStack-{region}", ...).
+# Single stack (only the main stack carries tracking, per the tracking rule). Cross-checked
+# against deploy-all.sh, which deploys and reads outputs for "IamAnalyzerAssistantStack-$REGION".
+stacks: ["IamAnalyzerAssistantStack-us-west-2"]
+
+# Pinned so the region-suffixed stack name above stays deterministic AND so it matches a region
+# where the demo's Bedrock model (us.anthropic.claude-sonnet-4-5-20250929-v1:0) is enabled. app.py
+# resolves region from AWS_REGION first, so exporting AWS_REGION=us-west-2 targets this region.
+region: "us-west-2"
+
+# Deterministic, same rationale as the reference demo: whether the assistant "really works"
+# depends on Bedrock Claude model access being manually enabled for the account (a one-time
+# external console action CI cannot perform), and grading the conversational quality is a
+# qualitative judgment. The reliable, driveable signal is that the one stack (Cognito, API
+# Gateway/Lambda, S3+CloudFront frontend) reaches *_COMPLETE on deploy and is confirmed gone on
+# destroy. The deploy itself does not require model access; only the runtime assistant does.
+verify: "deterministic"
+
+notes: >
+  CDK + Bedrock demo (no CodeBuild/agent/interactive prompts). deploy-all.sh deploys one stack
+  (IamAnalyzerAssistantStack-{region}: Cognito user pool, API Gateway + Lambda, S3 + CloudFront
+  frontend) through the shared deploy-cdk.sh, builds/uploads a React frontend, and creates a demo
+  Cognito user. Needs Claude model access enabled in the account's Bedrock console for
+  the assistant to function at runtime; the deploy/destroy validated here does not depend on it.
+  Region pinned to us-west-2 to match the enabled model and keep the stack name deterministic.
+  Zero required args.

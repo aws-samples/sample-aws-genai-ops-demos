@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "name": "Concert read-path load test",
+  "target": {
+    "host": "my-app-alb-1234567890.us-west-2.elb.amazonaws.com",
+    "protocol": "http",
+    "environment": "test",
+    "connect_timeout_ms": 5000,
+    "response_timeout_ms": 30000
+  },
+  "load": {
+    "concurrency": 10,
+    "ramp_up_s": 10,
+    "hold_for_s": 60,
+    "think_time_ms": 1000,
+    "think_time_jitter_ms": 500
+  },
+  "setup": {
+    "endpoints": [
+      {
+        "name": "Seed concert id",
+        "path": "/api/concerts",
+        "method": "GET",
+        "query": { "page": "0", "size": "10" },
+        "success": {
+          "status": 200,
+          "body_contains": ["\"totalElements\"", "\"id\":"],
+          "body_not_contains": ["\"content\":[]"]
+        },
+        "extract": [
+          {
+            "variable": "concertId",
+            "type": "jsonpath",
+            "expression": "$.content[0].id",
+            "default_value": "CONCERT_ID_EXTRACT_FAILED"
+          }
+        ]
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "name": "List concerts",
+      "path": "/api/concerts",
+      "method": "GET",
+      "weight": 3,
+      "query": { "page": "0", "size": "10" },
+      "success": {
+        "status": 200,
+        "body_contains": ["\"totalElements\"", "\"id\":"],
+        "body_not_contains": ["\"content\":[]", "INTERNAL_ERROR"]
+      }
+    },
+    {
+      "name": "Concert detail",
+      "path": "/api/concerts/${concertId}",
+      "method": "GET",
+      "weight": 1,
+      "success": {
+        "status": 200,
+        "body_contains": ["\"totalSeats\"", "\"venue\""],
+        "body_not_contains": ["CONCERT_NOT_FOUND", "INTERNAL_ERROR"]
+      }
+    }
+  ]
+}

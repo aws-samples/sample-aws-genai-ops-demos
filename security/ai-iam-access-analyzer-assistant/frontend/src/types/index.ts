@@ -5,6 +5,83 @@ export interface Message {
     inputTokens?: number;
     outputTokens?: number;
   };
+  /**
+   * Tools the backend called to construct this assistant message. Rendered
+   * as a Cloudscape ExpandableSection + Steps ("Thinking pattern") in
+   * `MessageBubble.tsx` per #167 Req 5.
+   */
+  toolsUsed?: Array<{ tool: string; input_summary?: string }>;
+  /**
+   * Wall-clock duration of the /conversation request that produced this
+   * assistant message, in whole seconds. Used as the header text of the
+   * Thinking ExpandableSection ("Thought for Ns"). Absent when the
+   * request completed instantly or the client couldn't measure it.
+   */
+  durationSeconds?: number;
+  /**
+   * Local (client-only, this-session-only) record of the user's helpful /
+   * not-helpful vote on this response. Server-side telemetry for these
+   * votes is deferred — see the spec's DD-4. Only applies to assistant
+   * messages.
+   */
+  feedback?: "helpful" | "not-helpful";
+  /**
+   * When set to "error", the message is rendered as an inline Cloudscape
+   * `<Alert type="error">` inside the transcript at the position of the
+   * failed turn, instead of as a ChatBubble. Used for API errors,
+   * timeouts, and other request failures per #167 Req 7.
+   */
+  kind?: "error";
+  /**
+   * For error messages: the user prompt that triggered the failing
+   * request. Passed back through the Try again action so the message
+   * can be re-sent without the user re-typing it.
+   */
+  retryPrompt?: string;
+}
+
+/**
+ * One row of the session-start capability probe (#171 phase C).
+ *
+ * The assistant renders one pill per entry in the "Data sources" status
+ * line so the user can see — before typing anything — which AWS sources
+ * were reachable in this account/region and which were not.
+ */
+export interface CoverageEntry {
+  source: "securityhub" | "accessanalyzer" | "cloudtrail" | string;
+  state: "checked" | "unavailable";
+  detail: string;
+}
+
+/**
+ * Response body of ``GET /capabilities``. Called once when the chat opens.
+ *
+ * - ``region``: the region the Lambda ran in (surface it so a wrong-region
+ *   deploy is obvious to the user).
+ * - ``coverage``: structural per-source status used for the pill row.
+ * - ``welcome_message``: server-composed prose describing what CAN and
+ *   what CANNOT be seen — prepended to the greeting bubble so the user
+ *   reads the honesty statement before the feature list.
+ */
+export interface Capabilities {
+  region: string;
+  coverage: CoverageEntry[];
+  welcome_message: string;
+  /**
+   * AWS Organization ID, or null when this account is not part of an
+   * Organization (or the check failed). Level 1 passive multi-account
+   * detection (#173) — see capabilities.py's `_probe_org_detection`.
+   */
+  org_id: string | null;
+  /**
+   * Whether this account is the Security Hub delegated administrator for
+   * its Organization — true/false when known, null when Security Hub is
+   * disabled or the check itself failed. Threaded into each /conversation
+   * POST as `org_context` so the chat model can answer org-structure
+   * questions directly instead of guessing from tool-result data it has
+   * no basis to infer org structure from.
+   */
+  is_delegated_admin: boolean | null;
 }
 
 export interface Finding {
@@ -106,4 +183,90 @@ export interface ValidationResult {
     total_findings: number;
     verdict: string;
   };
+}
+
+// Access-key triage (#175). Shape mirrors the Python tool response from
+// src/tools/triage_access_keys.py exactly — snake_case fields, plain string
+// enums, inline-nested objects, in keeping with the other tool payload types
+// above.
+export interface AccessKeyRow {
+  account_id: string;
+  user: string;
+  is_root: boolean;
+  key_id: string;
+  status: string; // "Active" | "Inactive"
+  created: string;
+  key_age_days: number | null;
+  last_used: string; // ISO timestamp, "NEVER", or "UNKNOWN"
+  last_used_service: string;
+  actions: string;
+  policies: string;
+  resource_scope: string; // "WILDCARD" | "SCOPED" | "MIXED" | "NONE"
+  has_condition: boolean;
+  risk_flags: string[];
+  priority_class: string; // "Critical" | "High" | "Cleanup" | "Rotation"
+  suggested_remediation: string;
+  // Canonical AWS docs URL for the remediation, emitted by the Python tool
+  // via `_REMEDIATION_DOCS`. Empty string when the tool can't map the label
+  // (unknown remediation), in which case the frontend renders plain text
+  // instead of a link. Never construct URLs client-side.
+  suggested_remediation_url?: string;
+  // Ordered migration-step list for the remediation, emitted by the Python
+  // tool via `_REMEDIATION_STEPS`. Empty array when the tool can't map the
+  // label — the frontend then omits the "Migration steps" section from the
+  // expanded row detail. Never generate steps client-side.
+  suggested_remediation_steps?: string[];
+}
+
+export interface AccessKeysReport {
+  keys: AccessKeyRow[];
+  summary: {
+    Critical?: number;
+    High?: number;
+    Cleanup?: number;
+    Rotation?: number;
+    total_keys: number;
+    users_with_keys: number;
+  };
+  coverage: Array<{
+    source: string;
+    state: string; // "checked" | "empty" | "unavailable"
+    detail?: string;
+    count?: number;
+  }>;
+  usage_lag_caveat: string;
+}
+
+/**
+ * One IAM role row from a cross-account read (#173 Level 2). Mirrors the
+ * `roles[]` entries returned by the cross_account_iam_context tool.
+ */
+export interface CrossAccountRoleRow {
+  name: string;
+  arn: string;
+  high_privilege: boolean;
+  create_date: string;
+}
+
+/**
+ * Payload the cross_account_iam_context short-circuit embeds as a fenced
+ * ``_type: "cross_account_roles"`` JSON block, rendered by
+ * CrossAccountRolesTable. The structured channel exists so the backend can
+ * skip the slow second Bedrock synthesis round and hand the role list
+ * straight to the table.
+ */
+export interface CrossAccountRolesReport {
+  _type?: "cross_account_roles";
+  account_id: string;
+  is_hub_account: boolean;
+  roles: CrossAccountRoleRow[];
+  returned_count: number;
+  has_more: boolean;
+  cloudtrail_reachable: boolean;
+  coverage: Array<{
+    source: string;
+    state: string; // "checked" | "empty" | "unavailable"
+    detail?: string;
+    count?: number;
+  }>;
 }

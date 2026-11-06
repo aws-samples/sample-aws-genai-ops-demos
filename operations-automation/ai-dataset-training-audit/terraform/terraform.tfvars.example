@@ -1,0 +1,40 @@
+# =============================================================================
+# terraform.tfvars.example - AI Dataset Training Audit (DART)
+# =============================================================================
+# The Terraform deploy script (../deploy-all-terraform.{sh,ps1}) supplies
+# `region` and the built `image_tag` for you. A bare `terraform apply` is
+# UNSUPPORTED: image_tag has no default and the image must be built and pushed
+# by the deploy script first (see main.tf). This file documents the tunable
+# surface for reference and manual, deploy-script-driven runs.
+
+# -- Required -----------------------------------------------------------------
+
+# Region to deploy into. Amazon Bedrock and Amazon Comprehend must be available
+# there. The CDK and Terraform paths must not be deployed into the same
+# account+region.
+region = "us-east-1"
+
+# -- Optional -----------------------------------------------------------------
+
+# Solution adoption metrics: a zero-cost CloudFormation marker stack carrying
+# the repository tracking code (default: true). Set to false to opt out.
+# enable_deployment_metrics = true
+
+# Base Bedrock model id (no CRIS prefix). Must be in the approved list in
+# main.tf or Bedrock invoke is denied at runtime.
+# model_id = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+# Dataset input path-validation allowlists (empty = allow any, documented).
+# allowed_s3_buckets     = ""
+# allowed_s3_prefixes    = ""
+# allowed_local_base_dir = ""
+
+# Container log level.
+# log_level = "INFO"
+
+# Opt-in: let the task role READ datasets in these specific S3 buckets
+# (s3:GetObject + s3:ListBucket, scoped per bucket — never "*"). Empty keeps the
+# default-deny posture (own output bucket only). Set allowed_s3_buckets to the
+# same list so path validation and the IAM grant agree. See the README section
+# "Scanning a dataset in your own S3 bucket".
+# input_buckets = ["my-dataset-bucket"]

@@ -8,26 +8,25 @@ This repository contains deployable code samples demonstrating how generative AI
 |-----------|--------|-------------|------------|
 | AI-Powered Security Posture with Prowler + DevOps Agent | Security | Continuous Prowler scans with Nova-generated remediation playbooks and AWS DevOps Agent incident dispatch, surfaced in a React dashboard | [security/prowler-security-findings-agent/](security/prowler-security-findings-agent/README.md) |
 | AI-Powered Graviton Migration Assessment | Cost Optimization | Get comprehensive migration assessment with cost analysis and ready-to-use migration artifacts for any codebase | [cost-optimization/ai-graviton-migration-assessment/](cost-optimization/ai-graviton-migration-assessment/README.md) |
+| AI Dataset Training Audit | Operations Automation | Pre-flight validation for LLM fine-tuning datasets: seven checks (schema, duplicates, PII via Comprehend, viability, cost) producing a GO/NO-GO/GO-WITH-FIXES verdict and 0–100 quality score before any GPU spend | [operations-automation/ai-dataset-training-audit/](operations-automation/ai-dataset-training-audit/README.md) |
 | AI-Powered Technical Documentation Generation | Operations Automation | Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase | [operations-automation/ai-documentation-generation/](operations-automation/ai-documentation-generation/README.md) |
 | AI-Powered Legacy System Automation | Operations Automation | Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring | [operations-automation/ai-legacy-system-browser-automation/](operations-automation/ai-legacy-system-browser-automation/README.md) |
 | AI Password Reset Chatbot | Operations Automation | Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access | [operations-automation/ai-password-reset-chatbot/](operations-automation/ai-password-reset-chatbot/README.md) |
-| AWS Services Lifecycle Tracker | Operations Automation | Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
+| AWS Services Lifecycle Tracker (moved) | Operations Automation | Moved to [awslabs/support-solutions-aws](https://github.com/awslabs/support-solutions-aws/tree/main/Operations/service-lifecycle-tracker). Track AWS service deprecations and the account resources they affect with one Lambda durable function refresh pipeline, intelligent status categorization and an admin dashboard | [operations-automation/aws-services-lifecycle-tracker/](operations-automation/aws-services-lifecycle-tracker/README.md) |
+| AWS Services Lifecycle Tracker V2 (work in progress) | Operations Automation | Next version of the lifecycle tracker, starting from the same code base. Under active development | [operations-automation/aws-services-lifecycle-tracker-v2/](operations-automation/aws-services-lifecycle-tracker-v2/README.md) |
 | AWS GenAI Cost Optimization Kiro Power | Cost Optimization | MCP server for static code analysis of AWS GenAI service usage patterns with cost optimization recommendations and Kiro IDE integration | [cost-optimization/aws-genai-cost-optimization-mcp-server/](cost-optimization/aws-genai-cost-optimization-mcp-server/README.md) |
-| AI Lambda Runtime Migration Assistant | Operations Automation | Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
+| AI Lambda Runtime Migration Assistant | Operations Automation | Assess deprecated-runtime Lambda functions across an AWS Organization: org-wide multi-account discovery via Trusted Advisor, AI assessment with Amazon Nova, a durable 5-step Refresh pipeline and a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
+| AI Load Test Generator Agent | Resilience | Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing | [resilience/ai-load-test-generation-with-dlt/](resilience/ai-load-test-generation-with-dlt/README.md) |
+| FSx for Windows SLA Review with AWS DevOps Agent | Resilience | Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix | [resilience/fsx-windows-sla-review-devops-agent/](resilience/fsx-windows-sla-review-devops-agent/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
 | SaaS Status MCP Server for AWS DevOps Agent | Observability | Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more) — so investigations stop chasing internal infrastructure when the outage is upstream | [observability/saas-status-mcp/](observability/saas-status-mcp/README.md) |
 | AWS Feature Relevance Notification System | Observability | AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates | [observability/aws-feature-relevance-notification-system/](observability/aws-feature-relevance-notification-system/README.md) |
+| Proactive AWS Health Event Impact Analyzer | Observability | Use AWS DevOps Agent to triage AWS Health events, assess blast radius from application topology, and route multi-team notifications (email, Slack, MS Teams, Jira) automatically | [observability/proactive-health-event-impact-analyzer/](observability/proactive-health-event-impact-analyzer/README.md) |
 | AI Incident Response Playbook Builder | Security | Analyze AWS architecture and generate tailored IR playbooks with MITRE ATT&CK mapping, SSM Automation documents, and step-by-step response procedures | [security/ai-incident-response-playbook-builder/](security/ai-incident-response-playbook-builder/README.md) |
 | AI Permission Boundary Generator | Security | Analyze CloudTrail logs for IAM roles/users, identify unused permissions, and generate least-privilege permission boundaries as ready-to-deploy CDK/CloudFormation resources | [security/ai-permission-boundary-generator/](security/ai-permission-boundary-generator/README.md) |
 | IAM Security Assistant | Security | Conversational IAM security assistant that queries Security Hub findings, analyzes role usage via CloudTrail, generates least-privilege policies, and assesses blast radius — all read-only, with exportable remediation artifacts | [security/ai-iam-access-analyzer-assistant/](security/ai-iam-access-analyzer-assistant/README.md) |
-
-## Roadmap (Coming Soon)
-
-| Demo Name | Pillar | Description | Status |
-|-----------|--------|-------------|--------|
-| AWS Health and Support Case Analyzer | Resilience | AI-powered analysis of AWS Health events and Support Cases with intelligent categorization and actionable recommendations | Planned |
 
 ## Repository Structure
 
@@ -36,19 +35,24 @@ cost-optimization/
 ├── ai-graviton-migration-assessment/
 └── aws-genai-cost-optimization-mcp-server/
 operations-automation/
+├── ai-dataset-training-audit/
 ├── ai-documentation-generation/
 ├── ai-lambda-runtime-migration/
 ├── ai-legacy-system-browser-automation/
 ├── ai-password-reset-chatbot/
 ├── anycompany-it-demo-portal/
-└── aws-services-lifecycle-tracker/
+├── aws-services-lifecycle-tracker/
+└── aws-services-lifecycle-tracker-v2/
 observability/
 ├── aws-feature-relevance-notification-system/
 ├── aws-site-to-site-vpn-tunnel-investigation-devops-agent/
 ├── eks-investigation-devops-agent/
+├── proactive-health-event-impact-analyzer/
 └── saas-status-mcp/
 resilience/
-└── ai-chaos-engineering-with-fis/
+├── ai-chaos-engineering-with-fis/
+├── ai-load-test-generation-with-dlt/
+└── fsx-windows-sla-review-devops-agent/
 security/
 ├── ai-iam-access-analyzer-assistant/
 ├── ai-incident-response-playbook-builder/

@@ -60,6 +60,34 @@ def handler(event, context=None):
         # Step 2: Query CloudTrail for actual usage
         usage_data = _analyze_cloudtrail_usage(role_name, role_info["arn"], lookback_days)
 
+        # Safety fence: if the CloudTrail query failed (permission denied,
+        # throttling, service outage, network error, etc.), refuse to propose
+        # a policy. `_analyze_cloudtrail_usage` returns an empty `used_actions`
+        # accumulator on failure, and if we proceeded we would recommend
+        # stripping 100% of the role's permissions — a "least-privilege" answer
+        # driven by absence of data, not observed non-use. That is the single
+        # most dangerous silent-failure in this demo. Fix per #171 phase A:
+        # separate "CloudTrail query failed" from "zero events".
+        cloudtrail_coverage = next(
+            (c for c in usage_data.get("coverage", []) if c.get("source") == "cloudtrail"),
+            None,
+        )
+        if cloudtrail_coverage and cloudtrail_coverage.get("state") == "unavailable":
+            return {
+                "error": (
+                    "Could not read CloudTrail usage for this role — "
+                    f"{cloudtrail_coverage.get('detail', 'unknown error')}. "
+                    "Refusing to propose a least-privilege policy without usage data: "
+                    "the resulting recommendation would remove permissions the role "
+                    "actually needs. Fix CloudTrail access (verify the tool role has "
+                    "cloudtrail:LookupEvents in this region and that CloudTrail is "
+                    "logging management events) and re-run."
+                ),
+                "role_name": role_name,
+                "role_arn": role_info.get("arn"),
+                "coverage": usage_data.get("coverage", []),
+            }
+
         # Step 3: Build least-privilege policy with resource scoping
         proposed_policy = _build_least_privilege_policy(
             usage_data["used_actions"],
@@ -122,6 +150,7 @@ def handler(event, context=None):
                 "attack_surface_reduction": f"{reduction_pct}% of permissions removed",
                 "risk_level": "HIGH" if reduction_pct > 70 else "MEDIUM" if reduction_pct > 40 else "LOW",
             },
+            "coverage": usage_data.get("coverage", []),
         }
 
         # Add warnings
@@ -232,8 +261,49 @@ def _extract_actions_from_document(document: dict) -> set:
     return actions
 
 
+def _normalize_event_name(service: str, event_name: str) -> str:
+    """Strip an API-version-date suffix CloudTrail bakes into some Lambda
+    eventNames (e.g. ``ListFunctions20150331``, ``GetFunction20150331``) so
+    the value can be used directly as an IAM action name.
+
+    AWS's own Lambda troubleshooting guide confirms this is a known,
+    documented quirk specific to Lambda's API family: "The eventName might
+    include date and version information, such as GetFunction20150331, but
+    it's still referring to the same public API." (Lambda's stable API
+    version is 2015-03-31, hence the "20150331" suffix.)
+
+    Deliberately scoped to service == "lambda" only. A blind regex strip
+    of any trailing 8-digit run across every service risks corrupting an
+    action whose name legitimately ends in digits for some other service —
+    there is no evidence this pattern is universal, only that it is
+    confirmed and documented for Lambda.
+    """
+    if service == "lambda" and event_name[-8:].isdigit():
+        return event_name[:-8]
+    return event_name
+
+
 def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int) -> dict:
-    """Query CloudTrail for actual API usage by the role."""
+    """Query CloudTrail for actual API usage by the role.
+
+    Returns a dict with the observed usage plus a `coverage` entry describing
+    what the CloudTrail call actually did — one of three states:
+
+      * ``checked``       — the call succeeded and returned ``event_count > 0``
+      * ``empty``         — the call succeeded but returned zero events (the
+                            honest "role has not called AWS in ``lookback_days``"
+                            case that the caller can act on)
+      * ``unavailable``   — the call raised (``AccessDenied``, throttling,
+                            service outage, IAM misconfiguration, transient
+                            network error, etc.). ``used_actions`` will be
+                            empty, but the caller MUST NOT interpret that as
+                            "role has no usage" — the caller has no idea what
+                            usage the role has.
+
+    The caller inspects ``coverage`` to decide whether it is safe to propose a
+    least-privilege policy. See #171 for the wider `coverage` contract this
+    entry participates in.
+    """
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
 
@@ -244,21 +314,76 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
     truncated = False
     last_event_time = None
 
+    coverage_detail = f"{lookback_days}-day event history, role {role_name}"
+    coverage_state = "checked"
+    coverage_error: str | None = None
+
+    # CloudTrail's LookupEvents "Username" attribute filter does NOT match a
+    # role name for assumed-role activity -- it resolves to the SESSION name
+    # (the value passed as RoleSessionName, or a service-generated name for
+    # AWS-service callers like Lambda). Filtering LookupAttributes on
+    # Username=role_name therefore silently matches zero events for EVERY
+    # role, regardless of how much real activity exists under that role --
+    # a systemic false-negative, not a "role is unused" signal.
+    #
+    # LookupAttributes has no RoleName/RoleArn key at all (valid keys: EventId,
+    # EventName, ReadOnly, Username, ResourceType, ResourceName, EventSource,
+    # AccessKeyId -- confirmed against the API reference), and AccessKeyId
+    # doesn't help either since assumed-role sessions get fresh STS
+    # credentials per session, not a stable key. There is no server-side
+    # filter that identifies "activity by this role" for assumed-role
+    # events. Query unfiltered (paginating through the window) and match
+    # client-side against userIdentity.arn, which DOES contain the role name
+    # in both forms CloudTrail uses:
+    #   direct role events:    arn:aws:iam::<acct>:role/<role_name>
+    #   assumed-role sessions: arn:aws:sts::<acct>:assumed-role/<role_name>/<session>
+    # Match on a trailing "/" boundary (or end-of-string for the direct
+    # form) so a role whose name is a prefix of another role's name (e.g.
+    # "my-role" vs "my-role-v2") cannot cross-attribute the other role's
+    # activity.
+    #
+    # PERFORMANCE TRADEOFF: this scans ALL management events in the window
+    # (still capped at PageSize=50 x max_pages=20 = 1000 events total),
+    # not just this role's, because there's no way to filter server-side.
+    # In a low-traffic account this is unnoticeable. In a busy account with
+    # thousands of daily events, the 1000-event cap can be exhausted by
+    # OTHER principals' activity before this role's events are reached,
+    # producing `truncated: true` with an incomplete picture rather than a
+    # true "role has N events". If this proves to matter on a real customer
+    # account, the fix is EventHistory export to a CloudTrail Lake query
+    # (SQL filter on userIdentity.arn) instead of LookupEvents pagination --
+    # out of scope for this fix.
+    def _actor_matches_role(actor_arn: str) -> bool:
+        if f"role/{role_name}/" in actor_arn:
+            return True
+        # Direct-role form has no trailing session segment -- only match
+        # when the role name is the LAST path component (end of string),
+        # not merely a prefix of a longer role name.
+        return actor_arn.endswith(f"role/{role_name}")
+
     try:
         paginator = cloudtrail_client.get_paginator("lookup_events")
         page_count = 0
         max_pages = 20  # Safety limit
 
         for page in paginator.paginate(
-            LookupAttributes=[
-                {"AttributeKey": "Username", "AttributeValue": role_name},
-            ],
             StartTime=start_time,
             EndTime=end_time,
             PaginationConfig={"MaxItems": 1000, "PageSize": 50},
         ):
             page_count += 1
             for trail_event in page.get("Events", []):
+                # The lookup_events summary record doesn't expose
+                # userIdentity directly -- it's embedded in the raw
+                # CloudTrailEvent JSON string.
+                try:
+                    raw_event = json.loads(trail_event.get("CloudTrailEvent", "{}"))
+                except (TypeError, ValueError):
+                    raw_event = {}
+                actor_arn = raw_event.get("userIdentity", {}).get("arn", "")
+                if not _actor_matches_role(actor_arn):
+                    continue
+
                 event_count += 1
                 event_name = trail_event.get("EventName", "")
                 event_source = trail_event.get("EventSource", "")
@@ -269,6 +394,8 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
                 # Skip read-only events that are just credential checks
                 if event_name in ("GetCallerIdentity", "AssumeRole", "GetSessionToken"):
                     continue
+
+                event_name = _normalize_event_name(service, event_name)
 
                 action_key = f"{service}:{event_name}"
                 used_actions[service].add(event_name)
@@ -290,7 +417,23 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
                 break
 
     except Exception as e:
+        # Do NOT let the caller mistake this for "role made no API calls".
+        # The used_actions accumulator is empty because the call failed, not
+        # because the role is unused. The caller must inspect `coverage` and
+        # refuse to propose a policy when state == "unavailable".
         logger.warning(f"CloudTrail query error: {e}")
+        coverage_state = "unavailable"
+        coverage_error = f"{type(e).__name__}: {e}"
+
+    if coverage_state == "checked" and event_count == 0:
+        coverage_state = "empty"
+
+    coverage_entry = {
+        "source": "cloudtrail",
+        "state": coverage_state,
+        "count": event_count,
+        "detail": coverage_detail if coverage_error is None else coverage_error,
+    }
 
     return {
         "used_actions": dict(used_actions),
@@ -301,6 +444,7 @@ def _analyze_cloudtrail_usage(role_name: str, role_arn: str, lookback_days: int)
         "last_event_time": str(last_event_time) if last_event_time else None,
         "window_start": start_time.isoformat(),
         "window_end": end_time.isoformat(),
+        "coverage": [coverage_entry],
     }
 
 

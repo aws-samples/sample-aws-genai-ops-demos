@@ -3,12 +3,19 @@ import * as https from 'https';
 import * as url from 'url';
 import { DynamoDBClient, PutItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { SSMClient, GetParametersCommand } from '@aws-sdk/client-ssm';
-import { getSecret } from '../lib/secrets-cache';
+import { getSecretFromSecretsManager } from '../lib/secrets-manager-cache';
 
 const dynamoClient = new DynamoDBClient({});
 const ssmClient = new SSMClient({});
 const DEFAULT_WEBHOOK_URL = process.env.DEVOPS_AGENT_WEBHOOK_URL!;
-const WEBHOOK_SECRET_PARAM_NAME = process.env.WEBHOOK_SECRET_PARAM_NAME!;
+// The webhook HMAC secret is provisioned by the CDK-managed DevOpsAgentSpace
+// construct into Secrets Manager (see lib/constructs/devops-agent-space.ts) —
+// it never passes through CloudFormation, so this Lambda reads it directly by
+// ARN. The secret may live in a different region than this function (an
+// Agent Space can be deployed to a different region than the main stack),
+// hence the separate region env var.
+const WEBHOOK_SECRET_ARN = process.env.WEBHOOK_SECRET_ARN!;
+const WEBHOOK_SECRET_REGION = process.env.WEBHOOK_SECRET_REGION || process.env.AWS_REGION!;
 const TASK_TOKEN_TABLE = process.env.TASK_TOKEN_TABLE!;
 const AGENT_SPACES_TABLE = process.env.AGENT_SPACES_TABLE || '';
 
@@ -68,8 +75,12 @@ export const handler = async (event: TriggerInput): Promise<void> => {
 
   console.log(`Using agent space: ${agentSpace.spaceName || 'default'} (account: ${healthEvent.sourceAccountId || 'local'})`);
 
-  // Build the investigation request for DevOps Agent webhook
-  const incidentId = `health-${healthEvent.service}-${Date.now()}`;
+  // Build the investigation request for DevOps Agent webhook.
+  // The random suffix guarantees a unique investigationId even when two
+  // triggers fire in the same millisecond for the same event (e.g. duplicate
+  // EventBridge deliveries), so concurrent investigations never share a
+  // token-table partition key.
+  const incidentId = `health-${healthEvent.service}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
   const maintenanceWindow = healthEvent.startTime && healthEvent.endTime
     ? `${healthEvent.startTime} to ${healthEvent.endTime}`
@@ -89,7 +100,7 @@ export const handler = async (event: TriggerInput): Promise<void> => {
     action: 'created' as const,
     priority: mapCategoryToPriority(healthEvent.category),
     title: `[${incidentId}] AWS Health: ${healthEvent.service} ${healthEvent.eventType} in ${healthEvent.region}`,
-    description: buildDescription(healthEvent, maintenanceWindow, jiraConfig),
+    description: buildDescription(healthEvent, maintenanceWindow, jiraConfig, incidentId),
     timestamp: new Date().toISOString(),
     service: healthEvent.service,
     data: {
@@ -145,8 +156,8 @@ export const handler = async (event: TriggerInput): Promise<void> => {
  * while supporting per-account overrides for teams that need isolation.
  */
 async function resolveAgentSpace(sourceAccountId?: string): Promise<AgentSpaceConfig> {
-  // Retrieve the default webhook secret from SSM via the cached secrets module
-  const defaultSecret = await getSecret(WEBHOOK_SECRET_PARAM_NAME);
+  // Retrieve the default webhook secret from Secrets Manager via the cached module
+  const defaultSecret = await getSecretFromSecretsManager(WEBHOOK_SECRET_ARN, WEBHOOK_SECRET_REGION);
 
   // If no agent spaces table configured or no source account, use default
   if (!AGENT_SPACES_TABLE || !sourceAccountId) {
@@ -197,7 +208,7 @@ function mapCategoryToPriority(category: string): 'CRITICAL' | 'HIGH' | 'MEDIUM'
   }
 }
 
-function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, jiraConfig: JiraConfig | null): string {
+function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, jiraConfig: JiraConfig | null, incidentId: string): string {
   const resourceList = healthEvent.affectedResources
     .map(r => `  - ${r.resourceId} (${r.status})`)
     .join('\n');
@@ -213,8 +224,18 @@ function buildDescription(healthEvent: HealthEvent, maintenanceWindow: string, j
     ? `[JIRA_CONFIG:${JSON.stringify(jiraConfig)}]\n\n`
     : '';
 
+  // Optional event-type signal that tells the skill to run its Security Hub
+  // Finding path. Gated solely on the existing contract key `service`
+  // (set to the literal 'SecurityHub' by the Event Router's finding
+  // normalizer) — no new interface field is introduced. For Health events this
+  // is '', so the Health prompt stays byte-identical.
+  const eventTypeTag = healthEvent.service === 'SecurityHub'
+    ? '[EVENT_TYPE:securityhub-finding]\n'
+    : '';
+
   return `[CORRELATION_ID:${healthEvent.eventId}]
-${jiraTag}
+[INVESTIGATION_ID:${incidentId}]
+${eventTypeTag}${jiraTag}
 AWS Health Event detected. Please investigate the impact on our workloads.
 
 ${accountContext}Service: ${healthEvent.service}

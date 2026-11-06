@@ -1,0 +1,97 @@
+# Demo CDK validation workflow.
+#
+# THIS FILE IS DELIVERED INTO THE DEMOS REPO, not run from this GitLab repo. Its final home is
+#   aws-samples/sample-aws-genai-ops-demos : .github/workflows/demo-cdk-validation.yml
+# It is authored/versioned here first for review. (It lives under platform/github-workflow/ so
+# this repo's own GitLab CI never treats it as a pipeline of its own.)
+#
+# What it does: on manual trigger, deploy -> verify -> destroy one demo's CDK in the
+# genai-ops-demos AWS account, using OIDC (no long-lived keys, no self-hosted runner). Pass/fail
+# is the native Actions result. See .kiro/specs/demo-cdk-testing/ in the internal infra repo.
+#
+# Safe-authoring notes (per "Use GitHub Actions Safely"):
+#   - workflow_dispatch only (maintainer-triggered); NO pull_request_target.
+#   - runs under the reviewer-gated `demo-validation` environment (approval required).
+#   - untrusted inputs (demo, region) passed via env vars, never interpolated into run: scripts.
+#   - only first-party actions (actions/checkout, aws-actions/configure-aws-credentials).
+#   - minimal permissions: id-token: write (OIDC), contents: read (checkout).
+
+name: Demo CDK validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      demo_path:
+        description: "Demo folder path to validate, e.g. 'security/ai-incident-response-playbook-builder'. Its validation.yaml defines how it's deployed/verified/destroyed."
+        required: true
+        type: string
+      ref:
+        description: "Git ref (branch/tag/SHA) to check out and validate. Defaults to the default branch — set a PR branch to validate a proposed demo."
+        required: false
+        type: string
+
+permissions:
+  id-token: write   # required to mint the OIDC token
+  contents: read    # required for actions/checkout
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # Reviewer-gated environment: a maintainer must approve before this job proceeds, and the
+    # OIDC trust policy is pinned to this environment.
+    environment: demo-validation
+    steps:
+      - name: Check out the demos repo
+        uses: actions/checkout@v4
+        with:
+          # Defaults to the default branch when `ref` is empty. Set a PR branch to validate a
+          # proposed demo before merge; leave empty to validate an existing demo on main.
+          ref: ${{ inputs.ref }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Role deployed by the internal infra repo's platform/ app (GithubDemoValidationRole).
+          # Its ARN is the stack output GithubDemoValidationRoleArn.
+          role-to-assume: ${{ vars.DEMO_VALIDATION_ROLE_ARN }}
+          # This is only the default region for the STS call / SDK. The demo runner overrides
+          # AWS_REGION per-demo (e.g. eu-west-1 for the VPN demo), and the OIDC role can assume
+          # the CDK bootstrap roles in every bootstrapped region, so cross-region deploys work.
+          aws-region: us-west-2
+          role-session-name: demo-cdk-validation
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk@2
+
+      # The deploy/verify/destroy runner (genai_ops_common) lives in a PRIVATE internal GitLab
+      # repo a public runner can't pip-install from. Instead the infra repo's platform/ app
+      # publishes it to a PRIVATE S3 bucket; this job (already authenticated via the OIDC role,
+      # which has read on that bucket) fetches it. Single source of truth, nothing public, no
+      # copy committed here. DEMO_RUNNER_BUCKET is the DemoRunnerBucketName stack output.
+      - name: Fetch the demo runner from the private bucket
+        env:
+          RUNNER_BUCKET: ${{ vars.DEMO_RUNNER_BUCKET }}
+          RUNNER_HOME: ${{ runner.temp }}/demo-runner
+        run: |
+          mkdir -p "$RUNNER_HOME/genai_ops_common"
+          aws s3 cp "s3://${RUNNER_BUCKET}/demo-runner/genai_ops_common" \
+            "$RUNNER_HOME/genai_ops_common" --recursive
+          pip install pyyaml
+
+      - name: Deploy -> verify -> destroy the demo
+        env:
+          # Untrusted input passed via env var, never interpolated into the shell (injection-safe).
+          DEMO_PATH: ${{ inputs.demo_path }}
+          RUNNER_HOME: ${{ runner.temp }}/demo-runner
+          REPO_ROOT: ${{ github.workspace }}
+        run: |
+          # Run the runner from where the package was fetched, but point --repo-root at the
+          # checked-out demos repo so it can read <demo>/validation.yaml and run the demo's
+          # scripts by relative path.
+          cd "$RUNNER_HOME"
+          python -m genai_ops_common.demo_runner --path "$DEMO_PATH" --repo-root "$REPO_ROOT"

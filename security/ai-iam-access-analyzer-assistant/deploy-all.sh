@@ -1,8 +1,37 @@
 #!/bin/bash
 # AI IAM Access Analyzer Assistant — Deployment Script
 # Deploys CDK infrastructure and React frontend
+#
+# Default: single-account deploy, unchanged from before this feature existed.
+# --multi-account: opt-in Level 2 hub-and-spoke (#173). This account becomes
+#   the "hub" — the assistant can read IAM/CloudTrail data in OTHER accounts
+#   of an AWS Organization, one named account_id at a time (never "every
+#   account" in one request — see agent.py's MULTI-ACCOUNT system-prompt
+#   rule). Runs shared/scripts/check-org-access.sh first; when this account
+#   may roll out service-managed StackSets, the Org stack places a read-only
+#   spoke role in every account under --org-targets. Otherwise the hub stack
+#   still deploys (its own account's data is unaffected either way) and the
+#   one command a management-account admin has to run is printed.
+# --org-targets <ids>: comma-separated organization root (r-xxxx) and/or OU
+#   ids to roll the spoke role out to. Default: the whole organization (its
+#   root), same convention as aws-services-lifecycle-tracker's --org-targets.
+#
+# Security Hub findings aggregation does NOT need any of this — that's
+# already solved by Level 1 (#171/#173), which works automatically when this
+# hub account is the Security Hub delegated administrator. --multi-account
+# only matters for IAM/CloudTrail reads in a DIFFERENT account.
 
 set -euo pipefail
+
+MULTI_ACCOUNT=false
+ORG_TARGETS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --multi-account) MULTI_ACCOUNT=true; shift ;;
+        --org-targets) ORG_TARGETS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--multi-account] [--org-targets r-xxxx,ou-xxxx-yyyyyyyy]"; exit 1 ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -83,24 +112,190 @@ echo " Region: $REGION"
 echo " Account: $ACCOUNT_ID"
 echo ""
 
+# Report what the assistant will be able to see in this region. The stack deploys a
+# read-only role and creates none of these: it reads whatever Security Hub CSPM, IAM
+# Access Analyzer and CloudTrail already hold here. So the deployment cannot fail on
+# them, but the demo is empty without them, and an analyzer of the wrong kind looks
+# exactly like a clean account. Every line is one of three states: what is there,
+# what is missing, or what could not be checked (the operator's credentials, not the
+# Lambda role, run these calls). Never blocks; mirrors src/tools/list_findings.py.
+# Mirrors Show-DataSourceStatus in deploy-all.ps1.
+show_data_source_status() {
+    local region="$1"
+    local last_aws_error=""
+
+    # One block per AWS service: the service name as a header, then one line per check.
+    service() { printf '   %s\n' "$1"; }
+    line() {  # state label text
+        local mark
+        case "$1" in
+            ok)      mark="+" ;;
+            missing) mark="!" ;;
+            *)       mark="?" ;;
+        esac
+        printf '     [%s] %-30s %s\n' "$mark" "$2" "$3"
+    }
+    hint() { printf '         %s\n' "$1"; }
+    # Read-only AWS CLI call: prints stdout and returns 0, or sets last_aws_error and
+    # returns 1. Never aborts the script (set -e is disabled around the call).
+    aws_read() {
+        local out
+        set +e
+        out=$(aws "$@" --region "$region" --no-cli-pager 2>&1)
+        local rc=$?
+        set -e
+        if [ $rc -ne 0 ]; then
+            last_aws_error=$(printf '%s' "$out" | head -n 1)
+            return 1
+        fi
+        printf '%s' "$out"
+    }
+
+    echo " Data sources in ${region}"
+    echo "   The assistant only reads what these AWS services already hold in this region."
+    echo "   The deployment does not depend on them; this is what the assistant can see today."
+    echo ""
+
+    # --- AWS Security Hub CSPM: the only place the assistant reads findings from ---
+    service "AWS Security Hub CSPM"
+    local hub_enabled=false hub
+    if hub=$(aws_read securityhub describe-hub --query SubscribedAt --output text); then
+        hub_enabled=true
+        line ok "Service" "enabled in $region since ${hub:0:10}"
+    elif printf '%s' "$last_aws_error" | grep -qE 'InvalidAccessException|not subscribed'; then
+        line missing "Service" "not enabled in $region: the assistant cannot read any finding"
+        hint "Enable Security Hub CSPM in this region: https://console.aws.amazon.com/securityhub/"
+    else
+        line unknown "Service" "could not check ($last_aws_error)"
+    fi
+
+    # Access Analyzer -> Security Hub integration (auto-enabled, can be switched off)
+    local integration_on=false sub
+    if [ "$hub_enabled" = true ]; then
+        if sub=$(aws_read securityhub list-enabled-products-for-import \
+                --query "length(ProductSubscriptions[?contains(@, 'product-subscription/aws/access-analyzer')])" \
+                --output text); then
+            if [ "$sub" = "0" ]; then
+                line missing "IAM Access Analyzer feed" "switched off: IAM Access Analyzer findings do not reach Security Hub"
+                hint "Security Hub CSPM console > Integrations > IAM Access Analyzer > Accept findings"
+            else
+                integration_on=true
+                line ok "IAM Access Analyzer feed" "on: IAM Access Analyzer findings are forwarded to Security Hub"
+            fi
+        else
+            line unknown "IAM Access Analyzer feed" "could not check ($last_aws_error)"
+        fi
+    fi
+
+    # Findings the assistant can see right now: same filter as src/tools/list_findings.py.
+    local count
+    if [ "$hub_enabled" = true ] && [ "$integration_on" = true ]; then
+        local filters='{"ProductName":[{"Value":"IAM Access Analyzer","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],"WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]}'
+        if count=$(aws_read securityhub get-findings --filters "$filters" --max-results 100 \
+                --query "length(Findings)" --output text); then
+            if [ "$count" = "0" ]; then
+                line missing "Findings from Access Analyzer" "0 active in Security Hub: nothing to report, or the analyzer is new"
+                hint "New findings reach Security Hub within about 30 minutes of creating an analyzer."
+            elif [ "$count" -ge 100 ] 2>/dev/null; then
+                line ok "Findings from Access Analyzer" "100 or more active in Security Hub"
+            else
+                line ok "Findings from Access Analyzer" "$count active in Security Hub"
+            fi
+        else
+            line unknown "Findings from Access Analyzer" "could not check ($last_aws_error)"
+        fi
+    fi
+
+    # --- AWS IAM Access Analyzer: produces the findings. Two analyzer kinds, two finding families ---
+    service "AWS IAM Access Analyzer"
+    local analyzers external unused
+    if analyzers=$(aws_read accessanalyzer list-analyzers \
+            --query "analyzers[?status=='ACTIVE'].[type,name]" --output text); then
+        external=$(printf '%s\n' "$analyzers" | grep -v 'UNUSED_ACCESS' | head -n 1 || true)
+        unused=$(printf '%s\n' "$analyzers" | grep 'UNUSED_ACCESS' | head -n 1 || true)
+        # External access (ACCOUNT / ORGANIZATION): public and cross-account access findings
+        if [ -n "$external" ]; then
+            line ok "External access analyzer" "$(printf '%s' "$external" | cut -f2) ($(printf '%s' "$external" | cut -f1))"
+            hint "Reports public and cross-account access on S3, KMS, Lambda, SQS, Secrets Manager and IAM role trust."
+        else
+            line missing "External access analyzer" "none in $region: public and cross-account access findings cannot appear"
+            hint "aws accessanalyzer create-analyzer --analyzer-name external-access --type ACCOUNT --region $region   (free)"
+        fi
+        # Unused access (*_UNUSED_ACCESS): unused roles, permissions, access keys, passwords
+        if [ -n "$unused" ]; then
+            line ok "Unused access analyzer" "$(printf '%s' "$unused" | cut -f2) ($(printf '%s' "$unused" | cut -f1))"
+            hint "Reports unused IAM roles, permissions, access keys and passwords."
+        else
+            line missing "Unused access analyzer" "none in $region: unused roles and permissions cannot appear (most suggested prompts need this)"
+            hint "aws accessanalyzer create-analyzer --analyzer-name unused-access --type ACCOUNT_UNUSED_ACCESS --configuration \"unusedAccess={unusedAccessAge=90}\" --region $region"
+            hint "(billed per IAM role and user analyzed)"
+        fi
+    else
+        line unknown "Analyzers" "could not check ($last_aws_error)"
+    fi
+
+    # --- AWS CloudTrail: usage data for least-privilege policy generation ---
+    service "AWS CloudTrail"
+    line ok "Event history" "90-day management event history of $region (always on, no trail required)"
+    hint "Used by policy generation to see which API calls a role actually made."
+    echo ""
+}
+
 # Verify Bedrock model access up front (warns but continues)
 check_bedrock_model_access "$REGION" || \
     echo " ⚠ Continuing deploy despite the model-access warning above — the assistant will"$'\n'"   return an access error at runtime until model access is enabled and propagated."
 echo ""
 
-# Step 1: Install CDK dependencies
-echo "[1/5] Installing CDK dependencies..."
-pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
-if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
-fi
-source .venv/bin/activate
-pip install -r requirements.txt --quiet
-popd > /dev/null
-echo " ✓ CDK dependencies installed."
+STACK_NAME="IamAnalyzerAssistantStack-$REGION"
 
-# Step 2: Build frontend
-echo "[2/5] Building React frontend..."
+# Multi-account preflight (read-only; exit codes documented in
+# check-org-access.sh). Reused as-is from the hub-and-spoke pattern in
+# operations-automation/aws-services-lifecycle-tracker (#144) — same
+# three prerequisites apply here (list accounts, StackSets trusted
+# access, StackSets rollout permission), so there is no reason to
+# duplicate the check.
+ORG_ROLLOUT=false
+if [ "$MULTI_ACCOUNT" = true ]; then
+    echo "Checking multi-account (organization) access..."
+    if [ -f "$SCRIPT_DIR/../../shared/scripts/check-org-access.sh" ]; then
+        set +e
+        "$SCRIPT_DIR/../../shared/scripts/check-org-access.sh"
+        org_check=$?
+        set -e
+        if [ $org_check -eq 2 ]; then
+            echo "This account cannot list the organization's accounts, so --multi-account is not possible from here."
+            echo "Apply the fix printed above, or deploy without --multi-account."
+            exit 1
+        elif [ $org_check -ne 0 ] && [ $org_check -ne 3 ]; then
+            echo "Multi-account preflight failed."
+            exit 1
+        fi
+        [ $org_check -eq 0 ] && ORG_ROLLOUT=true
+    else
+        echo " ⚠ shared/scripts/check-org-access.sh not found — skipping the preflight check."
+        echo "   Proceeding on the assumption this account can run service-managed StackSets;"
+        echo "   if that's wrong, the Org stack deploy below will fail with a clear CloudFormation error."
+        ORG_ROLLOUT=true
+    fi
+    if [ -z "$ORG_TARGETS" ]; then
+        ORG_TARGETS=$(aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager 2>/dev/null || echo "")
+        if [ -z "$ORG_TARGETS" ]; then
+            echo "Could not determine --org-targets automatically (not in an AWS Organization, or no permission to list roots)."
+            echo "Pass --org-targets r-xxxx or --org-targets ou-xxxx-yyyyyyyy explicitly."
+            exit 1
+        fi
+    fi
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo " ✓ Multi-account enabled. Spoke-role targets: $ORG_TARGETS (rolled out from this account)."
+    else
+        echo " ⚠ Multi-account enabled, but this account cannot roll out the spoke-role StackSet itself."
+        echo "   Targets: $ORG_TARGETS — see the management-account command printed at the end of this run."
+    fi
+    echo ""
+fi
+
+# Step 1: Build frontend
+echo "[1/4] Building React frontend..."
 pushd "$SCRIPT_DIR/frontend" > /dev/null
 if [ ! -d "node_modules" ]; then
     npm install
@@ -109,27 +304,48 @@ npm run build
 popd > /dev/null
 echo " ✓ Frontend built."
 
-# Step 3: Deploy CDK stack
-echo "[3/5] Deploying CDK infrastructure..."
-pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
-source .venv/bin/activate
-export VIRTUAL_ENV="$SCRIPT_DIR/infrastructure/cdk/.venv"
-export PATH="$VIRTUAL_ENV/bin:$PATH"
+# Step 2: Deploy CDK stack via the shared script (installs CDK deps, bootstraps, deploys)
+echo "[2/4] Deploying CDK infrastructure..."
 export AWS_REGION="$REGION"
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
-npx cdk deploy "IamAnalyzerAssistantStack-$REGION" --require-approval never --outputs-file outputs.json
-popd > /dev/null
+"$SCRIPT_DIR/../../shared/scripts/deploy-cdk.sh" --cdk-directory "$SCRIPT_DIR/infrastructure/cdk" --stack-name "$STACK_NAME"
+
+# Multi-account: roll the spoke role out via StackSet (#173 Level 2). Only
+# when this account can actually run service-managed StackSets itself —
+# otherwise ORG_ROLLOUT is false and the management-account command is
+# printed at the end of this run instead, same as deploying nothing here.
+if [ "$MULTI_ACCOUNT" = true ] && [ "$ORG_ROLLOUT" = true ]; then
+    echo ""
+    echo "Deploying org stack (spoke-role StackSet)..."
+    pushd "$SCRIPT_DIR/infrastructure/cdk" > /dev/null
+    export AWS_REGION="$REGION"
+    export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
+    npx cdk deploy "IamAnalyzerAssistantOrg-$REGION" --require-approval never \
+        --context "orgTargets=$ORG_TARGETS"
+    popd > /dev/null
+    echo " ✓ Spoke role rolled out to accounts under $ORG_TARGETS."
+fi
 echo " ✓ Infrastructure deployed."
 
-# Step 4: Get stack outputs and configure frontend
-echo "[4/5] Configuring frontend with stack outputs..."
-OUTPUTS_FILE="$SCRIPT_DIR/infrastructure/cdk/outputs.json"
+# Step 3: Get stack outputs and configure frontend
+echo "[3/4] Configuring frontend with stack outputs..."
+get_stack_output() {
+    aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" --no-cli-pager \
+        --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+}
 
-API_ENDPOINT=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".ApiEndpoint" "$OUTPUTS_FILE")
-USER_POOL_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".UserPoolId" "$OUTPUTS_FILE")
-USER_POOL_CLIENT_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".UserPoolClientId" "$OUTPUTS_FILE")
-IDENTITY_POOL_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".IdentityPoolId" "$OUTPUTS_FILE")
-WEBSITE_URL=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".WebsiteUrl" "$OUTPUTS_FILE")
+API_ENDPOINT=$(get_stack_output ApiEndpoint)
+USER_POOL_ID=$(get_stack_output UserPoolId)
+USER_POOL_CLIENT_ID=$(get_stack_output UserPoolClientId)
+IDENTITY_POOL_ID=$(get_stack_output IdentityPoolId)
+WEBSITE_URL=$(get_stack_output WebsiteUrl)
+FRONTEND_BUCKET=$(get_stack_output FrontendBucketName)
+DISTRIBUTION_ID=$(get_stack_output DistributionId)
+
+if [ -z "$USER_POOL_ID" ] || [ -z "$FRONTEND_BUCKET" ]; then
+    echo "ERROR: Failed to read outputs from stack $STACK_NAME"
+    exit 1
+fi
 
 # Generate frontend environment config
 cat > "$SCRIPT_DIR/frontend/.env.production.local" <<EOF
@@ -141,9 +357,8 @@ VITE_REGION=$REGION
 EOF
 echo " ✓ Frontend configured."
 
-# Step 5: Deploy frontend to S3 + invalidate CloudFront
-echo "[5/5] Uploading frontend to S3..."
-FRONTEND_BUCKET=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".FrontendBucketName" "$OUTPUTS_FILE")
+# Step 4: Deploy frontend to S3 + invalidate CloudFront
+echo "[4/4] Uploading frontend to S3..."
 
 # Rebuild with production env vars
 pushd "$SCRIPT_DIR/frontend" > /dev/null
@@ -152,8 +367,6 @@ aws s3 sync dist/ "s3://$FRONTEND_BUCKET" --delete --region "$REGION"
 popd > /dev/null
 
 # Invalidate CloudFront cache
-DISTRIBUTION_ID=$(jq -r ".\"IamAnalyzerAssistantStack-$REGION\".DistributionId" "$OUTPUTS_FILE")
-
 if [ -n "$DISTRIBUTION_ID" ] && [ "$DISTRIBUTION_ID" != "None" ]; then
     aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --region "$REGION" > /dev/null
 fi
@@ -163,23 +376,65 @@ echo " ✓ Frontend deployed."
 echo ""
 echo "Creating demo user..."
 DEMO_EMAIL="admin@example.com"
-DEMO_PASSWORD="IamAnalyzer2024!"
+# Generate a unique, strong password per deployment instead of shipping a hardcoded
+# credential in the repo. Cognito's default policy requires >=8 chars with upper,
+# lower, digit, and symbol, so we guarantee one of each (the "Demo" prefix and "!9"
+# suffix) and add random alphanumeric entropy. Uses /dev/urandom + tr (POSIX, no
+# extra dependency) rather than openssl.
+#
+# Read a FINITE chunk of /dev/urandom, THEN filter. Piping endless /dev/urandom
+# straight into "tr ... | head -c 12" lets head close the pipe after 12 bytes while
+# tr is still writing, so tr dies with SIGPIPE (exit 141); under "set -euo pipefail"
+# that 141 aborts the whole deploy right here -- before the aws cognito calls below,
+# so their "|| true" guards never get a chance to mask it. Bounding the source with
+# "head -c 256" lets tr reach EOF cleanly; only ~62/256 bytes survive the
+# alphanumeric filter, so 256 raw bytes yield ~62 chars on average -- far more than
+# the 12 that cut takes, so the segment is reliably a full 12 characters.
+DEMO_PASSWORD="Demo$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-12)!9"
 
-# Create user (ignore error if already exists)
-aws cognito-idp admin-create-user \
-  --user-pool-id "$USER_POOL_ID" \
-  --username "$DEMO_EMAIL" \
-  --user-attributes Name=email_verified,Value=true \
-  --message-action SUPPRESS \
-  --region "$REGION" 2>/dev/null || true
+# admin-create-user: allow re-runs on an existing user (UsernameExistsException),
+# but surface any other error rather than silently continuing to a
+# "Deployment Complete!" summary whose credentials the pool doesn't actually
+# accept. Capture stderr into a variable while dropping stdout, then decide
+# based on both the exit status and the specific error class.
+CREATE_ERR="$(aws cognito-idp admin-create-user \
+    --user-pool-id "$USER_POOL_ID" \
+    --username "$DEMO_EMAIL" \
+    --user-attributes Name=email_verified,Value=true \
+    --message-action SUPPRESS \
+    --region "$REGION" 2>&1 1>/dev/null)" && CREATE_STATUS=0 || CREATE_STATUS=$?
 
-# Set permanent password (bypasses force-change-password flow)
-aws cognito-idp admin-set-user-password \
-  --user-pool-id "$USER_POOL_ID" \
-  --username "$DEMO_EMAIL" \
-  --password "$DEMO_PASSWORD" \
-  --permanent \
-  --region "$REGION" 2>/dev/null || true
+if [ "$CREATE_STATUS" -ne 0 ]; then
+    if printf '%s' "$CREATE_ERR" | grep -q 'UsernameExistsException'; then
+        echo "   (demo user already exists — password will be rotated below)"
+    else
+        echo ""
+        echo " ✗ Failed to create demo user:"
+        printf '%s\n' "$CREATE_ERR"
+        echo ""
+        echo "   The deployment finished but sign-in with the demo credentials"
+        echo "   below will not work. Fix the error above and re-run this script,"
+        echo "   or create a user manually via the Cognito console for User Pool"
+        echo "   $USER_POOL_ID."
+        exit 1
+    fi
+fi
+
+# admin-set-user-password: this is the step that guarantees the demo user can
+# sign in (bypasses the force-change-password flow the Amplify hosted UI
+# mishandles). Do NOT swallow failures — a silent failure here produces the
+# exact InvalidPasswordException symptom this script exists to avoid.
+if ! aws cognito-idp admin-set-user-password \
+    --user-pool-id "$USER_POOL_ID" \
+    --username "$DEMO_EMAIL" \
+    --password "$DEMO_PASSWORD" \
+    --permanent \
+    --region "$REGION"; then
+    echo ""
+    echo " ✗ Failed to set demo user password. Sign-in will not work."
+    echo "   The user exists in the pool but has no usable permanent password."
+    exit 1
+fi
 
 echo " ✓ Demo user created."
 
@@ -191,9 +446,26 @@ echo "========================================"
 echo " Open the demo: $WEBSITE_URL"
 echo " Region: $REGION"
 echo ""
+show_data_source_status "$REGION"
 echo " Sign in with:"
 echo "   Email:    $DEMO_EMAIL"
 echo "   Password: $DEMO_PASSWORD"
 echo ""
 echo " (You can create additional users via the Cognito console or CLI)"
 echo ""
+
+if [ "$MULTI_ACCOUNT" = true ]; then
+    echo "Multi-account (#173 Level 2):"
+    echo "  Hub account $ACCOUNT_ID can read IAM/CloudTrail data in accounts under $ORG_TARGETS,"
+    echo "  one named account_id at a time (ask the assistant about a specific account)."
+    if [ "$ORG_ROLLOUT" = true ]; then
+        echo "  Spoke role: StackSet IamAnalyzerAssistantOrg-$REGION-SpokeRole (auto-deploys to accounts joining later)."
+        echo "    aws cloudformation list-stack-instances --stack-set-name IamAnalyzerAssistantOrg-$REGION-SpokeRole --region $REGION"
+    else
+        echo "  ACTION REQUIRED: this account cannot run service-managed StackSets. From the MANAGEMENT account, run once:"
+        echo "    cd infrastructure/cdk && npx cdk deploy IamAnalyzerAssistantOrg-$REGION --context orgTargets=$ORG_TARGETS --context hubAccountId=$ACCOUNT_ID --require-approval never"
+        echo "  Until then, accounts under $ORG_TARGETS have no spoke role, and cross-account reads will fail with a clear"
+        echo "  'spoke role not deployed' message rather than silently returning no data."
+    fi
+    echo ""
+fi

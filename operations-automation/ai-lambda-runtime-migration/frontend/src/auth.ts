@@ -9,7 +9,6 @@ import {
   CognitoUserPool,
   CognitoUser,
   AuthenticationDetails,
-  CognitoUserAttribute,
 } from 'amazon-cognito-identity-js';
 
 const userPoolId = import.meta.env.VITE_USER_POOL_ID;
@@ -28,28 +27,6 @@ export interface AuthUser {
   username: string;
   email: string;
 }
-
-export const signUp = (email: string, password: string): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const attributeList = [
-      new CognitoUserAttribute({ Name: 'email', Value: email }),
-    ];
-    userPool.signUp(email, password, attributeList, [], (err) => {
-      if (err) { reject(err); return; }
-      resolve();
-    });
-  });
-};
-
-export const confirmSignUp = (email: string, code: string): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
-    cognitoUser.confirmRegistration(code, true, (err) => {
-      if (err) { reject(err); return; }
-      resolve();
-    });
-  });
-};
 
 export const signIn = (email: string, password: string): Promise<string> => {
   return new Promise((resolve, reject) => {

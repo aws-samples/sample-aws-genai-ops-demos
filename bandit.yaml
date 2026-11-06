@@ -1,0 +1,16 @@
+# Repo-root Bandit configuration, consumed by the ASH security scan
+# (.github/workflows/security-scan.yml) via .ash/.ash.yaml -> scanners.bandit.options.config_file.
+#
+# Purpose: silence B101 (assert_used) ONLY.
+#
+# Why: B101 fires on every `assert` in the repo and accounts for ~1,065 of ~1,240
+# total ASH findings (86%). It is a LOW-severity hygiene rule, not a security issue,
+# and its volume buries the actionable (>=MEDIUM) findings in the report. ASH already
+# gates on incomplete scanners (not on findings), so this only affects report
+# readability -- it does not weaken any security gate.
+#
+# Scope is deliberately narrow: we skip ONLY B101. Every other Bandit rule -- including
+# other LOW-severity ones like B105 (hardcoded_password_string) and B108 (hardcoded_tmp)
+# -- remains active, so genuine hygiene issues still surface.
+skips:
+  - B101

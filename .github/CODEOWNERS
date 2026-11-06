@@ -1,3 +1,33 @@
-# Governance files — require maintainer approval
-/.kiro/          @bquintas @benlec
-/.github/        @bquintas @benlec
+# Demo owners: the author first, then the three maintainers as backup.
+# Any one listed owner can give the code-owner approval, so a demo is never
+# blocked when its author is away or opens the PR themselves.
+/cost-optimization/ai-graviton-migration-assessment/                   @bquintas @benlec @emenguy
+/cost-optimization/aws-genai-cost-optimization-mcp-server/             @emenguy @bquintas @benlec
+/observability/aws-feature-relevance-notification-system/              @awsrahulrsr @bquintas @benlec @emenguy
+/observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/ @rahulnarya @bquintas @benlec @emenguy
+/observability/eks-investigation-devops-agent/                         @AmiroucheRA @bquintas @benlec @emenguy
+/observability/proactive-health-event-impact-analyzer/                 @u-mancini @bquintas @benlec @emenguy
+/observability/saas-status-mcp/                                        @benlec @bquintas @emenguy
+/operations-automation/ai-dataset-training-audit/                      @bquintas @benlec @emenguy
+/operations-automation/ai-documentation-generation/                    @benlec @bquintas @emenguy
+/operations-automation/ai-lambda-runtime-migration/                    @benlec @bquintas @emenguy
+/operations-automation/ai-legacy-system-browser-automation/            @merichea @bquintas @benlec @emenguy
+/operations-automation/ai-password-reset-chatbot/                      @benlec @bquintas @emenguy
+/operations-automation/anycompany-it-demo-portal/                      @benlec @bquintas @emenguy
+/operations-automation/aws-services-lifecycle-tracker/                 @benlec @bquintas @emenguy
+/operations-automation/aws-services-lifecycle-tracker-v2/              @benlec @bquintas @emenguy
+/resilience/ai-chaos-engineering-with-fis/                             @benlec @bquintas @emenguy
+/resilience/ai-load-test-generation-with-dlt/                          @OHsechun @hunmini @bquintas @benlec @emenguy
+/resilience/fsx-windows-sla-review-devops-agent/                       @benlec @bquintas @emenguy
+/security/ai-iam-access-analyzer-assistant/                            @jgq-amazon @bquintas @benlec @emenguy
+/security/ai-incident-response-playbook-builder/                       @Dakum11 @bquintas @benlec @emenguy
+/security/ai-permission-boundary-generator/                            @otymix @bquintas @benlec @emenguy
+/security/prowler-security-findings-agent/                             @albertjh @bquintas @benlec @emenguy
+
+# Governance files — require maintainer approval (keep LAST: last match wins)
+/.kiro/          @bquintas @benlec @emenguy
+/.github/        @bquintas @benlec @emenguy
+# Security-scan config: weakening it must get the same maintainer review
+/.ash/              @bquintas @benlec @emenguy
+/bandit.yaml        @bquintas @benlec @emenguy
+/.secrets.baseline  @bquintas @benlec @emenguy

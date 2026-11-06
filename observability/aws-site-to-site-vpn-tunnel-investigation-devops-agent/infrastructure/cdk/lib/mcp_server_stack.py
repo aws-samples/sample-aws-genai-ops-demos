@@ -50,7 +50,7 @@ class McpServerStack(cdk.Stack):
         )
 
         api_key = api.add_api_key("McpApiKey",
-            api_key_name="vpn-devops-mcp-api-key",
+            api_key_name="vpn-devops-mcp-api-key",  # pragma: allowlist secret
         )
 
         plan = api.add_usage_plan("McpUsagePlan",

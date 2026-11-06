@@ -1,29 +1,39 @@
-# IAM Security Assistant
-
-Help teams identify and remediate overly-permissive IAM roles through natural language conversation, so they stop guessing which roles to fix and start acting on data-driven recommendations.
+# AI IAM Access Analyzer Assistant
+*Conversational least-privilege policy management powered by Amazon Bedrock*
 
 ## Overview
 
-As AWS accounts grow, IAM roles accumulate — created for projects long finished, granted broad permissions "just to get it working," or inherited from teams that moved on. Security Hub and IAM Access Analyzer flag these roles as findings, but translating findings into safe, tested policy changes still requires manual analysis: checking CloudTrail for actual usage, mapping dependencies, validating that a tighter policy won't break production.
+The AI IAM Access Analyzer Assistant provides a conversational interface for managing your AWS IAM security posture. Instead of navigating multiple console pages and writing JSON policies by hand, users ask natural language questions and receive actionable insights backed by IAM Access Analyzer findings, CloudTrail activity analysis, and policy validation.
 
-This assistant automates that analysis. It's a **read-only** conversational tool — it queries your security findings, analyzes role usage, generates recommended policies, and assesses blast radius, but **never modifies IAM roles, policies, or configurations**. Teams get expert-level analysis and ready-to-apply recommendations without risk of accidental changes.
+## What's New
 
-The core question it answers: "What should I fix first, and how do I fix it safely?"
+Recent hardening improvements observed in real deployments:
+
+- **Optional multi-account visibility.** The assistant can now be made aware of — and, with an opt-in deploy flag, read IAM/CloudTrail data across — an AWS Organization. See [Optional: Multi-Account Visibility](#optional-multi-account-visibility-hub-and-spoke) below. The default single-account deployment is completely unaffected.
+- **IAM access-key triage.** A new tool inventories every IAM access key in the account and returns a prioritized action list with a specific replacement path per identity — SSO federation for humans, IAM roles for services, OIDC federation for CI/CD, or root-key removal. Each row links to the AWS documentation page for the recommended migration pattern.
+- **Downloads no longer depend on STS token lifetime.** Exports and re-issued download links now go through a Cognito-authenticated API Gateway proxy with a prefix allowlist and path-traversal defense. This replaces the previous S3 presigned-URL design, which could issue links with less remaining life than the URL's `ExpiresIn` when the Lambda's own STS token rotated. The legacy `PresignerRole` remains in the CDK stack for one release cycle marked deprecated, and can be removed on the next revision.
+- **More flows short-circuit deterministically.** Pagination (`next 10`, `page 3`), `generate an action plan`, `validate this policy` for a pasted JSON body, `audit my access keys`, `explain what the audit does` (and similar educational questions), and the `generate an action plan and export it` compound all execute server-side in a single turn — no Bedrock round-trip and no risk of hitting the API Gateway 29-second ceiling. The model still handles novel or exploratory questions.
+- **Coverage contract across every tool.** Every tool surfaces whether each data source (Security Hub, IAM, Access Analyzer, CloudTrail, S3) was checked, empty, or unavailable. The model names unavailable sources in prose rather than describing the posture as "clean" when it could not actually see all the data.
+- **Cloudscape chat surface with dark mode.** The chat UI moved from a hand-rolled implementation to Cloudscape's generative-AI chat pattern (ChatBubble, Avatar, PromptInput, SupportPromptGroup). Model output is rendered through `react-markdown` with `rehype-sanitize` — replacing the earlier regex + `dangerouslySetInnerHTML` path, which was an XSS surface. Full dark-mode support including a bridge for the `@cloudscape-design/chat-components` token layer.
+- **`list_findings` no longer blocks on large accounts.** The first page returns as soon as the API replies; the total finding count is scanned lazily (or not at all, per configuration). Accounts with tens of thousands of findings no longer time out on the very first user prompt.
+- **Passive AWS Organization / Security Hub delegated-admin detection.** The session-start capabilities probe now also reports whether this account is part of an AWS Organization and, if so, whether it's the Security Hub delegated administrator — read-only, no new infrastructure, no cross-account roles. When the account is the delegated admin, the welcome message and chat answers correctly state that findings aggregate across every member account, and the assistant no longer has to guess (or guess wrong) when asked directly which account administers Security Hub for the organization. This is a first, narrow step toward the full multi-account hub-and-spoke feature requested in #173 — it does not add spoke roles, StackSets, or cross-account IAM/CloudTrail reads; those remain unimplemented.
+- **Access-key audit recognizes remediation-intent phrasing.** "Help me reduce the number of access keys I'm using," "cut down on access keys," and similar phrasings now take the same fast, deterministic path as "audit my access keys" — previously these fell through to a full Bedrock synthesis round and could hit the API Gateway 29-second ceiling.
 
 ## At a Glance
 
-- **Time**: ~15 min deployment + immediate demo
-- **Difficulty**: Beginner
-- **Audience**: Security Engineers, Cloud Admins, TAMs/SAs demoing IAM remediation workflows
-- **Tech Stack**: React + Cloudscape, Amazon Bedrock Converse API (Claude Sonnet, toolConfig), Python 3.12, AWS CDK
-- **Estimated Cost**: ~$0.05-0.15 per session — see Cost Estimate in ARCHITECTURE.md
+- **Duration**: 15 minutes (deploy) + ongoing usage
+- **Difficulty**: Intermediate
+- **Target Audience**: Security engineers, cloud architects, DevOps teams
+- **Key Technologies**: Amazon Bedrock (Claude), IAM Access Analyzer, Security Hub, CloudTrail, Lambda, API Gateway, Cognito, CloudFront
+- **Estimated Cost**: $6-57/month depending on usage
 
 ## Business Value
 
-- **Speed**: Reduces IAM finding triage from 30+ min/role to under 2 minutes of conversation
-- **Safety**: Read-only analysis with blast radius checks — know what breaks before you touch anything
-- **Adoption**: Guided mode lowers the barrier for teams intimidated by IAM complexity
-- **Actionable**: Generates ready-to-apply policies, not just findings — export to S3 with one command
+- Reduces time to review IAM findings from hours to minutes
+- Generates least-privilege policies automatically from CloudTrail data
+- **Blast radius analysis** before any IAM change — shows exactly what would break
+- Validates policies against security best practices before deployment
+- Makes IAM security accessible to non-IAM-specialists through natural language
 
 ## What You Get
 
@@ -32,6 +42,15 @@ The core question it answers: "What should I fix first, and how do I fix it safe
 - Blast radius analysis to understand impact before modifying or deleting IAM resources
 - Policy validation against AWS best practices and IAM Access Analyzer
 - Exportable policy documents in JSON, CDK (Python/TypeScript), and CloudFormation formats
+
+### Exporting reports
+
+Every generated artifact — policies, action plans, role comparisons, blast-radius analyses — is exportable to the reports S3 bucket. Downloads are served through a Cognito-authenticated API Gateway route, so a link stays usable for the current signed-in session. Files stay in S3 permanently, so an expired session never means a lost report:
+
+- Ask `list my exports` to see everything that has been saved.
+- Ask `get me a new link for <filename>` to mint a fresh download link for any file.
+
+The download route (`GET /downloads/{proxy+}`) is protected by the same Cognito authorizer as the rest of the API. A dedicated Lambda serves objects from the reports bucket with a prefix allowlist and path-traversal defense. Direct S3 access is not exposed.
 
 ## How It Works
 
@@ -48,6 +67,7 @@ The core question it answers: "What should I fix first, and how do I fix it safe
 Experience this demo in an interactive click-through walkthrough:
 
 ▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/rf9tmdd93eq6)
+
 
 ## Prerequisites
 
@@ -78,13 +98,25 @@ chmod +x deploy-all.sh
 ```
 
 The script will:
-1. Install CDK dependencies
-2. Build the React frontend
-3. Deploy CDK infrastructure (Lambda, API Gateway, Cognito, CloudFront, S3)
-4. Configure the frontend with stack outputs
-5. Upload the frontend to S3 and invalidate CloudFront
+1. Build the React frontend
+2. Deploy the CDK stack through the shared `deploy-cdk` script (Lambda, API Gateway, Cognito, CloudFront, S3)
+3. Configure the frontend with stack outputs
+4. Upload the frontend to S3 and invalidate CloudFront
+5. Create a demo Cognito user (`admin@example.com`) with a permanent password so you can sign in without going through the Amplify force-change-password flow.
+6. Print the [Data sources status](#data-sources-status): what the assistant will be able to see in this region.
 
-After deployment, create a user in the Cognito User Pool and navigate to the CloudFront URL.
+The final "Deployment Complete!" summary prints the CloudFront URL, the demo email, and the demo password — copy them from the terminal to sign in. Re-running the script rotates the demo user's password.
+
+If a demo-user step fails, the script exits with a clear error rather than pretending the demo user was created; the CloudFormation deploy itself is already complete at that point and does not need to be re-run. To create additional users (teammates, service accounts, etc.), use the Cognito console against the printed User Pool ID, or the CLI equivalent:
+
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --user-attributes Name=email_verified,Value=true --message-action SUPPRESS
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <UserPoolId> --username you@example.com \
+  --password '<YourPassword>' --permanent
+```
 
 ## Architecture
 
@@ -107,13 +139,24 @@ User → CloudFront → S3 (React)
 | Cognito User Pool + Identity Pool | User authentication |
 | API Gateway (REST) | Request routing with Cognito authorizer |
 | Lambda (Conversation Handler) | Bedrock Converse orchestration |
-| Lambda (list_findings) | Query Security Hub for IAM findings |
-| Lambda (generate_policy) | Analyze CloudTrail and generate policies |
+| Lambda (list_findings) | Query Security Hub for IAM findings (paginated) |
+| Lambda (get_finding_details) | Fetch the full context of a single finding |
+| Lambda (generate_policy) | Analyze CloudTrail and generate least-privilege policies |
 | Lambda (check_dependencies) | Blast radius analysis — map IAM entity dependencies |
 | Lambda (validate_policy) | Validate policies via Access Analyzer |
+| Lambda (generate_action_plan) | Turn a batch of findings into a prioritized remediation plan |
+| Lambda (compare_roles) | Diff two IAM roles side-by-side |
+| Lambda (export_report) | Persist a generated artifact to S3 and return a Cognito-authenticated download URL |
+| Lambda (list_exports) | List previously-exported artifacts and issue fresh download URLs |
+| Lambda (download) | Cognito-authenticated proxy that serves objects from the reports bucket with a prefix allowlist and path-traversal defense |
+| Lambda (cross_account_iam_context) | Read IAM roles and CloudTrail reachability for one named account — the hub's own account by default, or another account when [multi-account visibility](#optional-multi-account-visibility-hub-and-spoke) is deployed |
+| IAM Role (ToolExecutionRole) | Shared execution role for all tool Lambdas (read-only IAM, Security Hub, CloudTrail, Access Analyzer) |
+| IAM Role (PresignerRole) | Deprecated. Retained in the CDK stack for one release cycle for backwards compatibility; no code path assumes this role anymore. |
 | S3 (Frontend Hosting) | React app static files |
 | S3 (Reports) | Generated policies and reports (optional — see note below) |
 | CloudFront | HTTPS distribution for frontend |
+
+**Note on multi-account resources**: everything in the table above deploys with every install, with no flags needed. The IAM role and CloudFormation StackSet described in [Optional: Multi-Account Visibility](#optional-multi-account-visibility-hub-and-spoke) below are NOT in this table because they are opt-in — they only deploy when `--multi-account` is passed to the deploy script.
 
 **Note on S3 Reports Bucket**: The reports bucket stores exported artifacts (policies, change requests, action plans) for server-side access. If your organization restricts S3 bucket creation, you can remove the `StorageConstruct` from the CDK stack — the tool will gracefully fall back to local browser downloads via the "Save as .md" button. The frontend hosting bucket is required and cannot be removed.
 
@@ -127,11 +170,85 @@ User → CloudFront → S3 (React)
 3. Ensure the tool Lambda execution role has `s3:PutObject` and `s3:GetObject` on that bucket
 4. Redeploy: `./deploy-all.sh`
 
+## Optional: Multi-Account Visibility (Hub-and-Spoke)
+
+Everything described so far in [What Gets Deployed](#what-gets-deployed) and [Cost](#cost) is the **standard, single-account deployment** — one AWS account, the resources listed there, the cost range shown below. This section describes an *additional*, fully optional layer on top of that baseline, for organizations that manage IAM across an AWS Organization and want this assistant to see more than its own account.
+
+**This is entirely opt-in.** If you deploy with no flags (as shown everywhere else in this README), nothing in this section applies — you get exactly the standard deployment above, unchanged.
+
+### Two levels of multi-account support
+
+#### Level 1: Organization and delegated-admin awareness (no new infrastructure)
+
+Adds **zero new resources** on top of the standard deployment table above. The assistant detects, using read-only `organizations:DescribeOrganization` and `securityhub:DescribeOrganizationConfiguration` calls at session start, whether this account is part of an AWS Organization and whether it is the Security Hub delegated administrator — no new Lambda, no new IAM role, no new stack. When it is the delegated administrator, Security Hub findings (surfaced via `list_findings` and related tools) already aggregate across every member account automatically; the welcome message and a "Data sources" indicator in the chat UI say so explicitly, and the assistant can answer direct questions about the organization structure correctly rather than guessing.
+
+- **Cost:** $0 beyond the baseline Cost table above — these are a couple of extra read-only API calls at session start, not a new billable resource.
+- **Setup:** None. Always on; each check is independently skipped if the deploying account lacks the relevant permission or isn't part of an Organization.
+- **Use case:** Awareness of organization-wide Security Hub coverage without deploying any new infrastructure. Always on, no decision required.
+
+#### Level 2: Cross-account IAM/CloudTrail reads (opt-in deploy flag)
+
+Deploys a read-only IAM role into target accounts (via a CloudFormation StackSet, so no manual per-account setup is needed) so the assistant can read IAM roles and check CloudTrail reachability in one specific, named account at a time — for example, "what roles exist in account 123456789012?"
+
+```bash
+./deploy-all.sh --multi-account --org-targets <ou-id-or-org-root-id>
+```
+
+```powershell
+.\deploy-all.ps1 -MultiAccount -OrgTargets <ou-id-or-org-root-id>
+```
+
+If `--org-targets` is omitted, it defaults to the whole organization's root. The deploy script runs a read-only preflight check first; if this account can roll the spoke role out itself (it is the Organizations management account, or a registered StackSets delegated administrator), the rollout happens automatically. If not, the standard deployment still completes normally, and the exact command for a management-account administrator to run once is printed at the end.
+
+**What this adds beyond the baseline [What Gets Deployed](#what-gets-deployed) table:**
+- One read-only IAM role (`IamAnalyzerAssistantSpokeRole`), deployed to every target account via a CloudFormation StackSet. Its trust policy is scoped to this specific hub account's tool-execution role, not the account broadly, and its permissions are a narrow read-only subset (IAM `Get`/`List` calls plus `cloudtrail:LookupEvents`) — no Security Hub permissions are included, since Level 1 already covers Security Hub aggregation without any cross-account role.
+- An expanded `sts:AssumeRole` permission on the hub's existing tool-execution role (`ToolExecutionRole` in the baseline table), scoped to that specific spoke-role name in any account — it cannot assume any other role.
+- Nothing else from the baseline table changes — no new compute, no networking changes, no database. This feature always requires an explicit account to be named; the assistant will never attempt to loop over every account in an organization within a single request.
+
+**Prerequisites:**
+- AWS Organizations with CloudFormation StackSets trusted access enabled (the deploy script's preflight check verifies this and prints the exact fix if it isn't)
+- Recommended: deploy the hub in your Security Hub delegated administrator account, so Level 1's org-wide findings aggregation applies automatically
+
+**Cost:** The additional IAM role and StackSet have no meaningful cost on their own — they do not appear as new line items beyond the baseline Cost table above. Cross-account API calls (assuming a role, then reading IAM/CloudTrail in that account) are standard AWS API usage with no additional charge beyond what the baseline deployment's own IAM/CloudTrail reads already incur.
+
+### Which option should you choose?
+
+| Your situation | Recommended option |
+|---|---|
+| Single AWS account, not part of an organization | Default deployment. Nothing to change. |
+| Part of an organization, mostly work within one account | **Level 1** — always on, no new infrastructure, no decision required |
+| Occasionally need IAM/CloudTrail detail from a specific other account | **Level 2** — name the account when asking; deploy with `--multi-account` first |
+| Need org-wide findings visibility across every account | **Level 1 alone is sufficient** if this hub is the Security Hub delegated administrator — no Level 2 deploy needed for that specific question |
+
+### Limitations
+
+- Multi-region is not supported — IAM is a global service, but CloudTrail is regional. The assistant only ever reflects the deployment region.
+- This feature does not enable Security Hub, create IAM Access Analyzers, or register a delegated administrator on your behalf — those are organization-wide changes you make deliberately, outside this tool.
+- Cross-account reads always require a specific, named account. There is no "scan every account" mode — this is a deliberate design choice to avoid request timeouts and ambiguous answers when accounts disagree, not a current limitation planned for removal.
+- The spoke role deployed to member accounts is strictly read-only, matching the hub's own permissions model described in the baseline [What Gets Deployed](#what-gets-deployed) table.
+
+## Configuration
+
+Most tunables are set at CDK synth time in `infrastructure/cdk/stacks/tools_construct.py` (constructor arguments) and propagated to Lambdas as environment variables.
+
+### Pagination on large accounts — `FULL_TOTAL_SCAN`
+
+`list_findings` can either return a page of findings immediately (and let the total count settle later) or paginate through *every* finding on the first call to give an exact `total_matching` count. On an account with tens of thousands of findings the second mode makes even a "show me the first 10" request scale with the total count and can push the tool close to Lambda's 60-second timeout.
+
+The behavior is controlled by the `FULL_TOTAL_SCAN` environment variable on the tool Lambdas, wired from a `full_total_scan` argument on `ToolsConstruct`:
+
+| Value | Behavior | Response shape |
+|-------|----------|----------------|
+| `false` *(default in this stack)* | Return the first page immediately; if there are more findings, `total_matching` returns as `-1` (unknown) | Fast first paint on any account |
+| `true` | Paginate through every finding to compute the exact total on the first call | Exact `total_matching`, at the cost of first-page latency scaling with account size |
+
+To flip it on a smaller account where you always want an exact count, pass `full_total_scan=True` when instantiating `ToolsConstruct` (or set the env var directly on the tool Lambdas after deploy).
+
 ## Cost
 
 | Resource | Monthly (Low) | Monthly (Active) |
 |----------|---------------|------------------|
-| Lambda (5 functions) | $1-3 | $5-15 |
+| Lambda (10 functions) | $1-3 | $5-15 |
 | API Gateway | $1-2 | $3-5 |
 | CloudFront + S3 | $1.50 | $3-7 |
 | Cognito (< 50k MAU free) | $0 | $0 |
@@ -162,7 +279,7 @@ ai-iam-access-analyzer-assistant/
 │       │   ├── iam_analyzer_assistant_stack.py
 │       │   ├── auth_construct.py
 │       │   ├── api_construct.py
-│       │   ├── tools_construct.py
+│       │   ├── tools_construct.py     # Tool Lambdas + shared execution role
 │       │   ├── storage_construct.py
 │       │   └── frontend_construct.py
 │       ├── requirements.txt
@@ -173,7 +290,12 @@ ai-iam-access-analyzer-assistant/
 │   │   ├── main.tsx
 │   │   ├── components/
 │   │   │   ├── ChatInterface.tsx
-│   │   │   └── MessageBubble.tsx
+│   │   │   ├── MessageBubble.tsx
+│   │   │   ├── PolicyViewer.tsx
+│   │   │   ├── FindingsTable.tsx
+│   │   │   ├── DependencyGraph.tsx
+│   │   │   ├── WelcomeModal.tsx
+│   │   │   └── ErrorBoundary.tsx
 │   │   ├── services/
 │   │   │   └── api.ts
 │   │   └── types/
@@ -182,17 +304,26 @@ ai-iam-access-analyzer-assistant/
 │   ├── vite.config.ts
 │   └── index.html
 ├── src/                             # Backend Lambda code
-│   ├── agent.py                     # Bedrock Converse orchestration
+│   ├── agent.py                     # Bedrock Converse orchestration + short-circuits
 │   ├── tools/
 │   │   ├── list_findings.py
 │   │   ├── get_finding_details.py
 │   │   ├── generate_policy.py
 │   │   ├── check_dependencies.py
-│   │   └── validate_policy.py
+│   │   ├── validate_policy.py
+│   │   ├── generate_action_plan.py
+│   │   ├── compare_roles.py
+│   │   ├── export_report.py
+│   │   └── list_exports.py
 │   └── requirements.txt
 ├── tests/                           # Local test harness
 │   ├── test_tools_local.py
-│   └── test_conversation_local.py
+│   ├── test_conversation_local.py
+│   ├── test_list_findings.py
+│   ├── test_pagination_shortcircuit.py
+│   ├── test_action_plan_shortcircuit.py
+│   ├── test_validate_and_export_shortcircuits.py
+│   └── test_export_report_clients.py
 └── .gitignore
 ```
 
@@ -218,7 +349,7 @@ You: Check dependencies for ConsoleAdminAccess
 Assistant: Dependency Analysis for ConsoleAdminAccess:
 
          Risk Level: LOW (Score: 0/100)
-         Quick Dependents: None
+         Direct Dependents: None
          Trust: arn:aws:iam::123456789012:root (with ExternalId condition)
          Policies Attached: None
 
@@ -240,9 +371,9 @@ Assistant: Policy Analysis for ApolloRole:
 
 ## Customization
 
-### Identity & Authentication (Production Use)
+### Identity & Authentication (Hardened Deployments)
 
-The default deployment creates a standalone Cognito User Pool with a demo user — suitable for evaluation and demos. For production use, integrate with your existing identity provider:
+The default deployment creates a standalone Cognito User Pool with a demo user — suitable for evaluation and demos. For hardened deployments, integrate with your existing identity provider:
 
 **Option 1: Cognito + SAML Federation (Okta, Azure AD, Ping)**
 
@@ -434,7 +565,14 @@ aws cognito-idp admin-set-user-password \
 
 **Cause:** API Gateway has a 29-second timeout. Requests that require multiple sequential tool calls (e.g., query findings → process results → export to S3) can exceed this limit, especially in longer conversations.
 
-**Workaround:** Break multi-step requests into separate messages:
+**Update:** Several common compound requests are now handled server-side in a single turn without a Bedrock round-trip, so they no longer time out:
+
+- Pagination: `next 10`, `page 3`, `show more`
+- `generate an action plan`
+- `generate an action plan and export it`
+- `validate this policy` when the message contains a pasted policy JSON body
+
+**Workaround for other multi-step requests:** Break them into separate messages:
 
 1. First: "Show me my top findings"
 2. Then: "Export that to S3"
@@ -521,6 +659,8 @@ If adopting this tool beyond demo/evaluation, consider the following:
 We welcome community contributions! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
 
 ## Security
+
+Evaluating whether to deploy this assistant in your environment? See the [**Security FAQ**](./SECURITY-FAQ.md) — twelve questions covering the AWS API surface, IAM permissions, data flow, encryption, authentication, and offboarding, with citations to the specific source files a security review would inspect.
 
 See [CONTRIBUTING](../../CONTRIBUTING.md#security-issue-notifications) for more information.
 

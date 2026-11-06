@@ -25,15 +25,20 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 
 ## Operations Automation
 
+- [AI Dataset Training Audit](operations-automation/ai-dataset-training-audit/README.md): Pre-flight validation for LLM fine-tuning datasets: seven checks (schema, duplicates, PII via Comprehend, viability, cost) producing a GO/NO-GO/GO-WITH-FIXES verdict and 0–100 quality score before any GPU spend
 - [AI-Powered Technical Documentation Generation](operations-automation/ai-documentation-generation/README.md): Generate comprehensive technical documentation with architecture analysis, API docs, and operational guides from any codebase
 - [AI-Powered Legacy System Automation](operations-automation/ai-legacy-system-browser-automation/README.md): Automate complex web workflows on legacy systems using cloud-based browser automation with session recording and live monitoring
 - [AI Password Reset Chatbot](operations-automation/ai-password-reset-chatbot/README.md): Conversational password reset with streaming responses, session persistence, and secure Cognito integration for anonymous access
-- [AWS Services Lifecycle Tracker](operations-automation/aws-services-lifecycle-tracker/README.md): Automated monitoring and intelligent categorization of AWS service deprecations with real-time dashboard and admin interface
-- [AI Lambda Runtime Migration Assistant](operations-automation/ai-lambda-runtime-migration/README.md): Discover, assess, and transform Lambda functions running deprecated runtimes using Amazon Bedrock AgentCore and Nova 2 Lite with a React dashboard
+- [AWS Services Lifecycle Tracker (moved)](operations-automation/aws-services-lifecycle-tracker/README.md): Moved to https://github.com/awslabs/support-solutions-aws/tree/main/Operations/service-lifecycle-tracker. Track AWS service deprecations and the account resources they affect with one Lambda durable function refresh pipeline, intelligent status categorization and an admin dashboard
+- [AWS Services Lifecycle Tracker V2 (work in progress)](operations-automation/aws-services-lifecycle-tracker-v2/README.md): Next version of the lifecycle tracker, starting from the same code base. Under active development
+- [AI Lambda Runtime Migration Assistant](operations-automation/ai-lambda-runtime-migration/README.md): Assess deprecated-runtime Lambda functions across an AWS Organization with org-wide multi-account discovery via Trusted Advisor, AI assessment with Amazon Nova, a durable 5-step Refresh pipeline and a React dashboard
+- [AnyCompany IT Demo Portal](operations-automation/anycompany-it-demo-portal/README.md): Multi-portal enterprise IT system simulation demonstrating AI-powered legacy system automation using Amazon Nova Act with the AgentCore Browser Tool
 
 ## Resilience
 
 - [Natural Language Chaos Engineering with AWS FIS](resilience/ai-chaos-engineering-with-fis/README.md): Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching
+- [AI Load Test Generator Agent](resilience/ai-load-test-generation-with-dlt/README.md): Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing
+- [FSx for Windows SLA Review with AWS DevOps Agent](resilience/fsx-windows-sla-review-devops-agent/README.md): Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix
 
 ## Observability
 
@@ -41,6 +46,7 @@ Each demo lives under a pillar directory and typically ships a `README.md` (depl
 - [Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md): Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent
 - [SaaS Status MCP Server for AWS DevOps Agent](observability/saas-status-mcp/README.md): Remote MCP server on Bedrock AgentCore giving AWS DevOps Agent real-time visibility into upstream SaaS dependency health (Snowflake, Datadog, GitHub, and 25 more)
 - [AWS Feature Relevance Notification System](observability/aws-feature-relevance-notification-system/README.md): AI-powered scoring of AWS feature announcements against registered workload profiles using Bedrock, with Slack notifications for high-relevance updates
+- [Proactive Health Event Impact Analyzer](observability/proactive-health-event-impact-analyzer/README.md): Use AWS DevOps Agent to triage AWS Health events, assess their impact, and route multi-team notifications automatically
 
 ## Optional
 

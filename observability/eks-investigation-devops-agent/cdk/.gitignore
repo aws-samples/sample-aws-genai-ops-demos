@@ -4,3 +4,4 @@ dist
 *.js
 *.d.ts
 !jest.config.js
+.lab-stage/

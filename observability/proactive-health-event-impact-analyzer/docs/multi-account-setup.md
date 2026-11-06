@@ -82,16 +82,22 @@ Deploy in the management account or a delegated admin account:
 npx ts-node scripts/setup-wizard.ts
 ```
 
-The setup wizard handles webhook URL, SSM secrets, and all parameters interactively. For manual deployment:
+The setup wizard deploys the DevOps Agent Space stack (creating the shared space's webhook automatically), then the main stack, threading the webhook URL and Secrets Manager secret ARN through as CDK context. For manual deployment, see [README.md § Manual CDK Deployment](../README.md#manual-cdk-deployment) for the full two-stack sequence; in short:
 
 ```bash
 cd infrastructure/cdk
+npx cdk deploy HealthEventAnalyzerAgentSpace-$AWS_REGION --require-approval=broadening
+WEBHOOK_URL=$(aws cloudformation describe-stacks --stack-name HealthEventAnalyzerAgentSpace-$AWS_REGION \
+  --query "Stacks[0].Outputs[?OutputKey=='WebhookUrl'].OutputValue" --output text)
+WEBHOOK_SECRET_ARN=$(aws cloudformation describe-stacks --stack-name HealthEventAnalyzerAgentSpace-$AWS_REGION \
+  --query "Stacks[0].Outputs[?OutputKey=='WebhookSecretArn'].OutputValue" --output text)
 npx cdk deploy HealthEventAnalyzerStack-$AWS_REGION \
-  --parameters DevOpsAgentWebhookUrl=YOUR_SHARED_SPACE_URL \
+  -c devOpsAgentWebhookUrl=$WEBHOOK_URL \
+  -c devOpsAgentWebhookSecretArn=$WEBHOOK_SECRET_ARN \
   --require-approval=broadening
 ```
 
-The webhook HMAC secret is stored in SSM Parameter Store SecureString at `/health-analyzer/{env}/webhook-secret` (created by the setup wizard or manually via `aws ssm put-parameter --type SecureString`).
+The shared space's webhook HMAC secret lives in the Secrets Manager secret CDK created above — it's never an SSM parameter and never passes through this deployment. (The **per-account override** webhook secrets described below, in the `health-analyzer-agent-spaces` table, are a separate mechanism and are still stored as plain DynamoDB item values — see the table schema.)
 
 ### Step 3: Configure Per-Account Agent Spaces (Optional)
 

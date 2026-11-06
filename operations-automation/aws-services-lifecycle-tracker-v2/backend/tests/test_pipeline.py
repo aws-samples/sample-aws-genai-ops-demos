@@ -1,0 +1,214 @@
+"""
+Local tests for the durable refresh pipeline (issue #139).
+
+Runs the real durable handler through DurableFunctionTestRunner with the
+step BODIES mocked (Bedrock, boto3, DynamoDB), so what is under test is the
+orchestration: mode routing, phase order, failure tolerance, reconciliation
+scoping, and the summary/notification contract.
+"""
+import json
+import os
+import sys
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Heavy modules are stubbed before import so the test needs no AWS access.
+for mod in ("bedrock_agentcore", "requests", "bs4"):
+    sys.modules.setdefault(mod, MagicMock())
+os.environ.setdefault("AWS_REGION", "eu-central-1")
+
+from aws_durable_execution_sdk_python_testing import DurableFunctionTestRunner
+from aws_durable_execution_sdk_python.execution import InvocationStatus
+from aws_durable_execution_sdk_python.lambda_service import OperationType
+
+import pipeline as lp
+
+
+def _run(event: dict):
+    runner = DurableFunctionTestRunner(handler=lp.handler)
+    with runner:
+        return runner.run(input=json.dumps(event), timeout=60)
+
+
+def _result(res) -> dict:
+    return json.loads(res.result) if isinstance(res.result, str) else res.result
+
+
+def _step_names(res) -> set:
+    # get_all_operations() walks into map children (per-cell steps live one level down)
+    return {op.name for op in res.get_all_operations() if op.operation_type == OperationType.STEP and op.name}
+
+
+def _fake_extract(service_name, force_refresh, refresh_origin):
+    if service_name == "broken":
+        raise RuntimeError("Bedrock exploded")
+    return {"success": service_name != "amplify", "total_items_extracted": 5,
+            "extraction_duration": 1.5, "error": None if service_name != "amplify" else "no items"}
+
+
+def _fake_scanner_ok(region, index):
+    return [{"service_name": "lambda", "item_id": "inventory#nodejs14.x", "status": "deprecated"}]
+
+
+def _fake_scanner_boom(region, index):
+    raise RuntimeError("AccessDenied")
+
+
+HUB_ACCOUNT = "111111111111"
+
+
+@pytest.fixture
+def mocks():
+    with patch.object(lp, "get_all_enabled_services", return_value=["lambda", "amplify", "broken"]), \
+         patch.object(lp, "extract_service_lifecycle", side_effect=_fake_extract), \
+         patch.object(lp.account_discovery, "LifecycleIndex",
+                      side_effect=lambda **kw: MagicMock(account_id=kw.get("account_id") or HUB_ACCOUNT,
+                                                         account_name=kw.get("account_name", ""))), \
+         patch.object(lp.account_discovery, "_caller_identity", return_value={"partition": "aws", "account": HUB_ACCOUNT}), \
+         patch.object(lp.account_discovery, "load_scan_targets", return_value={}), \
+         patch.object(lp.account_discovery, "save_resolved_accounts"), \
+         patch.object(lp.account_discovery, "record_scan_outcome"), \
+         patch.object(lp.account_discovery, "session_for_account", return_value=None), \
+         patch.object(lp.account_discovery, "save_scope_inventory",
+                      return_value={"saved": 1}) as save_scope, \
+         patch.object(lp.account_discovery, "reconcile_from_table",
+                      return_value={"success": True, "items_saved": 1, "stale_removed": 0,
+                                    "tags": {"available": False}, "health": {"available": False},
+                                    "cost_exposure": {"available": False}, "scopes_failed": 0}) as reconcile, \
+         patch.object(lp.account_discovery, "collect_resource_tags",
+                      return_value={"available": False, "reason": "test", "resources": 0, "tagged": 0, "keys": {}}), \
+         patch.object(lp.account_discovery, "cross_check_health",
+                      return_value={"available": False, "reason": "test", "events": 0, "flagged_resources": 0}), \
+         patch.object(lp.account_discovery, "estimate_cost_exposure",
+                      return_value={"available": False, "reason": "test", "resources_priced": 0, "monthly": 0.0, "forecast_12m": 0.0}), \
+         patch.dict(lp.SCANNERS, {"Lambda": _fake_scanner_ok, "EKS": _fake_scanner_boom}, clear=True), \
+         patch.dict(lp.account_discovery.SCANNER_SERVICE_KEYS,
+                    {"Lambda": ["lambda"], "EKS": ["eks"]}, clear=True), \
+         patch("boto3.client") as boto_client:
+        yield {"save_scope": save_scope, "reconcile": reconcile, "boto": boto_client}
+
+
+class TestFullPipeline:
+    def test_full_mode_runs_all_phases_and_tolerates_failures(self, mocks):
+        res = _run({"mode": "full", "refresh_origin": "Auto"})
+        assert res.status is InvocationStatus.SUCCEEDED
+        out = _result(res)
+
+        # Extraction: 3 services, one reported failure, one raised
+        assert out["extract"]["total"] == 3
+        assert out["extract"]["succeeded"] == 1
+        assert sorted(out["extract"]["failed"]) == ["amplify", "broken"]
+        assert out["extract"]["items_extracted"] == 5
+
+        # Scan: 2 cells (function region only), one raised
+        assert out["scan"]["cells_total"] == 2
+        assert out["scan"]["cells_succeeded"] == 1
+        assert out["scan"]["failed_cells"] == [f"EKS@{HUB_ACCOUNT}/eu-central-1"]
+        assert out["accounts"] == [HUB_ACCOUNT]                      # hub only without _scan_targets (#144)
+        assert out["scan"]["items_discovered"] == 1
+        assert out["scan"]["needs_attention"] == 1
+
+        # Steps exist by name (never by index)
+        names = _step_names(res)
+        assert {"start-run", "extract-lambda", "extract-amplify", f"scan-Lambda-{HUB_ACCOUNT}-eu-central-1",
+                "reconcile-inventory", "summarize-and-notify"} <= names
+
+    def test_reconciliation_scoped_to_succeeded_scanner_cells(self, mocks):
+        _run({"mode": "scan"})
+        # reconcile reads back from the table once, driven by scanned_scopes -
+        # no items argument crosses the boundary (issue #225)
+        assert mocks["reconcile"].call_count == 1
+        args = mocks["reconcile"].call_args.args
+        run_id, scanned_scopes = args[0], args[1]
+        assert run_id
+        service_keys = {k for sc in scanned_scopes for k in sc["service_keys"]}
+        # EKS scanner failed -> its scope must NOT be reconciled; Lambda succeeded
+        assert service_keys == {"lambda"}
+        # the succeeded Lambda cell persisted its own rows via save_scope_inventory
+        assert mocks["save_scope"].called
+        assert mocks["save_scope"].call_args.kwargs["run_id"] == run_id
+
+    def test_run_id_is_stable_and_present_in_summary(self, mocks):
+        out = _result(_run({"mode": "scan"}))
+        assert out["run_id"] == mocks["reconcile"].call_args.args[0]
+
+
+class TestModes:
+    def test_extract_mode_skips_scan(self, mocks):
+        res = _run({"mode": "extract"})
+        out = _result(res)
+        assert out["extract"]["total"] == 3
+        assert out["scan"]["cells_total"] == 0
+        assert out["inventory"] == {}
+        mocks["save_scope"].assert_not_called()
+        mocks["reconcile"].assert_not_called()
+        assert not any(n.startswith("scan-") for n in _step_names(res))
+
+    def test_scan_mode_skips_extract(self, mocks):
+        res = _run({"mode": "scan"})
+        out = _result(res)
+        assert out["extract"]["total"] == 0
+        assert out["scan"]["cells_total"] == 2
+        assert not any(n.startswith("extract-") for n in _step_names(res))
+
+    def test_services_subset_limits_both_phases(self, mocks):
+        res = _run({"mode": "full", "services": ["lambda"]})
+        out = _result(res)
+        assert out["extract"]["total"] == 1
+        # Only the Lambda scanner emits 'lambda' rows -> EKS cell not built
+        assert out["scan"]["cells_total"] == 1
+        assert out["scan"]["failed_cells"] == []
+
+    def test_scan_targets_add_accounts_and_hub_is_always_included(self, mocks):
+        targets = {"accounts": [{"id": "222222222222", "name": "Account A"}], "regions": ["eu-central-1"], "source": "manual"}
+        with patch.object(lp.account_discovery, "load_scan_targets", return_value=targets):
+            out = _result(_run({"mode": "scan"}))
+        assert out["accounts"] == [HUB_ACCOUNT, "222222222222"]      # hub prepended
+        assert out["scan"]["cells_total"] == 4                        # 2 scanners x 2 accounts
+        # the fake EKS scanner raises for both accounts, Lambda succeeds for both
+        assert out["scan"]["accounts_scanned"] == [HUB_ACCOUNT, "222222222222"]
+        assert out["scan"]["accounts_failed"] == []
+        assert sorted(out["scan"]["failed_cells"]) == [f"EKS@{HUB_ACCOUNT}/eu-central-1", "EKS@222222222222/eu-central-1"]
+
+    def test_regions_multiply_scan_cells(self, mocks):
+        out = _result(_run({"mode": "scan", "regions": ["eu-central-1", "us-west-2"]}))
+        assert out["scan"]["cells_total"] == 4
+        assert out["regions"] == ["eu-central-1", "us-west-2"]
+
+    def test_invalid_mode_fails_execution(self, mocks):
+        res = _run({"mode": "yolo"})
+        assert res.status is InvocationStatus.FAILED
+
+
+class TestNotification:
+    def test_publishes_to_sns_when_topic_configured(self, mocks):
+        sns = MagicMock()
+        mocks["boto"].return_value = sns
+        with patch.dict(os.environ, {"NOTIFICATION_TOPIC_ARN": "arn:aws:sns:eu-central-1:123456789012:t"}):
+            out = _result(_run({"mode": "extract"}))
+        assert out["notified"] is True
+        msg = sns.publish.call_args.kwargs["Message"]
+        assert "Facts (web extraction): 1/3" in msg
+        assert "amplify" in msg and "broken" in msg
+
+    def test_no_topic_no_publish(self, mocks):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("NOTIFICATION_TOPIC_ARN", None)
+            out = _result(_run({"mode": "extract"}))
+        assert "notified" not in out
+        mocks["boto"].return_value.publish.assert_not_called()
+
+
+class TestPureHelpers:
+    def test_normalize_defaults(self):
+        assert lp.normalize_spec({}) == {"mode": "full", "services": None, "regions": None,
+                                         "refresh_origin": "manual"}
+
+    def test_normalize_rejects_bad_types(self):
+        with pytest.raises(ValueError):
+            lp.normalize_spec({"services": "all"})
+        with pytest.raises(ValueError):
+            lp.normalize_spec({"regions": "eu-central-1"})

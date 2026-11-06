@@ -1,0 +1,5 @@
+          <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TX_{{TX_NAME}}" enabled="true">
+            <boolProp name="TransactionController.parent">true</boolProp>
+            <boolProp name="TransactionController.includeTimers">false</boolProp>
+          </TransactionController>
+          <hashTree>

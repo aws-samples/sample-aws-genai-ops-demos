@@ -3,7 +3,12 @@ set -e
 
 # Default values
 OUTPUT_FORMAT="both"
-MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Empty by default on purpose: DO NOT hardcode a model id here. When empty, generator.py
+# resolves a region-correct, non-legacy default via the shared get_bedrock_model_id() helper
+# (contributor-guide.md). A pinned id eventually goes Legacy and Bedrock blocks new/inactive
+# accounts from invoking it -- that is the exact failure this fix removes. --model-id still
+# overrides for callers who want a specific model.
+MODEL_ID=""
 REGION=""
 ORG_CONTEXT=""
 OUTPUT_DIR="./output"
@@ -43,7 +48,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --output-format FORMAT  ssm, markdown, or both (default: both)"
-            echo "  --model-id ID           Bedrock model ID (default: anthropic.claude-3-5-sonnet-20241022-v2:0)"
+            echo "  --model-id ID           Bedrock model ID (default: region-correct non-legacy Sonnet via shared helper)"
             echo "  --region REGION         AWS region to scan (default: current configured region)"
             echo "  --org-context FILE      Path to JSON with org-specific context"
             echo "  --output-dir DIR        Local output directory (default: ./output)"
@@ -155,7 +160,11 @@ echo ""
 echo "Configuration:"
 echo "  Account:       $ACCOUNT_ID"
 echo "  Region:        $REGION"
-echo "  Model:         $MODEL_ID"
+if [[ -n "$MODEL_ID" ]]; then
+    echo "  Model:         $MODEL_ID (override)"
+else
+    echo "  Model:         region-correct default (resolved by generator.py via shared helper)"
+fi
 echo "  Output format: $OUTPUT_FORMAT"
 echo "  S3 Bucket:     $OUTPUT_BUCKET"
 echo "  Job ID:        $JOB_ID"
@@ -209,11 +218,16 @@ GENERATE_START=$(date +%s)
 GENERATE_ARGS=(
     "$SRC_DIR/generator.py"
     "--profile" "$PROFILE_PATH"
-    "--model-id" "$MODEL_ID"
     "--region" "$REGION"
     "--output-dir" "$OUTPUT_DIR"
     "--output-format" "$OUTPUT_FORMAT"
 )
+
+# Only forward --model-id when the caller explicitly overrode it. When omitted, generator.py
+# resolves the region-correct, non-legacy default via the shared get_bedrock_model_id() helper.
+if [[ -n "$MODEL_ID" ]]; then
+    GENERATE_ARGS+=("--model-id" "$MODEL_ID")
+fi
 
 if [[ -n "$ORG_CONTEXT" ]]; then
     if [[ ! -f "$ORG_CONTEXT" ]]; then
