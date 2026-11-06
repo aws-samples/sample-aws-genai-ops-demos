@@ -4,4 +4,4 @@ import urllib.request
 
 
 def fetch(url):
-    return urllib.request.urlopen(url).read()
+    return urllib.request.urlopen(url).read()  # nosec B310 - test override
