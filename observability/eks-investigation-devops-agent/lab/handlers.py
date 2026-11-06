@@ -1,3 +1,5 @@
+# THROWAWAY test: shift every line down by two
+#
 """
 Lab handlers for the EKS demo: the only Lab code this demo writes.
 
