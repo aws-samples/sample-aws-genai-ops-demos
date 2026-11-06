@@ -1,0 +1,20 @@
+# Demo validation contract (see .kiro/steering/contributor-guide.md, "Demo Validation").
+deploy_command: ["./deploy-all.sh"]
+destroy_command: ["./destroy-all.sh"]
+destroy_subdir: "."
+stacks:
+  - "FsxSlaReviewAgentSpace-us-west-2"
+  - "FsxSlaReviewDirectory-us-west-2"
+  - "FsxSlaReviewFileSystem-us-west-2"
+  - "FsxSlaReviewLab-us-west-2"
+region: "us-west-2"
+verify: "deterministic"
+notes: >
+  Deploys in about an hour: deploy-all.sh waits for the self-managed Active Directory domain
+  controller (EC2, user data) before creating the FSx for Windows file system, which itself
+  takes 25-35 minutes and fails after 30 minutes if the domain is unreachable. Needs AWS DevOps
+  Agent available in the region (or DEVOPS_AGENT_REGION set to one where it is). The functional
+  check (inject a scenario, get the agent's review) needs the skill uploaded in the Agent Space
+  console, which CI cannot do: deploy/destroy is the signal. destroy-all.sh removes the Agent
+  Space, the file system (and its backups), the domain controller and the VPC; teardown takes
+  about 15 minutes.

@@ -6,8 +6,10 @@ namespace: payment-demo
 resources:
   - ../../base
 
-commonLabels:
-  environment: prod
+labels:
+  - includeSelectors: true
+    pairs:
+      environment: prod
 
 # All environments use 1 replica to ensure immediate failure on incident injection
 replicas:

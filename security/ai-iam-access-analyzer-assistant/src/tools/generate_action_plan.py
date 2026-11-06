@@ -17,6 +17,20 @@ securityhub_client = boto3.client("securityhub")
 iam_client = boto3.client("iam")
 
 
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build a per-source coverage entry per the #171 contract."""
+    meta = getattr(securityhub_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    entry = {
+        "source": "securityhub",
+        "state": state,
+        "detail": detail.format(region=region),
+    }
+    if count is not None:
+        entry["count"] = count
+    return entry
+
+
 def handler(event, context=None):
     """Generate a prioritized action plan for IAM remediation.
 
@@ -57,22 +71,67 @@ def handler(event, context=None):
             if focus_area in focus_filters:
                 filters.update(focus_filters[focus_area])
 
-        response = securityhub_client.get_findings(
-            Filters=filters,
-            MaxResults=max_items,
-            SortCriteria=[{"Field": "SeverityNormalized", "SortOrder": "desc"}],
-        )
+        # Handle Security Hub failures explicitly per #171: an empty
+        # accumulator produced by a failed query must NOT read as "posture
+        # is clean" — we simply couldn't check.
+        try:
+            response = securityhub_client.get_findings(
+                Filters=filters,
+                MaxResults=max_items,
+                SortCriteria=[{"Field": "SeverityNormalized", "SortOrder": "desc"}],
+            )
+        except securityhub_client.exceptions.InvalidAccessException as e:
+            logger.error(f"Security Hub access error: {e}")
+            return {
+                "error": (
+                    "Could not read Security Hub findings — Security Hub is "
+                    "not enabled or the tool role lacks securityhub:GetFindings "
+                    "in this region. Cannot generate an action plan without "
+                    "visibility into your findings."
+                ),
+                "coverage": [_coverage(
+                    "unavailable",
+                    "Security Hub not enabled or access denied in {region}",
+                )],
+            }
+        except Exception as e:
+            logger.error(f"Security Hub query failed: {e}", exc_info=True)
+            return {
+                "error": (
+                    f"Security Hub query failed: {type(e).__name__}: {e}. "
+                    "Cannot generate an action plan without reading findings."
+                ),
+                "coverage": [_coverage(
+                    "unavailable",
+                    f"Security Hub query failed in {{region}}: {type(e).__name__}: {e}",
+                )],
+            }
 
         findings = response.get("Findings", [])
         if not findings:
+            # #171: name the coverage instead of implying the environment is
+            # clean. "No active findings" is an honest observation about
+            # Security Hub for this region and product filter — it does not
+            # imply the account has no risk.
             return {
                 "action_plan": [],
                 "summary": {
                     "total_findings": 0,
-                    "message": "No active IAM findings found. Your IAM posture looks clean!",
+                    "message": (
+                        "No active IAM Access Analyzer findings in Security "
+                        f"Hub for {securityhub_client.meta.region_name or 'this region'}. "
+                        "This reflects only what Security Hub can see: verify "
+                        "an IAM Access Analyzer of the kind you care about "
+                        "(external-access or unused-access) is enabled here."
+                    ),
                 },
                 "quick_wins": [],
                 "risk_distribution": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+                "coverage": [_coverage(
+                    "empty",
+                    "IAM Access Analyzer findings via Security Hub, {region}",
+                    count=0,
+                )],
             }
 
         # Score and prioritize each finding
@@ -151,6 +210,11 @@ def handler(event, context=None):
             "summary": summary,
             "quick_wins": quick_wins,
             "risk_distribution": dict(risk_distribution),
+            "coverage": [_coverage(
+                "checked",
+                "IAM Access Analyzer findings via Security Hub, {region}",
+                count=len(findings),
+            )],
         }
 
     except Exception as e:

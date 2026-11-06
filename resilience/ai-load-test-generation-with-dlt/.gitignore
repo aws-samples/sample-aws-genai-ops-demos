@@ -1,0 +1,37 @@
+# credentials — never commit; the AgentCore runtime uses its execution role
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# build artifacts
+builder/_tmp/
+*.jtl
+jmeter.log
+build/
+dist/
+*.egg-info/
+
+# generated test outputs
+test/_tmp/
+out/
+
+# editor
+.vscode/
+.idea/
+.DS_Store
+
+# reference samples from real systems — contain live credentials and
+# internal IPs; must never reach a remote
+sample/*.jmx
+
+# CDK
+cdk.out/
+**/cdk.out/
+cdk.out*
+.cdk.staging/

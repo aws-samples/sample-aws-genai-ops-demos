@@ -69,7 +69,7 @@ export class DevOpsAgentStack extends cdk.Stack {
       description: 'DevOps Agent webhook bundle (URL, HMAC secret, Agent Space ID)',
       secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
         webhookUrl: 'NOT_CONFIGURED',
-        webhookSecret: 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE',
+        webhookSecret: 'PLACEHOLDER_GENERATE_WEBHOOK_IN_CONSOLE',  // pragma: allowlist secret
         agentSpaceId: '',
       })),
     });

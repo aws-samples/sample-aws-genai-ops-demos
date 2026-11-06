@@ -1,6 +1,9 @@
 ---
 inclusion: fileMatch
-fileMatchPattern: '**/cdk/**/app.{py,ts}'
+fileMatchPattern:
+  - '**/cdk/**/app.py'
+  - '**/cdk/**/app.ts'
+  - '**/terraform/*.tf'
 ---
 
 # Solution Adoption Tracking Requirements
@@ -68,6 +71,40 @@ class YourDemoStack(Stack):
                         **kwargs)
 ```
 
+#### Terraform path (when a demo also ships Terraform on top of CDK)
+
+The Solution Adoption Dashboard counts deployments by reading the `Description` of **CloudFormation stacks**; Terraform resources are invisible to it and Terraform support is not on its roadmap (confirmed by the dashboard owners in `#saes-metrics-interest`). A Terraform deployment must therefore create one **zero-cost CloudFormation marker stack** whose only job is to carry the tracking code. Rules:
+
+- Same tracking ID and **exactly the same tags** as the CDK main stack of that demo (one demo, one tag pair, whichever path deployed it)
+- Marker resource: `AWS::CloudFormation::WaitConditionHandle` (no cost, no side effect, no permissions)
+- Stack name with region suffix, like every other stack: `<Demo>Tracking-${var.region}`
+- Opt-out variable `enable_deployment_metrics`, `bool`, default `true`, documented in the README ("set to false to opt out of adoption metrics")
+- Only this marker carries tracking on the Terraform path; the two IaC paths never coexist in one account and region, so exactly one tracked stack exists per deployment either way
+
+```hcl
+# terraform/tracking.tf
+variable "enable_deployment_metrics" {
+  description = "Create a zero-cost CloudFormation marker stack so this deployment is counted in AWS solution adoption metrics. Set to false to opt out."
+  type        = bool
+  default     = true
+}
+
+resource "aws_cloudformation_stack" "tracking" {
+  count = var.enable_deployment_metrics ? 1 : 0
+  name  = "YourDemoTracking-${var.region}"
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Description              = "Your Demo, Terraform deployment marker (uksb-do9bhieqqh)(tag:your-demo-name,pillar-name)"
+    Resources = {
+      Marker = { Type = "AWS::CloudFormation::WaitConditionHandle" }
+    }
+  })
+}
+```
+
+Reference implementation: `observability/saas-status-mcp/infrastructure/terraform/tracking.tf`.
+
 #### CloudFormation Implementation (Not Accepted for New Demos)
 All new demos must use AWS CDK. The example below is for reference only if maintaining legacy demos:
 ```yaml
@@ -76,7 +113,7 @@ Description: 'Brief demo description (uksb-do9bhieqqh)(tag:your-demo-name,pillar
 ```
 
 ### Demo Naming Convention
-- Use lowercase with hyphens: `ai-password-reset`, `lifecycle-tracker`
+- Use lowercase with hyphens: `ai-password-reset`, `it-portal-demo`
 - Keep names descriptive but concise
 - Avoid generic terms like `demo` or `sample` in the tag name
 
@@ -226,17 +263,7 @@ const infraStack = new PasswordResetInfraStack(app, 'PasswordResetInfra', {
 });
 ```
 
-### Example 2: Lifecycle Tracker (TypeScript)
-```typescript
-// operations-automation/aws-services-lifecycle-tracker/cdk/bin/app.ts
-new AWSServicesLifecycleTrackerRuntime(app, 'AWSServicesLifecycleTrackerRuntime', {
-  lifecycleTableName: dataStack.lifecycleTable.tableName,
-  configTableName: dataStack.configTable.tableName,
-  description: 'AWS Services Lifecycle Tracker Runtime: AI-powered extraction agent with built-in authentication (uksb-do9bhieqqh)(tag:lifecycle-tracker,operations-automation)',
-});
-```
-
-### Example 3: IT Portal Demo (Python)
+### Example 2: IT Portal Demo (Python)
 ```python
 # operations-automation/anycompany-it-demo-portal/infrastructure/cdk/app.py
 from aws_cdk import App
@@ -253,7 +280,7 @@ AnyCompanyITPortalStack(
 app.synth()
 ```
 
-### Example 4: Graviton Migration (Python)
+### Example 3: Graviton Migration (Python)
 ```python
 # cost-optimization/ai-graviton-migration-assessment/infrastructure/cdk/app.py
 GravitonAssessmentStack(
@@ -271,7 +298,8 @@ GravitonAssessmentStack(
 - `ai-documentation-generation`: `(tag:doc-generation,operations-automation)`
 - `ai-legacy-system-browser-automation`: `(tag:legacy-automation,operations-automation)`
 - `ai-password-reset-chatbot`: `(tag:password-reset,operations-automation)`
-- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)`
+- `aws-services-lifecycle-tracker`: `(tag:lifecycle-tracker,operations-automation)` (moved to awslabs/support-solutions-aws)
+- `aws-services-lifecycle-tracker-v2`: `(tag:lifecycle-tracker-v2,operations-automation)`
 - `anycompany-it-demo-portal`: `(tag:it-portal-demo,operations-automation)`
 
 ### Cost Optimization Pillar
@@ -288,6 +316,7 @@ For every new demo, ensure:
 - [ ] **Correct pillar selected** based on operational use case
 - [ ] **Only main stack tagged** to avoid duplicate metrics
 - [ ] **Tag documented** in demo README.md for reference
+- [ ] **Terraform path (if any)**: CloudFormation marker stack with the same tag pair and an `enable_deployment_metrics` opt-out
 
 ## Benefits
 

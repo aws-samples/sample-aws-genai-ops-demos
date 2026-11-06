@@ -1,0 +1,383 @@
+"""
+Refresh pipeline as ONE AWS Lambda durable function (issue #139).
+
+    extract (facts from AWS docs, per service)  ->  scan (what runs in the
+    account, per service x region)  ->  reconcile inventory  ->  notify
+
+Replaces the Step Functions state machine and the separate "Discover My
+Resources" action: one execution refreshes the whole picture of the world.
+
+Replay model rules (see .kiro/steering/aws-lambda-durable-functions): every
+piece of non-determinism - clock reads, uuid, Bedrock/boto3/DynamoDB calls -
+lives INSIDE a step, so replays return checkpointed results instead of
+re-executing. Code outside steps is pure transformation of step outputs.
+
+Input contract:
+    {
+      "mode": "full" | "extract" | "scan",      (default "full")
+      "services": ["lambda", "rds", ...],        (default: all enabled)
+      "regions": ["eu-central-1", ...],          (default: this function's region)
+      "refresh_origin": "manual" | "Auto"        (default "manual")
+    }
+"""
+import os
+from datetime import datetime, timezone
+from typing import Dict, List
+
+from aws_durable_execution_sdk_python import durable_execution, durable_step, DurableContext, StepContext
+from aws_durable_execution_sdk_python.config import Duration, MapConfig, CompletionConfig, StepConfig
+from aws_durable_execution_sdk_python.retries import RetryStrategyConfig, create_retry_strategy
+from aws_durable_execution_sdk_python.concurrency.models import BatchItemStatus
+
+import account_discovery
+from guard import guard_payload
+from actions import get_all_enabled_services, slim_extraction_result
+from workflow_orchestrator import extract_service_lifecycle
+from org_targets import resolve_targets
+
+MODES = ("full", "extract", "scan")
+DEFAULT_CONCURRENCY = 5
+SCAN_CONCURRENCY = 10  # scan cells multiply with accounts x regions (#144)
+
+# Scanner label -> scanner function. Labels match account_discovery.SCANNER_SERVICE_KEYS.
+SCANNERS = {
+    "Lambda": account_discovery.discover_lambda_functions,
+    "RDS": account_discovery.discover_rds_instances,
+    "EKS": account_discovery.discover_eks_clusters,
+    "ElastiCache": account_discovery.discover_elasticache_clusters,
+    "OpenSearch": account_discovery.discover_opensearch_domains,
+    "MSK": account_discovery.discover_msk_clusters,
+    "DocumentDB": account_discovery.discover_documentdb_clusters,
+    "Neptune": account_discovery.discover_neptune_clusters,
+    "Glue": account_discovery.discover_glue_jobs,
+    "Elastic Beanstalk": account_discovery.discover_beanstalk_environments,
+    "EC2": account_discovery.discover_ec2_instances,
+}
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (safe outside steps: deterministic, no side effects)
+# ---------------------------------------------------------------------------
+
+def normalize_spec(event: dict) -> dict:
+    """Validate and default the pipeline input. Pure."""
+    event = event or {}
+    mode = str(event.get("mode") or "full").lower()
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, got '{mode}'")
+    services = event.get("services")
+    if services is not None and not isinstance(services, list):
+        raise ValueError("services must be a list of service keys")
+    regions = event.get("regions")
+    if regions is not None and not isinstance(regions, list):
+        raise ValueError("regions must be a list of region names")
+    return {
+        "mode": mode,
+        "services": services,
+        "regions": regions,
+        "refresh_origin": str(event.get("refresh_origin") or "manual"),
+    }
+
+
+def scan_cells_for(spec: dict, regions: List[str], accounts: List[Dict] = None) -> List[Dict]:
+    """Build (account, region, scanner label) cells. Pure.
+
+    If a services subset was requested, only scanners that emit rows for those
+    service keys run (RDS scanner covers both 'rds' and 'aurora'). `accounts`
+    is [{id, name}] (#144); None means the hub account only.
+    """
+    wanted = set(spec["services"]) if spec["services"] else None
+    accounts = accounts or [{"id": "", "name": ""}]
+    cells = []
+    for account in accounts:
+        for label in SCANNERS:
+            keys = account_discovery.SCANNER_SERVICE_KEYS.get(label, [])
+            if wanted is not None and not (wanted & set(keys)):
+                continue
+            for region in regions:
+                cells.append({"label": label, "region": region, "service_keys": keys,
+                              "account_id": account.get("id", ""), "account_name": account.get("name", "")})
+    return cells
+
+
+# ---------------------------------------------------------------------------
+# Steps (all non-determinism lives here)
+# ---------------------------------------------------------------------------
+
+@durable_step
+def start_run(step: StepContext, spec: dict) -> dict:
+    """Mint the run identity once: run id, start time, region, service list."""
+    import uuid
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    services = spec["services"] if spec["services"] else get_all_enabled_services()
+    # Scan targets (#144): the _scan_targets control row resolved against AWS
+    # Organizations when it points at the organization or OUs; hub-only otherwise.
+    hub = account_discovery._caller_identity().get("account", "")
+    resolved = resolve_targets(account_discovery.load_scan_targets(), hub, region)
+    account_discovery.save_resolved_accounts(resolved)  # for the UI (Settings)
+    regions = spec["regions"] or resolved["regions"]
+    accounts = [{"id": a["id"], "name": a.get("name", "")} for a in resolved["accounts"]]
+    return guard_payload({
+        "run_id": str(uuid.uuid4()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "function_region": region,
+        "services": services,
+        "regions": regions,
+        "accounts": accounts,
+        "targets_source": resolved["source"],
+        "targets_errors": resolved["errors"],
+        # Expected work, so the UI can show determinate progress (#150 item 6)
+        "extract_total": len(services) if spec["mode"] in ("full", "extract") else 0,
+        "scan_total": len(scan_cells_for(spec, regions, accounts)) if spec["mode"] in ("full", "scan") else 0,
+    }, name="start-run")
+
+
+@durable_step
+def extract_cell(step: StepContext, service_name: str, refresh_origin: str) -> dict:
+    """Extract one service's deprecation facts (Bedrock + DynamoDB), slim return."""
+    result = extract_service_lifecycle(
+        service_name=service_name,
+        force_refresh=True,
+        refresh_origin=refresh_origin,
+    )
+    return slim_extraction_result(service_name, result)
+
+
+@durable_step
+def scan_cell(step: StepContext, cell: dict, run_id: str) -> dict:
+    """Run one scanner in one (account, region), persist its rows, return bounded facts.
+
+    For a spoke account the scanner runs with credentials from the spoke role
+    (#144); the facts table is always read with the hub's own credentials.
+
+    This is the write point (issue #225): the cell persists its OWN discovered
+    rows to the inventory table and returns only bounded facts (counts, keys,
+    labels) - the whole-org list never crosses a durable checkpoint. It is also
+    the single owner of needs_attention. If the per-scope write cannot persist
+    (save_scope_inventory raises or returns {"success": False}), that propagates
+    so the cell counts as failed and its scope drops out of scanned_scopes,
+    leaving that scope's previous inventory intact.
+    """
+    scanner = SCANNERS[cell["label"]]
+    session = account_discovery.session_for_account(cell.get("account_id", ""), cell["region"])
+    index = account_discovery.LifecycleIndex(region=cell["region"], account_id=cell.get("account_id") or None,
+                                             account_name=cell.get("account_name", ""), session=session)
+    items = scanner(cell["region"], index)
+    needs_attention = sum(1 for i in items if i.get("status") in ("deprecated", "end_of_life"))
+    saved = account_discovery.save_scope_inventory(items, run_id=run_id, region=cell["region"])
+    if isinstance(saved, dict) and saved.get("success") is False:
+        raise RuntimeError(saved.get("error", "save_scope_inventory failed"))
+    return guard_payload({
+        "label": cell["label"],
+        "region": cell["region"],
+        "account_id": index.account_id,
+        "service_keys": cell["service_keys"],
+        "discovered": len(items),
+        "needs_attention": needs_attention,
+        "ok": True,
+    }, name=f"scan-{cell['label']}")
+
+
+@durable_step
+def reconcile_inventory(step: StepContext, run_id: str, scanned_scopes: List[Dict],
+                        accounts_failed: List[str] = None) -> dict:
+    """Reconcile ONLY successfully scanned scopes from rows READ BACK from the table.
+
+    No items argument crosses this boundary (issue #225): reconcile_from_table
+    reads the scanned scopes' rows back in bounded pages, runs enrichment once
+    per run over that working set (user tags #164, AWS Health #141, Extended
+    Support cost #142), re-persists the enriched rows and removes stale rows.
+    """
+    totals = account_discovery.reconcile_from_table(run_id, scanned_scopes or [])
+    # Which accounts this run actually covered (for Settings, #144)
+    scoped = {sc.get("account_id", "") for sc in (scanned_scopes or [])}
+    account_discovery.record_scan_outcome(sorted(scoped), sorted(set(accounts_failed or []) - scoped))
+    return guard_payload(totals, name="reconcile-inventory")
+
+
+@durable_step
+def summarize_and_notify(step: StepContext, run: dict, spec: dict, extract_summary: dict,
+                         scan_summary: dict, reconcile_result: dict) -> dict:
+    """Assemble the run summary and publish it to SNS (if a topic is configured)."""
+    import boto3
+
+    summary = {
+        "run_id": run["run_id"],
+        "mode": spec["mode"],
+        "refresh_origin": spec["refresh_origin"],
+        "started_at": run["started_at"],
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "regions": run["regions"],
+        "accounts": [a["id"] for a in run.get("accounts", [])],
+        "targets_source": run.get("targets_source", "hub"),
+        "targets_errors": run.get("targets_errors", []),
+        "extract": extract_summary,
+        "scan": scan_summary,
+        "inventory": reconcile_result,
+    }
+
+    topic_arn = os.environ.get("NOTIFICATION_TOPIC_ARN")
+    if topic_arn:
+        ex, sc = extract_summary, scan_summary
+        lines = [
+            "AWS Services Lifecycle Tracker - Refresh Complete",
+            "",
+            f"Mode: {spec['mode']}   Origin: {spec['refresh_origin']}   Run: {run['run_id']}",
+            f"Started:  {run['started_at']}",
+            f"Finished: {summary['finished_at']}",
+            "",
+            f"Facts (web extraction): {ex['succeeded']}/{ex['total']} services succeeded, "
+            f"{ex['items_extracted']} items",
+        ]
+        if ex["failed"]:
+            lines.append("  Failed: " + ", ".join(ex["failed"]))
+        lines += [
+            f"Inventory (account scan): {sc['cells_succeeded']}/{sc['cells_total']} scanner cells succeeded, "
+            f"{sc['items_discovered']} assets discovered, {sc['needs_attention']} need attention",
+            f"  Accounts ({run.get('targets_source', 'hub')}): {len(run.get('accounts', []))} targeted, "
+            f"{len(sc.get('accounts_scanned', []))} scanned"
+            + (f", failed: {', '.join(sc['accounts_failed'])}" if sc.get("accounts_failed") else ""),
+        ]
+        for err in run.get("targets_errors", []):
+            lines.append(f"  Targets: {err}")
+        if sc["failed_cells"]:
+            lines.append("  Failed: " + ", ".join(sc["failed_cells"]))
+        if reconcile_result:
+            lines.append(f"  Reconciled: {reconcile_result.get('items_saved', 0)} saved, "
+                         f"{reconcile_result.get('stale_removed', 0)} stale removed")
+            health = reconcile_result.get("health") or {}
+            lines.append(f"  AWS Health: {health.get('flagged_resources', 0)} resources flagged"
+                         if health.get("available") else f"  AWS Health: unavailable ({health.get('reason', 'n/a')})")
+            cost = reconcile_result.get("cost_exposure") or {}
+            if cost.get("resources_priced"):
+                lines.append(f"  Extended Support exposure: ${cost.get('monthly', 0):,.0f}/month once in Extended Support, "
+                             f"${cost.get('forecast_12m', 0):,.0f} over the next 12 months ({cost['resources_priced']} RDS/Aurora resources)")
+        boto3.client("sns", region_name=run["function_region"]).publish(
+            TopicArn=topic_arn,
+            Subject="AWS Lifecycle Tracker - Refresh Complete",
+            Message="\n".join(lines),
+        )
+        summary["notified"] = True
+    return guard_payload(summary, name="summarize-and-notify")
+
+
+# ---------------------------------------------------------------------------
+# Handler
+# ---------------------------------------------------------------------------
+
+_EXTRACT_RETRY = StepConfig(retry_strategy=create_retry_strategy(RetryStrategyConfig(
+    max_attempts=3, initial_delay=Duration.from_seconds(10), max_delay=Duration.from_minutes(2))))
+_SCAN_RETRY = StepConfig(retry_strategy=create_retry_strategy(RetryStrategyConfig(
+    max_attempts=2, initial_delay=Duration.from_seconds(5), max_delay=Duration.from_seconds(30))))
+
+# A single bad service or scanner must never abort the run: the summary reports it.
+_TOLERATE_ALL = CompletionConfig(tolerated_failure_percentage=100)
+
+EMPTY_EXTRACT = {"total": 0, "succeeded": 0, "failed": [], "items_extracted": 0, "results": []}
+EMPTY_SCAN = {"cells_total": 0, "cells_succeeded": 0, "failed_cells": [], "items_discovered": 0,
+              "needs_attention": 0, "scanned_service_keys": []}
+
+
+@durable_execution
+def handler(event: dict, context: DurableContext) -> dict:
+    spec = normalize_spec(event)
+    run = context.step(start_run(spec), name="start-run")
+
+    # Phase 1: facts
+    extract_summary = dict(EMPTY_EXTRACT)
+    if spec["mode"] in ("full", "extract"):
+        def _extract(ctx: DurableContext, service: str, index: int, _all) -> dict:
+            return ctx.step(extract_cell(service, spec["refresh_origin"]),
+                            name=f"extract-{service}", config=_EXTRACT_RETRY)
+
+        batch = context.map(run["services"], _extract, name="extract",
+                            config=MapConfig(max_concurrency=DEFAULT_CONCURRENCY,
+                                             completion_config=_TOLERATE_ALL))
+        extract_summary = summarize_extract(run["services"], batch)
+
+    # Phase 2: impact
+    scan_summary = dict(EMPTY_SCAN)
+    reconcile_result = {}
+    if spec["mode"] in ("full", "scan"):
+        cells = scan_cells_for(spec, run["regions"], run.get("accounts"))
+
+        def _scan(ctx: DurableContext, cell: dict, index: int, _all) -> dict:
+            return ctx.step(scan_cell(cell, run["run_id"]),
+                            name=f"scan-{cell['label']}-{cell['account_id']}-{cell['region']}",
+                            config=_SCAN_RETRY)
+
+        batch = context.map(cells, _scan, name="scan",
+                            config=MapConfig(max_concurrency=SCAN_CONCURRENCY,
+                                             completion_config=_TOLERATE_ALL))
+        scan_summary = summarize_scan(cells, batch)
+        reconcile_result = context.step(
+            reconcile_inventory(run["run_id"], scan_summary["scanned_scopes"],
+                                scan_summary["accounts_failed"]),
+            name="reconcile-inventory")
+
+    return context.step(
+        summarize_and_notify(run, spec, extract_summary, scan_summary, reconcile_result),
+        name="summarize-and-notify")
+
+
+# ---------------------------------------------------------------------------
+# Batch result folding (pure)
+# ---------------------------------------------------------------------------
+
+def _results_by_index(batch, count: int) -> List:
+    """BatchResult.all as a list aligned to the input index; None where the
+    item failed (or was never started because a completion policy fired)."""
+    aligned = [None] * count
+    for item in batch.all:
+        if item.status is BatchItemStatus.SUCCEEDED and item.result is not None:
+            aligned[item.index] = item.result
+    return aligned
+
+
+def summarize_extract(services: List[str], batch) -> dict:
+    results, failed, items_total = [], [], 0
+    for service, result in zip(services, _results_by_index(batch, len(services))):
+        if result is None:
+            result = {"service_name": service, "success": False, "items_extracted": 0,
+                      "error": "step failed after retries", "duration": 0.0}
+        results.append(result)
+        if result["success"]:
+            items_total += result["items_extracted"]
+        else:
+            failed.append(service)
+    return {
+        "total": len(services),
+        "succeeded": len(services) - len(failed),
+        "failed": failed,
+        "items_extracted": items_total,
+        "results": results,
+    }
+
+
+def summarize_scan(cells: List[Dict], batch) -> dict:
+    """Fold the scan map into BOUNDED facts only (issue #225): counts, scope keys,
+    per-account outcome. No per-resource objects cross this boundary - the rows
+    were written where they were discovered (scan_cell -> save_scope_inventory).
+    items_discovered / needs_attention come from the per-cell bounded counts."""
+    scanned_keys, failed_cells, scopes = [], [], []
+    items_discovered, needs_attention = 0, 0
+    for cell, result in zip(cells, _results_by_index(batch, len(cells))):
+        if result is not None:
+            scanned_keys.extend(result["service_keys"])
+            scopes.append({"account_id": result.get("account_id") or cell.get("account_id", ""),
+                           "region": cell["region"], "service_keys": result["service_keys"]})
+            items_discovered += result["discovered"]
+            needs_attention += result["needs_attention"]
+        else:
+            failed_cells.append(f"{cell['label']}@{cell.get('account_id') or 'hub'}/{cell['region']}")
+    return {
+        "cells_total": len(cells),
+        "cells_succeeded": len(cells) - len(failed_cells),
+        "failed_cells": failed_cells,
+        "items_discovered": items_discovered,
+        "needs_attention": needs_attention,
+        "scanned_service_keys": sorted(set(scanned_keys)),
+        "scanned_scopes": scopes,
+        "accounts_scanned": sorted({sc["account_id"] for sc in scopes}),
+        "accounts_failed": sorted({c.get("account_id", "") for c in cells} - {sc["account_id"] for sc in scopes}),
+    }

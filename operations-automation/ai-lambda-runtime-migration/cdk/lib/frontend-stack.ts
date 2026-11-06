@@ -7,20 +7,18 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
 export interface FrontendStackProps extends cdk.StackProps {
+  apiUrl: string;
   userPoolId: string;
   userPoolClientId: string;
-  identityPoolId: string;
-  discoverRuntimeArn: string;
-  analyzeRuntimeArn: string;
-  transformRuntimeArn: string;
-  region: string;
 }
 
 /**
- * Frontend Stack — S3 + CloudFront (Simplified)
+ * Frontend Stack — S3 + CloudFront
  *
- * No API Gateway, no Lambda functions. The React frontend calls
- * the three AgentCore Runtimes directly via SigV4 using AWS SDK.
+ * The React frontend calls the HTTP API (see ApiStack) with the Cognito JWT
+ * (id token) in the Authorization header — no direct SigV4 to a runtime. The
+ * API URL and Cognito ids are baked into the Vite build (VITE_API_URL /
+ * VITE_USER_POOL_ID / VITE_USER_POOL_CLIENT_ID) by scripts/build-frontend.*.
  *
  * Creates:
  * 1. S3 bucket for React frontend assets (private, OAC access)
@@ -68,7 +66,7 @@ export class FrontendStack extends cdk.Stack {
         principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
         conditions: {
           StringEquals: {
-            'AWS:SourceArn': `arn:aws:cloudfront::${cdk.Stack.of(this).account}:distribution/${distribution.distributionId}`,
+            'AWS:SourceArn': `arn:${cdk.Stack.of(this).partition}:cloudfront::${cdk.Stack.of(this).account}:distribution/${distribution.distributionId}`,
           },
         },
       })
@@ -98,26 +96,6 @@ export class FrontendStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UserPoolClientId', {
       value: props.userPoolClientId,
       description: 'Cognito User Pool Client ID',
-    });
-
-    new cdk.CfnOutput(this, 'IdentityPoolId', {
-      value: props.identityPoolId,
-      description: 'Cognito Identity Pool ID',
-    });
-
-    new cdk.CfnOutput(this, 'DiscoverRuntimeArn', {
-      value: props.discoverRuntimeArn,
-      description: 'AgentCore Runtime ARN — Discover Agent',
-    });
-
-    new cdk.CfnOutput(this, 'AnalyzeRuntimeArn', {
-      value: props.analyzeRuntimeArn,
-      description: 'AgentCore Runtime ARN — Analyze Agent',
-    });
-
-    new cdk.CfnOutput(this, 'TransformRuntimeArn', {
-      value: props.transformRuntimeArn,
-      description: 'AgentCore Runtime ARN — Transform Agent',
     });
   }
 }

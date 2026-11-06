@@ -384,6 +384,7 @@ saas-status-mcp/
     └── terraform/
         ├── main.tf               # AgentCore Runtime + IAM role
         ├── registration.tf       # DevOps Agent registration
+        ├── tracking.tf           # Zero-cost CloudFormation marker stack (adoption metrics, opt-out)
         ├── variables.tf
         ├── outputs.tf
         └── terraform.tfvars.example
@@ -398,7 +399,7 @@ The provider registry lives in `agent/providers.json` as the source-controlled s
 | `SaasStatusMcpStack-{region}` | Runtime region | MCP server hosting | AgentCore Runtime, Runtime IAM role, CloudWatch log group |
 | `SaasStatusMcpRegistrationStack-{space-region}` | Agent Space region | DevOps Agent registration | SigV4 signing role, DevOps Agent Service, Association |
 
-The registration stack is optional — only deployed when you run `setup-devops-agent`. The Terraform path (`infrastructure/terraform/`) deploys the same resources without CDK.
+The registration stack is optional — only deployed when you run `setup-devops-agent`. The Terraform path (`infrastructure/terraform/`) deploys the same resources without CDK, plus one zero-cost CloudFormation stack, `SaasStatusMcpTracking-{runtime-region}` (a single `WaitConditionHandle`), whose only purpose is to carry the solution adoption tracking code that the CDK runtime stack carries in its description; set `enable_deployment_metrics = false` in `terraform.tfvars` to opt out.
 
 ## Cleanup
 

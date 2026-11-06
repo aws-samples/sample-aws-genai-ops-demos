@@ -1,0 +1,38 @@
+{
+  "name": "aws-services-lifecycle-tracker-cdk",
+  "version": "1.0.0",
+  "description": "CDK deployment for the AWS Services Lifecycle Tracker (Lambda durable pipeline)",
+  "main": "app.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "keywords": [
+    "aws",
+    "cdk",
+    "bedrock",
+    "lambda",
+    "durable-functions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudscape-design/chat-components": "^1.0.67",
+    "@cloudscape-design/components": "^3.0.1109",
+    "@cloudscape-design/design-tokens": "^3.0.62",
+    "@cloudscape-design/global-styles": "^1.0.46",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.20",
+    "aws-cdk": "^2.1030.0",
+    "jest": "^30.4.2",
+    "source-map-support": "^0.5.21",
+    "ts-jest": "^29.4.11",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.268.0",
+    "constructs": "^10.4.2"
+  }
+}

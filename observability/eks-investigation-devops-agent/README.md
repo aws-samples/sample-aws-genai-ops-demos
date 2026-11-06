@@ -5,7 +5,7 @@
 
 When a microservice running on EKS fails, on-call engineers spend 30–60 minutes manually checking pods, logs, database connectivity, and security groups before identifying the root cause. This demo deploys a 3-service payment platform on Amazon EKS, wires CloudWatch alarms to the AWS DevOps Agent, and lets you inject real incidents to watch the agent investigate automatically.
 
-The demo includes a **DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
+The demo includes a **AWS DevOps Agent Lab** — a built-in control center for injecting failures, managing agent skills, viewing investigation logs, and monitoring account usage. No manual investigation required.
 
 ## At a Glance
 
@@ -23,7 +23,7 @@ The demo includes a **DevOps Agent Lab** — a built-in control center for injec
 | **Custom Skills** | Create a business-context skill → agent uses it in Chat to produce executive-ready reports |
 | **On-demand Chat** | Ask the agent about platform issues → get structured reports with SLA and revenue impact |
 | **Account Usage & Quotas** | Live usage dashboard in the Lab UI (investigation, evaluation, on-demand hours) |
-| **Investigation Logs** | Compact view of recent investigations with tool calls, skills loaded, and summaries |
+| **Agent tasks** | Recent tasks of the Agent Space (investigations, evaluations, chats) with tool calls, skills loaded and summaries |
 | **Kiro Power (IDE Integration)** | Use the AWS DevOps Agent Power in Kiro to investigate, map topology, and review architecture — without leaving the IDE |
 
 ## Interactive Demo
@@ -40,7 +40,7 @@ The platform has three layers:
 
 - **Application Layer** — CloudFront serves the React portal from S3 and routes API traffic through an NLB to three microservices running on EKS (Merchant Gateway, Payment Processor, Webhook Service), backed by RDS PostgreSQL and SQS for async webhook delivery.
 - **Observability & Incident Response** — Fluent Bit ships container logs to CloudWatch. Metric filters trigger alarms that flow through SNS → Lambda (HMAC-signed) → AWS DevOps Agent, which automatically investigates pods, logs, RDS connectivity, and security groups to deliver a root cause analysis.
-- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (9 stacks) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
+- **CI/CD Pipeline** — CodeBuild builds container images from S3 source bundles into ECR. AWS CDK (10 stacks, including the Agent Space) provisions all infrastructure, and Kustomize manages Kubernetes manifests per environment.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture documentation including network design, security model, and data flows.
 
@@ -48,7 +48,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture docum
 
 - **AWS CLI v2.34.21+** with configured credentials and default region
 - kubectl v1.36+
-- Node.js 20+ with npm
+- Node.js 20+ with npm (the project installs its pinned CDK CLI automatically)
 - `zip` utility
 - Git
 - **CDK bootstrap** — the target account + region must be bootstrapped before running the deploy script. If you've never deployed CDK to this account/region pair, run:
@@ -70,28 +70,33 @@ cd sample-aws-genai-ops-demos/observability/eks-investigation-devops-agent
 
 ### 2. Deploy
 
-> **⚠️ Interactive step required during deployment:** The script will pause and ask you to generate a DevOps Agent webhook from the AWS console. Have a browser ready — the script prints the exact console URL to open.
+The deployment is zero-touch: CDK creates the Agent Space, IAM roles, operator app,
+AWS account association, and generic webhook. The webhook HMAC secret is written
+directly to Secrets Manager and never appears in shell variables, CDK context, or
+CloudFormation outputs.
 
-> **Two regions, set them both.** The deploy uses two independent region variables:
->
-> - `AWS_REGION` — where the CDK stacks (EKS, RDS, CloudFront, etc.) are deployed. If unset, the AWS CLI falls back to `aws configure get region`, which may not be what you want.
-> - `DEVOPS_AGENT_REGION` — where the DevOps Agent Space is created. Defaults to `us-east-1` because `AWS::DevOpsAgent` resources are not available in every region.
->
-> For a same-region deployment (example: Ireland):
-> ```bash
-> # Bash
-> export AWS_REGION=eu-west-1
-> export AWS_DEFAULT_REGION=eu-west-1
-> export DEVOPS_AGENT_REGION=eu-west-1
-> bash deploy-all.sh
-> ```
-> ```powershell
-> # PowerShell
-> $env:AWS_REGION = "eu-west-1"
-> $env:AWS_DEFAULT_REGION = "eu-west-1"
-> $env:DEVOPS_AGENT_REGION = "eu-west-1"
-> .\deploy-all.ps1
-> ```
+By default the Agent Space deploys to the current region with the other stacks. To
+place it elsewhere, set `DEVOPS_AGENT_REGION` before deploying:
+
+```powershell
+$env:DEVOPS_AGENT_REGION = "eu-west-1"
+```
+
+```bash
+export DEVOPS_AGENT_REGION=eu-west-1
+```
+
+When you set `DEVOPS_AGENT_REGION`, the Agent Space and its webhook HMAC secret are
+created in that region, while the rest of the demo (including the trigger Lambda that
+signs and forwards CloudWatch alarms to the webhook) stays in the infrastructure
+region. The Lambda therefore has to read the secret from the Agent Space region, not
+its own. CDK passes that region to the Lambda as the `SECRET_REGION` environment
+variable so it builds its Secrets Manager client against the right region. You never
+set `SECRET_REGION` yourself: the deployment derives it from the Agent Space region,
+and when the two regions are the same (the default) the Lambda simply falls back to
+its own `AWS_REGION`.
+
+The Agent Space region must be CDK-bootstrapped as well as the infrastructure region.
 
 ```bash
 # macOS / Linux
@@ -102,9 +107,9 @@ bash deploy-all.sh
 ```
 
 The deployment script:
-1. Creates the DevOps Agent Space, IAM roles, Operator Access, and account association (in the DevOps Agent region)
-2. Prompts for the webhook URL and secret (generated in the DevOps Agent console)
-3. Deploys 9 CDK stacks (EKS, RDS, CloudFront, monitoring, etc.) in current region
+1. Deploys the CDK-managed Agent Space (roles, operator app, AWS association, webhook)
+2. Reads its URL, secret ARN, and Agent Space ID from CloudFormation outputs
+3. Deploys the EKS, RDS, CloudFront, monitoring, and integration stacks
 4. Builds 3 container images via CodeBuild
 5. Applies Kubernetes manifests and seeds the database
 6. Builds and deploys the React frontend
@@ -157,15 +162,14 @@ No human intervention needed between the crash and the diagnosis.
 
 ## DevOps Agent Lab
 
-The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner). It's powered by a separate Lambda-based API (outside the EKS cluster) that uses kubectl to inject and rollback failures.
+The Lab is a built-in demo control center accessible via the 🧪 icon in the portal (lower right hand corner): two Lambda functions outside the EKS cluster, an API Gateway and a Cloudscape page. The injection engine is the repository's shared mechanism ([`shared/devops-agent/lab/`](../../shared/devops-agent/README.md)); everything else (scenarios, handlers, API routes, UI) is this demo's own, in `lab/` and `services/merchant-portal/src/lab/`, and serves as the reference other demos adapt.
 
 **How it works:**
-- A Lambda function in VPC runs kubectl commands against the EKS cluster via a kubectl Lambda layer
-- EKS authentication uses STS presigned URLs (same mechanism as `aws eks get-token`)
-- API Gateway exposes routes for inject, rollback, status, usage, and investigation logs
-- CloudFront routes `/admin/*` requests to the API Gateway
-- DynamoDB stores scenario timers for server-side auto-revert (10 minutes)
-- The Lambda calls the DevOps Agent API (SigV4-signed, cross-region) for usage and investigation data
+- `lab/scenarios.yaml` is the single source of truth: it defines the scenarios (handler, auto-revert timeout, walkthrough text) and the custom skill. The Lab UI renders whatever it finds there; adding a scenario means one YAML entry plus one inject/revert/probe handler in `lab/handlers.py`.
+- Every injection is one **Lambda durable function** execution (the *engine*): `inject` → `await-rollback` (waits up to `autoRevertSeconds`, 10 minutes by default, for the presenter to click Rollback) → `revert`. If nobody clicks, the wait times out and the revert runs anyway, so nothing stays broken if the browser is closed. There is no state store: the cluster says what is injected, the execution history says where the run is.
+- The *API* Lambda (behind API Gateway, reached through CloudFront `/admin/*`) probes the cluster live, starts engine runs through the `live` alias, resolves the run's callback on Rollback, and reads the DevOps Agent API (SigV4-signed, cross-region) for usage and investigation data.
+- Both functions run in the VPC with a kubectl Lambda layer; EKS authentication uses STS presigned URLs (same mechanism as `aws eks get-token`).
+- The Lab refuses a second injection while one is running: one scenario at a time keeps the investigation unambiguous.
 
 **Why Lambda outside the cluster:** If we put the simulator inside EKS, a DNS failure scenario would kill the simulator too. The Lambda is isolated from cluster failures.
 
@@ -173,10 +177,10 @@ The Lab is a built-in demo control center accessible via the 🧪 icon in the po
 
 | Section | API Endpoint | Data Source |
 |---------|-------------|-------------|
-| 🔥 Scenarios | `POST/DELETE /admin/scenarios/{id}/inject` | kubectl → EKS |
-| Status cards | `GET /admin/status` | kubectl + CloudWatch |
-| 🧠 Skills | N/A (copy-paste to Operator Access) | Static content in UI |
-| 📋 Logs | `GET /admin/logs` | DevOps Agent API (list-backlog-tasks, list-executions, list-journal-records) |
+| 🔥 Scenarios | `GET /admin/scenarios`, `POST/DELETE /admin/scenarios/{id}/inject` | `lab/scenarios.yaml`; engine durable function |
+| Live status | `GET /admin/status` | kubectl + CloudWatch + durable execution history |
+| 🧠 Skill | N/A (copy-paste to Operator Access) | `lab/scenarios.yaml` (`skills`) |
+| 📋 Investigations | `GET /admin/logs` | DevOps Agent API (list-backlog-tasks, list-executions, list-journal-records) |
 | 📊 Usage | `GET /admin/usage` | DevOps Agent API (get-account-usage) |
 
 ## Run the Demo
@@ -191,19 +195,19 @@ Open the Portal URL, log in with `demo-merchant-1` / `DemoPass2026!`, browse the
 
 Click the 🧪 lab icon in the bottom-right corner of the portal. The Lab has four sections:
 
-- **🔥 Scenarios** — inject real infrastructure failures
-- **🧠 Skills** — create a custom skill to teach the agent your business context
-- **📋 Logs** — view recent investigations with metrics (tool calls, skills loaded, duration)
-- **📊 Usage** — monitor DevOps Agent account usage and estimated cost
+- **🔥 Scenarios** — inject real infrastructure failures; each card shows live pods, replicas and alarm state, the auto-revert countdown and the engine run's steps
+- **🧠 Skill** — create a custom skill to teach the agent your business context (copy-paste fields)
+- **📋 Agent tasks** — recent tasks of the Agent Space with metrics (tool calls, skills loaded, duration)
+- **📊 Usage** — DevOps Agent account usage and estimated cost
 
 ### 3. Inject a failure (automated investigation)
 
-Pick a scenario and click **Inject**:
+Pick a scenario and click **Inject** (scenarios are defined in `lab/scenarios.yaml`):
 
 | Scenario | What Breaks | How the Agent Finds It |
 |----------|------------|----------------------|
-| **Database Connection Failure** | Wrong DB password → CrashLoopBackOff | Reads pod logs, traces to credential mismatch |
-| **DNS Resolution Failure** | CoreDNS scaled to 0 → all DNS fails | Traces from app errors across namespaces to kube-system |
+| **Database connection failure** | Wrong DB password → CrashLoopBackOff | Reads pod logs, traces to credential mismatch |
+| **DNS resolution failure** | CoreDNS scaled to 0 → all DNS fails | Traces from app errors across namespaces to kube-system |
 
 Wait ~2 minutes for the CloudWatch alarm to fire. The agent starts investigating automatically.
 
@@ -215,7 +219,7 @@ Open the DevOps Agent Operator Access (link in the Lab UI) to watch the agent:
 - Review security groups and recent changes
 - Deliver a root cause analysis with remediation steps
 
-The Lab's **Logs** section shows a compact summary of each investigation with metrics.
+The Lab's **Agent tasks** section shows a compact summary of each task with metrics.
 
 ### 5. Demo the Skills feature
 
@@ -259,7 +263,7 @@ The Power will:
 
 ### 7. Rollback
 
-Click **Rollback** on the scenario card, or wait for the auto-revert timer (10 minutes).
+Click **Rollback** on the scenario card, or let the engine revert on its own when the auto-revert timeout (10 minutes) expires.
 
 ## CDK Stacks
 
@@ -274,19 +278,27 @@ All stack IDs include the region suffix for multi-region deployment support.
 | `DevOpsAgentEksAuth-{region}` | Auth | Cognito User Pool with custom attributes |
 | `DevOpsAgentEksFrontend-{region}` | Frontend | CloudFront distribution, S3 bucket with OAC |
 | `DevOpsAgentEksMonitoring-{region}` | Observability | CloudWatch log groups, metric filters, alarms, SNS topic |
-| `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook, Secrets Manager |
-| `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab API | API Gateway, Lambda (kubectl), DynamoDB (timers) |
+| `DevOpsAgentEksAgentSpace-{agent-region}` | Agent onboarding | Agent Space, IAM roles, operator app, AWS association, webhook + secret |
+| `DevOpsAgentEksDevOpsAgent-{region}` | Incident response | SNS → Lambda → DevOps Agent webhook (secret imported by ARN) |
+| `DevOpsAgentEksFailureSimulatorApi-{region}` | Lab | API Gateway, API Lambda (kubectl), engine Lambda durable function (`live` alias) |
 
 ## Project Structure
 
 ```
 ├── deploy-all.sh / .ps1              # One-command deployment
 ├── cdk/
-│   ├── bin/app.ts                    # CDK entry point (9 stacks, region-suffixed)
-│   ├── lib/                          # Stack definitions
-│   └── lambda/
-│       ├── devops-agent-trigger/     # Alarm → webhook Lambda
-│       └── failure-simulator-api/    # Lab API Lambda (inject/rollback/status/usage/logs)
+│   ├── bin/app.ts                    # CDK entry point (10 stacks, region-suffixed)
+│   └── lib/
+│       ├── devops-agent-space-stack.ts # Agent Space stack: the shared DevOpsAgentSpace construct + outputs
+│       ├── devops-agent-stack.ts     # Trigger chain stack: the shared AlarmTrigger on the critical-alarms topic
+│       ├── failure-simulator-api-stack.ts # Lab stack: the shared LabEngine + this demo's API Gateway
+│       └── ...                       # Other stack definitions
+├── lab/                              # The Lab backend (bundled with the shared engine, shared/devops-agent/lab/)
+│   ├── scenarios.yaml                # Scenario definitions + skill: single source of truth for engine, UI and README
+│   ├── handlers.py                   # inject / revert / probe per scenario (kubectl)
+│   ├── api.py                        # Lab API routes (status, scenarios, inject, rollback, tasks, usage)
+│   ├── engine_main.py                # Durable function entry point: shared engine + this demo's handlers
+│   └── tests/                        # Engine on both roads (recorder handlers), API rules, YAML consistency
 ├── k8s/                              # Kubernetes manifests (Kustomize)
 │   ├── base/                         # Deployments, services, configmap, Fluent Bit
 │   └── overlays/dev|staging|prod     # Environment-specific patches
@@ -296,13 +308,31 @@ All stack IDs include the region suffix for multi-region deployment support.
 │   ├── payment-processor/            # Java 21 + Spring Boot 3.5 (EKS)
 │   └── webhook-service/              # Node.js 20 + TypeScript (EKS)
 ├── scripts/
-│   ├── setup-devops-agent.sh / .ps1  # Agent Space + IAM + webhook setup (6 steps)
 │   └── cleanup.sh / .ps1             # Delete all resources
 └── docs/
     ├── ARCHITECTURE.md               # Full architecture documentation
     ├── architecture-overview.drawio   # High-level architecture diagram (editable)
     └── architecture.drawio            # Detailed architecture diagram (editable)
 ```
+
+### Shared with the repository
+
+The demo does not deploy from this folder alone. It uses these files from the repository's
+[`shared/`](../../shared/README.md) directory, so deploy from a full clone:
+
+| File | Used by | For |
+|---|---|---|
+| `shared/scripts/check-prerequisites.ps1` / `.sh` | `deploy-all.ps1` / `.sh` | Tooling, credentials and region checks; DevOps Agent availability |
+| `shared/devops-agent/agent-space/cdk/agent-space.ts` + `lambda/webhook-provisioner/` | `cdk/lib/devops-agent-space-stack.ts` | `DevOpsAgentSpace` construct: IAM roles, Agent Space, operator app, AWS association, webhook (custom resource, secret in Secrets Manager) |
+| `shared/devops-agent/agent-space/cdk/alarm-trigger.ts` + `lambda/alarm-trigger/` | `cdk/lib/devops-agent-stack.ts` | `AlarmTrigger` construct: SNS → Lambda → HMAC-signed incident on the webhook |
+| `shared/devops-agent/lab/cdk/lab-engine.ts` | `cdk/lib/failure-simulator-api-stack.ts` | `LabEngine` construct: the two Lab Lambda functions, their role, the `live` alias, the code bundle |
+| `shared/devops-agent/lab/lambda/engine.py` | `lab/engine_main.py`, `lab/api.py` | The durable inject → wait for rollback → revert execution and its control plane |
+| `shared/devops-agent/lab/lambda/devops_agent.py` | `lab/api.py` | Agent tasks and spend, read from the DevOps Agent data plane |
+| `shared/devops-agent/lab/lambda/requirements.txt` | the bundle | Durable execution SDK, PyYAML |
+
+At synth time the construct copies the three Python files next to this demo's `lab/*.py`
+and `scenarios.yaml`, and that flat folder becomes the Lambda code
+([how it works](../../shared/devops-agent/README.md)).
 
 ## Cost Estimate
 
@@ -335,8 +365,8 @@ All costs approximate, based on `us-east-1` pricing.
 | **504** Gateway Timeout | Backend pods not running | Check: `kubectl get pods -n payment-demo` |
 | **500** on payment | DB credential mismatch | Check logs: `kubectl logs -l app.kubernetes.io/name=payment-processor -n payment-demo --tail=50` |
 | CloudFront returns **403** | S3/OAC misconfigured | Re-run deployment |
-| Agent Space not found | CLI too old | Upgrade AWS CLI to >= 2.34.21 |
-| Investigation shows "no AWS account access" | Missing association | Re-run `.\scripts\setup-devops-agent.ps1` |
+| Agent Space stack fails | Region unsupported or CDK not bootstrapped | Read the error and bootstrap the Agent Space region (`npx cdk bootstrap aws://<account-id>/<agent-region>`) |
+| Investigation shows "no AWS account access" | AWS monitor association is invalid | Re-deploy `DevOpsAgentEksAgentSpace-<agent-region>`; CloudFormation owns and validates the association |
 | CDK fails with **`SSM parameter /cdk-bootstrap/hnb659fds/version not found`** | Account/region is not CDK-bootstrapped | Run `npx cdk bootstrap aws://<account-id>/<region>` once, then re-run `deploy-all.sh` |
 | CDK bootstrap "S3 bucket already exists" | Broken CDK bootstrap stack | Run `npx cdk bootstrap --force` or delete the orphaned S3 bucket `cdk-hnb659fds-assets-*` and re-bootstrap. See [CDK bootstrap troubleshooting](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-troubleshoot.html) |
 | Deploy targeted the wrong region | `AWS_REGION` unset, so CLI fell back to `aws configure get region` | `export AWS_REGION=<intended-region>` and `export AWS_DEFAULT_REGION=<same>` before running the script |
@@ -344,18 +374,23 @@ All costs approximate, based on `us-east-1` pricing.
 
 ## Recreating the Agent Space
 
-To start fresh with a clean Agent Space (e.g., for A/B testing skills):
+The Agent Space and webhook are CloudFormation-owned. To rotate the webhook and start
+with a clean space, destroy only its stack and rerun the main deployment:
 
 ```powershell
-# Delete the old space
-aws devops-agent delete-agent-space --agent-space-id <space-id> --region us-east-1
-
-# Re-run setup — creates new space, prompts for webhook, updates deployed Lambdas
-.\scripts\setup-devops-agent.ps1          # PowerShell
-bash scripts/setup-devops-agent.sh        # Bash
+$agentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { aws configure get region }
+npx cdk destroy "DevOpsAgentEksAgentSpace-$agentRegion" -c "devOpsAgentRegion=$agentRegion"
+.\deploy-all.ps1
 ```
 
-The setup script detects the deployed demo and live-updates Lambda env vars and Secrets Manager — no CDK redeploy needed.
+```bash
+agent_region="${DEVOPS_AGENT_REGION:-$(aws configure get region)}"
+npx cdk destroy "DevOpsAgentEksAgentSpace-$agent_region" -c "devOpsAgentRegion=$agent_region"
+bash deploy-all.sh
+```
+
+Destroying the stack disassociates the webhook, deletes the Agent Space and roles, and
+removes the Secrets Manager secret. The next deploy creates a new webhook automatically.
 
 ## Cleanup
 

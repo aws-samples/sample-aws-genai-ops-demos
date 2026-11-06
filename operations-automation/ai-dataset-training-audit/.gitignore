@@ -1,0 +1,24 @@
+# CDK
+cdk.out*
+cdk.context.json
+node_modules/
+
+# Python
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+build/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.*
+terraform.tfvars
+*.tfplan
+crash.log
+
+# Terraform / deploy image staging
+.image-stage/
+*.zip

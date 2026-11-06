@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Partner webhook receiver on a deprecated runtime (python3.9). AWS Transform
+  (AWS/python-version-upgrade) is expected to update the Runtime below along
+  with the code and test changes.
+
+Resources:
+  MockPythonFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-migration-mock-python
+      Handler: lambda_function.handler
+      Runtime: python3.9
+      MemorySize: 128
+      Timeout: 10
+      CodeUri: .

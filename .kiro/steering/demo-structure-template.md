@@ -66,6 +66,10 @@ demos/[demo-name]/
 ├── ARCHITECTURE.md             # Architecture diagram and explanation
 ├── src/                        # Source code
 ├── infrastructure/             # AWS CDK infrastructure (TypeScript or Python)
+│   └── cdk/lib/
+│       ├── scan-permissions.ts # (multi-account only) read actions shared by hub and spoke roles
+│       ├── spoke-stack.ts      # (multi-account only) read-only role deployed in member accounts, bootstrapless
+│       └── org-stack.ts        # (multi-account only) service-managed StackSet rolling the spoke out; no tracking tag
 ├── sample-data/                # Test data or scenarios (if applicable)
 └── docs/                       # Additional documentation (optional)
 ```
@@ -76,7 +80,6 @@ See these live examples in the repository:
 
 ### Complete Demo Examples
 - **Password Reset Chatbot**: #[[file:operations-automation/ai-password-reset-chatbot/README.md]]
-- **Lifecycle Tracker**: #[[file:operations-automation/aws-services-lifecycle-tracker/README.md]]
 - **IT Portal Demo**: #[[file:operations-automation/anycompany-it-demo-portal/README.md]]
 - **Chaos Engineering**: #[[file:resilience/ai-chaos-engineering-with-fis/README.md]]
 
@@ -86,7 +89,7 @@ See these live examples in the repository:
 
 ### Architecture Documentation Examples
 - **Detailed Architecture**: #[[file:operations-automation/anycompany-it-demo-portal/ARCHITECTURE.md]]
-- **Technical Design**: #[[file:operations-automation/aws-services-lifecycle-tracker/ARCHITECTURE.md]]
+- **Technical Design**: #[[file:operations-automation/ai-dataset-training-audit/ARCHITECTURE.md]]
 
 ### Deployment Script Examples
 - **PowerShell**: #[[file:operations-automation/anycompany-it-demo-portal/deploy-all.ps1]]

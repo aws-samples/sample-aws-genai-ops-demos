@@ -1,0 +1,5 @@
+          <elementProp name="{{ARG_NAME}}" elementType="Argument">
+            <stringProp name="Argument.name">{{ARG_NAME}}</stringProp>
+            <stringProp name="Argument.value">{{ARG_VALUE}}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>

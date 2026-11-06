@@ -260,17 +260,147 @@ Switch to Direct mode. Send a message. Refresh the page.
 
 ---
 
+## Section 6: Access Key Triage (#175 — new)
+
+Prereqs before running these:
+1. Latest code deployed (backend `TriageAccessKeys` Lambda + frontend `AccessKeysTable` component + `_shortcircuit_triage_access_keys`). Confirm by asking `audit my access keys` — the response should render as a sortable **table**, not a plain-text list.
+2. Test-user fixture created:
+   ```
+   awsrefresh <workloads-account-alias>
+   bash tests/fixtures/create-triage-test-users.sh
+   ```
+   Expected: six `triage-test-*` users, each hitting a distinct risk-flag path.
+
+### 6.1 — Cold audit (baseline path)
+```
+audit my access keys
+```
+**Expected**:
+- Response in **< 15 seconds** (short-circuit path — no Bedrock synthesis).
+- Renders as `AccessKeysTable`, **not** as a JSON code block or plain-text list.
+- Rows sorted **Critical → High → Cleanup → Rotation**, and within each class by descending age.
+- **`triage-test-alice.admin`** appears at or near the top with priority `Critical` and risk flag `ADMIN`.
+- **`triage-test-svc-loader`** appears in the `High` band with flag `BROAD:AmazonS3FullAccess`.
+- **`triage-test-bedrock-ci-worker`** in the `High` band with flag `SERVICE_WILDCARD:bedrock` and `RESOURCE_WILDCARD`.
+- **`triage-test-dual-key-user`** shows **two rows** (one per active key) both flagged `MULTI_ACTIVE_KEYS`.
+- Prose above the table names the totals + priority mix in one line, and either a root-user note (see 6.2) or a "Top priority: …" one-liner.
+
+### 6.2 — Root user detection (safety-critical)
+Prereq: **skip if the account has no root access keys** — do NOT create root keys just for this test. If the account already has them, the test is automatic.
+```
+audit my access keys
+```
+**Expected**: A synthetic **`<root>`** row surfaces **first** in the table with priority `Critical`, a `root` badge in the User column, and suggested remediation exactly `Remove_Root_Access_Keys` (the literal label — the model must not paraphrase it). Prose above the table quotes the label too.
+
+### 6.3 — Alternate phrasings hit the same short-circuit
+Run each of these separately and confirm the same table shape:
+```
+which of my access keys are stale
+```
+```
+show me over-permissioned users
+```
+```
+iam key hygiene
+```
+```
+list all my access keys
+```
+**Expected**: All four go through the short-circuit (same sub-15s response time, same `AccessKeysTable`). None should trigger a Bedrock synthesis round.
+
+### 6.4 — Adjacent prompts must NOT trigger triage
+Run each and confirm the assistant reaches the **existing** tool, not `triage_access_keys`:
+```
+generate an action plan
+```
+Expected: `generate_action_plan` short-circuit path, plan table renders.
+```
+compare roles ApolloRole and EpoxyAccessRole
+```
+Expected: goes to Bedrock → `compare_roles` tool.
+```
+list findings
+```
+Expected: goes to Bedrock → `list_findings` tool.
+
+### 6.5 — Row expansion (per-key detail)
+On the table from 6.1, click the expand chevron on **`triage-test-alice.admin`**.
+**Expected**: A detail panel renders **below the table** (not inline in the row body) showing `Resource scope: WILDCARD`, `Has condition: no`, an `Effective actions` block containing `*` and its Resource scope, and `Source policies: AdministratorAccess`.
+
+### 6.6 — Copy-to-clipboard on Key ID column
+Click the copy icon next to `AKIA…` on any row.
+**Expected**: The **full** access key ID copies to clipboard (not the truncated `AKIA…xxxx` display value). A small `copied` label appears next to the icon for ~1.5 s. Paste into any text field to verify.
+
+### 6.7 — Sorting
+Click the column header on **Age (days)**.
+**Expected**: Rows re-order by age. Click again — descending. `triage-test-*` users all have fresh keys so their ages will all be 0 or 1 — verify the sort is stable.
+
+Click **Last used**.
+**Expected**: Every `triage-test-*` row has `Never` in Last used (none of the created keys have been exercised), so `Never` badges cluster at the bottom of the ascending sort.
+
+### 6.8 — Fenced JSON payload routing (frontend detection guardrail)
+Open browser devtools → **Network** tab → find the `/conversation` POST → **Response** body. Confirm:
+- `response` field contains a fenced ```` ```json ```` block wrapping the tool payload.
+- The JSON has `"_type": "access_keys_report"` as its first field (added by the short-circuit's `_render_triage_access_keys` for unambiguous frontend detection).
+- No `dangerouslySetInnerHTML` warning in the console — the AccessKeysTable path bypasses the markdown renderer entirely.
+
+### 6.9 — Safety framing (prose must not shift)
+Reading the prose above the table from 6.1, confirm every one of these:
+- ✅ Words used: "consider", "recommend", "candidate for", "suggested".
+- ❌ Words NOT used: "delete this key now", "remove immediately", any imperative.
+- ✅ The literal phrase **"deactivate → monitor a full business cycle → delete"** appears for in-use key advice.
+- ✅ The **`usage_lag_caveat`** ("Last-used data can lag by hours…") is quoted verbatim in italics.
+- ✅ The tool's `suggested_remediation` labels (`SSO_Federation`, `IAM_Role`, `OIDC_Federation`, `Cross_Account_Role_With_External_Id`, `Remove_Root_Access_Keys`) appear **as-is** in the prose, never paraphrased.
+
+### 6.10 — Coverage-unavailable path (permission-denied simulation)
+Temporarily remove the `iam:ListUsers` action from the tool role via a **DENY** policy statement on the `ToolExecutionRole` (or use a role that lacks it) and re-run:
+```
+audit my access keys
+```
+**Expected**:
+- Response is prose-only — **no** `AccessKeysTable` renders (nothing to show).
+- Message names the failure: `"I couldn't inventory IAM access keys in this account or region — IAM was unavailable: iam:ListUsers failed: AccessDenied…"`.
+- No fabricated / placeholder key list.
+- Remove the DENY when done.
+
+Alternative: point the assistant at a region with no IAM API (e.g. deploy a beta copy in a region where the tool role's cross-region trust isn't set up).
+
+### 6.11 — Follow-up flow after triage
+After the table renders (6.1), ask:
+```
+export that
+```
+**Expected**: `export_report` fires with the tool payload as the content. Returns a presigned URL. The exported artifact should include the full report shape.
+
+Then ask:
+```
+what's the blast radius of triage-test-alice.admin
+```
+**Expected**: `check_dependencies` fires on the ARN. Alice's dependency graph appears — trust relationships (none for a user), attached policies (`AdministratorAccess`), risk score.
+
+### 6.12 — Teardown
+```
+bash tests/fixtures/delete-triage-test-users.sh
+```
+**Expected**: All six users removed in one pass. Re-running is idempotent (says "No triage-test users found").
+
+Post-teardown re-run of `audit my access keys` should show **no** `triage-test-*` rows.
+
+---
+
 ## Scoring Guide
 
 | Category | Tests | Weight |
 |----------|-------|--------|
-| Core functionality (Section 1) | 10 tests | 40% |
-| UX & Modes (Section 2) | 6 tests | 20% |
-| Edge cases (Section 3) | 6 tests | 15% |
+| Core functionality (Section 1) | 10 tests | 35% |
+| UX & Modes (Section 2) | 6 tests | 15% |
+| Edge cases (Section 3) | 6 tests | 10% |
 | Security (Section 4) | 10 tests | 20% |
 | Performance (Section 5) | 5 tests | 5% |
+| **Access Key Triage — #175 (Section 6)** | **12 tests** | **15%** |
 
 **Pass criteria**: 
-- All Section 4 (security) tests MUST pass — any failure is a blocker
-- 80%+ of Section 1 (core) tests must pass
-- 70%+ overall for "ready for PR"
+- All Section 4 (security) tests MUST pass — any failure is a blocker.
+- 6.2 (root detection), 6.9 (safety framing), and 6.10 (coverage-unavailable) MUST pass — any failure is a blocker for #175 specifically.
+- 80%+ of Section 1 (core) tests must pass.
+- 70%+ overall for "ready for PR".

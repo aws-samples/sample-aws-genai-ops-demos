@@ -22,6 +22,20 @@ export AWS_REGION="$REGION"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
+# Resolve the Agent Space region before the infrastructure stacks are deleted.
+# The deployment publishes it from DevOpsAgentStack; an explicit env override wins.
+DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-}"
+if [ -z "$DEVOPS_AGENT_REGION" ]; then
+    DEVOPS_AGENT_REGION=$(aws cloudformation describe-stacks \
+        --stack-name "DevOpsAgentEksDevOpsAgent-${REGION}" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='AgentSpaceRegion'].OutputValue" \
+        --output text --no-cli-pager 2>/dev/null || echo "")
+fi
+if [ -z "$DEVOPS_AGENT_REGION" ] || [ "$DEVOPS_AGENT_REGION" = "None" ]; then
+    DEVOPS_AGENT_REGION="$REGION"
+fi
+
 echo "============================================"
 echo "DevOps Agent EKS Demo - Cleanup"
 echo "============================================"
@@ -304,14 +318,6 @@ for stack in "${STACK_DELETE_ORDER[@]}"; do
   fi
 done
 
-# Fallback: try deleting legacy CloudFormation root stack if it exists
-if aws cloudformation describe-stacks --stack-name "$PROJECT_NAME" &>/dev/null; then
-  echo "  Deleting legacy root stack $PROJECT_NAME..."
-  aws cloudformation delete-stack --stack-name "$PROJECT_NAME"
-  aws cloudformation wait stack-delete-complete --stack-name "$PROJECT_NAME" 2>/dev/null || true
-  echo "  ✓ Root stack deleted"
-fi
-
 echo ""
 echo "[10/14] Cleaning up remaining S3 buckets (if any survived stack deletion)..."
 for bucket in "${BUCKETS[@]}"; do
@@ -326,7 +332,7 @@ done
 echo ""
 echo "[11/14] Cleaning up any orphaned stacks in DELETE_FAILED state..."
 FAILED_STACKS=""
-# Check for both legacy CloudFormation and CDK stack name patterns
+# Match both the project-name prefix and the CDK stack name pattern
 for pattern in "$PROJECT_NAME" "DevOpsAgentEks"; do
   FOUND=$(aws cloudformation list-stacks --stack-status-filter DELETE_FAILED \
     --query "StackSummaries[?contains(StackName,'${pattern}')].StackName" --output text 2>/dev/null || echo "")
@@ -412,65 +418,21 @@ fi
 
 echo ""
 echo "[14/14] Cleaning up DevOps Agent resources..."
-DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
+AGENT_SPACE_STACK="DevOpsAgentEksAgentSpace-${DEVOPS_AGENT_REGION}"
 
-# Delete only the Agent Space matching our project name (not all spaces in the account)
-AGENT_SPACE_ID=$(aws devops-agent list-agent-spaces \
+# CloudFormation owns the Agent Space, IAM roles, operator app, AWS association,
+# eventChannel webhook, and webhook secret.
+MANAGED_STACK_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "$AGENT_SPACE_STACK" \
     --region "$DEVOPS_AGENT_REGION" \
-    --query "agentSpaces[?name=='${PROJECT_NAME}'].agentSpaceId | [0]" \
+    --query 'Stacks[0].StackStatus' \
     --output text --no-cli-pager 2>/dev/null || echo "")
-
-if [[ -n "$AGENT_SPACE_ID" && "$AGENT_SPACE_ID" != "None" ]]; then
-  echo "  Deleting Agent Space $AGENT_SPACE_ID (${PROJECT_NAME})..."
-  # Remove associations first
-  ASSOC_IDS=$(aws devops-agent list-associations \
-      --agent-space-id "$AGENT_SPACE_ID" \
-      --region "$DEVOPS_AGENT_REGION" \
-      --query 'associations[*].associationId' \
-      --output text --no-cli-pager 2>/dev/null || echo "")
-  for assoc_id in $ASSOC_IDS; do
-    if [[ -n "$assoc_id" && "$assoc_id" != "None" ]]; then
-      echo "    Removing association $assoc_id..."
-      aws devops-agent disassociate-service \
-          --agent-space-id "$AGENT_SPACE_ID" \
-          --association-id "$assoc_id" \
-          --region "$DEVOPS_AGENT_REGION" \
-          --no-cli-pager 2>/dev/null || true
-    fi
-  done
-  aws devops-agent delete-agent-space \
-      --agent-space-id "$AGENT_SPACE_ID" \
-      --region "$DEVOPS_AGENT_REGION" \
-      --no-cli-pager 2>/dev/null || true
-  echo "  ✓ Agent Space $AGENT_SPACE_ID deleted"
-else
-  echo "  - No Agent Space named '${PROJECT_NAME}' found"
+if [[ -n "$MANAGED_STACK_STATUS" && "$MANAGED_STACK_STATUS" != "DELETE_COMPLETE" ]]; then
+  echo "  Deleting CDK-managed Agent Space stack $AGENT_SPACE_STACK ($MANAGED_STACK_STATUS)..."
+  aws cloudformation delete-stack --stack-name "$AGENT_SPACE_STACK" --region "$DEVOPS_AGENT_REGION" --no-cli-pager
+  aws cloudformation wait stack-delete-complete --stack-name "$AGENT_SPACE_STACK" --region "$DEVOPS_AGENT_REGION" --no-cli-pager
+  echo "  ✓ CDK-managed Agent Space resources deleted"
 fi
-
-# Delete DevOps Agent IAM roles (both old script-created and CDK-managed names)
-for ROLE_NAME in "${PROJECT_NAME}-AgentSpaceRole" "${PROJECT_NAME}-OperatorRole" "${PROJECT_NAME}-${ENVIRONMENT}-AgentSpaceRole" "${PROJECT_NAME}-${ENVIRONMENT}-OperatorRole"; do
-  if aws iam get-role --role-name "$ROLE_NAME" &>/dev/null 2>&1; then
-    echo "  Deleting IAM role $ROLE_NAME..."
-    # Detach managed policies
-    POLICIES=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null || echo "")
-    for policy_arn in $POLICIES; do
-      if [[ -n "$policy_arn" && "$policy_arn" != "None" ]]; then
-        aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$policy_arn" 2>/dev/null || true
-      fi
-    done
-    # Delete inline policies
-    INLINE_POLICIES=$(aws iam list-role-policies --role-name "$ROLE_NAME" --query 'PolicyNames[*]' --output text 2>/dev/null || echo "")
-    for policy_name in $INLINE_POLICIES; do
-      if [[ -n "$policy_name" && "$policy_name" != "None" ]]; then
-        aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$policy_name" 2>/dev/null || true
-      fi
-    done
-    aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
-    echo "  ✓ $ROLE_NAME deleted"
-  else
-    echo "  - $ROLE_NAME not found, skipping"
-  fi
-done
 
 echo ""
 echo "============================================"

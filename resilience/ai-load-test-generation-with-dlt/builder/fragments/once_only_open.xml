@@ -1,0 +1,2 @@
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="{{OOC_NAME}}" enabled="true"/>
+        <hashTree>

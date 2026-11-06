@@ -11,7 +11,8 @@ import os
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-RUNTIME_ARN = "arn:aws:bedrock-agentcore:eu-west-3:517675598740:runtime/saas_status_mcp-405ED0Cw5p"
+# Replace with your own deployed runtime ARN (account ID + runtime ID)
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:eu-west-3:123456789012:runtime/saas_status_mcp-XXXXXXXXXX"
 REGION = "eu-west-3"
 
 

@@ -23,7 +23,7 @@ Real-time customer data platform processing 2M events/sec for personalization an
 - Kinesis Data Firehose for S3 data lake loading
 
 ## Content Delivery
-- Amazon CloudFront with 50+ Points of Presence
+- Amazon CloudFront, serving users from edge locations in hundreds of cities around the world
 - Custom domain with ACM certificates
 - Origin failover configured for high availability
 - Lambda@Edge for A/B testing and personalization at the edge

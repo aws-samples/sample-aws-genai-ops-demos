@@ -366,7 +366,7 @@ import boto3
 bedrock = boto3.client('bedrock-runtime')
 
 # Using prompt router ARN
-router_arn = "arn:aws:bedrock:us-east-1:517675598740:prompt-router/z0e0g1c7y7za"
+router_arn = "arn:aws:bedrock:us-east-1:123456789012:prompt-router/XXXXXXXXXXXX"
 
 def process_request(prompt):
     response = bedrock.invoke_model(

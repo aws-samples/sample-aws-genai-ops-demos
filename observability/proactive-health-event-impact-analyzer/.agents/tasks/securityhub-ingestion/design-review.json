@@ -1,0 +1,22 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "NIT",
+      "title": "§6.3 overstates which output sections the Callback parser actually consumes",
+      "where": "design.md §6.3",
+      "problem": "§6.3 says the new path must emit 'the headings the Callback parser (parseAgentAnalysis) depends on' and lists all six, including ## Notification Routing and ## Jira Tracking. Verified against investigation-callback/index.ts: parseAgentAnalysis only parses ## Summary, ## Key Findings, ## Answers to Your Questions, ## Recommended Actions (also ## Actions / ### 4.), and the no-impact keyword set. ## Notification Routing and ## Jira Tracking are output-contract sections emitted for humans/Jira, not parser inputs. Behavior is unaffected because the design reuses all six existing SKILL.md sections verbatim and requirements.md lists the same six.",
+      "fix": "Reword §6.3 to say the new path reuses the existing SKILL.md output-contract headings, of which only ## Summary, ## Key Findings, ## Answers to Your Questions, and ## Recommended Actions are parsed by parseAgentAnalysis, while ## Notification Routing and ## Jira Tracking are emitted for downstream consumers. No section-list change needed."
+    },
+    {
+      "id": 2,
+      "severity": "NIT",
+      "title": "§2 could note that interface HealthEvent omits rawEvent and declares sourceAccountId optional",
+      "where": "design.md §2",
+      "problem": "Verified investigation-trigger/index.ts: interface HealthEvent has no rawEvent member and declares sourceAccountId optional. The normalizer must still emit rawEvent because it is part of the Health branch workflowInput key set and the AC-4 exact-key invariant. The design is internally consistent (it already states rawEvent is carried but not read), but an implementer could wrongly 'trim' rawEvent.",
+      "fix": "Add one clause to §2 stating interface HealthEvent declares sourceAccountId optional and has no rawEvent member, so emitting rawEvent satisfies the Router/workflowInput key set without being consumed by the Trigger, and must not be dropped."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\umancini\\sviluppi-new\\sample-aws-genai-ops-demos\\observability\\proactive-health-event-impact-analyzer\\.agents\\tasks\\securityhub-ingestion\\design-review.md"
+}

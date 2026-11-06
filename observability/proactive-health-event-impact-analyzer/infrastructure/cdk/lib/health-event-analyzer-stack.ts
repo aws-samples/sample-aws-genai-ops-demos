@@ -11,11 +11,28 @@ import { Notification } from './constructs/notification';
 export const VALID_ENVIRONMENTS = ['production', 'staging'] as const;
 export type Environment = typeof VALID_ENVIRONMENTS[number];
 
+export interface HealthEventAnalyzerStackProps extends cdk.StackProps {
+  /** DevOps Agent webhook URL, from the DevOpsAgentSpaceStack output (via CDK context). */
+  devOpsAgentWebhookUrl: string;
+  /**
+   * ARN of the Secrets Manager secret holding the webhook HMAC secret, from the
+   * DevOpsAgentSpaceStack output (via CDK context). Empty string on a bare
+   * synth/test before the Agent Space stack has ever been deployed.
+   */
+  devOpsAgentWebhookSecretArn: string;
+  /**
+   * Region hosting the DevOps Agent Agent Space. Defaults to this stack's own
+   * region when not supplied — an Agent Space monitors resources across ALL
+   * Regions of an associated account, so it need not sit in the deploy Region.
+   */
+  devOpsAgentRegion?: string;
+}
+
 export class HealthEventAnalyzerStack extends cdk.Stack {
   /** The resolved deployment environment (production or staging) for this stack */
   public readonly deployEnvironment: Environment;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: HealthEventAnalyzerStackProps) {
     super(scope, id, props);
 
     // Environment configuration
@@ -39,16 +56,27 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       default: '',
     });
 
-    const devOpsAgentWebhookUrl = new cdk.CfnParameter(this, 'DevOpsAgentWebhookUrl', {
-      type: 'String',
-      description: 'AWS DevOps Agent webhook URL for triggering investigations',
-    });
+    // DevOps Agent webhook URL and Secrets Manager ARN, sourced from the
+    // DevOpsAgentSpaceStack's outputs. These are CDK context values (resolved
+    // and passed by scripts/setup-wizard.ts via `--context` after reading the
+    // Agent Space stack's outputs with `aws cloudformation describe-stacks`),
+    // not CloudFormation parameters — the Agent Space stack itself is now
+    // CDK-managed, so there is no longer a manual value for an operator to
+    // paste in at deploy time.
+    const devOpsAgentWebhookUrl = props.devOpsAgentWebhookUrl;
+    const devOpsAgentWebhookSecretArn = props.devOpsAgentWebhookSecretArn;
 
-    // SSM Parameter Store paths for secrets (actual SecureString values are
-    // created externally by the setup wizard — CDK just references the paths
-    // in Lambda environment variables and grants read permissions)
+    // Region hosting the DevOps Agent Agent Space. Defaults to this stack's region
+    // (same-region deployment); differs when the Agent Space lives elsewhere — the
+    // service is only available in a subset of Regions, and an Agent Space monitors
+    // resources across ALL Regions of an associated account, so it need not sit in
+    // the deploy Region. See shared/README.md ("AWS DevOps Agent Region").
+    const resolvedDevOpsAgentRegion = props.devOpsAgentRegion || this.region;
+
+    // SSM Parameter Store paths for the Slack/MS Teams webhook secrets. These
+    // remain plain SSM SecureStrings set by the setup wizard — unrelated to the
+    // DevOps Agent webhook secret above, which now lives in Secrets Manager.
     const ssmParamPrefix = `/health-analyzer/${this.deployEnvironment}`;
-    const webhookSecretParamName = `${ssmParamPrefix}/webhook-secret`;
     const slackWebhookParamName = `${ssmParamPrefix}/slack-webhook-url`;
     const msTeamsWebhookParamName = `${ssmParamPrefix}/msteams-webhook-url`;
 
@@ -63,8 +91,9 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       notificationTopic: notification.topic,
       teamsTable: notification.teamsTable,
       agentSpacesTable: notification.agentSpacesTable,
-      devOpsAgentWebhookUrl: devOpsAgentWebhookUrl.valueAsString,
-      webhookSecretParamName,
+      devOpsAgentWebhookUrl,
+      devOpsAgentRegion: resolvedDevOpsAgentRegion,
+      devOpsAgentWebhookSecretArn,
       slackWebhookParamName,
       msTeamsWebhookParamName,
       deployEnvironment: this.deployEnvironment,
@@ -157,9 +186,19 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       sid: 'DenyInsecureTransport',
       effect: iam.Effect.DENY,
       principals: [new iam.AnyPrincipal()],
+      // SNS resource policies don't accept the sns:* wildcard, so the topic-scoped
+      // actions are enumerated to deny any non-TLS request (Req 14.3, 4.1). Only
+      // the 8 actions valid in an SNS resource policy may be used here — actions
+      // like sns:Unsubscribe / sns:Receive are rejected by SNS at deploy time
+      // ("Policy statement action out of service scope").
       actions: [
         'sns:Publish',
         'sns:Subscribe',
+        'sns:GetTopicAttributes',
+        'sns:SetTopicAttributes',
+        'sns:ListSubscriptionsByTopic',
+        'sns:AddPermission',
+        'sns:RemovePermission',
       ],
       resources: [notification.topic.topicArn],
       conditions: {
@@ -173,6 +212,9 @@ export class HealthEventAnalyzerStack extends cdk.Stack {
       sid: 'RestrictSubscriptions',
       effect: iam.Effect.ALLOW,
       principals: [new iam.AccountPrincipal(this.account)],
+      // Only the owning account may subscribe to the topic (Req 14.4).
+      // Note: sns:Unsubscribe is NOT valid in an SNS resource policy (SNS rejects
+      // it with "action out of service scope"), so only sns:Subscribe is scoped here.
       actions: ['sns:Subscribe'],
       resources: [notification.topic.topicArn],
     }));

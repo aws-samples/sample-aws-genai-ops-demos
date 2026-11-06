@@ -1,0 +1,60 @@
+# validation.yaml — operations-automation/anycompany-it-demo-portal
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)") for the schema.
+
+# The demo's own deploy command, run zero-arg exactly as the README's Quick Start shows.
+# deploy-all.sh's argument parser has no required flag -- every option defaults off
+# (SKIP_BUILD=false, DESTROY_INFRA=false, POPULATE_DATA=false) -- so the bare command is valid.
+# Unlike most demos here, this one has NO gated external service: check-prerequisites.sh is
+# called with only --require-cdk (no --required-service bedrock/transform/agentcore), so CI can
+# actually exercise the full deploy without a manually-enabled capability. The script deploys
+# the CDK stack via the shared shared/scripts/deploy-cdk.sh, then uploads the static frontend to
+# S3 and invalidates CloudFront -- all standard, self-contained infrastructure.
+deploy_command: ["./deploy-all.sh"]
+
+# Install this demo's OWN CDK deps explicitly and loudly BEFORE deploy_command runs, so aws_cdk
+# is importable regardless of the shared deploy-cdk.sh's own (now loud, but historically silent)
+# install. Same failure-derived guard the reference demo uses -- see the contributor guide's
+# "Python CDK demos: declare your own deps" note.
+setup_commands:
+  - ["pip", "install", "-r", "infrastructure/cdk/requirements.txt"]
+
+# Default destroy: `npx cdk destroy` run directly from infrastructure/cdk (the schema default),
+# bypassing deploy-all.sh/deploy-cdk.sh. The demo also offers `./deploy-all.sh --destroy-infra`,
+# but the direct path is deterministic and matches the reference demo -- see pythonpath_repo_root
+# below for why the direct path needs the repo root on PYTHONPATH.
+destroy_command: ["npx", "-y", "cdk", "destroy", "--force", "--no-cli-pager"]
+destroy_subdir: "infrastructure/cdk"
+
+# infrastructure/cdk/app.py: AnyCompanyITPortalStack(app, f"AnyCompanyITPortalStack-{region}", ...).
+# Single stack (only the main stack, per the solution-adoption-tracking single-stack rule), so
+# one entry. Cross-checked against deploy-all.sh's own lookup: STACK_NAME="AnyCompanyITPortalStack-$REGION".
+stacks: ["AnyCompanyITPortalStack-us-west-2"]
+
+# Pinned so the region-suffixed stack name above stays deterministic. This demo has no
+# region-sensitive model dependency (no Bedrock), so any bootstrapped region works; us-west-2 is
+# chosen for consistency with the other validated demos.
+region: "us-west-2"
+
+# Deterministic is the honest verify mode here, and unlike the Bedrock/Transform demos it is a
+# GENUINE success signal rather than a caveated proxy: the demo's whole purpose is a static
+# multi-portal site fronted by CloudFront + API Gateway, so "the stack reaches *_COMPLETE on
+# deploy and is confirmed gone on destroy" actually exercises what the demo delivers. There is no
+# manually-enabled service or qualitative-quality judgment gating success.
+verify: "deterministic"
+
+# Load-bearing, same as the reference demo. infrastructure/cdk/app.py has
+# `from shared.utils import get_region`. On the DEPLOY path this is fine: shared/scripts/deploy-cdk.sh
+# exports `PYTHONPATH="$REPO_ROOT"` before `cdk deploy`. But the DESTROY step above runs
+# `npx cdk destroy` directly, which re-synths app.py (cdk.json: "app": "python app.py") with no
+# PYTHONPATH of its own -- without this flag that import fails with
+# `ModuleNotFoundError: No module named 'shared'` and destroy fails even though deploy succeeded.
+pythonpath_repo_root: true
+
+notes: >
+  Pure-CDK demo with NO gated external service (no Bedrock/Transform/AgentCore) -- the simplest
+  end-to-end validation candidate in the repo. deploy-all.sh deploys one stack
+  (AnyCompanyITPortalStack-{region}: S3 + CloudFront + API Gateway/Lambda), then syncs the static
+  frontend to S3 and invalidates CloudFront. The optional `--populate-data` path (a boto3 install
+  + seed script) is NOT exercised by the zero-arg deploy_command; note it carries a minor
+  silent-pip issue tracked separately (GitHub issue #132), unrelated to this validation. Zero
+  required args.

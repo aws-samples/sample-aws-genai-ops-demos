@@ -31,22 +31,83 @@ Write-Host "Using region: $Region" -ForegroundColor Cyan
 # Destroy mode
 if ($DestroyInfra) {
     Write-Host "Destroying infrastructure..." -ForegroundColor Red
+    # `cdk destroy` re-synthesizes app.py, which does `from shared.utils.aws_utils import
+    # get_region` and imports aws_cdk. Both must be importable by the interpreter cdk uses, so
+    # set PYTHONPATH to the repo root (the deploy path sets it below, but destroy exits first)
+    # and verify both imports -- otherwise destroy fails with a cryptic ModuleNotFoundError.
+    $WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..").Path
+    $env:PYTHONPATH = "$WorkspaceRoot;$env:PYTHONPATH"
+    python -c "import aws_cdk" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: 'aws_cdk' is not importable by python, which cdk needs to synthesize the app for destroy." -ForegroundColor Red
+        Write-Host "       Install the CDK deps first (in a venv): python -m pip install -r requirements.txt" -ForegroundColor Yellow
+        exit 1
+    }
+    python -c "import shared.utils.aws_utils" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: the repo's 'shared' package is not importable, which app.py needs to synthesize for destroy." -ForegroundColor Red
+        Write-Host "       Run this script from within the repo so PYTHONPATH can reach the repo root." -ForegroundColor Yellow
+        exit 1
+    }
     Push-Location $CdkDir
     cdk destroy $StackName @cdkAppArg --force
+    $destroyExit = $LASTEXITCODE
     Pop-Location
+    if ($destroyExit -ne 0) {
+        Write-Host "ERROR: CDK destroy failed" -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Infrastructure destruction completed" -ForegroundColor Green
     exit 0
 }
 
-# Install CDK dependencies
+# Install CDK dependencies and FAIL LOUDLY. $ErrorActionPreference="Stop" does NOT trap a
+# native command's non-zero exit, so we must check $LASTEXITCODE explicitly -- otherwise a
+# failed pip install falls through to `cdk deploy` and dies with ModuleNotFoundError:
+# No module named 'aws_cdk'. We also do not auto-force --break-system-packages (which mutates
+# the system Python); that bypass is opt-in only via DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES=1.
 Write-Host "`nInstalling CDK dependencies..." -ForegroundColor Yellow
 Push-Location $CdkDir
 python -m pip install -r requirements.txt -q
+if ($LASTEXITCODE -ne 0) {
+    if ($env:DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES -eq "1") {
+        Write-Host "Normal pip install failed; DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES=1 set, retrying with --break-system-packages (mutates system Python)..." -ForegroundColor Yellow
+        python -m pip install -r requirements.txt -q --break-system-packages
+        if ($LASTEXITCODE -ne 0) {
+            Pop-Location
+            Write-Host "ERROR: Failed to install CDK dependencies (requirements.txt)" -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        Pop-Location
+        Write-Host "ERROR: Failed to install CDK dependencies (requirements.txt)." -ForegroundColor Red
+        Write-Host "If this is an 'externally-managed-environment' (PEP 668) error, do NOT force it into" -ForegroundColor Yellow
+        Write-Host "your system Python. Create and activate a virtual environment first:" -ForegroundColor Yellow
+        Write-Host "    python -m venv .venv; .\.venv\Scripts\Activate.ps1" -ForegroundColor Gray
+        Write-Host "then re-run. On a throwaway/ephemeral host you may instead re-run with:" -ForegroundColor Gray
+        Write-Host "    `$env:DEPLOY_CDK_ALLOW_BREAK_SYSTEM_PACKAGES = '1'" -ForegroundColor Gray
+        exit 1
+    }
+}
+# Verify aws_cdk is importable by the interpreter that will synth the app.
+python -c "import aws_cdk" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    Write-Host "ERROR: 'aws_cdk' is not importable by python after installing requirements.txt." -ForegroundColor Red
+    Write-Host "       Use a virtual environment so pip and python are the same interpreter." -ForegroundColor Yellow
+    exit 1
+}
 Pop-Location
 
-# Install Lambda dependencies (no Docker required)
+# Install Lambda dependencies (no Docker required). These are vendored into the function dir
+# via -t and zipped into the Lambda, so a SILENT failure ships a Lambda missing its deps that
+# only fails at RUNTIME in AWS. Fail loudly. (--break-system-packages is irrelevant for -t.)
 Write-Host "Installing Lambda dependencies..." -ForegroundColor Yellow
 python -m pip install -r "$ScriptDir\lambdas\rss-ingestion\requirements.txt" -t "$ScriptDir\lambdas\rss-ingestion" -q --no-compile
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to install Lambda dependencies for rss-ingestion" -ForegroundColor Red
+    exit 1
+}
 
 # Set PYTHONPATH for shared utilities
 $WorkspaceRoot = (Resolve-Path "$ScriptDir\..\..").Path

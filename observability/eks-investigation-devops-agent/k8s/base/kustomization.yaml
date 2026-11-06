@@ -16,6 +16,10 @@ resources:
   - webhook-service/service.yaml
   - ingress.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: devops-agent-eks
-  app.kubernetes.io/managed-by: kustomize
+# includeSelectors keeps the former commonLabels behaviour (labels also land on
+# selectors); dropping it would change immutable Deployment selectors.
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: devops-agent-eks
+      app.kubernetes.io/managed-by: kustomize

@@ -1,0 +1,8 @@
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="EXTRACT_{{VAR_NAME}}" enabled="true">
+                <stringProp name="JSONPostProcessor.referenceNames">{{VAR_NAME}}</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">{{EXPRESSION}}</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">{{MATCH_NUMBER}}</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">{{DEFAULT_VALUE}}</stringProp>
+                <boolProp name="JSONPostProcessor.compute_concat">false</boolProp>
+              </JSONPostProcessor>
+              <hashTree/>

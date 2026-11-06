@@ -7,6 +7,7 @@ Returns paginated results with summary statistics.
 
 import json
 import logging
+import os
 from collections import defaultdict
 
 import boto3
@@ -15,6 +16,30 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 securityhub_client = boto3.client("securityhub")
+
+
+def _coverage(state: str, detail: str, count: int | None = None) -> dict:
+    """Build a per-source coverage entry per the #171 contract.
+
+    Three states:
+      * ``checked``     — call succeeded and returned data
+      * ``empty``       — call succeeded, returned nothing (honest "no
+                          findings" case the caller can act on)
+      * ``unavailable`` — call failed. The caller must NOT interpret an empty
+                          data set on this path as "nothing found".
+    """
+    # Defensive: some tests inject a fake client without a boto3-style .meta
+    # attribute. Don't let coverage emission blow up on the happy path.
+    meta = getattr(securityhub_client, "meta", None)
+    region = getattr(meta, "region_name", None) or "unknown"
+    entry = {
+        "source": "securityhub",
+        "state": state,
+        "detail": detail.format(region=region),
+    }
+    if count is not None:
+        entry["count"] = count
+    return entry
 
 
 def handler(event, context=None):
@@ -33,9 +58,12 @@ def handler(event, context=None):
     Returns:
         {
             findings: [...],
-            total_count: int,
+            returned_count: int,
+            total_matching: int,  # exact on a terminal first page or FULL_TOTAL_SCAN=true; otherwise -1
+            total_count: int,     # backward-compatible alias for total_matching
             summary: {severity_breakdown, resource_type_breakdown, top_recommendations},
             next_token: str or null,
+            has_more: bool,
             filters_applied: {...}
         }
     """
@@ -65,7 +93,7 @@ def handler(event, context=None):
             "KMSKey": "AwsKmsKey",
             "LambdaFunction": "AwsLambdaFunction",
             "SQSQueue": "AwsSqsQueue",
-            "SecretsManager": "AwsSecretsManagerSecret",
+            "SecretsManager": "AwsSecretsManagerSecret",  # pragma: allowlist secret
         }
         mapped_type = resource_type_map.get(resource_type, resource_type)
         filters["ResourceType"] = [{"Value": mapped_type, "Comparison": "EQUALS"}]
@@ -150,9 +178,34 @@ def handler(event, context=None):
             "highest_severity": _get_highest_severity(severity_breakdown),
         }
 
+        # Security Hub does not return a grand total. The standard stack sets
+        # FULL_TOTAL_SCAN=false so the first page avoids an expensive count scan
+        # that can exceed API Gateway's synchronous timeout. Other callers retain
+        # the legacy exact-count behavior unless they explicitly opt out.
+        has_more = "NextToken" in response
+        full_total_scan = os.environ.get("FULL_TOTAL_SCAN", "true").lower() == "true"
+        if full_total_scan and (has_more or len(findings) >= limit):
+            total_matching = _count_all_matching(filters)
+        elif has_more or next_token:
+            total_matching = -1
+        else:
+            total_matching = len(findings)
+
+        # Coverage per #171: 'checked' when we got data, 'empty' when the
+        # call succeeded but returned zero findings. The caller can tell the
+        # difference between "no findings" and "we couldn't check".
+        coverage_state = "checked" if findings else "empty"
+        coverage_entry = _coverage(
+            coverage_state,
+            "IAM Access Analyzer findings via Security Hub, {region}",
+            count=len(findings),
+        )
+
         result = {
             "findings": findings,
-            "total_count": len(findings),
+            "returned_count": len(findings),   # items in THIS page
+            "total_matching": total_matching,  # exact only with a total scan or terminal first page
+            "total_count": total_matching,     # back-compat alias
             "summary": summary,
             "filters_applied": {
                 "severity": severity,
@@ -160,10 +213,11 @@ def handler(event, context=None):
                 "status": status,
                 "search_text": search_text,
             },
+            "coverage": [coverage_entry],
         }
 
         # Include pagination token if more results exist
-        if "NextToken" in response:
+        if has_more:
             result["next_token"] = response["NextToken"]
             result["has_more"] = True
         else:
@@ -178,6 +232,10 @@ def handler(event, context=None):
             "Please enable Security Hub with IAM Access Analyzer integration.",
             "findings": [],
             "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                "Security Hub not enabled or access denied in {region}",
+            )],
         }
     except securityhub_client.exceptions.InvalidInputException as e:
         logger.error(f"Invalid filter input: {e}")
@@ -185,10 +243,44 @@ def handler(event, context=None):
             "error": f"Invalid filter parameters: {e}",
             "findings": [],
             "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                f"Security Hub in {{region}} rejected the filters: {e}",
+            )],
         }
     except Exception as e:
         logger.error(f"Error querying Security Hub: {e}", exc_info=True)
-        return {"error": str(e), "findings": [], "total_count": 0}
+        return {
+            "error": str(e),
+            "findings": [],
+            "total_count": 0,
+            "coverage": [_coverage(
+                "unavailable",
+                f"Security Hub query failed in {{region}}: {type(e).__name__}: {e}",
+            )],
+        }
+
+
+def _count_all_matching(filters: dict, max_pages: int = 40) -> int:
+    """Count all matching findings across pages for callers that require totals."""
+    try:
+        total = 0
+        pages = 0
+        next_token = None
+        while True:
+            params = {"Filters": filters, "MaxResults": 100}
+            if next_token:
+                params["NextToken"] = next_token
+            response = securityhub_client.get_findings(**params)
+            total += len(response.get("Findings", []))
+            next_token = response.get("NextToken")
+            pages += 1
+            if not next_token or pages >= max_pages:
+                break
+        return total
+    except Exception as error:
+        logger.warning("Could not compute total matching findings: %s", error)
+        return -1
 
 
 def _get_highest_severity(breakdown: dict) -> str:

@@ -81,6 +81,31 @@ jobs:
               else
                 echo "✅ Bash script exists"
               fi
+
+              # Demo scripts must deploy through shared/scripts/deploy-cdk, never call cdk
+              # directly. Direct calls bypass the shared dep install / import check / bootstrap /
+              # exit-code handling and are how platform-specific deploy bugs ship (see #165).
+              # Command lines only: comments, echo/Write-Host hints and throw messages are ignored.
+              # NEW demos (no README on main) fail; EXISTING offenders warn until migrated.
+              DIRECT_CDK=""
+              for SCRIPT in "$DEMO"/*.ps1 "$DEMO"/*.sh "$DEMO"/scripts/*.ps1 "$DEMO"/scripts/*.sh; do
+                [ -f "$SCRIPT" ] || continue
+                if grep -vE '^\s*(#|echo\b|Write-Host\b|throw\b)' "$SCRIPT" \
+                   | grep -qE '(^|[[:space:];(&|])(npx\s+(-y\s+)?)?cdk\s+(deploy|bootstrap|destroy)\b'; then
+                  DIRECT_CDK="$DIRECT_CDK $SCRIPT"
+                fi
+              done
+              if [ -n "$DIRECT_CDK" ]; then
+                if [ -z "$(git ls-tree --name-only origin/main "$DEMO/README.md")" ]; then
+                  echo "❌ New demo calls cdk directly; deploy through shared/scripts/deploy-cdk.{ps1,sh} instead:"
+                  EXIT_CODE=1
+                else
+                  echo "⚠️  Calls cdk directly instead of shared/scripts/deploy-cdk.{ps1,sh} (pre-existing; migrate when touching these scripts):"
+                fi
+                for S in $DIRECT_CDK; do echo "   $S"; done
+              else
+                echo "✅ CDK deployment goes through the shared script"
+              fi
             fi
 
             # Check CDK infrastructure exists (required unless .no-deploy)
@@ -91,6 +116,20 @@ jobs:
                 EXIT_CODE=1
               else
                 echo "✅ CDK directory exists: $CDK_DIR"
+                # cdk.json "app" must be platform-neutral (python3 app.py / npx ts-node ...).
+                # A virtualenv path only exists on POSIX: a Windows venv has Scripts\python.exe
+                # and no bin/, so synth fails there before anything is deployed.
+                VENV_APP=$(grep -lE '"app"\s*:\s*"[^"]*(\.venv|/bin/python|Scripts[/\\]python)' "$CDK_DIR"/cdk.json 2>/dev/null || true)
+                if [ -n "$VENV_APP" ]; then
+                  if [ -z "$(git ls-tree --name-only origin/main "$DEMO/README.md")" ]; then
+                    echo "❌ $CDK_DIR/cdk.json \"app\" points at a virtualenv interpreter; use \"python3 app.py\" (shared deploy-cdk installs the deps)"
+                    EXIT_CODE=1
+                  else
+                    echo "⚠️  $CDK_DIR/cdk.json \"app\" points at a virtualenv interpreter (pre-existing; switch to \"python3 app.py\" when touching this demo)"
+                  fi
+                else
+                  echo "✅ cdk.json app command is platform-neutral"
+                fi
               fi
             fi
 
@@ -141,3 +180,49 @@ jobs:
           done
 
           exit $EXIT_CODE
+
+      - name: Check llms.txt catalog for changed demos
+        run: |
+          # PR-SCOPED catalog check: only enforce llms.txt for demos THIS PR
+          # touches, so a contributor is never blocked by pre-existing drift
+          # someone else introduced. Rules:
+          #   - a demo README added in this PR  -> must be listed in llms.txt
+          #   - a demo README removed in this PR -> must be delisted from llms.txt
+          # Repo-wide stale/missing sweeps are handled by a separate scheduled
+          # maintainer-notification job, not this contributor gate.
+          PILLARS="security cost-optimization operations-automation resilience observability"
+          PILLAR_RE="($(echo "$PILLARS" | tr ' ' '|'))"
+
+          # Demo README paths this PR added / deleted (two levels deep only).
+          ADDED=$(git diff --name-status --diff-filter=A origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
+          REMOVED=$(git diff --name-status --diff-filter=D origin/main...HEAD \
+            | awk '{print $2}' \
+            | grep -oE "^${PILLAR_RE}/[^/]+/README\.md$" | sort -u || true)
+
+          # Currently-catalogued demo links in llms.txt.
+          grep -oE "${PILLAR_RE}/[^)]+/README\.md" llms.txt | sort -u > /tmp/listed.txt
+
+          RC=0
+          for path in $ADDED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "✅ Added demo listed in llms.txt: $path"
+            else
+              echo "❌ Added demo not in llms.txt (add a catalog entry): $path"
+              RC=1
+            fi
+          done
+          for path in $REMOVED; do
+            if grep -qxF "$path" /tmp/listed.txt; then
+              echo "❌ Removed demo still in llms.txt (delete its catalog entry): $path"
+              RC=1
+            else
+              echo "✅ Removed demo delisted from llms.txt: $path"
+            fi
+          done
+
+          if [ -z "$ADDED$REMOVED" ]; then
+            echo "No demo README added or removed in this PR — llms.txt check skipped."
+          fi
+          exit $RC

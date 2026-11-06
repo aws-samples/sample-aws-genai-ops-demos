@@ -6,7 +6,7 @@ import json
 bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
 
 # Example 1: Using Prompt Router (DETECTED - Positive feedback)
-ROUTER_ARN = "arn:aws:bedrock:us-east-1:517675598740:prompt-router/z0e0g1c7y7za"
+ROUTER_ARN = "arn:aws:bedrock:us-east-1:123456789012:prompt-router/XXXXXXXXXXXX"
 
 def process_with_routing(prompt):
     """
@@ -89,7 +89,7 @@ def complex_task_no_routing(data):
 """
 {
   "type": "prompt_routing_detected",
-  "router_arn": "arn:aws:bedrock:us-east-1:517675598740:prompt-router/z0e0g1c7y7za",
+  "router_arn": "arn:aws:bedrock:us-east-1:123456789012:prompt-router/XXXXXXXXXXXX",
   "cost_consideration": "Prompt Routing is enabled. This automatically optimizes cost by routing simple prompts to cheaper models.",
   "best_practices": [
     "Monitor routing decisions via CloudWatch metrics",

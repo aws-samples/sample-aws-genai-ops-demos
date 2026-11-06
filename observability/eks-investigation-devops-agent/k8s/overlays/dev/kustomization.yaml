@@ -6,8 +6,10 @@ namespace: payment-demo
 resources:
   - ../../base
 
-commonLabels:
-  environment: dev
+labels:
+  - includeSelectors: true
+    pairs:
+      environment: dev
 
 # Reduce replicas for dev environment
 replicas:
