@@ -523,9 +523,28 @@ Rules:
   scanner-safe.
 
 If a genuine false positive still slips through (e.g. a test fixture that must contain
-a value-shaped string), record it in the repo-root `.secrets.baseline` **after
-auditing it** — do not silence it by disabling a detect-secrets plugin or excluding a
-path, which would blind the scanner to real secrets of that type going forward.
+a value-shaped string), audit it, then add `# pragma: allowlist secret` (or
+`// pragma: allowlist secret`) at the end of that line. Files that can't carry a
+comment (docs) get a rule + path entry under `global_settings.suppressions` in
+`.ash/.ash.yaml`, with a reason; never a line-number entry, which breaks when code
+moves. Do not silence it by disabling a detect-secrets plugin or excluding a path,
+which would blind the scanner to real secrets of that type going forward.
+
+#### Security scan and merge gate
+
+A PR can't merge if it adds a **new** high or critical finding (any scanner except
+Checkov) or a new secret; existing findings never block. Each one shows as an
+annotation on the changed line. Fix it, or add the scanner's inline comment with a
+reason:
+
+| Scanner | Comment |
+|---|---|
+| Bandit | `# nosec B310 - reason` |
+| detect-secrets | `# pragma: allowlist secret` |
+| Semgrep / Opengrep | `# nosemgrep: <full.rule.id>` (reason in a separate comment) |
+| Checkov | `# checkov:skip=CKV_AWS_116: reason` |
+
+Each comment silences its own scanner only. Reviewers check the reason in the diff.
 
 ### Cross-Account Compatibility
 - Must work in any AWS account without modification
@@ -626,7 +645,8 @@ Applies to any string a user sees: welcome bubbles, chat prompts, button labels,
 - Make multi-account the default, or require `cdk bootstrap` in member accounts
 - Put a tracking tag on Spoke/Org stacks
 - Write example secrets/webhooks in a real value shape (e.g. `hooks.slack.com/services/T00/B00/x`) — use an angle-bracket token like `<SLACK_WEBHOOK_URL>`
-- Silence a scanner false positive by disabling a detect-secrets plugin or excluding a path (blinds it to real secrets) — audit and add to `.secrets.baseline` instead
+- Silence a scanner false positive by disabling a detect-secrets plugin or excluding a path (blinds it to real secrets) — audit it and add an inline `pragma: allowlist secret` comment instead
+- Suppress a finding by line number in `.ash/.ash.yaml` (breaks as soon as code moves) — use an inline comment, or rule + path for docs
 - Write user-facing copy with exclamation marks, "click", directional words ("below"/"above"), or "please" (see Writing section)
 - Put emoji or Unicode glyphs (✓, ⚠, ⛔, 🔒, 🎉) in UI copy — use a Cloudscape `StatusIndicator` / `Icon` / `Alert` instead
 

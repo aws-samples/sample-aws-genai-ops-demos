@@ -318,7 +318,10 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
                     errors.append(f"Invalid item type: {type(item)}")
                     continue
                 
-                identifier = item.get('identifier', item.get('name', ''))
+                # `or`, not a .get() default: the model can return the key with a
+                # None value ({'identifier': None, 'name': 'Zeppelin notebook'}),
+                # and .get('identifier', fallback) would return None there.
+                identifier = item.get('identifier') or item.get('name') or ''
                 # Temporary safety net, not an architecture: when the LLM
                 # extraction emits neither 'identifier' nor 'name' but does give
                 # 'engine' + 'version', derive a key as "<engine-slug>-<version>"
@@ -330,8 +333,9 @@ def store_deprecation_data(service_name: str, items: list) -> dict:
                 # version catalog (DescribeServiceLifecycle), whose schema
                 # returns a stable 'version' identifier directly.
                 if not identifier:
-                    engine = str(item.get('engine', '')).strip().lower().replace(' ', '-')
-                    version = str(item.get('version', '')).strip()
+                    # Same None handling: str(None) would make the key 'none-None'.
+                    engine = str(item.get('engine') or '').strip().lower().replace(' ', '-')
+                    version = str(item.get('version') or '').strip()
                     if engine and version:
                         identifier = f"{engine}-{version}"
                 if not identifier:
