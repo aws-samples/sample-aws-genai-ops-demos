@@ -338,29 +338,29 @@ def console_url(service_key: str, region: str, res: Dict) -> str:
     base = f"https://{region}.console.aws.amazon.com"
     name, arn = res.get("name", ""), res.get("arn", "")
     q = quote(name, safe="")
-    if service_key == "lambda":
+    if service_key == "lambda":  # pragma: allowlist secret
         return f"{base}/lambda/home?region={region}#/functions/{q}"
     if service_key in ("rds", "aurora"):
         return f"{base}/rds/home?region={region}#database:id={q};is-cluster=false"
-    if service_key == "eks":
+    if service_key == "eks":  # pragma: allowlist secret
         return f"{base}/eks/home?region={region}#/clusters/{q}"
-    if service_key == "elasticache":
+    if service_key == "elasticache":  # pragma: allowlist secret
         engine = res.get("engine", "redis")
         return f"{base}/elasticache/home?region={region}#/{engine}/{q}"
-    if service_key == "opensearch":
+    if service_key == "opensearch":  # pragma: allowlist secret
         return f"{base}/aos/home?region={region}#opensearch/domains/{q}"
-    if service_key == "msk":
+    if service_key == "msk":  # pragma: allowlist secret
         return f"{base}/msk/home?region={region}#/cluster/{quote(arn, safe='')}/view"
-    if service_key == "documentdb":
+    if service_key == "documentdb":  # pragma: allowlist secret
         return f"{base}/docdb/home?region={region}#cluster-details/{q}"
-    if service_key == "neptune":
+    if service_key == "neptune":  # pragma: allowlist secret
         return f"{base}/neptune/home?region={region}#database:ids={q};is-cluster=true"
-    if service_key == "glue":
+    if service_key == "glue":  # pragma: allowlist secret
         return f"{base}/gluestudio/home?region={region}#/editor/job/{q}/details"
-    if service_key == "elasticbeanstalk":
+    if service_key == "elasticbeanstalk":  # pragma: allowlist secret
         env_id = res.get("environment_id", "")
         return f"{base}/elasticbeanstalk/home?region={region}#/environment/dashboard?environmentId={quote(env_id, safe='')}"
-    if service_key == "ec2":
+    if service_key == "ec2":  # pragma: allowlist secret
         return f"{base}/ec2/home?region={region}#InstanceDetails:instanceId={q}"
     return ""
 
@@ -447,7 +447,7 @@ def discover_lambda_functions(region: str = None, index: LifecycleIndex = None) 
         
         for runtime, functions in runtime_functions.items():
             items.append(build_inventory_item(
-                service_key="lambda",
+                service_key="lambda",  # pragma: allowlist secret
                 identifier=runtime,
                 display_name=f"Lambda {runtime} Runtime",
                 candidates=[runtime],
@@ -561,7 +561,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
                 # The minor's own end of standard support = the date RDS auto-upgrades
                 # this exact version to a newer minor. Kept per resource, not as the
                 # row's deadline (that one is the major's).
-                service_key = "aurora" if engine.startswith("aurora") else "rds"
+                service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
                 minor = index.lookup(service_key, [_rds_match_candidates(engine, version)[0]])
                 if minor and minor.get("end_of_support_date") not in (None, "", "N/A"):
                     resource["minor_version"] = version
@@ -570,7 +570,7 @@ def discover_rds_instances(region: str = None, index: LifecycleIndex = None) -> 
         
         for (engine, major), instances in engine_instances.items():
             # Aurora engines have their own extraction source/config key
-            service_key = "aurora" if engine.startswith("aurora") else "rds"
+            service_key = "aurora" if engine.startswith("aurora") else "rds"  # pragma: allowlist secret
             engine_key = f"{engine}-{major}"
             items.append(build_inventory_item(
                 service_key=service_key,
@@ -607,7 +607,7 @@ def discover_eks_clusters(region: str = None, index: LifecycleIndex = None) -> L
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="eks",
+                service_key="eks",  # pragma: allowlist secret
                 identifier=f"k8s-{version}",
                 display_name=f"Kubernetes {version}",
                 candidates=[version, f"k8s-{version}", f"eks-{version}"],
@@ -644,7 +644,7 @@ def discover_elasticache_clusters(region: str = None, index: LifecycleIndex = No
         
         for engine_key, clusters in engine_clusters.items():
             items.append(build_inventory_item(
-                service_key="elasticache",
+                service_key="elasticache",  # pragma: allowlist secret
                 identifier=engine_key,
                 display_name=f"ElastiCache {engine_key.replace('-', ' ').title()}",
                 candidates=[engine_key],
@@ -681,7 +681,7 @@ def discover_opensearch_domains(region: str = None, index: LifecycleIndex = None
         for version, domain_names in version_domains.items():
             bare_version = version.split("_")[-1] if "_" in version else version
             items.append(build_inventory_item(
-                service_key="opensearch",
+                service_key="opensearch",  # pragma: allowlist secret
                 identifier=version,
                 display_name=f"OpenSearch {version}",
                 candidates=[version, bare_version, f"opensearch-{bare_version}"],
@@ -719,7 +719,7 @@ def discover_msk_clusters(region: str = None, index: LifecycleIndex = None) -> L
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="msk",
+                service_key="msk",  # pragma: allowlist secret
                 identifier=f"kafka-{version}",
                 display_name=f"Apache Kafka {version}",
                 candidates=[f"kafka-{version}", version],
@@ -756,7 +756,7 @@ def discover_documentdb_clusters(region: str = None, index: LifecycleIndex = Non
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="documentdb",
+                service_key="documentdb",  # pragma: allowlist secret
                 identifier=f"docdb-{version}",
                 display_name=f"DocumentDB {version} (MongoDB compatibility)",
                 candidates=[f"docdb-{version}", f"documentdb-{version}", version],
@@ -793,7 +793,7 @@ def discover_neptune_clusters(region: str = None, index: LifecycleIndex = None) 
         
         for version, cluster_names in version_clusters.items():
             items.append(build_inventory_item(
-                service_key="neptune",
+                service_key="neptune",  # pragma: allowlist secret
                 identifier=f"neptune-{version}",
                 display_name=f"Neptune {version}",
                 candidates=[f"neptune-{version}", version],
@@ -830,7 +830,7 @@ def discover_glue_jobs(region: str = None, index: LifecycleIndex = None) -> List
         
         for version_key, job_names in version_jobs.items():
             items.append(build_inventory_item(
-                service_key="glue",
+                service_key="glue",  # pragma: allowlist secret
                 identifier=version_key,
                 display_name=f"Glue {version_key.replace('glue-', '')}",
                 candidates=[version_key, version_key.replace('glue-', '')],
@@ -883,7 +883,7 @@ def discover_beanstalk_environments(region: str = None, index: LifecycleIndex = 
         
         for platform_key, env_names in platform_envs.items():
             items.append(build_inventory_item(
-                service_key="elasticbeanstalk",
+                service_key="elasticbeanstalk",  # pragma: allowlist secret
                 identifier=platform_key,
                 display_name=f"Beanstalk {platform_key}",
                 candidates=[platform_key, platform_key.replace('-', ' ')],
@@ -932,7 +932,7 @@ def discover_ec2_instances(region: str = None, index: LifecycleIndex = None) -> 
             if family not in EC2_PREVIOUS_GENERATION_FAMILIES:
                 continue
             items.append(build_inventory_item(
-                service_key="ec2",
+                service_key="ec2",  # pragma: allowlist secret
                 identifier=family,
                 display_name=f"EC2 {family.upper()} Instance Family",
                 candidates=[family, f"ec2-{family}"],

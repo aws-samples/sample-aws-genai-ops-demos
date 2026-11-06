@@ -87,7 +87,7 @@ describe('CDK-managed DevOps Agent onboarding', () => {
       region: 'us-east-1',
       agentRegion: 'us-east-1',
       webhookUrl: 'https://example.com/webhook',
-      webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-AbCdEf',
+      webhookSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-AbCdEf',  // pragma: allowlist secret
     };
 
     expect(Object.keys(context)).toContain('webhookSecretArn');

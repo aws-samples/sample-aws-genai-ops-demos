@@ -367,7 +367,7 @@ def test_end_to_end(tmpdir: Path) -> None:
     # The core claim: a wrong password returns HTTP 200 with a null token. A
     # status-code-only assertion calls that success; ours must not.
     broken = copy.deepcopy(spec)
-    broken["variables"]["LOGIN_PASSWORD"] = "wrong"
+    broken["variables"]["LOGIN_PASSWORD"] = "wrong"  # pragma: allowlist secret
     rc, output = run_validator(broken, tmpdir, "badlogin")
     check(rc != 0, "HTTP 200 login failure is detected as a failure")
     check(

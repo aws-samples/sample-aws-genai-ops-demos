@@ -355,7 +355,7 @@ $demoEmail = "admin@example.com"
 # credential in the repo. Cognito's default policy requires >=8 chars with upper,
 # lower, digit, and symbol, so we guarantee one of each and add random entropy.
 $demoRandom = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
-$demoPassword = "Demo$demoRandom!9"
+$demoPassword = "Demo$demoRandom!9"  # pragma: allowlist secret
 
 # admin-create-user: allow re-runs on an existing user (UsernameExistsException),
 # but surface any other error rather than silently continuing to a

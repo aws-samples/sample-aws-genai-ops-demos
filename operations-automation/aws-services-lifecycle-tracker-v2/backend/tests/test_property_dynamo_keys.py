@@ -55,7 +55,7 @@ def generate_dynamo_record(service_name: str, schema_key: str, item: dict) -> Op
 # Strategy for non-empty service names (alphanumeric + hyphens/underscores)
 service_name_strategy = st.text(
     alphabet=st.sampled_from(
-        "abcdefghijklmnopqrstuvwxyz0123456789-_"
+        "abcdefghijklmnopqrstuvwxyz0123456789-_"  # pragma: allowlist secret
     ),
     min_size=1,
     max_size=50,
@@ -64,7 +64,7 @@ service_name_strategy = st.text(
 # Strategy for schema_key (typically short identifiers like "runtimes", "versions")
 schema_key_strategy = st.text(
     alphabet=st.sampled_from(
-        "abcdefghijklmnopqrstuvwxyz_"
+        "abcdefghijklmnopqrstuvwxyz_"  # pragma: allowlist secret
     ),
     min_size=1,
     max_size=30,

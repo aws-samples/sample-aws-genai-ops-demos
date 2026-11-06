@@ -25,7 +25,7 @@ import {
 } from './jwt-utils';
 
 // Test secret for JWT signing (only for testing)
-const TEST_SECRET = 'test-secret-key-for-property-testing-only';
+const TEST_SECRET = 'test-secret-key-for-property-testing-only';  // pragma: allowlist secret
 
 // Arbitrary generators for test data
 const userIdArb = fc.uuid();

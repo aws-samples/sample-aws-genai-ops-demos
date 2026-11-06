@@ -55,7 +55,7 @@ class FakeStsClient:
         return {
             "Credentials": {
                 "AccessKeyId": "FAKEKEY",
-                "SecretAccessKey": "FAKESECRET",
+                "SecretAccessKey": "FAKESECRET",  # pragma: allowlist secret
                 "SessionToken": "FAKETOKEN",
             }
         }

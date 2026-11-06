@@ -107,7 +107,7 @@ class TestBuildInventoryItem:
     def test_unified_shape_with_match(self):
         index = _index_with_rows(EKS_ROWS)
         item = ad.build_inventory_item(
-            service_key="eks", identifier="k8s-1.31", display_name="Kubernetes 1.31",
+            service_key="eks", identifier="k8s-1.31", display_name="Kubernetes 1.31",  # pragma: allowlist secret
             candidates=["1.31"], affected_resources="cluster-a", total_affected=1,
             source_url="https://example", index=index)
         assert item["service_name"] == "eks"                      # config key, not display name
@@ -120,7 +120,7 @@ class TestBuildInventoryItem:
     def test_unknown_fallback_when_unmatched(self):
         index = _index_with_rows(EKS_ROWS)
         item = ad.build_inventory_item(
-            service_key="eks", identifier="k8s-9.99", display_name="Kubernetes 9.99",
+            service_key="eks", identifier="k8s-9.99", display_name="Kubernetes 9.99",  # pragma: allowlist secret
             candidates=["9.99"], affected_resources="x", total_affected=1,
             source_url="https://example", index=index)
         assert item["status"] == "unknown"
@@ -129,7 +129,7 @@ class TestBuildInventoryItem:
     def test_custom_fallback_status_for_ec2(self):
         index = _index_with_rows([])
         item = ad.build_inventory_item(
-            service_key="ec2", identifier="m1", display_name="EC2 M1 Instance Family",
+            service_key="ec2", identifier="m1", display_name="EC2 M1 Instance Family",  # pragma: allowlist secret
             candidates=["m1"], affected_resources="i-123", total_affected=1,
             source_url="https://example", index=index, fallback_status="deprecated")
         assert item["status"] == "deprecated"
