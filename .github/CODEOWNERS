@@ -19,6 +19,7 @@
 /resilience/ai-chaos-engineering-with-fis/                             @benlec @bquintas @emenguy
 /resilience/ai-load-test-generation-with-dlt/                          @OHsechun @hunmini @bquintas @benlec @emenguy
 /resilience/fsx-windows-sla-review-devops-agent/                       @benlec @bquintas @emenguy
+/resilience/well-architected-agent-review/                             @stefano92 @fabbio80 @bquintas @benlec @emenguy
 /security/ai-iam-access-analyzer-assistant/                            @jgq-amazon @bquintas @benlec @emenguy
 /security/ai-incident-response-playbook-builder/                       @Dakum11 @bquintas @benlec @emenguy
 /security/ai-permission-boundary-generator/                            @otymix @bquintas @benlec @emenguy

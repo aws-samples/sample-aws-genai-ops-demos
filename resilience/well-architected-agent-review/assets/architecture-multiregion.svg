@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1100" height="680" viewBox="0 0 1100 680" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Well-Architected Agent Demo (multi-region) - Architecture</title>
+  <desc>AWS CDK demo: active/active web app in us-east-1 and us-west-2. Each region has a 2-AZ VPC with no NAT gateway, an internet-facing ALB restricted to an admin CIDR, an Auto Scaling group in private subnets (deliberately confined to one AZ in the primary Region, fixed at one instance in the secondary), and VPC endpoints. A DynamoDB global table replicates between the regions; a CloudWatch dashboard in us-east-1 shows both.</desc>
+
+  <defs>
+    <!-- Official AWS Architecture Icons (q3-2021 set) for EC2, VPC and IAM, one namespaced gradient per icon. -->
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-ec2"><stop stop-color="#C8511B" offset="0%"/><stop stop-color="#FF9900" offset="100%"/></linearGradient>
+    <symbol id="ic-ec2" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-ec2)"/>
+      <path fill="#FFF" d="M27,53 L52,53 L52,28 L27,28 L27,53 Z M54,28 L58,28 L58,30 L54,30 L54,34 L58,34 L58,36 L54,36 L54,39 L58,39 L58,41 L54,41 L54,45 L58,45 L58,47 L54,47 L54,51 L58,51 L58,53 L54,53 L54,53.136 C54,54.164 53.164,55 52.136,55 L52,55 L52,59 L50,59 L50,55 L46,55 L46,59 L44,59 L44,55 L41,55 L41,59 L39,59 L39,55 L35,55 L35,59 L33,59 L33,55 L29,55 L29,59 L27,59 L27,55 L26.864,55 C25.836,55 25,54.164 25,53.136 L25,53 L22,53 L22,51 L25,51 L25,47 L22,47 L22,45 L25,45 L25,41 L22,41 L22,39 L25,39 L25,36 L22,36 L22,34 L25,34 L25,30 L22,30 L22,28 L25,28 L25,27.864 C25,26.836 25.836,26 26.864,26 L27,26 L27,22 L29,22 L29,26 L33,26 L33,22 L35,22 L35,26 L39,26 L39,22 L41,22 L41,26 L44,26 L44,22 L46,22 L46,26 L50,26 L50,22 L52,22 L52,26 L52.136,26 C53.164,26 54,26.836 54,27.864 L54,28 Z M41,65.876 C41,65.944 40.944,66 40.876,66 L14.124,66 C14.056,66 14,65.944 14,65.876 L14,39.124 C14,39.056 14.056,39 14.124,39 L20,39 L20,37 L14.124,37 C12.953,37 12,37.953 12,39.124 L12,65.876 C12,67.047 12.953,68 14.124,68 L40.876,68 C42.047,68 43,67.047 43,65.876 L43,61 L41,61 L41,65.876 Z M68,14.124 L68,40.876 C68,42.047 67.047,43 65.876,43 L60,43 L60,41 L65.876,41 C65.944,41 66,40.944 66,40.876 L66,14.124 C66,14.056 65.944,14 65.876,14 L39.124,14 C39.056,14 39,14.056 39,14.124 L39,20 L37,20 L37,14.124 C37,12.953 37.953,12 39.124,12 L65.876,12 C67.047,12 68,12.953 68,14.124 L68,14.124 Z"/>
+    </symbol>
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-vpc"><stop stop-color="#4D27A8" offset="0%"/><stop stop-color="#A166FF" offset="100%"/></linearGradient>
+    <symbol id="ic-vpc" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-vpc)"/>
+      <path fill="#FFF" d="M61,41.3717025 L55.5,39.1717025 L55.5,59.1227025 C57.106,58.9627025 58.401,58.4347025 59.321,57.5007025 C61.021,55.7727025 61.001,53.2397025 61,53.2147025 L61,41.3717025 Z M53.5,59.1357025 L53.5,39.1717025 L48,41.3717025 L48,53.1947025 C48.007,53.4017025 48.234,58.5517025 53.5,59.1357025 L53.5,59.1357025 Z M63,53.1947025 C63.003,53.3077025 63.053,56.5417025 60.765,58.8847025 C59.269,60.4177025 57.16,61.1947025 54.5,61.1947025 C47.927,61.1947025 46.065,55.9767025 46,53.2187025 L46,40.6947025 C46,40.2857025 46.249,39.9177025 46.629,39.7657025 L54.129,36.7657025 C54.367,36.6707025 54.633,36.6707025 54.871,36.7657025 L62.371,39.7657025 C62.751,39.9177025 63,40.2857025 63,40.6947025 L63,53.1947025 Z M66.001,51.2287025 L66,37.8717025 L54.5,33.2717025 L43,37.8717025 L43,51.1947025 C42.998,51.2857025 42.865,57.4227025 46.534,61.1987025 C48.466,63.1867025 51.146,64.1947025 54.5,64.1947025 C57.877,64.1947025 60.57,63.1797025 62.504,61.1787025 C66.168,57.3867025 66.003,51.2897025 66.001,51.2287025 L66.001,51.2287025 Z M63.942,62.5677025 C61.617,64.9747025 58.44,66.1947025 54.5,66.1947025 C50.579,66.1947025 47.413,64.9787025 45.09,62.5807025 C40.831,58.1877025 40.991,51.4477025 41,51.1637025 L41,37.1947025 C41,36.7857025 41.249,36.4177025 41.629,36.2657025 L54.129,31.2657025 C54.367,31.1707025 54.633,31.1707025 54.871,31.2657025 L67.371,36.2657025 C67.751,36.4177025 68,36.7857025 68,37.1947025 L68,51.1947025 C68.009,51.4447025 68.189,58.1727025 63.942,62.5677025 L63.942,62.5677025 Z M23.055,47.1947025 L38,47.1947025 L38,49.1947025 L23.055,49.1947025 C16.977,49.1947025 12.337,45.1427025 12.024,39.5597025 C12.002,39.3317025 12,39.0657025 12,38.7997025 C12,31.9307025 16.803,29.4017025 19.604,28.5117025 C19.584,28.1907025 19.574,27.8657025 19.574,27.5387025 C19.574,22.0857025 23.464,16.3807025 28.621,14.2687025 C34.677,11.7887025 41.062,12.9897025 45.695,17.4757025 C47.256,18.9967025 48.446,20.6207025 49.307,22.4097025 C50.513,21.3747025 51.969,20.8187025 53.529,20.8187025 C56.834,20.8187025 60.33,23.4127025 60.931,28.3817025 C63.114,28.9317025 65.854,30.0997025 67.788,32.5797025 L66.212,33.8097025 C64.43,31.5237025 61.741,30.5717025 59.8,30.1737025 C59.355,30.0837025 59.028,29.7057025 59.002,29.2537025 C58.741,24.8327025 55.982,22.8187025 53.529,22.8187025 C52.067,22.8187025 50.771,23.5087025 49.78,24.8137025 C49.559,25.1057025 49.199,25.2567025 48.835,25.1987025 C48.474,25.1437025 48.17,24.8967025 48.045,24.5537025 C47.278,22.4637025 46.054,20.6177025 44.302,18.9107025 C40.258,14.9967025 34.676,13.9517025 29.379,16.1197025 C24.93,17.9417025 21.574,22.8507025 21.574,27.5387025 C21.574,28.0797025 21.605,28.6147025 21.668,29.1277025 C21.729,29.6287025 21.405,30.0967025 20.915,30.2187025 C18.333,30.8577025 14,32.8237025 14,38.7997025 C14,39.0017025 13.998,39.2047025 14.018,39.4077025 C14.272,43.9357025 18.072,47.1947025 23.055,47.1947025 L23.055,47.1947025 Z"/>
+    </symbol>
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-iam"><stop stop-color="#BD0816" offset="0%"/><stop stop-color="#FF5252" offset="100%"/></linearGradient>
+    <symbol id="ic-iam" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-iam)"/>
+      <path fill="#FFF" d="M14,59 L66,59 L66,21 L14,21 L14,59 Z M68,20 L68,60 C68,60.552 67.553,61 67,61 L13,61 C12.447,61 12,60.552 12,60 L12,20 C12,19.448 12.447,19 13,19 L67,19 C67.553,19 68,19.448 68,20 L68,20 Z M44,48 L59,48 L59,46 L44,46 L44,48 Z M57,42 L62,42 L62,40 L57,40 L57,42 Z M44,42 L52,42 L52,40 L44,40 L44,42 Z M29,46 C29,45.449 28.552,45 28,45 C27.448,45 27,45.449 27,46 C27,46.551 27.448,47 28,47 C28.552,47 29,46.551 29,46 L29,46 Z M31,46 C31,47.302 30.161,48.401 29,48.816 L29,51 L27,51 L27,48.815 C25.839,48.401 25,47.302 25,46 C25,44.346 26.346,43 28,43 C29.654,43 31,44.346 31,46 L31,46 Z M19,53.993 L36.994,54 L36.996,50 L33,50 L33,48 L36.996,48 L36.998,45 L33,45 L33,43 L36.999,43 L37,40.007 L19.006,40 L19,53.993 Z M22,38.001 L34,38.006 L34,31 C34.001,28.697 31.197,26.677 28,26.675 L27.996,26.675 C24.804,26.675 22.004,28.696 22.002,31 L22,38.001 Z M17,54.992 L17.006,39 C17.006,38.734 17.111,38.48 17.299,38.292 C17.486,38.105 17.741,38 18.006,38 L20,38.001 L20.002,31 C20.004,27.512 23.59,24.675 27.996,24.675 L28,24.675 C32.412,24.677 36.001,27.515 36,31 L36,38.007 L38,38.008 C38.553,38.008 39,38.456 39,39.008 L38.994,55 C38.994,55.266 38.889,55.52 38.701,55.708 C38.514,55.895 38.259,56 37.994,56 L18,55.992 C17.447,55.992 17,55.544 17,54.992 L17,54.992 Z M60,36 L62,36 L62,34 L60,34 L60,36 Z M44,36 L55,36 L55,34 L44,34 L44,36 Z"/>
+    </symbol>
+
+    <!-- Simplified glyphs in the AWS category colors (Networking, Database, Management). -->
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-alb"><stop stop-color="#4D27A8" offset="0%"/><stop stop-color="#A166FF" offset="100%"/></linearGradient>
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-ddb"><stop stop-color="#2E27AD" offset="0%"/><stop stop-color="#527FFF" offset="100%"/></linearGradient>
+    <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="g-cw"><stop stop-color="#B0084D" offset="0%"/><stop stop-color="#FF4F8B" offset="100%"/></linearGradient>
+
+    <symbol id="ic-alb" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-alb)"/>
+      <g fill="none" stroke="#FFF" stroke-width="3">
+        <circle cx="26" cy="40" r="9"/>
+        <path d="M35,40 L54,22 M35,40 L54,40 M35,40 L54,58"/>
+        <circle cx="59" cy="22" r="5"/><circle cx="59" cy="40" r="5"/><circle cx="59" cy="58" r="5"/>
+        <path d="M8,40 L17,40"/>
+      </g>
+    </symbol>
+
+    <symbol id="ic-ddb" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-ddb)"/>
+      <g fill="none" stroke="#FFF" stroke-width="3">
+        <ellipse cx="40" cy="22" rx="20" ry="7"/>
+        <path d="M20,22 L20,58 C20,62 29,65 40,65 C51,65 60,62 60,58 L60,22"/>
+        <path d="M20,34 C20,38 29,41 40,41 C51,41 60,38 60,34"/>
+        <path d="M20,46 C20,50 29,53 40,53 C51,53 60,50 60,46"/>
+      </g>
+    </symbol>
+
+    <symbol id="ic-cw" viewBox="0 0 80 80">
+      <rect width="80" height="80" fill="url(#g-cw)"/>
+      <g fill="none" stroke="#FFF" stroke-width="3">
+        <rect x="14" y="16" width="52" height="44" rx="2"/>
+        <path d="M20,50 L32,36 L42,44 L58,26"/>
+        <path d="M30,66 L50,66"/>
+      </g>
+    </symbol>
+
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5a6b7b"/>
+    </marker>
+  </defs>
+
+  <style>
+    .lbl   { font-size: 13px; fill: #232f3e; }
+    .sub   { font-size: 10.5px; fill: #5a6b7b; }
+    .edge  { stroke: #5a6b7b; stroke-width: 1.6; fill: none; }
+    .grp   { fill: none; stroke-width: 1.5; }
+    .grptitle { font-size: 12px; font-weight: 600; }
+  </style>
+
+  <rect width="1100" height="680" fill="#ffffff"/>
+  <text x="24" y="34" font-size="18" font-weight="700" fill="#232f3e">Well-Architected Agent Demo (multi-region) — Architecture</text>
+
+  <!-- Admin actor and optional DNS -->
+  <use href="#ic-iam" x="526" y="52" width="48" height="48"/>
+  <text class="sub" x="584" y="74" fill="#DD3F5B">Admin (adminCidr)</text>
+  <text class="sub" x="584" y="88">HTTP 80 / HTTPS 443</text>
+  <rect class="grp" x="410" y="118" width="280" height="40" rx="6" stroke="#8C4FFF" stroke-dasharray="4 3"/>
+  <text class="lbl" x="550" y="135" text-anchor="middle" font-weight="600">Route 53 DNS (optional)</text>
+  <text class="sub" x="550" y="150" text-anchor="middle">records and health checks configured manually</text>
+  <path class="edge" d="M550,100 L550,116" marker-end="url(#arrow)"/>
+
+  <!-- CloudWatch dashboard (primary region, metrics from both) -->
+  <use href="#ic-cw" x="24" y="56" width="44" height="44"/>
+  <text class="lbl" x="78" y="74" font-weight="600">CloudWatch dashboard</text>
+  <text class="sub" x="78" y="90">in us-east-1, ALB metrics from both regions</text>
+
+  <!-- ===================== Primary region ===================== -->
+  <rect class="grp" x="24" y="190" width="516" height="466" rx="8" stroke="#232f3e" stroke-dasharray="2 3"/>
+  <text class="grptitle" x="40" y="212" fill="#232f3e">AWS Region · us-east-1 (primary)</text>
+
+  <rect class="grp" x="40" y="226" width="484" height="314" rx="8" stroke="#8C4FFF"/>
+  <text class="grptitle" x="56" y="246" fill="#8C4FFF">VPC 10.0.0.0/16 · no NAT gateway</text>
+  <use href="#ic-vpc" x="486" y="232" width="30" height="30"/>
+
+  <rect class="grp" x="56" y="266" width="220" height="86" rx="6" stroke="#4CA2E8" stroke-dasharray="4 3"/>
+  <text class="sub" x="66" y="282" fill="#2d7fc0">Public Subnet · AZ-a</text>
+  <rect class="grp" x="288" y="266" width="220" height="86" rx="6" stroke="#4CA2E8" stroke-dasharray="4 3"/>
+  <text class="sub" x="298" y="282" fill="#2d7fc0">Public Subnet · AZ-b</text>
+  <use href="#ic-alb" x="254" y="286" width="56" height="56"/>
+  <text class="lbl" x="318" y="312" font-weight="600">ALB</text>
+  <text class="sub" x="318" y="326">internet-facing, zonal shift</text>
+
+  <rect class="grp" x="56" y="370" width="220" height="124" rx="6" stroke="#7AA116" stroke-dasharray="4 3"/>
+  <text class="sub" x="66" y="386" fill="#5f7d10">Private Subnet · AZ-a</text>
+  <rect class="grp" x="288" y="370" width="220" height="124" rx="6" stroke="#7AA116" stroke-dasharray="4 3"/>
+  <text class="sub" x="298" y="386" fill="#5f7d10">Private Subnet · AZ-b</text>
+  <rect class="grp" x="66" y="396" width="200" height="88" rx="6" stroke="#ED7100" stroke-dasharray="6 3"/>
+  <use href="#ic-ec2" x="88" y="404" width="52" height="52"/>
+  <use href="#ic-ec2" x="176" y="404" width="52" height="52"/>
+  <text class="sub" x="76" y="476" fill="#ED7100">Auto Scaling group · EC2 t3.micro x2</text>
+  <text class="sub" x="398" y="426" text-anchor="middle" style="fill:#D13212" font-weight="600">No web instances in this AZ</text>
+  <text class="sub" x="398" y="442" text-anchor="middle" style="fill:#D13212">WA-ANTIPATTERN: zonal SPOF,</text>
+  <text class="sub" x="398" y="456" text-anchor="middle" style="fill:#D13212">zonal shift has nowhere to go</text>
+
+  <text class="sub" x="56" y="512">Gateway endpoints: S3, DynamoDB</text>
+  <text class="sub" x="56" y="527">Interface endpoints: SSM, SSM Messages, EC2 Messages (Session Manager)</text>
+
+  <use href="#ic-ddb" x="40" y="562" width="56" height="56"/>
+  <text class="lbl" x="106" y="584" font-weight="600">DynamoDB global table</text>
+  <text class="sub" x="106" y="600">replica · on-demand · PITR</text>
+
+  <!-- ===================== Secondary region ===================== -->
+  <rect class="grp" x="560" y="190" width="516" height="466" rx="8" stroke="#232f3e" stroke-dasharray="2 3"/>
+  <text class="grptitle" x="576" y="212" fill="#232f3e">AWS Region · us-west-2 (secondary)</text>
+
+  <rect class="grp" x="576" y="226" width="484" height="314" rx="8" stroke="#8C4FFF"/>
+  <text class="grptitle" x="592" y="246" fill="#8C4FFF">VPC 10.1.0.0/16 · no NAT gateway</text>
+  <use href="#ic-vpc" x="1022" y="232" width="30" height="30"/>
+
+  <rect class="grp" x="592" y="266" width="220" height="86" rx="6" stroke="#4CA2E8" stroke-dasharray="4 3"/>
+  <text class="sub" x="602" y="282" fill="#2d7fc0">Public Subnet · AZ-a</text>
+  <rect class="grp" x="824" y="266" width="220" height="86" rx="6" stroke="#4CA2E8" stroke-dasharray="4 3"/>
+  <text class="sub" x="834" y="282" fill="#2d7fc0">Public Subnet · AZ-b</text>
+  <use href="#ic-alb" x="790" y="286" width="56" height="56"/>
+  <text class="lbl" x="854" y="312" font-weight="600">ALB</text>
+  <text class="sub" x="854" y="326">internet-facing, zonal shift</text>
+
+  <rect class="grp" x="592" y="370" width="220" height="124" rx="6" stroke="#7AA116" stroke-dasharray="4 3"/>
+  <text class="sub" x="602" y="386" fill="#5f7d10">Private Subnet · AZ-a</text>
+  <rect class="grp" x="824" y="370" width="220" height="124" rx="6" stroke="#7AA116" stroke-dasharray="4 3"/>
+  <text class="sub" x="834" y="386" fill="#5f7d10">Private Subnet · AZ-b</text>
+  <rect class="grp" x="646" y="396" width="344" height="88" rx="6" stroke="#ED7100" stroke-dasharray="6 3"/>
+  <use href="#ic-ec2" x="676" y="404" width="52" height="52"/>
+  <text class="sub" x="660" y="468" fill="#ED7100">Auto Scaling group</text>
+  <text class="sub" x="660" y="480" fill="#ED7100">EC2 t3.micro x1</text>
+  <text class="sub" x="908" y="426" text-anchor="middle" style="fill:#D13212" font-weight="600">Fixed: min = max = 1</text>
+  <text class="sub" x="908" y="442" text-anchor="middle" style="fill:#D13212">WA-ANTIPATTERN: cannot absorb</text>
+  <text class="sub" x="908" y="456" text-anchor="middle" style="fill:#D13212">the primary's traffic on failover</text>
+
+  <text class="sub" x="592" y="512">Gateway endpoints: S3, DynamoDB</text>
+  <text class="sub" x="592" y="527">Interface endpoints: SSM, SSM Messages, EC2 Messages (Session Manager)</text>
+
+  <use href="#ic-ddb" x="576" y="562" width="56" height="56"/>
+  <text class="lbl" x="642" y="584" font-weight="600">DynamoDB global table</text>
+  <text class="sub" x="642" y="600">replica · on-demand · PITR</text>
+
+  <!-- ===================== Edges ===================== -->
+  <!-- DNS -> ALBs -->
+  <path class="edge" d="M430,158 C380,200 300,230 282,284" marker-end="url(#arrow)"/>
+  <path class="edge" d="M670,158 C720,200 800,230 818,284" marker-end="url(#arrow)"/>
+  <!-- ALB -> ASG (HTTP 80, security group reference) -->
+  <path class="edge" d="M282,344 L282,361 L252,361 L252,394" marker-end="url(#arrow)"/>
+  <path class="edge" d="M818,344 L818,394" marker-end="url(#arrow)"/>
+  <!-- Web tier -> local DynamoDB replica via gateway endpoint -->
+  <path class="edge" d="M88,430 L48,430 L48,560" marker-end="url(#arrow)"/>
+  <path class="edge" d="M676,430 L584,430 L584,560" marker-end="url(#arrow)"/>
+  <!-- Bidirectional global table replication -->
+  <path class="edge" d="M300,592 L574,592" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="sub" x="437" y="584" text-anchor="middle">active/active replication</text>
+</svg>
