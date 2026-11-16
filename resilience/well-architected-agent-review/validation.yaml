@@ -1,27 +1,42 @@
 # Demo validation contract (see contributor-guide.md, "Demo Validation").
-# Validates the default variant (single). The multi-region variant is deployed
-# with `./deploy-all.sh --variant multi` (see README) and is not part of this
-# contract, because the schema carries one deploy command and one region.
+# Validates the default application (single) with the shared agent profile. The
+# multi-region application is deployed with `./deploy-all.sh --variant multi` (see
+# README) and is not part of this contract, because the schema carries one deploy
+# command and one region.
 
+# Deploys the shared profile, then the single application and its context.
 deploy_command: ["./deploy-all.sh"]
 
-# The demo's own script destroys the stack through the shared deploy-cdk script.
-destroy_command: ["./deploy-all.sh", "--destroy"]
+# Removes the application (context, then workload), then the shared profile, which
+# the application destroy keeps on purpose. Both steps go through the shared
+# deploy-cdk script; the profile step refuses while an application is registered.
+destroy_command: ["bash", "-c", "./deploy-all.sh --destroy && ./deploy-all.sh --variant profile --destroy"]
 destroy_subdir: "."
 
-# Region-suffixed stack ID produced by infrastructure/cdk/bin/app.ts (variant single).
-stacks: ["WellArchitectedAgentReviewStack-us-east-1"]
+# Region-suffixed stack IDs produced by infrastructure/cdk/bin/app.ts (variant single,
+# profile in the same Region).
+stacks:
+  - "WellArchitectedAgentReviewProfile-us-east-1"
+  - "WellArchitectedAgentReviewStack-us-east-1"
+  - "WellArchitectedAgentReviewSingleContext-us-east-1"
 
 region: "us-east-1"
 
 verify: deterministic
 
 notes: >
-  Single-region variant (default): one stack with the deliberately non-optimized
-  workload and the Well-Architected Agent profile. The agent requires a Business+ (or
-  higher) Support plan in the test account and can only be hosted in us-east-1,
-  us-east-2 or us-west-2. Recommendations take 24-48 hours, so CI can only check deploy
-  and destroy. The admin CIDR defaults to the runner's public IPv4 (/32). To validate
-  the multi-region variant by hand: ./deploy-all.sh --variant multi, then
-  ./deploy-all.sh --variant multi --destroy (stacks WellArchitectedAgentReviewMultiPrimary-us-east-1,
-  WellArchitectedAgentReviewMultiSecondary-us-west-2, WellArchitectedAgentReviewMultiDashboard-us-east-1).
+  Three stacks: the shared Well-Architected Agent profile (main stack, adoption
+  tracking), the deliberately non-optimized single-region workload, and the context
+  stack that registers it in the profile. The agent requires a Business+ (or higher)
+  Support plan in the test account, and ec2:DescribeRegions (the profile scans every
+  enabled Region). us-east-1 can host the profile; in a Region that cannot, set
+  WA_AGENT_REGION and the profile and context stacks go there (the shared prerequisites
+  check names the hosting Regions). Recommendations take hours (up to 48), so CI can only
+  check deploy and destroy. The admin CIDR defaults to the runner's public IPv4 (/32).
+  To validate the multi-region application by hand: ./deploy-all.sh --variant multi,
+  then ./deploy-all.sh --variant multi --destroy and ./deploy-all.sh --variant profile
+  --destroy (stacks WellArchitectedAgentReviewMultiPrimary-us-east-1,
+  WellArchitectedAgentReviewMultiSecondary-us-east-2,
+  WellArchitectedAgentReviewMultiDashboard-us-east-1,
+  WellArchitectedAgentReviewMultiContext-us-east-1; the secondary Region is chosen by
+  the script and read back from the primary stack on destroy).

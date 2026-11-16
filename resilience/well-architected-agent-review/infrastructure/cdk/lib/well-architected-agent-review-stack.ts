@@ -4,44 +4,29 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { addWellArchitectedAgent, assertAgentProfileRegion, WaAgentGoal } from './wa-agent';
+import { WaApplicationContext } from './wa-agent';
 import { lockProviderLogGroup } from './cdk-log-groups';
 
 /** Tag that marks every resource of this application for the agent's context. */
 const PROJECT_TAG = 'well-architected-agent-review';
 
 /**
- * Goals of the single-region variant, one per pillar the agent analyzes
- * (Operational Excellence and Sustainability are not in scope for the agent).
+ * How the single-region application registers in the shared agent profile
+ * (WaApplicationContextStack, deployed in the profile Region). The declared
+ * requirements intentionally contradict what is deployed, so the agent can flag
+ * the gap between the stated objectives and the actual architecture.
  */
-const WA_AGENT_GOALS: WaAgentGoal[] = [
-  {
-    pillar: 'RESILIENCE',
-    title:
-      'Meet the declared RPO of 5 minutes and RTO of 2 hours by removing single points of failure',
-    description:
-      'Run the database and the application tier across at least two Availability Zones, enable automated backups with point-in-time recovery, and regularly test recovery so that the declared RPO and RTO are achievable.',
-  },
-  {
-    pillar: 'SECURITY',
-    title:
-      'Enforce least-privilege access and encryption of all workload data at rest and in transit',
-    description:
-      'Replace broad administrative permissions with scoped roles, encrypt every data store, require TLS for all data access, and keep the data tier out of public subnets.',
-  },
-  {
-    pillar: 'COST_OPTIMIZATION',
-    title: 'Reduce compute spend by at least 30% by rightsizing over-provisioned resources',
-    description:
-      'Align instance types and capacity with observed utilization, and remove idle or oversized capacity without lowering the resilience targets.',
-  },
-  {
-    pillar: 'PERFORMANCE',
-    title: 'Scale the web tier automatically to sustain peak load without manual intervention',
-    description:
-      'Replace manually sized capacity with elastic scaling behind a load balancer, so that response times stay stable as traffic grows.',
-  },
-];
+export function singleRegionApplicationContext(workloadRegion: string): WaApplicationContext {
+  return {
+    projectTag: PROJECT_TAG,
+    regions: [workloadRegion],
+    title: 'Well-Architected Agent demo web application',
+    applicationOverview: 'Customer-facing web application with a MySQL database and an S3 asset store.',
+    architectureOverview:
+      'Single EC2 web instance, single RDS MySQL instance, S3 asset bucket, credentials in Secrets Manager.',
+    additionalContext: 'Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place',
+  };
+}
 
 /**
  * WellArchitectedAgentReviewStack
@@ -70,10 +55,6 @@ export class WellArchitectedAgentReviewStack extends cdk.Stack {
     //    selected for the Well-Architected Agent.
     // -----------------------------------------------------------------------
     cdk.Tags.of(this).add('project', PROJECT_TAG);
-
-    // The agent profile below can only be created in a few Regions. Fail the synth
-    // with a clear message instead of failing halfway through a deployment.
-    assertAgentProfileRegion(this.region);
 
     // -----------------------------------------------------------------------
     // Networking
@@ -245,27 +226,8 @@ export class WellArchitectedAgentReviewStack extends cdk.Stack {
       'AutoDeleteObjectsLogGroup',
     );
 
-    // =======================================================================
-    // Well-Architected Agent (shared with the multi-region variant, see
-    // lib/wa-agent.ts). Configured correctly: no WA-ANTIPATTERN.
-    // =======================================================================
-    // Also emits the AgentProfileArn output.
-    addWellArchitectedAgent(this, {
-      projectTag: PROJECT_TAG,
-      roleNamePrefix: 'WAAgent',
-      displayName: 'Well-Architected Agent Review',
-      description: 'Reviews the deliberately non-optimized demo workload in this stack',
-      regions: [this.region],
-      goals: WA_AGENT_GOALS,
-      context: {
-        title: 'Well-Architected Agent demo web application',
-        applicationOverview:
-          'Customer-facing web application with a MySQL database and an S3 asset store.',
-        architectureOverview:
-          'Single EC2 web instance, single RDS MySQL instance, S3 asset bucket, credentials in Secrets Manager.',
-        additionalContext: 'Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place',
-      },
-    });
+    // The Well-Architected Agent is not part of this stack: the shared profile
+    // stack and this application's context stack (lib/wa-agent.ts) review it.
 
     // -----------------------------------------------------------------------
     // Outputs

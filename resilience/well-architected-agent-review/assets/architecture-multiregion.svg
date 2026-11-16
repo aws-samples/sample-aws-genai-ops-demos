@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1100" height="680" viewBox="0 0 1100 680" font-family="Segoe UI, Helvetica, Arial, sans-serif">
   <title>Well-Architected Agent Demo (multi-region) - Architecture</title>
-  <desc>AWS CDK demo: active/active web app in us-east-1 and us-west-2. Each region has a 2-AZ VPC with no NAT gateway, an internet-facing ALB restricted to an admin CIDR, an Auto Scaling group in private subnets (deliberately confined to one AZ in the primary Region, fixed at one instance in the secondary), and VPC endpoints. A DynamoDB global table replicates between the regions; a CloudWatch dashboard in us-east-1 shows both.</desc>
+  <desc>AWS CDK demo: active/active web app in us-east-1 and us-east-2. Each region has a 2-AZ VPC with no NAT gateway, an internet-facing ALB restricted to an admin CIDR, an Auto Scaling group in private subnets (deliberately confined to one AZ in the primary Region, fixed at one instance in the secondary), and VPC endpoints. A DynamoDB global table replicates between the regions; a CloudWatch dashboard in us-east-1 shows both.</desc>
 
   <defs>
     <!-- Official AWS Architecture Icons (q3-2021 set) for EC2, VPC and IAM, one namespaced gradient per icon. -->
@@ -121,7 +121,7 @@
 
   <!-- ===================== Secondary region ===================== -->
   <rect class="grp" x="560" y="190" width="516" height="466" rx="8" stroke="#232f3e" stroke-dasharray="2 3"/>
-  <text class="grptitle" x="576" y="212" fill="#232f3e">AWS Region · us-west-2 (secondary)</text>
+  <text class="grptitle" x="576" y="212" fill="#232f3e">AWS Region · us-east-2 (secondary)</text>
 
   <rect class="grp" x="576" y="226" width="484" height="314" rx="8" stroke="#8C4FFF"/>
   <text class="grptitle" x="592" y="246" fill="#8C4FFF">VPC 10.1.0.0/16 · no NAT gateway</text>

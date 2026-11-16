@@ -1,17 +1,5 @@
 import { App } from 'aws-cdk-lib';
 import { getRegion } from '../../../../../shared/utils/aws-utils';
-import { WA_AGENT_PROFILE_REGIONS } from './wa-agent';
-
-/**
- * Default secondary Region for each supported primary Region, so the pair is
- * derived from the deployment Region instead of being hardcoded. Override with
- * `-c secondaryRegion=<region>`.
- */
-const DEFAULT_SECONDARY_REGION: Record<string, string> = {
-  'us-east-1': 'us-west-2',
-  'us-east-2': 'us-west-2',
-  'us-west-2': 'us-east-1',
-};
 
 /**
  * Deployment configuration, read from CDK context (cdk.json or `-c key=value`).
@@ -53,7 +41,6 @@ export interface AppConfig {
    * CNAMEs already exist in the zone.
    */
   createCertValidationRecords: boolean;
-  enableResilienceHub: boolean;
   /** Global Accelerator ID for the optional dashboard row. Empty = skip. */
   globalAcceleratorId: string;
   /**
@@ -125,25 +112,59 @@ function assertCidr(key: string, value: string): void {
 }
 
 /**
- * Primary Region: `WA_DEMO_PRIMARY_REGION` when set (the deploy script pins it,
- * because it switches AWS_REGION to bootstrap the secondary Region), otherwise
- * the shared getRegion() resolution (AWS_DEFAULT_REGION, AWS_REGION, CLI config).
+ * Workload Region (the primary Region for `multi`): `WA_DEMO_PRIMARY_REGION` when
+ * set (the deploy scripts pin it, because they switch AWS_REGION to bootstrap and
+ * deploy the other Regions), otherwise the shared getRegion() resolution
+ * (AWS_DEFAULT_REGION, AWS_REGION, CLI config). Any Region: only the agent
+ * profile is limited to the hosting Regions.
  */
-function resolvePrimaryRegion(): string {
+export function resolvePrimaryRegion(): string {
   return process.env.WA_DEMO_PRIMARY_REGION || getRegion();
+}
+
+/**
+ * Region of the shared agent profile and of every application context stack:
+ * `WA_AGENT_REGION` when set, otherwise the workload Region. The deploy scripts get
+ * it from the shared prerequisites check (`wellarchitected-agent`), which holds the
+ * hosting-Region list and stops in a Region that cannot host a profile. A manual
+ * synth is not checked against that list: CloudFormation rejects the profile instead.
+ */
+export function resolveAgentRegion(workloadRegion: string): string {
+  const agentRegion = process.env.WA_AGENT_REGION || workloadRegion;
+  if (!REGION_RE.test(agentRegion)) {
+    throw new Error(`WA_AGENT_REGION must be an AWS Region code, got "${agentRegion}"`);
+  }
+  return agentRegion;
+}
+
+/**
+ * Regions the shared profile scans: `WA_AGENT_SCAN_REGIONS` (comma-separated), which
+ * the deploy scripts fill with the account's enabled Regions, or `-c scanRegions=...`.
+ * Without either (a manual synth) it falls back to the profile Region alone, which
+ * only reviews applications deployed there.
+ */
+export function resolveScanRegions(app: App, agentRegion: string): string[] {
+  const raw = String(app.node.tryGetContext('scanRegions') ?? process.env.WA_AGENT_SCAN_REGIONS ?? '');
+  const regions = raw.split(',').map((r) => r.trim()).filter(Boolean);
+  for (const r of regions) {
+    if (!REGION_RE.test(r)) throw new Error(`Scan Region "${r}" is not an AWS Region code`);
+  }
+  return regions.length > 0 ? [...new Set(regions)].sort() : [agentRegion];
 }
 
 export function loadConfig(app: App): AppConfig {
   const primaryRegion = resolvePrimaryRegion();
-  if (!WA_AGENT_PROFILE_REGIONS.includes(primaryRegion)) {
-    // Fail the synth with a clear message instead of failing halfway through a deployment.
+  // Precedence: -c secondaryRegion, then WA_DEMO_SECONDARY_REGION. The app keeps
+  // no list and picks nothing: the deploy scripts choose the secondary Region
+  // (the user's, or one read from the account's enabled Regions) and set the
+  // variable, so `cdk destroy` sees the same value.
+  const secondaryRegion = str(app, 'secondaryRegion', process.env.WA_DEMO_SECONDARY_REGION || '');
+  if (!secondaryRegion) {
     throw new Error(
-      `The primary Region hosts the Well-Architected Agent profile, which is only available in ` +
-        `${WA_AGENT_PROFILE_REGIONS.join(', ')}; resolved "${primaryRegion}". ` +
-        'Set AWS_REGION and AWS_DEFAULT_REGION to a supported Region.',
+      'No secondary Region. Deploy with the scripts (they choose one), or pass ' +
+        '-c secondaryRegion=<region> / set WA_DEMO_SECONDARY_REGION for a manual synth.',
     );
   }
-  const secondaryRegion = str(app, 'secondaryRegion', DEFAULT_SECONDARY_REGION[primaryRegion]);
   if (!REGION_RE.test(secondaryRegion) || secondaryRegion === primaryRegion) {
     throw new Error(`Context "secondaryRegion" must be a Region different from "${primaryRegion}", got "${secondaryRegion}"`);
   }
@@ -176,7 +197,6 @@ export function loadConfig(app: App): AppConfig {
     route53ZoneName: str(app, 'route53ZoneName'),
     appDomainAltNames: list(app, 'appDomainAltNames'),
     createCertValidationRecords: bool(app, 'createCertValidationRecords', true),
-    enableResilienceHub: bool(app, 'enableResilienceHub', false),
     globalAcceleratorId: str(app, 'globalAcceleratorId'),
     dashboard: {
       primaryAlbFullName: str(app, 'primaryAlbFullName'),

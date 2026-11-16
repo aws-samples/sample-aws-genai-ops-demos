@@ -1,33 +1,23 @@
-import { WaAgentGoal } from './wa-agent';
+import { AppConfig } from './config';
+import { WaApplicationContext } from './wa-agent';
 
 /**
- * Goals of the multi-region variant, one per pillar the agent analyzes
- * (Operational Excellence and Sustainability are not in scope for the agent).
- * They point at the gaps deliberately left in this workload.
+ * How the multi-region application registers in the shared agent profile
+ * (WaApplicationContextStack, deployed in the profile Region): both workload
+ * Regions, scoped by the variant's `project` tag. The declared requirements go
+ * beyond what is deployed on purpose (no automatic Regional failover, no alarms),
+ * so the agent can flag the gap.
  */
-export const MULTI_REGION_AGENT_GOALS: WaAgentGoal[] = [
-  {
-    pillar: 'RESILIENCE',
-    title: 'Fail over between Regions automatically within the declared RTO of 15 minutes',
-    description:
-      'Route users to both Regions with health-checked DNS so that a Regional impairment is detected and traffic moves without manual action, and alarm on failures so that recovery starts within minutes.',
-  },
-  {
-    pillar: 'SECURITY',
-    title: 'Protect the internet-facing endpoints and encrypt all traffic in transit',
-    description:
-      'Serve the application only over HTTPS, filter requests at the edge with a web application firewall, and keep access logs for every load balancer.',
-  },
-  {
-    pillar: 'COST_OPTIMIZATION',
-    title: 'Match web tier capacity to demand in both Regions',
-    description:
-      'Scale in when traffic is low instead of running fixed capacity around the clock, without lowering the resilience targets.',
-  },
-  {
-    pillar: 'PERFORMANCE',
-    title: 'Scale the web tier automatically to sustain peak load in each Region',
-    description:
-      'Replace fixed capacity with target-tracking scaling so that response times stay stable as traffic grows, including when one Region absorbs the traffic of the other.',
-  },
-];
+export function multiRegionApplicationContext(cfg: AppConfig): WaApplicationContext {
+  return {
+    projectTag: cfg.projectTag,
+    regions: [cfg.primaryRegion, cfg.secondaryRegion],
+    title: 'Multi-region active/active web application',
+    applicationOverview:
+      'Customer-facing web application served from two AWS Regions, with a visit counter in a DynamoDB global table.',
+    architectureOverview:
+      'In each Region: internet-facing Application Load Balancer, multi-AZ Auto Scaling group in private subnets, VPC endpoints, no NAT gateway. DynamoDB global table replicated between the two Regions.',
+    additionalContext:
+      'Business critical, RPO 1 minute, RTO 15 minutes, active/active in two Regions with automatic Regional failover, failures detected and alerted within 5 minutes',
+  };
+}

@@ -1,20 +1,42 @@
 # Architecture: Well-Architected Agent Review
 
-This demo deploys a target workload for the Well-Architected Agent to review, plus a
-correctly configured agent profile that reviews it. The target workload is not a
-recommended pattern: it exists so the agent has realistic findings to report. Each
+This demo deploys target applications for the Well-Architected Agent to review, plus a
+correctly configured agent profile that reviews them. The applications are not a
+recommended pattern: they exist so the agent has realistic findings to report. Each
 anti-pattern is marked inline in the stacks with a `WA-ANTIPATTERN` comment.
 
-There are two variants, selected at deploy time and deployable side by side in the same
-account (distinct stack names, profile names, IAM role names and `project` tags):
+The demo is made of three independent building blocks:
 
-| Variant | Workload | Stacks |
+| Building block | Stacks | Region |
 | --- | --- | --- |
-| `single` (default) | Deliberately non-optimized single-instance web app (EC2, RDS, S3) | `WellArchitectedAgentReviewStack-<region>` |
-| `multi` | Active/active web app in two Regions with a few documented gaps | `WellArchitectedAgentReviewMultiPrimary-<primary>`, `WellArchitectedAgentReviewMultiSecondary-<secondary>`, `WellArchitectedAgentReviewMultiDashboard-<primary>` |
+| 1. Shared agent profile | `WellArchitectedAgentReviewProfile-<agent-region>`: execution and access roles, profile, goals. Main stack (adoption tracking) | `WA_AGENT_REGION` |
+| 2. Application `single` (default) | `WellArchitectedAgentReviewStack-<region>`: deliberately non-optimized single-instance web app (EC2, RDS, S3) | workload Region |
+| | `WellArchitectedAgentReviewSingleContext-<region>`: registers the application in the profile | `WA_AGENT_REGION` |
+| 3. Application `multi` | `WellArchitectedAgentReviewMultiPrimary-<primary>`, `WellArchitectedAgentReviewMultiSecondary-<secondary>`, `WellArchitectedAgentReviewMultiDashboard-<primary>`: active/active web app in two Regions with a few documented gaps | primary and secondary Regions |
+| | `WellArchitectedAgentReviewMultiContext-<primary>`: registers the application in the profile | `WA_AGENT_REGION` |
 
-The pieces both variants use (variant selection, agent profile, managed Lambda log
-groups) are described once in [Shared building blocks](#shared-building-blocks).
+```mermaid
+flowchart LR
+    subgraph agent["WA_AGENT_REGION"]
+        profile["Profile stack<br/>roles, profile, goals<br/>export WellArchitectedAgentReviewProfileArn"]
+        sctx["SingleContext stack"]
+        mctx["MultiContext stack"]
+    end
+    single["single workload stack<br/>(workload Region)"]
+    multi["multi workload stacks<br/>(primary + secondary Regions)"]
+    sctx -- "Fn::ImportValue" --> profile
+    mctx -- "Fn::ImportValue" --> profile
+    sctx -. "project tag + Region" .-> single
+    mctx -. "project tag + Regions" .-> multi
+```
+
+The workload stacks contain nothing of the agent. The profile is created once per account
+and agent Region and reused by every application; an application joins it through its own
+context stack, so adding an application changes nothing in the profile. Both applications
+can run side by side under the same profile (distinct stack names and `project` tags).
+
+The pieces all building blocks use (variant selection, agent profile, agent Region,
+managed Lambda log groups) are described once in [Shared building blocks](#shared-building-blocks).
 
 ## Variant `single`
 
@@ -22,7 +44,7 @@ groups) are described once in [Shared building blocks](#shared-building-blocks).
 
 ### Components
 
-All resources live in one CloudFormation stack, `WellArchitectedAgentReviewStack-<region>`,
+The workload lives in one CloudFormation stack, `WellArchitectedAgentReviewStack-<region>`,
 defined in `infrastructure/cdk/lib/well-architected-agent-review-stack.ts`.
 
 | Component | Configuration |
@@ -36,18 +58,19 @@ defined in `infrastructure/cdk/lib/well-architected-agent-review-stack.ts`.
 | S3 (`AssetBucket`) | Public access blocked, no versioning, TLS not enforced, no access logging, no lifecycle rules, objects auto-deleted with the stack |
 | CloudWatch Logs (`AutoDeleteObjectsLogGroup`) | Log group of the CDK bucket-emptying Lambda, 30-day retention, deleted with the stack |
 
-#### Well-Architected Agent
+#### Application context
 
-The agent side is configured correctly; none of it is an anti-pattern. It is built by the
-shared `addWellArchitectedAgent()` (see [Well-Architected Agent (shared)](#well-architected-agent-shared)).
+The application joins the shared profile through
+`WellArchitectedAgentReviewSingleContext-<region>`, a `WaApplicationContextStack`
+(`lib/wa-agent.ts`) deployed in `WA_AGENT_REGION`, with the content returned by
+`singleRegionApplicationContext()` in `lib/well-architected-agent-review-stack.ts`:
 
-| Component | Configuration |
+| Field | Value |
 | --- | --- |
-| Execution role (`WAAgentExecutionRole-<region>`) | Trusted by `wellarchitected.amazonaws.com`; only permission is `sts:AssumeRole` on the access role |
-| Access role (`WAAgentAccessRole-<region>`) | Trusted by the execution role ARN; AWS managed policy `WellArchitectedAgentResourceScanning` (read-only) |
-| Agent profile (`well-architected-agent-review`) | Pillars Resilience, Security, Cost Optimization, Performance; this account and Region; termination protection off |
-| Goals | One per pillar, from `WA_AGENT_GOALS` in `lib/well-architected-agent-review-stack.ts` |
-| Application context | `BUSINESS_CRITICAL`; "Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place"; scoped by tag `project=well-architected-agent-review` |
+| Profile | imported from `WellArchitectedAgentReviewProfileArn` (see [Well-Architected Agent (shared)](#well-architected-agent-shared)) |
+| Type and criticality | `APPLICATION`, `BUSINESS_CRITICAL` |
+| Scope | tag `project=well-architected-agent-review`, this account, the workload Region |
+| Declared requirements | "Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place" |
 
 The VPC spans two AZs only because an RDS subnet group must cover at least two. The
 database itself stays single-AZ.
@@ -91,13 +114,20 @@ scope, so they are not listed.
 ### Deployment flow
 
 `deploy-all.ps1` / `deploy-all.sh` (default variant) call the library's shared
-`check-prerequisites` script (AWS CLI, credentials, region, Node.js 20+, CDK), then the
-shared `deploy-cdk` script, which installs dependencies, bootstraps the account and
-deploys the stack with `adminCidr` passed as CDK context. CloudFormation creates the
-roles first, then the agent profile, then the goals and the application context. The region is resolved once
-and used for both the stack name suffix and the deployment.
+`check-prerequisites` script (AWS CLI, credentials, region, Node.js 20+, CDK, and the
+profile Region), list the account's enabled Regions for the profile, resolve the admin
+CIDR, then call the shared `deploy-cdk` script once per stack:
+
+1. Profile stack, in `WA_AGENT_REGION` (bootstraps it; created, or updated with the
+   current enabled Regions).
+2. Workload stack, in the workload Region (bootstraps it), with `adminCidr` as CDK context.
+3. Context stack, in `WA_AGENT_REGION`.
 
 ### Teardown
+
+`deploy-all.ps1 -Destroy` / `deploy-all.sh --destroy` destroy the context stack, then the
+workload stack, and keep the shared profile (see
+[Removing the profile](#well-architected-agent-shared)).
 
 Every resource uses `RemovalPolicy.DESTROY` or the service default delete behavior. The
 S3 bucket is emptied by the CDK auto-delete custom resource before deletion.
@@ -107,8 +137,8 @@ That custom resource runs a CDK-managed Lambda whose log group is managed by the
 
 ## Variant `multi`
 
-By default the primary Region is us-east-1 (N. Virginia) and the secondary is us-west-2
-(Oregon).
+In the examples the primary Region is us-east-1 (N. Virginia) and the secondary is
+us-east-2 (Ohio); both are configurable (see below).
 
 ![Architecture diagram: active/active web app in two Regions, each with an ALB, a multi-AZ Auto Scaling group in private subnets and VPC endpoints, sharing a DynamoDB global table](assets/architecture-multiregion.svg)
 
@@ -116,16 +146,32 @@ By default the primary Region is us-east-1 (N. Virginia) and the secondary is us
 
 | Stack (default Regions) | Region | Defined in | Contents |
 | --- | --- | --- | --- |
-| `WellArchitectedAgentReviewMultiPrimary-us-east-1` | primary | `lib/region-stack.ts`, `lib/wa-agent.ts` | Region resources, DynamoDB global table, Well-Architected Agent roles / profile / goals / context (+ optional Resilience Hub role) |
-| `WellArchitectedAgentReviewMultiSecondary-us-west-2` | secondary | `lib/region-stack.ts` | Region resources |
+| `WellArchitectedAgentReviewMultiPrimary-us-east-1` | primary | `lib/region-stack.ts` | Region resources, DynamoDB global table, `SecondaryRegion` output |
+| `WellArchitectedAgentReviewMultiSecondary-us-east-2` | secondary | `lib/region-stack.ts` | Region resources |
 | `WellArchitectedAgentReviewMultiDashboard-us-east-1` | primary | `lib/dashboard-stack.ts` | CloudWatch dashboard for both Regions |
+| `WellArchitectedAgentReviewMultiContext-us-east-1` | `WA_AGENT_REGION` | `lib/wa-agent.ts`, `lib/multi-region-agent.ts` | Application context of this application in the shared profile |
 
 The primary Region comes from `WA_DEMO_PRIMARY_REGION` when the deploy script sets it,
 otherwise from the shared `getRegion()` resolution (`AWS_DEFAULT_REGION`, `AWS_REGION`,
-CLI configuration). It must be `us-east-1`, `us-east-2` or `us-west-2`, the Regions that
-can host an agent profile; the synth fails early in any other Region. The secondary
-Region is derived from the primary (`us-east-1` and `us-east-2` pair with `us-west-2`,
-`us-west-2` pairs with `us-east-1`) unless `-c secondaryRegion=...` is passed.
+CLI configuration). Any Region works: only the agent profile is limited to the hosting
+Regions (see [Agent Region](#agent-region-shared)). The secondary Region comes from
+`-c secondaryRegion=...` or `WA_DEMO_SECONDARY_REGION`; with neither the synth stops. The
+CDK app keeps no Region list and chooses nothing. The deploy scripts set the variable:
+
+1. `-SecondaryRegion` / `--secondary-region` when passed;
+2. otherwise the `SecondaryRegion` output of the deployed primary stack, so a redeploy or
+   a destroy never moves the secondary Region (passing a different one is an error);
+3. otherwise, on a first deploy, a Region chosen from the account's enabled Regions
+   (`aws ec2 describe-regions`) in the primary's geography: primary excluded,
+   alphabetical order, Regions without opt-in first. us-east-1 gives us-east-2, eu-west-3
+   gives eu-central-1.
+
+On deploy, the scripts require the secondary Region to be in the primary's geography,
+whatever its source: the geography is the Region code without its last two segments
+(`us-east-1` is `us`, `ap-southeast-1` is `ap`, `us-gov-west-1` is `us-gov`). They stop
+when it is not, and when the account has no other enabled Region in that geography. The
+destroy skips this check, so it can always remove what is deployed. The scripts do not
+check that the secondary Region offers every service the variant uses.
 
 The secondary stack depends on the primary because the primary creates the DynamoDB
 replica in the secondary Region and, with HTTPS, the shared ACM validation records. The
@@ -156,23 +202,20 @@ the region stack outputs.
 | --- | --- |
 | DynamoDB global table (`GlobalTable`) | Partition key `pk` (string), on-demand billing, encryption at rest with the AWS owned key (declared explicitly), point-in-time recovery on both replicas, replicas in both Regions. Both replicas accept writes |
 | CloudWatch dashboard | Requests (stacked total and per Region), ELB 5xx, healthy hosts, target response time, requests per AZ (Metrics Insights). Optional Global Accelerator row |
-| Resilience Hub (optional) | One IAM role (IAM is global) trusted by `resiliencehub.amazonaws.com` with `aws:SourceAccount` and `aws:SourceArn` conditions for both Regions, with `AWSResilienceHubV2AssessmentExecutionPolicy` and `AWSResilienceHubResilienceTestingPolicy`. One tag-based resource group per Region (`project=<projectTag>`) as discovery source |
 
-#### Well-Architected Agent
+#### Application context
 
-Built by the shared `addWellArchitectedAgent()` in the primary stack (see
-[Well-Architected Agent (shared)](#well-architected-agent-shared)).
+The application joins the shared profile through
+`WellArchitectedAgentReviewMultiContext-<primary>`, a `WaApplicationContextStack`
+(`lib/wa-agent.ts`) deployed in `WA_AGENT_REGION`, with the content returned by
+`multiRegionApplicationContext()` in `lib/multi-region-agent.ts`:
 
-| Component | Configuration |
+| Field | Value |
 | --- | --- |
-| Execution role (`WAAgentMultiRegionExecutionRole-<region>`) | Trusted by `wellarchitected.amazonaws.com`; only permission is `sts:AssumeRole` on the access role |
-| Access role (`WAAgentMultiRegionAccessRole-<region>`) | Trusted by the execution role ARN; AWS managed policy `WellArchitectedAgentResourceScanning` (read-only) |
-| Agent profile (`well-architected-agent-review-multiregion`) | Pillars Resilience, Security, Cost Optimization, Performance; this account, both Regions; termination protection off |
-| Goals | One per pillar, from `MULTI_REGION_AGENT_GOALS` in `lib/multi-region-agent.ts` |
-| Application context | `BUSINESS_CRITICAL`; "Business critical, RPO 1 minute, RTO 15 minutes, active/active in two Regions with automatic Regional failover, failures detected and alerted within 5 minutes"; scoped by tag `project=well-architected-agent-review-multiregion`, both Regions |
-
-The role names carry a `MultiRegion` infix so they never collide with the `single`
-variant's roles in the same account.
+| Profile | imported from `WellArchitectedAgentReviewProfileArn` (see [Well-Architected Agent (shared)](#well-architected-agent-shared)) |
+| Type and criticality | `APPLICATION`, `BUSINESS_CRITICAL` |
+| Scope | tag `project=well-architected-agent-review-multiregion`, this account, both workload Regions |
+| Declared requirements | "Business critical, RPO 1 minute, RTO 15 minutes, active/active in two Regions with automatic Regional failover, failures detected and alerted within 5 minutes" |
 
 ### Traffic and access
 
@@ -249,33 +292,37 @@ scope, so they are not listed.
 - Encryption at rest declared explicitly: encrypted gp3 root volumes, DynamoDB AWS owned key.
 - Point-in-time recovery on both table replicas.
 - With HTTPS: TLS 1.3 security policy and HTTP to HTTPS redirect.
-- The agent roles, profile, goals and application context.
+- The shared agent profile and this application's context.
 
 ### Deployment flow
 
 `deploy-all.ps1 -Variant multi` / `deploy-all.sh --variant multi` call the library's shared `check-prerequisites` script
-(AWS CLI 2.31.13+, credentials, Region, Node.js 20+, CDK), check that the primary Region
-can host the agent profile, derive the secondary Region and resolve the admin CIDR
+(AWS CLI 2.31.13+, credentials, Region, Node.js 20+, CDK, and the profile Region, see
+[Agent Region](#agent-region-shared)), resolve the secondary Region and the admin CIDR
 (auto-detected `/32` or passed explicitly, fail closed on anything that is not an IPv4
 CIDR). They then call the shared `deploy-cdk` script once per stack, with `AWS_REGION`
-pinned to the stack's Region and `WA_DEMO_PRIMARY_REGION` pinned to the primary, so every
-call synthesizes the same stacks:
+pinned to the stack's Region and `WA_DEMO_PRIMARY_REGION`, `WA_DEMO_SECONDARY_REGION` and
+`WA_AGENT_REGION` pinned, so every call synthesizes the same stacks:
 
-1. Primary stack, in the primary Region (bootstraps it). CloudFormation creates the roles
-   first, then the agent profile, then the goals and the application context.
-2. Secondary stack, in the secondary Region (bootstraps it).
-3. Dashboard stack, in the primary Region, with the four ALB and target group identifiers
+1. Profile stack, in `WA_AGENT_REGION` (bootstraps it; created, or updated with the
+   current enabled Regions).
+2. Primary stack, in the primary Region (bootstraps it).
+3. Secondary stack, in the secondary Region (bootstraps it).
+4. Context stack, in `WA_AGENT_REGION`.
+5. Dashboard stack, in the primary Region, with the four ALB and target group identifiers
    read from the region stack outputs and passed as `--context`.
 
 ### Teardown
 
-`deploy-all.sh --variant multi --destroy` / `deploy-all.ps1 -Variant multi -Destroy` destroy the dashboard, secondary and
-primary stacks in that order through the shared `deploy-cdk` script. The synth that `cdk destroy` runs needs no context: the admin CIDR
+`deploy-all.sh --variant multi --destroy` / `deploy-all.ps1 -Variant multi -Destroy` destroy the dashboard, context,
+secondary and primary stacks in that order through the shared `deploy-cdk` script, and keep the shared profile; run them
+with the same `AWS_REGION` and `WA_AGENT_REGION` as the deploy (the secondary Region is read from the primary stack output).
+The synth that `cdk destroy` runs needs no context: the Regions come from the environment variables above, the admin CIDR
 falls back to a no-access value and the dashboard renders a placeholder widget.
 
 Every resource uses `RemovalPolicy.DESTROY` or the service default delete behavior. The
 DynamoDB table has deletion protection off, so the table and its replica are removed with
-the primary stack. The agent profile has termination protection off.
+the primary stack.
 
 Each region stack contains one CDK-managed Lambda, the custom resource that removes the
 rules of the VPC default security group; its log group is managed by the stack (see
@@ -287,28 +334,45 @@ stacks (`CDKToolkit`) are left in place in both Regions.
 
 ### Variant selection
 
-`infrastructure/cdk/bin/app.ts` instantiates either variant from `WA_DEMO_VARIANT` (set
-by the deploy scripts) or `-c variant=...`, default `single`. The environment variable is
-what reaches `cdk destroy`, because the shared `deploy-cdk` script passes no `--context` on
-destroy. Both variants resolve the Region with the library's shared `getRegion()`
-(`shared/utils/aws-utils.ts`), use the same `adminCidr` context value with the `10.0.0.0/32`
-no-access fallback, and put solution adoption tracking on their main stack only.
+`infrastructure/cdk/bin/app.ts` always instantiates the profile stack, plus the stacks
+of the variant in `WA_DEMO_VARIANT` (set by the deploy scripts) or `-c variant=...`:
+`profile` (nothing more), `single` (default) or `multi`. The environment variables are
+what reach `cdk destroy`, because the deploy scripts pass no `--context` on destroy:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `WA_DEMO_VARIANT` | `profile`, `single` or `multi` | `single` |
+| `WA_DEMO_PRIMARY_REGION` | workload Region (primary for `multi`), pinned by the scripts | the library's shared `getRegion()` (`shared/utils/aws-utils.ts`) |
+| `WA_AGENT_REGION` | Region of the profile and of every context stack | the workload Region |
+| `WA_AGENT_SCAN_REGIONS` | comma-separated Regions the profile scans | the profile Region alone (manual synth) |
+| `WA_DEMO_SECONDARY_REGION` | secondary Region of `multi` | none: required for `multi` |
+
+The applications use the same `adminCidr` context value with the `10.0.0.0/32` no-access
+fallback. Solution adoption tracking is on the profile stack only, the one stack every
+deployment has; the workload and context stacks carry none.
 
 ### Well-Architected Agent (shared)
 
-`lib/wa-agent.ts` exports `addWellArchitectedAgent()`, used by both variants with their
-own name, role prefix, Regions, goals and application context. It creates, directly on
-the stack and with fixed construct ids (`AgentExecutionRole`, `AgentAccessRole`,
-`AgentProfile`, `AgentGoal<Pillar>`, `AgentApplicationContext`) so logical IDs stay
-stable:
+`lib/wa-agent.ts` holds the agent side in two reusable stack classes. It is configured
+correctly; none of it is an anti-pattern.
 
-- an execution role trusted by `wellarchitected.amazonaws.com`, whose only permission is
-  `sts:AssumeRole` on the access role;
-- an access role trusted by the execution role ARN, with the AWS managed policy
-  `WellArchitectedAgentResourceScanning` (read-only);
-- the agent profile (termination protection off), one goal per pillar and one
-  application context scoped by the `project` tag;
-- the `AgentProfileArn` output.
+**`WaAgentProfileStack`**: `WellArchitectedAgentReviewProfile-<agent-region>`, one per
+account and agent Region, created on the first application deploy and updated by every
+later one. With fixed construct ids, so logical IDs stay stable and an update never
+replaces the profile:
+
+| Component | Configuration |
+| --- | --- |
+| Execution role (`WAAgentExecutionRole-<agent-region>`) | Trusted by `wellarchitected.amazonaws.com`; only permission is `sts:AssumeRole` on the access role |
+| Access role (`WAAgentAccessRole-<agent-region>`) | Trusted by the execution role ARN; AWS managed policy `WellArchitectedAgentResourceScanning` (read-only) |
+| Agent profile (`wa-agent-demo-profile`) | Display name `WA Agent Demo Profile`; pillars Resilience, Security, Cost Optimization, Performance; this account; scans every enabled Region of the account (`WA_AGENT_SCAN_REGIONS`, listed by the deploy scripts with `ec2 describe-regions` and sorted); termination protection off |
+| Goals | One per pillar, `PROFILE_GOALS`. Goals belong to the profile, not to an application, so they are written for every application the demo deploys |
+| Output | `AgentProfileArn`, exported as `WellArchitectedAgentReviewProfileArn` |
+
+**`WaApplicationContextStack`**: one per application deployment, in the profile Region. It
+creates one `APPLICATION` context (`AgentApplicationContext`) that imports the profile ARN
+and scopes the application by its `project` tag, account and Regions. The profile scans
+every enabled Region; each context narrows the review to its own application.
 
 ```mermaid
 flowchart LR
@@ -316,23 +380,65 @@ flowchart LR
     exec -- "sts:AssumeRole" --> access["Access role<br/>(read-only scanning)"]
     access -. "Get / List / Describe" .-> res["Resources tagged<br/>project=&lt;projectTag&gt;"]
     profile["Agent profile"] --- goals["4 goals"]
-    profile --- ctx["Application context"]
+    profile --- ctx1["Context: single"]
+    profile --- ctx2["Context: multi"]
     profile -. "uses" .-> exec
 ```
 
-The profile can only be hosted in `us-east-1`, `us-east-2` or `us-west-2`, so the synth
-fails early in any other Region (`assertAgentProfileRegion()`).
+**Why a context stack sits in the profile Region.** A CloudFormation stack only creates
+resources in its own Region, and a context belongs to its profile, so the context cannot
+live in a workload stack deployed elsewhere. One context stack per application, always in
+the profile Region, gives the same layout whatever the workload Region.
 
-The execution role trust policy names the exact service principal but has no
-`aws:SourceAccount` / `aws:SourceArn` condition. The service documentation does not say
-the service sends those keys, and states that it uses the profile ARN as an external ID in
-the role chain to prevent confused-deputy use. This is a documented exception to the
-library's SEC 03 rule, to revisit once the trust policy the console creates is confirmed.
+**Why an export.** The context stacks import `WellArchitectedAgentReviewProfileArn` with
+`Fn::ImportValue`. Besides passing the ARN without a CDK dependency between stacks,
+it makes CloudFormation refuse to delete the profile stack while an application is still
+registered.
+
+**Adding an application.** Write its workload stacks, a function that returns its
+`WaApplicationContext` (title, overviews, declared requirements, `project` tag, Regions),
+and one `WaApplicationContextStack` in `bin/app.ts` under a new variant. Nothing in the
+profile changes. Limits: a Business+ plan allows 7 applications per profile, and the
+profile has 4 of its 10 goals.
+
+**Removing the profile.** The application destroy keeps the profile for the other
+applications. `deploy-all.ps1 -Variant profile -Destroy` / `deploy-all.sh --variant profile
+--destroy` removes it: the script first lists the stacks that still import the export
+(`aws cloudformation list-imports`) and stops with their names if any are left, and
+CloudFormation would refuse anyway. A profile without any context is valid to keep but
+runs no scheduled recommendations.
+
+### Agent Region (shared)
+
+The workloads deploy in the user's Region. The profile can only be hosted in the Regions
+on the [quotas page](https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html),
+and scans resources in every commercial Region wherever it is hosted. The profile stack
+and every context stack live in `WA_AGENT_REGION`, default the workload Region (primary
+Region for `multi`):
+
+- The deploy scripts ask the library's shared prerequisites check for it
+  (`wellarchitected-agent`). That check holds the only copy of the hosting-Region list,
+  because hosting cannot be probed through the API, and stops with guidance to set
+  `WA_AGENT_REGION` in a Region that cannot host a profile. The demo keeps no copy. See
+  [AWS Well-Architected Agent Region](../../shared/README.md#aws-well-architected-agent-region).
+- `bin/app.ts` reads the resolved value (`resolveAgentRegion()` in `lib/config.ts`). The
+  stack layout is the same whether or not it equals the workload Region.
+- Keep the same `WA_AGENT_REGION` for every application of an account: each value creates
+  its own profile, and a Business+ plan allows 2. The IAM role names carry the profile
+  Region, so there is one profile per agent Region.
+
+The execution role trust policy names the exact service principal and carries the same
+confused-deputy conditions as the role the console creates: `aws:SourceAccount` equal to
+this account, and `aws:SourceArn` matching any agent profile of this account
+(`arn:<partition>:wellarchitected:*:<account>:agent-profile/*`). The profile ARN itself
+cannot be used, because the profile depends on the role. The access role trusts the
+execution role ARN only.
 
 ### CDK-managed Lambda log groups (shared)
 
-Both variants contain one CDK-managed custom resource Lambda: the S3 auto-delete-objects
+Both applications contain one CDK-managed custom resource Lambda: the S3 auto-delete-objects
 Lambda in `single`, the VPC default security group Lambda in each `multi` region stack.
+The profile and context stacks contain none.
 Left alone, such a Lambda creates its own log group at runtime and leaves it behind after
 `cdk destroy`. Because Lambda delivers logs a few seconds late, the run on destroy can
 recreate the group even after CloudFormation deleted it (seen in a real teardown).

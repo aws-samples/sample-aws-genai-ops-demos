@@ -12,14 +12,11 @@ import {
   aws_elasticloadbalancingv2 as elbv2,
   aws_elasticloadbalancingv2_targets as elbv2Targets,
   aws_iam as iam,
-  aws_resourcegroups as resourcegroups,
   aws_route53 as route53,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { AppConfig } from './config';
 import { renderUserData } from './userdata';
-import { addWellArchitectedAgent, assertAgentProfileRegion } from './wa-agent';
-import { MULTI_REGION_AGENT_GOALS } from './multi-region-agent';
 import { lockProviderLogGroup } from './cdk-log-groups';
 
 export type RegionRole = 'primary' | 'secondary';
@@ -39,8 +36,9 @@ export interface RegionStackProps extends StackProps {
  * Remaining gaps are marked inline with `WA-ANTIPATTERN` so the Well-Architected
  * Agent findings can be checked against a known list.
  * The primary stack also owns the DynamoDB global table (replica in the
- * secondary region), the Well-Architected Agent profile that reviews both
- * Regions and, optionally, the global Resilience Hub IAM role.
+ * secondary region). The
+ * Well-Architected Agent lives in the shared profile stack and this application's
+ * context stack (lib/wa-agent.ts).
  */
 export class RegionStack extends Stack {
   public readonly alb: elbv2.ApplicationLoadBalancer;
@@ -92,30 +90,11 @@ export class RegionStack extends Stack {
         description: 'DynamoDB global table name',
         value: table.tableName,
       });
-
-      // Well-Architected Agent profile, goals and application context, shared with
-      // the single-region variant (lib/wa-agent.ts). Primary Region only; the
-      // profile analyzes both Regions. Also emits the AgentProfileArn output.
-      assertAgentProfileRegion(cfg.primaryRegion);
-      addWellArchitectedAgent(this, {
-        projectTag: cfg.projectTag,
-        // MultiRegion infix: never collides with the single-region variant's roles.
-        roleNamePrefix: 'WAAgentMultiRegion',
-        displayName: 'Well-Architected Agent Review (multi-region)',
-        description: 'Reviews the multi-region active/active demo workload',
-        regions: [cfg.primaryRegion, cfg.secondaryRegion],
-        goals: MULTI_REGION_AGENT_GOALS,
-        context: {
-          title: 'Multi-region active/active web application',
-          applicationOverview:
-            'Customer-facing web application served from two AWS Regions, with a visit counter in a DynamoDB global table.',
-          architectureOverview:
-            'In each Region: internet-facing Application Load Balancer, multi-AZ Auto Scaling group in private subnets, VPC endpoints, no NAT gateway. DynamoDB global table replicated between the two Regions.',
-          // Declared on purpose beyond what is deployed (no automatic Regional
-          // failover, no alarms), so the agent can flag the gap.
-          additionalContext:
-            'Business critical, RPO 1 minute, RTO 15 minutes, active/active in two Regions with automatic Regional failover, failures detected and alerted within 5 minutes',
-        },
+      // The deploy scripts read this back on redeploy and destroy, instead of
+      // choosing the secondary Region again (the account's enabled Regions can change).
+      new CfnOutput(this, 'SecondaryRegion', {
+        description: 'Secondary Region of this deployment',
+        value: cfg.secondaryRegion,
       });
     }
 
@@ -341,7 +320,7 @@ export class RegionStack extends Stack {
       Tags.of(launchTemplate).add('Name', `${name}-web-lt`);
       // Explicit tag specifications for launched instances and their volumes
       // (CDK only tags the launch template itself). The `project` tag scopes the
-      // agent's application context and the Resilience Hub resource groups.
+      // agent's application context.
       const launchedTags = [
         { key: 'Name', value: `${name}-web` },
         { key: 'project', value: cfg.projectTag },
@@ -433,53 +412,6 @@ export class RegionStack extends Stack {
         open: false,
         defaultTargetGroups: [this.targetGroup],
       });
-    }
-
-    // ------------------------------------------------------------------
-    // AWS Resilience Hub (optional)
-    // The IAM role is GLOBAL: one role for the account, created in the primary
-    // stack, trusted by Resilience Hub in BOTH regions. The tag-based resource
-    // groups are regional and act as the discovery source in each region.
-    // ------------------------------------------------------------------
-    if (cfg.enableResilienceHub) {
-      const group = new resourcegroups.CfnGroup(this, 'ResilienceGroup', {
-        name: `${cfg.project}-resilience`,
-        resourceQuery: {
-          type: 'TAG_FILTERS_1_0',
-          query: {
-            resourceTypeFilters: ['AWS::AllSupported'],
-            tagFilters: [{ key: 'project', values: [cfg.projectTag] }],
-          },
-        },
-      });
-      new CfnOutput(this, 'ResilienceHubResourceGroupArn', {
-        description: 'Tag-based resource group (project=<projectTag>) to register as Resilience Hub input source',
-        value: group.attrArn,
-      });
-
-      if (roleLabel === 'primary') {
-        const account = Stack.of(this).account;
-        const rhRole = new iam.Role(this, 'ResilienceHubRole', {
-          assumedBy: new iam.ServicePrincipal('resiliencehub.amazonaws.com').withConditions({
-            StringEquals: { 'aws:SourceAccount': account },
-            ArnLike: {
-              'aws:SourceArn': [
-                `arn:aws:resiliencehub:${cfg.primaryRegion}:${account}:*`,
-                `arn:aws:resiliencehub:${cfg.secondaryRegion}:${account}:*`,
-              ],
-            },
-          }),
-          // Next generation Resilience Hub managed policies.
-          managedPolicies: [
-            iam.ManagedPolicy.fromAwsManagedPolicyName('AWSResilienceHubV2AssessmentExecutionPolicy'),
-            iam.ManagedPolicy.fromAwsManagedPolicyName('AWSResilienceHubResilienceTestingPolicy'),
-          ],
-        });
-        new CfnOutput(this, 'ResilienceHubRoleArn', {
-          description: 'IAM role for Resilience Hub discovery/assessment',
-          value: rhRole.roleArn,
-        });
-      }
     }
 
     // ------------------------------------------------------------------
