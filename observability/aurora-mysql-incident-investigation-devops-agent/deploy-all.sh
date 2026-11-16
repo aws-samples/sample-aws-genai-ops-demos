@@ -84,22 +84,17 @@ CDK_DIR="$SCRIPT_DIR/infrastructure/cdk"
 STACK_NAME="AuroraDemoStack-$REGION"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-export PYTHONPATH="$REPO_ROOT"
 
+# Use a virtual environment so the shared deploy script installs the CDK
+# dependencies there instead of into the system Python.
 python3 -m venv "$CDK_DIR/.venv"
 source "$CDK_DIR/.venv/bin/activate"
-pip install -r "$CDK_DIR/requirements.txt"
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
-pushd "$CDK_DIR" > /dev/null
-npx -y cdk bootstrap "aws://$ACCOUNT_ID/$REGION" --no-cli-pager
-
-CDK_ARGS=(npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager)
-CDK_ARGS+=(--context "keyPairName=$KEY_PAIR" --context "sshCidr=$SSH_CIDR")
-[[ -n "$WEBHOOK_URL" ]] && CDK_ARGS+=(--context "webhookUrl=$WEBHOOK_URL")
-[[ -n "$WEBHOOK_SECRET" ]] && CDK_ARGS+=(--context "webhookSecret=$WEBHOOK_SECRET")
-"${CDK_ARGS[@]}"
-popd > /dev/null
+CDK_ARGS=(--cdk-directory "$CDK_DIR" --stack-name "$STACK_NAME"
+  --cdk-context "keyPairName=$KEY_PAIR" --cdk-context "sshCidr=$SSH_CIDR")
+[[ -n "$WEBHOOK_URL" ]] && CDK_ARGS+=(--cdk-context "webhookUrl=$WEBHOOK_URL")
+[[ -n "$WEBHOOK_SECRET" ]] && CDK_ARGS+=(--cdk-context "webhookSecret=$WEBHOOK_SECRET")
+bash "$REPO_ROOT/shared/scripts/deploy-cdk.sh" "${CDK_ARGS[@]}"
 
 # =============================================================================
 echo ""

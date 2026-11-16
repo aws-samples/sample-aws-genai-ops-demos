@@ -3,7 +3,7 @@
 
 ## Overview
 
-Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWatch alarm fires (or a failover event occurs), an SNS → Lambda webhook notifies **Amazon DevOps Agent**, which reads CloudWatch metrics, Performance Insights, and the Aurora error/slow-query logs, correlates the signals, and enriches the finding with business context (dependent services, revenue-per-minute, compliance deadlines) via an **MCP server**. The result is an actionable incident report — not a wall of raw logs.
+Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWatch alarm fires (or a failover event occurs), an SNS → Lambda webhook notifies **Amazon DevOps Agent**, which reads CloudWatch metrics, Performance Insights, and the Aurora error/slow-query logs, correlates the signals, and enriches the finding with business context (dependent services, revenue-per-minute, SLA and compliance exposure, recent changes) using the [aurora-incident-business-context skill](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context) from the AWS DevOps Agent tools catalog. The result is an actionable incident report — not a wall of raw logs.
 
 This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent investigation demos.
 
@@ -13,14 +13,14 @@ This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent invest
 |---------|----------------|
 | **Automated incident investigation** | Inject a failure → a CloudWatch alarm fires → the agent opens and runs an investigation on its own, no prompting |
 | **On-demand chat** | Ask the agent about the cluster in the Operator App → it queries CloudWatch + RDS and returns a structured root-cause report |
-| **Business-context enrichment (MCP)** | The agent calls an MCP server for dependencies, revenue-per-minute impact, and compliance deadlines — context it can't get from metrics alone |
+| **Business-context enrichment (skill)** | The published `aurora-incident-business-context` skill has the agent read the cluster's business tags, AWS Config history, and CloudTrail for dependent services, cost of downtime, SLA and compliance exposure, and recent changes — context it can't get from metrics alone |
 | **Multiple incident types** | Four reliable scenarios — connection storm, CPU spike, deadlock, failover — each mapped to its own alarm/event |
 
 ## At a Glance
 - **Duration**: ~25 minutes (Agent Space setup + infra deployment; Aurora cluster creation is ~10-15 min of that)
 - **Difficulty**: Intermediate
 - **Target Audience**: DBREs, SREs, Cloud Operations, TAMs running database-focused customer conversations
-- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, MCP
+- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, DevOps Agent skills
 - **Estimated Cost**: approx. $0.18–0.30/hr while running (approx. $130–220/month if left running continuously). This demo is meant to be deployed, tested, and torn down — tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
 
 ## Business Value
@@ -33,7 +33,7 @@ Database incidents are high-stakes and time-sensitive: a stalled writer blocks c
 2. Inject a realistic failure with one command (e.g. a connection storm).
 3. A CloudWatch alarm transitions to ALARM → SNS → Lambda webhook → DevOps Agent.
 4. DevOps Agent opens an investigation on its own, reads metrics + logs, and identifies root cause.
-5. The agent queries the MCP server for business context: dependent services, $/minute impact, compliance reporting deadlines, and recent changes.
+5. The `aurora-incident-business-context` skill adds business context from the cluster's tags, AWS Config, and CloudTrail: dependent services, $/minute impact, SLA status, compliance exposure, and recent changes.
 6. A complete incident report, plus on-demand follow-up chat ("what are the remediation steps?").
 
 ## How Incident Detection Works
@@ -54,7 +54,7 @@ Lambda signs the payload (HMAC-SHA256) → calls the DevOps Agent webhook
 DevOps Agent investigates: CloudWatch metrics, Performance Insights, Aurora logs
         │
         ▼
-Root cause + business context (via MCP) delivered — no human in the loop
+Root cause + business context (via the skill) delivered — no human in the loop
 ```
 
 ## Prerequisites
@@ -73,8 +73,8 @@ environment and automatically picks up the webhook from step 1.
 
 ### 1. Set up the DevOps Agent (hands-free)
 ```bash
-bash scripts/setup-devops-agent.sh us-west-2          # macOS/Linux
-# ./scripts/setup-devops-agent.ps1 -Region us-west-2   # Windows
+bash scripts/setup-devops-agent.sh <region>           # macOS/Linux
+# ./scripts/setup-devops-agent.ps1 -Region <region>    # Windows
 ```
 This **creates (or reuses) everything automatically** via the AWS SDK — no console
 clicking:
@@ -83,9 +83,14 @@ clicking:
 - the Operator App (web console access)
 - your AWS account connected as a monitored cloud source
 - a generic HMAC **webhook**, whose URL + secret are saved to `.devops-agent.env`
+- the [aurora-incident-business-context skill](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context), downloaded from `aws/tools-for-devops-agent` at a pinned, reviewed commit, plus the one extra permission it needs (`config:GetResourceConfigHistory`) on the Agent Space role
 
-Add `--with-mcp` (`-WithMcp` on Windows) to also deploy and print the MCP
-business-context server registration details.
+The script installs the skill in the Agent Space automatically (or updates it if
+it's already there). If your boto3 is too old to include the skill API, it saves
+`aurora-incident-business-context.zip` in the demo folder instead: in the DevOps
+Agent web app, open the `aurora-demo` Agent Space, go to **Skills**, choose
+**Upload**, and select the zip. Upgrading boto3 (`pip install -U boto3`) and
+re-running the script also works.
 
 > If your AWS SDK build predates the DevOps Agent API, the script detects that and
 > prints the one-time console steps instead — the rest of the demo is unchanged.
@@ -143,7 +148,7 @@ A suggested walkthrough:
 1. **Show a healthy cluster** — open the DevOps Agent console + CloudWatch Alarms; all `aurora-demo-*` alarms are OK.
 2. **Inject an incident** — e.g. `bash scripts/inject-failure.sh connection-storm --key-file ~/.ssh/your-key.pem` (see [Running Scenarios](#running-scenarios)).
 3. **Watch the alarm fire** — the matching alarm flips to ALARM in ~1–3 min.
-4. **Watch the agent investigate** — a new investigation appears in the Agent Space on its own (see [Watching the Investigation](#watching-the-investigation)); open it to see the root-cause reasoning and MCP business context.
+4. **Watch the agent investigate** — a new investigation appears in the Agent Space on its own (see [Watching the Investigation](#watching-the-investigation)); open it to see the root-cause reasoning and the business impact from the skill.
 5. **Roll back** — re-run the inject with `--rollback`; the alarm returns to OK.
 
 Recommended scenarios for a live demo: **connection-storm, cpu-spike, deadlock, failover** — the four most reliable.
@@ -161,14 +166,21 @@ Recommended scenarios for a live demo: **connection-storm, cpu-spike, deadlock, 
 
 Dedicated alarms start with their actions disabled; the inject script enables them before injecting and disables them on rollback (so they only fire for their scenario). `memory-pressure` and `replica-lag` are best-effort (harder to force on a larger instance) — the four core scenarios are the most demo-reliable.
 
-## MCP Server Tools
+## Business Context Skill
 
-| Tool | Input | Returns |
-|------|-------|---------|
-| `get_service_dependencies` | resource_id | Dependent services + criticality, on-call team, ~18K users affected |
-| `get_cost_impact` | resource_id, downtime_minutes | Revenue loss ($5,100/min), orders/min, SLA breach status |
-| `get_compliance_status` | resource_id | PCI-DSS / SOC 2 / GDPR reporting thresholds, data classification |
-| `get_maintenance_context` | resource_id | Recent parameter/app/engine changes to correlate with the incident |
+The demo uses the published [`aurora-incident-business-context`](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context) skill. The demo doesn't keep its own copy: `setup-devops-agent` downloads the skill from `aws/tools-for-devops-agent` at a pinned commit, so the catalog is the single source of truth.
+
+The skill reads these tags, which the CDK stack sets on the Aurora cluster:
+
+| Tag | Demo value | Used for |
+|---|---|---|
+| `DependentServices` | `checkout-service:CRITICAL - order-history-api:HIGH - analytics-etl:MEDIUM` | Affected services and criticality |
+| `OnCallTeam` | `Data Platform / DBRE` | Who to notify |
+| `RevenuePerMinute` | `5100` | Estimated cost of downtime |
+| `SLAThresholdMinutes` | `20` | SLA breached, or minutes remaining |
+| `DataClassification` | `Confidential` | Compliance exposure (for the compliance owner to decide) |
+
+The values are illustrative. No `checkout-service` compute exists in the demo, so the skill should flag the `DependentServices` tag as unverified, which shows it cross-checks tags against real connection evidence instead of repeating them. For recent changes, it checks AWS Config history and CloudTrail for parameter group, cluster, instance, and failover changes.
 
 ## Architecture
 
@@ -176,7 +188,7 @@ Dedicated alarms start with their actions disabled; the inject script enables th
 
 - **Network**: an Aurora MySQL cluster (writer + reader) sits in isolated subnets; a public bastion/load-generator injects scenarios over the MySQL protocol. No NAT gateway (cost).
 - **Detection**: CloudWatch alarms (connections, CPU, deadlocks, memory, replica-lag) plus an EventBridge failover rule fan into a single SNS topic.
-- **Investigation**: a conditional webhook Lambda notifies Amazon DevOps Agent, which reads CloudWatch metrics, Performance Insights, and Aurora logs, then queries an MCP server (API Gateway + Lambda) for business context (dependencies, cost impact, compliance).
+- **Investigation**: a conditional webhook Lambda notifies Amazon DevOps Agent, which reads CloudWatch metrics, Performance Insights, and Aurora logs, then uses the `aurora-incident-business-context` skill to add business context from the cluster's tags, AWS Config, and CloudTrail (dependencies, cost impact, SLA, compliance, recent changes).
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component breakdown and Well-Architected design notes.
 
@@ -184,12 +196,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component breakdown and Well
 
 Tear everything down when finished:
 ```bash
-bash scripts/cleanup.sh us-west-2     # macOS/Linux
-# ./scripts/cleanup.ps1 -Region us-west-2               # Windows
+bash scripts/cleanup.sh <region>      # macOS/Linux
+# ./scripts/cleanup.ps1 -Region <region>                # Windows
 ```
 Cleanup destroys the CDK stacks **and** removes the Agent Space + IAM roles that
-`setup-devops-agent` created. If you deployed the MCP server, remove its
-registration in the DevOps Agent console as well.
+`setup-devops-agent` created, including the skill installed in that Agent Space.
 
 ## Troubleshooting
 

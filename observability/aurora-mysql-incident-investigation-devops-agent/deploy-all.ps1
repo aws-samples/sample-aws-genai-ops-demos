@@ -55,22 +55,18 @@ Write-Host "`n==> Step 2: Deploy Aurora infrastructure via CDK (cluster creation
 $CdkDir = Join-Path $ScriptDir "infrastructure\cdk"
 $StackName = "AuroraDemoStack-$region"
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
-$env:PYTHONPATH = $RepoRoot
 
+# Use a virtual environment so the shared deploy script installs the CDK
+# dependencies there instead of into the system Python.
 python -m venv "$CdkDir\.venv"
 & "$CdkDir\.venv\Scripts\Activate.ps1"
-pip install -r "$CdkDir\requirements.txt"
 
-$accountId = (aws sts get-caller-identity --query Account --output text --no-cli-pager)
-Push-Location $CdkDir
-npx -y cdk bootstrap "aws://$accountId/$region" --no-cli-pager
-
-$cdkArgs = @("deploy", $StackName, "--require-approval", "never", "--no-cli-pager",
-  "--context", "keyPairName=$KeyPair", "--context", "sshCidr=$SshCidr")
-if ($WebhookUrl) { $cdkArgs += @("--context", "webhookUrl=$WebhookUrl") }
-if ($WebhookSecret) { $cdkArgs += @("--context", "webhookSecret=$WebhookSecret") }
-npx -y cdk @cdkArgs
-Pop-Location
+$cdkContext = @("keyPairName=$KeyPair", "sshCidr=$SshCidr")
+if ($WebhookUrl) { $cdkContext += "webhookUrl=$WebhookUrl" }
+if ($WebhookSecret) { $cdkContext += "webhookSecret=$WebhookSecret" }
+$env:AWS_REGION = $region
+& "$RepoRoot\shared\scripts\deploy-cdk.ps1" -CdkDirectory $CdkDir -StackName $StackName -CdkContext $cdkContext
+if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: CDK deployment failed" -ForegroundColor Red; exit 1 }
 
 Write-Host "`n==> Step 3: Fetch stack outputs..." -ForegroundColor Yellow
 function Get-Output($key) {

@@ -3,7 +3,6 @@
 import aws_cdk as cdk
 from shared.utils import get_region
 from lib.aurora_demo_stack import AuroraDemoStack
-from lib.mcp_server_stack import McpServerStack
 
 
 region = get_region()
@@ -30,12 +29,5 @@ AuroraDemoStack(
     ssh_cidr=ssh_cidr,
 )
 
-# MCP server stack — no tracking (secondary stack)
-McpServerStack(
-    app,
-    f"AuroraDemoMcpServer-{region}",
-    env=env,
-    description="MCP Server for Aurora MySQL DevOps Agent Demo",
-)
 
 app.synth()

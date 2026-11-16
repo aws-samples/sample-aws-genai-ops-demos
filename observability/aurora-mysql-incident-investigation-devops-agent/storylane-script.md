@@ -11,14 +11,14 @@
 ## Slide 1: Title / Hook
 **Screen**: Custom intro slide or architecture diagram
 **Script**: "Your production database starts refusing connections at 2 AM. Instead of your on-call DBRE spending 45 minutes in Performance Insights and error logs, Amazon DevOps Agent investigates automatically, finds the root cause, and tells you exactly who it's affecting and what it's costing — in minutes."
-**Callout**: "6 real-world Aurora failure scenarios | Automated root-cause analysis | Business context via MCP"
+**Callout**: "6 real-world Aurora failure scenarios | Automated root-cause analysis | Business context via a DevOps Agent skill"
 
 ---
 
 ## Slide 2: Architecture Overview
 **Screen**: Architecture diagram (see ARCHITECTURE.md)
-**Script**: "The demo deploys a self-contained Aurora MySQL cluster — a writer and a reader in isolated subnets — plus a bastion load-generator. CloudWatch alarms watch connections, CPU, deadlocks, memory, and replica lag; an EventBridge rule catches failover events. When something fires, a Lambda webhook wakes DevOps Agent, which investigates using metrics, Performance Insights, and logs, and calls an MCP server for business context."
-**Callout**: Highlight the flow: CloudWatch Alarm → SNS → Lambda → DevOps Agent → MCP Server
+**Script**: "The demo deploys a self-contained Aurora MySQL cluster — a writer and a reader in isolated subnets — plus a bastion load-generator. CloudWatch alarms watch connections, CPU, deadlocks, memory, and replica lag; an EventBridge rule catches failover events. When something fires, a Lambda webhook wakes DevOps Agent, which investigates using metrics, Performance Insights, and logs, and uses the published aurora-incident-business-context skill to add business context from the cluster's tags, AWS Config, and CloudTrail."
+**Callout**: Highlight the flow: CloudWatch Alarm → SNS → Lambda → DevOps Agent (+ business-context skill)
 
 ---
 
@@ -65,18 +65,15 @@
 
 ---
 
-## Slide 9: DevOps Agent — MCP Query (Service Dependencies)
-**Screen**: Operator App → agent calling `get_service_dependencies`
-**Script**: "The agent asks the MCP server who depends on this database. It learns checkout-service (CRITICAL, read-write), order-history-api (HIGH), and analytics-etl all rely on the cluster — roughly 18,000 active shopper sessions affected."
-**Callout**: Highlight the dependent services and criticality levels
-
+## Slide 9: DevOps Agent — Business Impact (Dependencies & Recent Changes)
+**Screen**: Investigation summary → the business-impact gaps and the recent-change finding
+**Script**: "The business-context skill reads the cluster's tags: checkout-service is listed as CRITICAL, with order-history-api and analytics-etl behind it. But the agent checks that claim against real connections and finds only the bastion talking to the database, so it marks the dependency tag as unverified instead of repeating it. It also pulls CloudTrail and AWS Config to show the parameter group change made just before the alarm."
+**Callout**: Highlight "Impact on dependent services unverified" and the parameter group finding
 ---
-
-## Slide 10: DevOps Agent — MCP Query (Cost & Compliance)
-**Screen**: Operator App → agent calling `get_cost_impact` and `get_compliance_status`
-**Script**: "It quantifies the impact — about $5,100 per minute in blocked checkout revenue, ~610 orders/minute — and flags PCI-DSS (15-min reporting) and GDPR obligations because the cluster holds payment tokens and customer PII."
-**Callout**: Highlight "$5,100/min" and "PCI-DSS: 15 min reporting"
-
+## Slide 10: DevOps Agent — Business Impact (Cost, SLA & Compliance)
+**Screen**: Investigation summary → cost and compliance gaps
+**Script**: "From the RevenuePerMinute and SLAThresholdMinutes tags, it estimates the cost — about $5,100 per minute if those services were really affected — and shows how many minutes are left before the 20-minute SLA. The cluster is tagged DataClassification=Confidential with no framework tag, so it names the exposure and leaves the reporting decision to the compliance owner, rather than claiming a deadline has started."
+**Callout**: Highlight "Business cost unconfirmed" and "Reporting obligation undetermined: for the compliance owner to decide"
 ---
 
 ## Slide 11: DevOps Agent — Final Incident Report
@@ -112,6 +109,6 @@
 
 ## Timing Notes
 - After injecting: wait ~1-3 min for the connections alarm to fire.
-- Agent investigation: ~2-5 min to complete including MCP calls.
+- Agent investigation: ~2-5 min to complete including the business-context checks.
 - Total capture time: ~15-20 min for all screenshots.
 - Remember to roll back after capture: `bash scripts/inject-failure.sh connection-storm --key-file <key> --rollback`

@@ -95,8 +95,9 @@ class AuroraDemoStack(cdk.Stack):
             "AuroraCluster",
             engine=engine,
             cluster_identifier=CLUSTER_ID,
-            credentials=rds.Credentials.from_generated_secret(
-                "admin", secret_name="aurora-demo/credentials"
+            credentials=rds.Credentials.from_generated_secret(  # nosec B106
+                # Username only; Secrets Manager generates the password at deploy time.
+                "admin", secret_name="aurora-demo/credentials"  # pragma: allowlist secret
             ),
             default_database_name=DEFAULT_DB,
             writer=rds.ClusterInstance.provisioned(
@@ -123,6 +124,22 @@ class AuroraDemoStack(cdk.Stack):
             deletion_protection=False,
             removal_policy=RemovalPolicy.DESTROY,
         )
+
+        # ============ Business-context tags ============
+        # Read by the aurora-incident-business-context skill (published in
+        # aws/tools-for-devops-agent) to report dependent services, cost of
+        # downtime, SLA and compliance exposure. The values are illustrative:
+        # no checkout-service compute exists in this demo, so the skill should
+        # report the DependentServices tag as unverified.
+        business_tags = {
+            "DependentServices": "checkout-service:CRITICAL - order-history-api:HIGH - analytics-etl:MEDIUM",
+            "OnCallTeam": "Data Platform / DBRE",
+            "RevenuePerMinute": "5100",
+            "SLAThresholdMinutes": "20",
+            "DataClassification": "Confidential",
+        }
+        for key, value in business_tags.items():
+            cdk.Tags.of(cluster).add(key, value)
 
         # ============ Bastion / load-generator ============
         bastion_role = iam.Role(

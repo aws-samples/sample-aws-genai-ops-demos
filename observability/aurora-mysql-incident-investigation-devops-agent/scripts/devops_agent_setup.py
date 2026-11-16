@@ -12,6 +12,9 @@ needs, using the boto3 `devops-agent` API directly:
   3. The Operator App (IAM auth) for the web console
   4. The AWS account associated as a "monitor" cloud source
   5. A generic (HMAC) webhook — the URL + secret alarms are delivered to
+  6. The aurora-incident-business-context skill, fetched from
+     aws/tools-for-devops-agent at a pinned commit (installed via the API when
+     the SDK supports it, otherwise saved as a zip to upload in the web app)
 
 The webhook URL + secret are written to `.devops-agent.env` in the demo root so
 `deploy-all.sh` / `deploy-all.ps1` can pick them up automatically.
@@ -21,13 +24,15 @@ the script prints the equivalent manual console steps and exits 0 — the demo s
 works, the operator just clicks through the console once.
 
 Usage:
-    python3 scripts/devops_agent_setup.py [--region us-west-2] [--space-name aurora-demo]
+    python3 scripts/devops_agent_setup.py [--region <region>] [--space-name aurora-demo]
 """
 import argparse
 import json
 import os
 import sys
 import time
+import urllib.request
+import zipfile
 
 try:
     import boto3
@@ -39,6 +44,26 @@ except ImportError:
 AGENT_POLICY = "arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy"
 OPERATOR_POLICY = "arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy"
 TRUST_PRINCIPAL = "aidevops.amazonaws.com"
+
+# Business-context skill, published in aws/tools-for-devops-agent (PR #205).
+# Pinned to the merge commit so the demo always installs the reviewed version.
+# The demo does not keep its own copy: that repository is the source of truth.
+SKILL_NAME = "aurora-incident-business-context"
+SKILL_REPO = "aws/tools-for-devops-agent"
+SKILL_COMMIT = "2f3e44ee1b4d9284efb84cb433c4431d335ca5ab"  # pragma: allowlist secret (git commit SHA)
+# Only the files DevOps Agent reads at runtime (SKILL.md and references/).
+SKILL_FILES = ["SKILL.md", "references/evidence-sources.md"]
+# The skill's recent-change check uses AWS Config history, which
+# AIDevOpsAgentAccessPolicy does not include.
+SKILL_POLICY_NAME = "AuroraIncidentBusinessContextSkill"
+SKILL_POLICY = json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Action": ["config:GetResourceConfigHistory"],
+        "Resource": "*",
+    }],
+})
 
 
 def _err(e):
@@ -81,6 +106,59 @@ def ensure_role(iam, name, policy_arn, trust_doc):
     except ClientError as e:
         print(f"    (attach policy: {_err(e)})")
     return arn
+
+
+def build_skill_zip(dest_path):
+    """Download the pinned skill files from GitHub and zip them as <skill>/<file>."""
+    base = f"https://raw.githubusercontent.com/{SKILL_REPO}/{SKILL_COMMIT}/skills/{SKILL_NAME}"
+    with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in SKILL_FILES:
+            url = f"{base}/{rel}"
+            if not url.startswith("https://raw.githubusercontent.com/"):
+                raise ValueError(f"unexpected skill URL: {url}")
+            # Fixed https URL built from constants above, checked on the line before.
+            with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310
+                zf.writestr(f"{SKILL_NAME}/{rel}", resp.read())
+    return dest_path
+
+
+def install_skill(da, space_id, demo_dir):
+    """Install the skill via CreateAsset when available, else save a zip to upload."""
+    zip_path = os.path.join(demo_dir, f"{SKILL_NAME}.zip")
+    try:
+        build_skill_zip(zip_path)
+    except Exception as e:
+        print(f"[6/6] Skill download failed: {e}")
+        print(f"      Get it from https://github.com/{SKILL_REPO}/tree/main/skills/{SKILL_NAME}")
+        return False
+    if hasattr(da, "create_asset"):
+        try:
+            with open(zip_path, "rb") as f:
+                content = {"zip": {"zipFile": f.read()}}
+            # Update an existing copy of the skill instead of adding a duplicate.
+            existing = None
+            for a in da.list_assets(agentSpaceId=space_id, assetType="skill").get("items", []):
+                if (a.get("metadata") or {}).get("name") == SKILL_NAME:
+                    existing = a["assetId"]
+            if existing and hasattr(da, "update_asset"):
+                da.update_asset(agentSpaceId=space_id, assetId=existing, content=content)
+                print(f"[6/6] Skill '{SKILL_NAME}' updated to the pinned version.")
+            else:
+                da.create_asset(
+                    agentSpaceId=space_id,
+                    assetType="skill",
+                    metadata={"agent_types": ["GENERIC"]},
+                    content=content,
+                )
+                print(f"[6/6] Skill '{SKILL_NAME}' installed in the Agent Space.")
+            return True
+        except ClientError as e:
+            print(f"[6/6] Skill install via API failed: {_err(e)}")
+    print(f"[6/6] Skill saved to {zip_path}")
+    print("      Upload it once in the DevOps Agent web app: open the Agent Space,")
+    print("      go to Skills, choose Upload, select the zip, and enable it for")
+    print("      Investigations and Chat.")
+    return False
 
 
 def main():
@@ -143,6 +221,8 @@ def main():
             print(f"No Agent Space named '{space_name}' in {region}.")
         for rn in (f"{space_name}-AgentSpaceRole", f"{space_name}-OperatorRole"):
             try:
+                for pn in iam.list_role_policies(RoleName=rn).get("PolicyNames", []):
+                    iam.delete_role_policy(RoleName=rn, PolicyName=pn)
                 for p in iam.list_attached_role_policies(RoleName=rn).get("AttachedPolicies", []):
                     iam.detach_role_policy(RoleName=rn, PolicyArn=p["PolicyArn"])
                 iam.delete_role(RoleName=rn)
@@ -176,17 +256,17 @@ def main():
         sys.exit(1)
 
     if space_id:
-        print(f"[1/5] Agent Space exists: {space_id}")
+        print(f"[1/6] Agent Space exists: {space_id}")
     else:
         space_id = da.create_agent_space(
             name=space_name,
             description="Aurora MySQL incident investigation demo",
         )["agentSpace"]["agentSpaceId"]
-        print(f"[1/5] Agent Space created: {space_id}")
+        print(f"[1/6] Agent Space created: {space_id}")
         time.sleep(8)
 
     # ---- 2. IAM roles ----
-    print("[2/5] IAM roles...")
+    print("[2/6] IAM roles...")
     trust = json.dumps({
         "Version": "2012-10-17",
         "Statement": [{
@@ -198,20 +278,29 @@ def main():
     })
     agent_role = ensure_role(iam, f"{space_name}-AgentSpaceRole", AGENT_POLICY, trust)
     operator_role = ensure_role(iam, f"{space_name}-OperatorRole", OPERATOR_POLICY, trust)
+    try:
+        iam.put_role_policy(
+            RoleName=f"{space_name}-AgentSpaceRole",
+            PolicyName=SKILL_POLICY_NAME,
+            PolicyDocument=SKILL_POLICY,
+        )
+        print("      Added config:GetResourceConfigHistory for the business-context skill.")
+    except ClientError as e:
+        print(f"      (skill IAM policy: {_err(e)})")
     print("      waiting for IAM propagation...")
     time.sleep(12)
 
     # ---- 3. Operator App (web console, IAM auth) ----
     try:
         da.enable_operator_app(agentSpaceId=space_id, authFlow="iam", operatorAppRoleArn=operator_role)
-        print("[3/5] Operator App enabled (IAM auth).")
+        print("[3/6] Operator App enabled (IAM auth).")
     except ClientError as e:
-        print(f"[3/5] Operator App: {_err(e)} (continuing)")
+        print(f"[3/6] Operator App: {_err(e)} (continuing)")
 
     # ---- 4. Associate AWS account (monitor) ----
     assocs = da.list_associations(agentSpaceId=space_id).get("associations", [])
     if any(a.get("serviceId") == "aws" for a in assocs):
-        print("[4/5] AWS account already connected (monitor).")
+        print("[4/6] AWS account already connected (monitor).")
     else:
         try:
             da.associate_service(
@@ -223,9 +312,9 @@ def main():
                     "assumableRoleArn": agent_role,
                 }},
             )
-            print(f"[4/5] AWS account {account_id} connected (monitor).")
+            print(f"[4/6] AWS account {account_id} connected (monitor).")
         except ClientError as e:
-            print(f"[4/5] associate AWS account: {_err(e)} (you may need to add it in the console)")
+            print(f"[4/6] associate AWS account: {_err(e)} (you may need to add it in the console)")
 
     # ---- 5. Generic (HMAC) webhook ----
     webhook_url = webhook_secret = None
@@ -234,7 +323,7 @@ def main():
     if saved.get("WEBHOOK_URL") and saved.get("WEBHOOK_SECRET") and saved.get("DEVOPS_AGENT_SPACE_ID") == space_id:
         webhook_url = saved["WEBHOOK_URL"]
         webhook_secret = saved["WEBHOOK_SECRET"]
-        print("[5/5] Reusing existing webhook from .devops-agent.env.")
+        print("[5/6] Reusing existing webhook from .devops-agent.env.")
     else:
         # Remove any stale event-channel associations so we get a fresh, known secret.
         for a in da.list_associations(agentSpaceId=space_id).get("associations", []):
@@ -257,9 +346,13 @@ def main():
             wh = out.get("webhook") or {}
             webhook_url = wh.get("webhookUrl")
             webhook_secret = wh.get("webhookSecret")
-            print(f"[5/5] Webhook created (type={wh.get('webhookType')}).")
+            print(f"[5/6] Webhook created (type={wh.get('webhookType')}).")
         except ClientError as e:
-            print(f"[5/5] webhook: {_err(e)}", file=sys.stderr)
+            print(f"[5/6] webhook: {_err(e)}", file=sys.stderr)
+
+    # ---- 6. Business-context skill ----
+    demo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    install_skill(da, space_id, demo_dir)
 
     # ---- Persist for deploy-all ----
     if webhook_url and webhook_secret:

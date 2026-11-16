@@ -7,18 +7,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REGION="${1:-${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null)}}}"
 [[ -z "$REGION" ]] && { echo "ERROR: region required (arg 1 or AWS_DEFAULT_REGION)"; exit 1; }
 
-CDK_DIR="$SCRIPT_DIR/../infrastructure/cdk"
+CDK_DIR="$(cd "$SCRIPT_DIR/../infrastructure/cdk" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-export PYTHONPATH="$REPO_ROOT"
 
-echo "==> Destroying CDK stacks in $REGION..."
-if [[ -d "$CDK_DIR/.venv" ]]; then
-  source "$CDK_DIR/.venv/bin/activate"
-fi
-pushd "$CDK_DIR" > /dev/null
-npx -y cdk destroy "AuroraDemoStack-$REGION" "AuroraDemoMcpServer-$REGION" \
-  --force --no-cli-pager --context "keyPairName=placeholder" || true
-popd > /dev/null
+echo "==> Destroying CDK stack in $REGION..."
+[[ -d "$CDK_DIR/.venv" ]] || python3 -m venv "$CDK_DIR/.venv"
+source "$CDK_DIR/.venv/bin/activate"
+export AWS_REGION="$REGION"
+bash "$REPO_ROOT/shared/scripts/deploy-cdk.sh" --cdk-directory "$CDK_DIR" \
+  --stack-name "AuroraDemoStack-$REGION" --destroy --skip-bootstrap \
+  --cdk-context "keyPairName=placeholder" || true
 
 echo ""
 echo "==> Removing DevOps Agent space + IAM roles (if created by setup-devops-agent.sh)..."
@@ -29,7 +27,7 @@ if [[ -n "$PY" ]]; then
 fi
 
 echo ""
+rm -f "$SCRIPT_DIR/../aurora-incident-business-context.zip"
 echo "==> Cleanup complete."
 echo "   Manually remove if desired:"
-echo "     - MCP server registration in the DevOps Agent console"
 echo "     - Secrets Manager secret 'aurora-demo/credentials' (retained ~7 days by default)"
