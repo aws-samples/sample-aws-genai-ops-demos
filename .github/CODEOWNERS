@@ -4,7 +4,7 @@
 /cost-optimization/ai-graviton-migration-assessment/                   @bquintas @benlec @emenguy
 /cost-optimization/aws-genai-cost-optimization-mcp-server/             @emenguy @bquintas @benlec
 /observability/aws-feature-relevance-notification-system/              @awsrahulrsr @bquintas @benlec @emenguy
-/observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/ @rahulnarya @bquintas @benlec @emenguy
+/observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/ @awsrahulrsr @bquintas @benlec @emenguy
 /observability/eks-investigation-devops-agent/                         @AmiroucheRA @bquintas @benlec @emenguy
 /observability/proactive-health-event-impact-analyzer/                 @u-mancini @bquintas @benlec @emenguy
 /observability/saas-status-mcp/                                        @benlec @bquintas @emenguy
