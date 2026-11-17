@@ -17,11 +17,11 @@ This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent invest
 | **Multiple incident types** | Four reliable scenarios — connection storm, CPU spike, deadlock, failover — each mapped to its own alarm/event |
 
 ## At a Glance
-- **Duration**: ~25 minutes (Agent Space setup + infra deployment; Aurora cluster creation is ~10-15 min of that)
+- **Duration**: \~25 minutes (Agent Space setup + infra deployment; Aurora cluster creation is \~10-15 min of that)
 - **Difficulty**: Intermediate
 - **Target Audience**: DBREs, SREs, Cloud Operations, TAMs running database-focused customer conversations
 - **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), AWS DevOps Agent, DevOps Agent skills
-- **Estimated Cost**: ~$0.17/hr for the infrastructure while it runs, plus AWS DevOps Agent usage (~$4 per 8-minute investigation). A 2-hour demo with three investigations costs ~$12. This demo is meant to be deployed, tested, and torn down. See [Cost Estimate](#cost-estimate).
+- **Estimated Cost**: \~$0.17/hr for the infrastructure while it runs, plus AWS DevOps Agent usage (\~$4 per 8-minute investigation). A 2-hour demo with three investigations costs \~$12. This demo is meant to be deployed, tested, and torn down. See [Cost Estimate](#cost-estimate).
 
 ## Interactive Demo
 
@@ -146,7 +146,7 @@ You can also start an investigation **on demand** from the Agent chat, e.g.:
 > `aurora-demo-connections-high` alarm is firing on the writer `aurora-demo-writer`.
 > Find the root cause and recommend remediation.
 
-Tip: CloudWatch metrics lag ~2–3 minutes, so give an active incident a moment before
+Tip: CloudWatch metrics lag \~2–3 minutes, so give an active incident a moment before
 asking the agent to investigate (or ask it to "re-check" to pick up the peak).
 
 ## Run the Demo
@@ -155,7 +155,7 @@ A suggested walkthrough:
 
 1. **Show a healthy cluster** — open the DevOps Agent console + CloudWatch Alarms; all `aurora-demo-*` alarms are OK.
 2. **Inject an incident** — e.g. `bash scripts/inject-failure.sh connection-storm --key-file ~/.ssh/your-key.pem` (see [Running Scenarios](#running-scenarios)).
-3. **Watch the alarm fire** — the matching alarm flips to ALARM in ~1–3 min.
+3. **Watch the alarm fire** — the matching alarm flips to ALARM in \~1–3 min.
 4. **Watch the agent investigate** — a new investigation appears in the Agent Space on its own (see [Watching the Investigation](#watching-the-investigation)); open it to see the root-cause reasoning and the business impact from the skill.
 5. **Roll back** — re-run the inject with `--rollback`; the alarm returns to OK.
 
@@ -165,7 +165,7 @@ Recommended scenarios for a live demo: **connection-storm, cpu-spike, deadlock, 
 
 | Scenario | What it does | Signal / Alarm |
 |----------|--------------|----------------|
-| `connection-storm` | Opens ~200 held connections on the writer | `DatabaseConnections` high → `aurora-demo-connections-high` |
+| `connection-storm` | Opens \~200 held connections on the writer | `DatabaseConnections` high → `aurora-demo-connections-high` |
 | `cpu-spike` | Runs CPU-burn query workers | `CPUUtilization` high → `aurora-demo-cpu-high` |
 | `deadlock` | Two transactions lock rows in opposite order | InnoDB `Deadlocks` → `aurora-demo-deadlocks` |
 | `failover` | `aws rds failover-db-cluster` — swaps writer/reader | RDS failover event via EventBridge → SNS |
@@ -229,13 +229,13 @@ On-demand prices in us-west-2 (checked with the AWS Pricing API). Other regions 
 | Bastion (`t3.micro`) | $0.0104/hr | $0.010/hr |
 | Public IPv4 address (bastion) | $0.005/hr | $0.005/hr |
 | Aurora storage and I/O | $0.10 per GB-month, $0.20 per million I/Os | <$0.01/hr for the demo data |
-| CloudWatch alarms (6), Secrets Manager (1 secret) | $0.10 per alarm-month, $0.40 per secret-month | ~$1/month |
+| CloudWatch alarms (6), Secrets Manager (1 secret) | $0.10 per alarm-month, $0.40 per secret-month | \~$1/month |
 | Lambda, SNS, EventBridge, CloudWatch Logs | Per request or GB | <$0.05 per demo |
 | CloudWatch Database Insights (Standard) | Included | $0 |
-| **Infrastructure total** | | **~$0.17/hr (~$125/month if left running)** |
-| AWS DevOps Agent | [$0.0083 per agent-second](https://aws.amazon.com/devops-agent/pricing/) | ~$4 per 8-minute investigation |
+| **Infrastructure total** | | **\~$0.17/hr (\~$125/month if left running)** |
+| AWS DevOps Agent | [$0.0083 per agent-second](https://aws.amazon.com/devops-agent/pricing/) | \~$4 per 8-minute investigation |
 
-**Demo run:** ~2 hours of infrastructure plus three investigations is ~$12. Most of that is DevOps Agent usage, so the cost depends mainly on how many investigations you run.
+**Demo run:** \~2 hours of infrastructure plus three investigations is \~$12. Most of that is DevOps Agent usage, so the cost depends mainly on how many investigations you run.
 
 **Keep costs down:** run `cleanup` as soon as you're done, inject only the scenarios you plan to show, and roll each one back so the alarm doesn't open repeat investigations.
 
@@ -253,10 +253,10 @@ Cleanup destroys the CDK stack **and** removes the Agent Space + IAM roles that
 
 | Issue | Cause | Fix |
 |---|---|---|
-| Alarm doesn't flip to ALARM after inject | CloudWatch metrics lag ~2–3 minutes behind real time | Wait 2–3 min after injecting before checking. Run `bash scripts/inject-failure.sh status --key-file <path>` to confirm the injector is actually running on the bastion. |
+| Alarm doesn't flip to ALARM after inject | CloudWatch metrics lag \~2–3 minutes behind real time | Wait 2–3 min after injecting before checking. Run `bash scripts/inject-failure.sh status --key-file <path>` to confirm the injector is actually running on the bastion. |
 | The investigation shows no business impact | The skill isn't installed in the Agent Space, or the cluster has no business tags | Re-run `setup-devops-agent` and check that it prints "Skill 'aurora-incident-business-context' installed" or "updated". In the DevOps Agent console, check the Agent Space's **Skills** list. Check the cluster's tags in the RDS console (**Tags** tab). |
 | `--rollback` takes a long time, or `status` still says "running" afterwards | The rollback stops the load on the bastion but can be slow to return, and the status record can lag behind | If it hangs, press Ctrl+C. Check that the alarm is back to OK and that `status` shows `threads_connected` near its normal level (around 10). |
-| `deploy-all` hangs on "Waiting for SSH..." | Bastion still booting, or `--ssh-cidr` doesn't match your current IP | Wait — it retries for ~5 minutes. If it still fails, confirm your current public IP matches the security group rule, or rerun with `--ssh-open` for the demo (never leave this on outside a live session). |
+| `deploy-all` hangs on "Waiting for SSH..." | Bastion still booting, or `--ssh-cidr` doesn't match your current IP | Wait — it retries for \~5 minutes. If it still fails, confirm your current public IP matches the security group rule, or rerun with `--ssh-open` for the demo (never leave this on outside a live session). |
 
 ## Security Notes (demo-grade)
 
