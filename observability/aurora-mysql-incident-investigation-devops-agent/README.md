@@ -5,8 +5,6 @@
 
 Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWatch alarm fires (or a failover event occurs), an SNS → Lambda webhook notifies **AWS DevOps Agent**, which reads CloudWatch metrics, Performance Insights, and the Aurora error/slow-query logs, correlates the signals, and enriches the finding with business context (dependent services, revenue-per-minute, SLA and compliance exposure, recent changes) using the [aurora-incident-business-context skill](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context) from the AWS DevOps Agent tools catalog. The result is an actionable incident report — not a wall of raw logs.
 
-This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent investigation demos.
-
 ## DevOps Agent Features Demonstrated
 
 | Feature | How it's shown |
