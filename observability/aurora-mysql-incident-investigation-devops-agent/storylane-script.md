@@ -1,4 +1,4 @@
-# Storylane Script: Intelligent Aurora MySQL Incident Investigation with Amazon DevOps Agent
+# Storylane Script: Intelligent Aurora MySQL Incident Investigation with AWS DevOps Agent
 
 ## Demo Overview
 - **Total slides**: 13
@@ -10,7 +10,7 @@
 
 ## Slide 1: Title / Hook
 **Screen**: Custom intro slide or architecture diagram
-**Script**: "Your production database starts refusing connections at 2 AM. Instead of your on-call DBRE spending 45 minutes in Performance Insights and error logs, Amazon DevOps Agent investigates automatically, finds the root cause, and tells you exactly who it's affecting and what it's costing — in minutes."
+**Script**: "Your production database starts refusing connections at 2 AM. Instead of your on-call DBRE spending 45 minutes in Performance Insights and error logs, AWS DevOps Agent investigates automatically, finds the root cause, and tells you exactly who it's affecting and what it's costing — in minutes."
 **Callout**: "6 real-world Aurora failure scenarios | Automated root-cause analysis | Business context via a DevOps Agent skill"
 
 ---

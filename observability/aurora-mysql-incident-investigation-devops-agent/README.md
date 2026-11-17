@@ -1,9 +1,9 @@
 # Intelligent Aurora MySQL Incident Investigation with AWS DevOps Agent
-*Your database degrades at 2 AM — instead of an on-call engineer digging through Performance Insights and error logs for 45 minutes, Amazon DevOps Agent investigates automatically, finds root cause, and quantifies the business impact.*
+*Your database degrades at 2 AM — instead of an on-call engineer digging through Performance Insights and error logs for 45 minutes, AWS DevOps Agent investigates automatically, finds root cause, and quantifies the business impact.*
 
 ## Overview
 
-Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWatch alarm fires (or a failover event occurs), an SNS → Lambda webhook notifies **Amazon DevOps Agent**, which reads CloudWatch metrics, Performance Insights, and the Aurora error/slow-query logs, correlates the signals, and enriches the finding with business context (dependent services, revenue-per-minute, SLA and compliance exposure, recent changes) using the [aurora-incident-business-context skill](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context) from the AWS DevOps Agent tools catalog. The result is an actionable incident report — not a wall of raw logs.
+Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWatch alarm fires (or a failover event occurs), an SNS → Lambda webhook notifies **AWS DevOps Agent**, which reads CloudWatch metrics, Performance Insights, and the Aurora error/slow-query logs, correlates the signals, and enriches the finding with business context (dependent services, revenue-per-minute, SLA and compliance exposure, recent changes) using the [aurora-incident-business-context skill](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context) from the AWS DevOps Agent tools catalog. The result is an actionable incident report — not a wall of raw logs.
 
 This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent investigation demos.
 
@@ -20,8 +20,10 @@ This is the database sibling to the EKS and Site-to-Site VPN DevOps Agent invest
 - **Duration**: ~25 minutes (Agent Space setup + infra deployment; Aurora cluster creation is ~10-15 min of that)
 - **Difficulty**: Intermediate
 - **Target Audience**: DBREs, SREs, Cloud Operations, TAMs running database-focused customer conversations
-- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), Amazon DevOps Agent, DevOps Agent skills
-- **Estimated Cost**: approx. $0.18–0.30/hr while running (approx. $130–220/month if left running continuously). This demo is meant to be deployed, tested, and torn down — tear down with `cleanup` when done. See [Cost & Cleanup](#cost--cleanup).
+- **Key Technologies**: Amazon Aurora MySQL, CloudWatch, CloudWatch Database Insights (formerly Performance Insights), SNS, Lambda, EventBridge, CDK (Python), AWS DevOps Agent, DevOps Agent skills
+- **Estimated Cost**: ~$0.17/hr for the infrastructure while it runs, plus AWS DevOps Agent usage (~$4 per 8-minute investigation). A 2-hour demo with three investigations costs ~$12. This demo is meant to be deployed, tested, and torn down. See [Cost Estimate](#cost-estimate).
+
+## Interactive Demo
 
 ## Business Value
 
@@ -62,13 +64,13 @@ Root cause + business context (via the skill) delivered — no human in the loop
 - Node.js 20+ and Python 3.9+ (for CDK)
 - An EC2 key pair in the target region
 - OpenSSH client (`ssh`/`scp`) — preinstalled on macOS/Linux and Windows 10+
-- Amazon DevOps Agent access in your account/region
-- **CDK bootstrap** — the target account/region must be bootstrapped once: `npx cdk bootstrap aws://<account-id>/<region>`
+- AWS DevOps Agent access in your account/region
+- **CDK bootstrap** — handled for you: `deploy-all` runs the repo's shared deploy script, which bootstraps the account and region if needed
 - **DevOps Agent region** — the Agent Space is created in your deploy region. `AWS::DevOpsAgent` isn't available everywhere, so use a supported region (e.g. `us-west-2`, `us-east-1`)
 
 ## Deployment (Quick Start)
 
-Two commands. Step 1 configures Amazon DevOps Agent; step 2 deploys the Aurora
+Two commands. Step 1 configures AWS DevOps Agent; step 2 deploys the Aurora
 environment and automatically picks up the webhook from step 1.
 
 ### 1. Set up the DevOps Agent (hands-free)
@@ -123,7 +125,7 @@ bash scripts/inject-failure.sh status --key-file ~/.ssh/your-key.pem
 
 ## Watching the Investigation
 
-Open your Agent Space in the Amazon DevOps Agent console (same region you deployed in):
+Open your Agent Space in the AWS DevOps Agent console (same region you deployed in):
 ```
 https://<region>.console.aws.amazon.com/aidevops/home?region=<region>
 ```
@@ -131,6 +133,12 @@ Select the `aurora-demo` space. After you inject a scenario, the alarm → webho
 opens a new investigation **automatically** within 1–3 minutes (titled
 `ALARM: "aurora-demo-…" in <Region>`) — click into it to watch the agent read the
 metrics, correlate signals, and produce a root-cause report with no prompting.
+
+The business impact from the skill appears in the investigation **summary**:
+the recent change shows up as a finding, and the rest is usually listed under
+**Other Gaps** as "Impact on dependent services unverified", "Business cost
+unconfirmed", and "Reporting obligation undetermined", each with the tag values
+and evidence it used.
 
 You can also start an investigation **on demand** from the Agent chat, e.g.:
 
@@ -186,20 +194,59 @@ The values are illustrative. No `checkout-service` compute exists in the demo, s
 
 ![Architecture diagram](architecture.svg)
 
+The editable source is [`architecture.drawio`](architecture.drawio).
+
 - **Network**: an Aurora MySQL cluster (writer + reader) sits in isolated subnets; a public bastion/load-generator injects scenarios over the MySQL protocol. No NAT gateway (cost).
 - **Detection**: CloudWatch alarms (connections, CPU, deadlocks, memory, replica-lag) plus an EventBridge failover rule fan into a single SNS topic.
-- **Investigation**: a conditional webhook Lambda notifies Amazon DevOps Agent, which reads CloudWatch metrics, Performance Insights, and Aurora logs, then uses the `aurora-incident-business-context` skill to add business context from the cluster's tags, AWS Config, and CloudTrail (dependencies, cost impact, SLA, compliance, recent changes).
+- **Investigation**: a conditional webhook Lambda notifies AWS DevOps Agent, which reads CloudWatch metrics, Performance Insights, and Aurora logs, then uses the `aurora-incident-business-context` skill to add business context from the cluster's tags, AWS Config, and CloudTrail (dependencies, cost impact, SLA, compliance, recent changes).
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component breakdown and Well-Architected design notes.
 
-## Cost & Cleanup
+## Project Structure
+
+```
+aurora-mysql-incident-investigation-devops-agent/
+├── deploy-all.sh / deploy-all.ps1      # Deploy the Aurora environment (shared CDK deploy script)
+├── scripts/
+│   ├── setup-devops-agent.sh / .ps1    # Agent Space, IAM roles, webhook, business-context skill
+│   ├── devops_agent_setup.py           # The AWS SDK calls behind setup-devops-agent
+│   ├── inject-failure.sh / .ps1        # Inject, roll back, or check a failure scenario
+│   └── cleanup.sh / .ps1               # Tear everything down
+├── bastion-scripts/                    # Scenario scripts copied to the bastion
+├── infrastructure/cdk/                 # CDK app (Python): VPC, Aurora, bastion, alarms, webhook Lambda
+├── architecture.svg / .drawio          # Architecture diagram
+├── ARCHITECTURE.md                     # Component breakdown and design notes
+└── storylane-script.md                 # Script for the interactive walkthrough
+```
+
+## Cost Estimate
+
+On-demand prices in us-west-2 (checked with the AWS Pricing API). Other regions differ slightly.
+
+| Component | Price | While running |
+|---|---|---|
+| Aurora MySQL writer + reader (`db.t4g.medium` × 2) | $0.073/hr each | $0.146/hr |
+| Bastion (`t3.micro`) | $0.0104/hr | $0.010/hr |
+| Public IPv4 address (bastion) | $0.005/hr | $0.005/hr |
+| Aurora storage and I/O | $0.10 per GB-month, $0.20 per million I/Os | <$0.01/hr for the demo data |
+| CloudWatch alarms (6), Secrets Manager (1 secret) | $0.10 per alarm-month, $0.40 per secret-month | ~$1/month |
+| Lambda, SNS, EventBridge, CloudWatch Logs | Per request or GB | <$0.05 per demo |
+| CloudWatch Database Insights (Standard) | Included | $0 |
+| **Infrastructure total** | | **~$0.17/hr (~$125/month if left running)** |
+| AWS DevOps Agent | [$0.0083 per agent-second](https://aws.amazon.com/devops-agent/pricing/) | ~$4 per 8-minute investigation |
+
+**Demo run:** ~2 hours of infrastructure plus three investigations is ~$12. Most of that is DevOps Agent usage, so the cost depends mainly on how many investigations you run.
+
+**Keep costs down:** run `cleanup` as soon as you're done, inject only the scenarios you plan to show, and roll each one back so the alarm doesn't open repeat investigations.
+
+## Cleanup
 
 Tear everything down when finished:
 ```bash
 bash scripts/cleanup.sh <region>      # macOS/Linux
 # ./scripts/cleanup.ps1 -Region <region>                # Windows
 ```
-Cleanup destroys the CDK stacks **and** removes the Agent Space + IAM roles that
+Cleanup destroys the CDK stack **and** removes the Agent Space + IAM roles that
 `setup-devops-agent` created, including the skill installed in that Agent Space.
 
 ## Troubleshooting
@@ -207,6 +254,8 @@ Cleanup destroys the CDK stacks **and** removes the Agent Space + IAM roles that
 | Issue | Cause | Fix |
 |---|---|---|
 | Alarm doesn't flip to ALARM after inject | CloudWatch metrics lag ~2–3 minutes behind real time | Wait 2–3 min after injecting before checking. Run `bash scripts/inject-failure.sh status --key-file <path>` to confirm the injector is actually running on the bastion. |
+| The investigation shows no business impact | The skill isn't installed in the Agent Space, or the cluster has no business tags | Re-run `setup-devops-agent` and check that it prints "Skill 'aurora-incident-business-context' installed" or "updated". In the DevOps Agent console, check the Agent Space's **Skills** list. Check the cluster's tags in the RDS console (**Tags** tab). |
+| `--rollback` takes a long time, or `status` still says "running" afterwards | The rollback stops the load on the bastion but can be slow to return, and the status record can lag behind | If it hangs, press Ctrl+C. Check that the alarm is back to OK and that `status` shows `threads_connected` near its normal level (around 10). |
 | `deploy-all` hangs on "Waiting for SSH..." | Bastion still booting, or `--ssh-cidr` doesn't match your current IP | Wait — it retries for ~5 minutes. If it still fails, confirm your current public IP matches the security group rule, or rerun with `--ssh-open` for the demo (never leave this on outside a live session). |
 
 ## Security Notes (demo-grade)

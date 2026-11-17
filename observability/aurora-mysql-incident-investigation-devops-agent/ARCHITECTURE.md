@@ -32,7 +32,7 @@
                                                │ (only if --webhook-url given)
                                                ▼
                                     ┌────────────────────────┐        ┌──────────────────────┐
-                                    │  Webhook Lambda (HMAC)  │───────▶│  Amazon DevOps Agent  │
+                                    │  Webhook Lambda (HMAC)  │───────▶│  AWS DevOps Agent  │
                                     └────────────────────────┘        │  (investigation +     │
                                                                        │   business-context    │
                                                                        │   skill)              │
