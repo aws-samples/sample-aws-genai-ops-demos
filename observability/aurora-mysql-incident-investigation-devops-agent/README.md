@@ -64,7 +64,7 @@ Root cause + business context (via the skill) delivered — no human in the loop
 - OpenSSH client (`ssh`/`scp`) — preinstalled on macOS/Linux and Windows 10+
 - AWS DevOps Agent access in your account/region
 - **CDK bootstrap** — handled for you: `deploy-all` runs the repo's shared deploy script, which bootstraps the account and region if needed
-- **DevOps Agent region** — the Agent Space is created in your deploy region. `AWS::DevOpsAgent` isn't available everywhere, so use a supported region (e.g. `us-west-2`, `us-east-1`)
+- **DevOps Agent region** — the Agent Space is created in your deploy region. AWS DevOps Agent isn't available in every region, so use a supported one (e.g. `us-west-2`, `us-east-1`)
 
 ## Deployment (Quick Start)
 
@@ -227,7 +227,7 @@ On-demand prices in us-west-2 (checked with the AWS Pricing API). Other regions 
 | Bastion (`t3.micro`) | $0.0104/hr | $0.010/hr |
 | Public IPv4 address (bastion) | $0.005/hr | $0.005/hr |
 | Aurora storage and I/O | $0.10 per GB-month, $0.20 per million I/Os | <$0.01/hr for the demo data |
-| CloudWatch alarms (6), Secrets Manager (1 secret) | $0.10 per alarm-month, $0.40 per secret-month | \~$1/month |
+| CloudWatch alarms (5), Secrets Manager (1 secret) | $0.10 per alarm-month, $0.40 per secret-month | \~$1/month |
 | Lambda, SNS, EventBridge, CloudWatch Logs | Per request or GB | <$0.05 per demo |
 | CloudWatch Database Insights (Standard) | Included | $0 |
 | **Infrastructure total** | | **\~$0.17/hr (\~$125/month if left running)** |
@@ -260,7 +260,8 @@ Cleanup destroys the CDK stack **and** removes the Agent Space + IAM roles that
 
 - The bastion is internet-facing on port 22; `deploy-all` restricts SSH to your current IP by default (`--ssh-open` widens it — avoid outside a demo).
 - The Aurora cluster is **not** publicly accessible, is encrypted at rest, and only accepts MySQL from the bastion security group.
-- Master credentials are generated into AWS Secrets Manager; the bastion reads them via an instance role. No passwords are stored in code or on disk.
+- Master credentials are generated into AWS Secrets Manager; the bastion reads them via an instance role. No database passwords are stored in code or on disk.
+- The DevOps Agent webhook URL and secret are saved to `.devops-agent.env` with owner-only permissions. The file is gitignored, so don't commit or share it.
 
 ## Contributing
 

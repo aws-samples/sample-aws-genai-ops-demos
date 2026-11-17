@@ -31,7 +31,7 @@
 
 ## Slide 4: CloudWatch Alarms — All OK (Before)
 **Screen**: CloudWatch Console → Alarms → filter "aurora-demo"
-**Script**: "Six CloudWatch alarms monitor this cluster — connections, CPU, deadlocks, plus dedicated memory-pressure and replica-lag alarms. All currently OK."
+**Script**: "Five CloudWatch alarms monitor this cluster — connections, CPU, deadlocks, plus dedicated memory-pressure and replica-lag alarms. All currently OK."
 **Callout**: Highlight the alarms in the green/OK state
 
 ---

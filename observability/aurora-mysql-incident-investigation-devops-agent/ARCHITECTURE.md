@@ -49,7 +49,7 @@ One CDK stack (region-suffixed ID), created from `infrastructure/cdk/app.py`:
   - `ec2.Vpc` — 2 AZs, `nat_gateways=0`, one public subnet group (bastion) and one `PRIVATE_ISOLATED` group (DB).
   - `rds.DatabaseCluster` — Aurora MySQL `8.0.mysql_aurora.3.08.0`, one writer + one reader (`db.t4g.medium`, Graviton burstable — the cheapest class that still supports CloudWatch Database Insights, formerly Performance Insights; only `db.t3.*` and `db.t4g.micro`/`small` are excluded), Database Insights on (Standard mode, free tier), `error`/`slowquery` logs exported to CloudWatch, `storage_encrypted`, generated credentials in Secrets Manager (`aurora-demo/credentials`).
   - `ec2.Instance` bastion — `t3.micro`, public subnet, instance role with read on the DB secret + `rds:FailoverDBCluster`; UserData installs the MySQL client. Fixed identifiers (`aurora-demo-cluster/-writer/-reader`) keep alarm dimensions and inject scripts deterministic.
-  - Six `cloudwatch.Alarm`s → SNS. EventBridge rule matches RDS failover event IDs → SNS.
+  - Five `cloudwatch.Alarm`s → SNS. EventBridge rule matches RDS failover event IDs → SNS.
   - Conditional webhook `lambda.Function` (created only when `webhookUrl` context is supplied) subscribed to the SNS topic; HMAC-signs and POSTs to the DevOps Agent webhook.
   - Business-context tags on the cluster (`DependentServices`, `OnCallTeam`, `RevenuePerMinute`, `SLAThresholdMinutes`, `DataClassification`), read by the skill.
 
