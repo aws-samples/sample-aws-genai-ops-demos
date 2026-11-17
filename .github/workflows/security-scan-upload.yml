@@ -1,0 +1,89 @@
+name: Security Scan upload (PR)
+# Uploads a PR's merge-gate findings (the ash-gate artifact of its "Security Scan (ASH)"
+# run) to code scanning. Code scanning then shows the PR's NEW high/critical findings on
+# the changed lines, and the protect-main code-scanning rule can block on them.
+#
+# Why workflow_run: a fork PR's own run gets a read-only token and cannot upload.
+# This workflow runs from main with its own token. Safe-authoring:
+#   - the PR's code is never checked out, run, installed or sourced. The findings arrive
+#     already fingerprinted (.github/scripts/ash_gate_filter.py, in the PR's own run).
+#   - the PR is looked up through the API from the run's head repo, branch and commit,
+#     never read from the artifact; the upload ref and commit are set here.
+#   - inputs from the triggering run are passed through env and validated.
+on:
+  workflow_run:
+    workflows: ["Security Scan (ASH)"]
+    types: [completed]
+permissions: {}
+jobs:
+  upload:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read          # download the artifact of the triggering run
+      contents: read         # upload-sarif reads repository metadata (no checkout)
+      pull-requests: read    # find the PR for the head commit
+      security-events: write # upload to code scanning
+    steps:
+      - name: Find the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Unexpected head SHA"; exit 1
+          fi
+          # Open PRs into main from that head branch, whose current head is this commit.
+          # A run for an older commit finds nothing and uploads nothing.
+          numbers=$(gh api -X GET "repos/$REPO/pulls" \
+            -f state=open -f base=main -f head="$HEAD_OWNER:$HEAD_BRANCH" -f per_page=100 \
+            --jq ".[] | select(.head.sha == \"$HEAD_SHA\") | .number")
+          count=$(printf '%s' "$numbers" | grep -c . || true)
+          if [ "$count" != "1" ]; then
+            echo "::notice::$count open PR(s) into main at $HEAD_SHA; nothing to upload"
+            exit 0
+          fi
+          if ! [[ "$numbers" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unexpected PR number"; exit 1
+          fi
+          echo "number=$numbers" >> "$GITHUB_OUTPUT"
+          echo "PR #$numbers at $HEAD_SHA"
+      - name: Download merge-gate findings
+        if: steps.pr.outputs.number
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ash-gate
+          path: gate
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Check the findings file
+        if: steps.pr.outputs.number
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+          meta = json.load(open("gate/meta.json"))
+          if meta.get("head_sha") != os.environ["HEAD_SHA"]:
+              sys.exit("::error::ash-gate artifact is for a different commit")
+          sarif = json.load(open("gate/ash.gate.sarif"))
+          runs = sarif.get("runs")
+          if not isinstance(runs, list) or len(runs) != 1:
+              sys.exit("::error::ash-gate SARIF must contain exactly one run")
+          print(f"{len(runs[0].get('results', []))} gate finding(s) for {meta['head_sha']}")
+          EOF
+      - name: Upload to code scanning
+        if: steps.pr.outputs.number
+        uses: github/codeql-action/upload-sarif@f3bbb05694c2f74569081c28664c0866d64dec21 # v4.39.3
+        with:
+          sarif_file: gate/ash.gate.sarif
+          category: ash
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          sha: ${{ github.event.workflow_run.head_sha }}

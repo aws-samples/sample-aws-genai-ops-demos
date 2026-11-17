@@ -1,10 +1,17 @@
 name: Security Scan (ASH)
 # Required check on main (protect-main ruleset). Red means the scan could not run or a
-# scanner did not complete. Findings are reported in the job summary and the uploaded
-# artifact but do not fail the check yet: the repo has a backlog of existing findings,
-# and failing on the total would block every PR for findings it did not introduce.
+# scanner did not complete. Findings never fail this check: the full set is in the job
+# summary and the ash-scan-results artifact.
+#
+# Merge gate on NEW findings: the high/critical non-Checkov findings, fingerprinted by
+# .github/scripts/ash_gate_filter.py, go to code scanning, which compares a PR with main.
+#   - push to main: the upload-baseline job uploads them for main.
+#   - pull request: saved as the ash-gate artifact; security-scan-upload.yml uploads them
+#     for the PR (that workflow has the write token a fork PR's run does not get).
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
   # Manual trigger so a change to this workflow can be proven on a branch before merge.
   workflow_dispatch: {}
@@ -26,6 +33,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # On a PR, scan the PR's head commit, not the merge commit: the gate uploads
+          # results for that exact commit, so line numbers must match it.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Install UV
         run: curl -LsSf https://astral.sh/uv/0.11.19/install.sh | sh
       - name: Run ASH security scan
@@ -85,6 +97,22 @@ jobs:
               print(f"::error::Scanners did not complete: {', '.join(bad)}")
               sys.exit(1)
           EOF
+      - name: Filter findings for the merge gate
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p gate
+          python3 .github/scripts/ash_gate_filter.py .ash/output/reports/ash.ghas.sarif gate/ash.gate.sarif .
+          # Cross-checked by security-scan-upload.yml; never used to choose what to upload.
+          printf '{"head_sha": "%s"}\n' "$HEAD_SHA" > gate/meta.json
+      - name: Save merge-gate findings
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ash-gate
+          path: gate/
+          retention-days: 7
       - name: Report findings
         # Run even when a previous step failed, so the reason still reaches the job summary.
         if: always()
@@ -104,3 +132,23 @@ jobs:
           name: ash-scan-results
           path: .ash/output/
           retention-days: 7
+  upload-baseline:
+    # main's findings are what code scanning compares every PR against.
+    if: github.event_name == 'push'
+    needs: security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      # No checkout: the findings are already fingerprinted by ash_gate_filter.py.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ash-gate
+          path: gate
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@f3bbb05694c2f74569081c28664c0866d64dec21 # v4.39.3
+        with:
+          sarif_file: gate/ash.gate.sarif
+          category: ash
