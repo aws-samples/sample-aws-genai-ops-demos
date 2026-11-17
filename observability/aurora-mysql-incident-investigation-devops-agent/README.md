@@ -1,5 +1,5 @@
 # Intelligent Aurora MySQL Incident Investigation with AWS DevOps Agent
-*Your database degrades at 2 AM — instead of an on-call engineer digging through Performance Insights and error logs for 45 minutes, AWS DevOps Agent investigates automatically, finds root cause, and quantifies the business impact.*
+*When your Aurora database degrades, AWS DevOps Agent starts investigating automatically: it finds the root cause in metrics and logs and adds the business impact, so the on-call engineer starts from conclusions instead of raw data.*
 
 ## Overview
 
