@@ -25,7 +25,7 @@ Automated root-cause analysis for Amazon Aurora MySQL incidents. When a CloudWat
 
 ## Business Value
 
-Database incidents are high-stakes and time-sensitive: a stalled writer blocks checkout, a connection storm takes down every dependent service, and a replica-lag spike quietly serves stale data. Mean-time-to-resolution is dominated by *triage* — figuring out *what* broke and *who* it affects. This demo shows how DevOps Agent collapses that triage from tens of minutes of manual log-reading into an automated, business-aware investigation, so engineers act on conclusions instead of assembling them.
+Database incidents are high-stakes and time-sensitive: a stalled writer blocks checkout, a connection storm takes down every dependent service, and a replica-lag spike quietly serves stale data. Mean-time-to-resolution is dominated by *triage* — figuring out *what* broke and *who* it affects. This demo shows how DevOps Agent turns that triage from manual log-reading into an automated, business-aware investigation, so engineers act on conclusions instead of assembling them.
 
 ## What You'll See
 
