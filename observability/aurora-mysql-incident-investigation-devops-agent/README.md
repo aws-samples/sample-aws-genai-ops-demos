@@ -5,7 +5,7 @@ hurts, what each minute costs and whether anyone has to be notified is harder, a
 knowledge usually lives in tags, change history and people's heads. This demo stands up one
 Aurora MySQL cluster whose tags carry that business metadata, starts a real connection storm
 or changes the tags on demand, and lets AWS DevOps Agent investigate with the
-[`aurora-incident-business-context`](https://github.com/aws/tools-for-devops-agent/tree/2f3e44ee1b4d9284efb84cb433c4431d335ca5ab/skills/aurora-incident-business-context)
+[`aurora-incident-business-context`](https://github.com/aws/tools-for-devops-agent/tree/main/skills/aurora-incident-business-context)
 skill from the Agent Tools repository loaded. The skill tells the agent where business
 evidence lives (tags, CloudTrail, AWS Config) and to report only what that evidence supports:
 a cost tied to real inputs, a compliance window that stays conditional, and a named gap where
@@ -15,7 +15,7 @@ nothing is tagged.
 
 | | |
 |---|---|
-| **Capability shown** | Skill `aurora-incident-business-context` (Agent Tools repository), fetched from `main` at deploy time, never copied here. Tested with skill commit `2f3e44ee1b4d9284efb84cb433c4431d335ca5ab` |
+| **Capability shown** | Skill `aurora-incident-business-context` (Agent Tools repository), fetched from `main` at deploy time, never copied here. Every deploy gets the latest version |
 | **Motions** | Incident RCA (a DatabaseConnections alarm starts an investigation) and Chat (a business-impact question, and an optional follow-up on each alarm-driven card) |
 | **Environment** | One Aurora MySQL writer (db.t4g.medium, Performance Insights on) in a VPC with no internet path, carrying five business tags |
 | **Scenarios** | Connection storm on a business-critical cluster, connection storm on a cluster tagged GDPR, business tags missing |
@@ -72,15 +72,9 @@ environment). The builder's answers at each fork, recorded so the next presenter
 - **Cost and duration** accepted under a ceiling of about $5 per day. The measured deploy took
   14 minutes (database stack 468 s) with the Agent Space stack unchanged; a full fresh deploy
   was not timed.
-- **Skill fetched from `main`, tested at a commit.** The scenarios were derived and tested with
-  the skill at commit `2f3e44ee1b4d9284efb84cb433c4431d335ca5ab` (`capability.ref` in
-  `lab/scenarios.yaml`). The shared `deploy-skill` script fetches a branch or a tag
-  (`git clone --branch`), not a commit, so the deploy scripts fetch `main`, as the FSx DevOps
-  Agent demo does. When this demo was built, the skill folder on `main` was identical to that
-  commit; if the skill changes on `main` later, re-check the `withCapability` statements.
-  The observed run (2026-11-18) registered the skill from `main` at
-  `b91e2c9562bbb26c57d45c36033b0170630d39df`; `skills/aurora-incident-business-context` is
-  byte-identical between that commit and `2f3e44ee` (empty `git diff`).
+- **Skill fetched from `main`.** The deploy scripts and the Lab fetch the latest version of the
+  skill from the Agent Tools repository on every deploy, so the demo always runs the current skill.
+  The `withCapability` statements were observed on 2026-11-18; if the skill changes, re-check them.
 - **CDK in `cdk/`, not `infrastructure/cdk/`.** The contributor guide's layout shows
   `infrastructure/cdk/`; this demo keeps `cdk/` to match the other AWS DevOps Agent demos
   (`observability/eks-investigation-devops-agent`, `resilience/fsx-windows-sla-review-devops-agent`).
@@ -171,8 +165,7 @@ The script prints the cost and duration first, then:
 2. deploys the VPC, the Aurora MySQL cluster with its business tags, the load function, the alarm
    and the trigger chain (468 s in the measured deploy; the writer instance takes about 6 minutes of it);
 3. deploys the Lab and publishes its site;
-4. fetches the skill from `main` with `shared/devops-agent/agent-tools/deploy-skill.*` (the demo
-   was tested with commit `2f3e44ee`), packages it and registers it in the Agent Space through
+4. fetches the skill from `main` with `shared/devops-agent/agent-tools/deploy-skill.*`, packages it and registers it in the Agent Space through
    the Asset API for agent types `CHAT,INCIDENT_RCA`. Nothing to upload or paste in the console.
 
 If the Lab site build fails, the script stops and prints the end of `frontend-build.log`.

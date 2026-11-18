@@ -22,10 +22,8 @@ PROJECT_NAME="aurora-bizctx"
 LAB_USER="presenter"
 LAB_PASSWORD=""
 SKILL_NAME="aurora-incident-business-context"
-# The shared deploy-skill fetches a branch or tag (git clone --branch), not a commit. The demo was
-# tested with the skill at SKILL_TESTED_COMMIT (lab/scenarios.yaml capability.ref); main is fetched.
+# The skill is fetched from main of the Agent Tools repository, so every deploy gets its latest version.
 SKILL_REF="main"
-SKILL_TESTED_COMMIT="2f3e44ee1b4d9284efb84cb433c4431d335ca5ab"
 SKILL_AGENT_TYPES="CHAT,INCIDENT_RCA"
 
 while [[ $# -gt 0 ]]; do
@@ -149,7 +147,7 @@ echo -e "${GREEN}  Site published.${NC}"
 #    the Agent Space through the Asset API for the two motions it declares (Chat, Incident RCA).
 # -----------------------------------------------------------------------------
 echo ""
-echo -e "${CYAN}[5/5] Skill $SKILL_NAME from $SKILL_REF (tested with commit ${SKILL_TESTED_COMMIT:0:7})...${NC}"
+echo -e "${CYAN}[5/5] Skill $SKILL_NAME from $SKILL_REF...${NC}"
 ../../shared/devops-agent/agent-tools/deploy-skill.sh --skill "$SKILL_NAME" --ref "$SKILL_REF" \
     --agent-space-id "$AGENT_SPACE_ID" --agent-space-region "$AGENT_REGION" --agent-types "$SKILL_AGENT_TYPES"
 
@@ -168,7 +166,7 @@ echo -e "${CYAN}  Cluster:       $CLUSTER_ID ($REGION)${NC}"
 echo -e "${CYAN}  Region:        $REGION${NC}"
 echo ""
 echo -e "${CYAN}  Skill:         $SKILL_NAME registered in the Agent Space (agent types $SKILL_AGENT_TYPES)${NC}"
-echo -e "${CYAN}                 fetched from $SKILL_REF; this demo was tested with commit $SKILL_TESTED_COMMIT${NC}"
+echo -e "${CYAN}                 latest version, fetched from $SKILL_REF${NC}"
 echo ""
 echo -e "${YELLOW}  Next: open the Lab and inject Connection storm on a business-critical cluster;${NC}"
 echo -e "${YELLOW}        the alarm starts an investigation within about 3 minutes.${NC}"

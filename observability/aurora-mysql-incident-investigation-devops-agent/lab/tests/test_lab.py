@@ -146,8 +146,7 @@ def test_scenarios_yaml_is_consistent():
             for line in s.get(key) or []:
                 assert isinstance(line, str), f"{s['id']}.{key}: quote this line in scenarios.yaml -> {line!r}"
     assert set(handlers.HANDLERS) == {s['handler'] for s in data['scenarios']}, 'every handler belongs to a scenario'
-    assert data['capability']['ref'] == data['skills'][0]['ref'], 'one pinned ref for the skill'
-    assert re.fullmatch(r'[0-9a-f]{40}', data['capability']['ref']), 'the skill is pinned to a commit'
+    assert data['capability']['ref'] == data['skills'][0]['ref'] == 'main', 'the skill is the latest version on main'
 
 
 def test_auto_revert_fits_the_engine_and_the_load_safety_net():
@@ -177,13 +176,12 @@ def test_alarm_driven_scenarios_name_the_connections_alarm():
 
 
 def test_deploy_scripts_register_the_skill_from_main_for_chat_and_incident_rca():
-    """deploy-skill clones a branch or tag (git clone --branch), never a SHA: fetch main, name the tested commit."""
-    tested = scenarios.load()['capability']['ref']
+    """deploy-skill clones a branch or tag (git clone --branch): every deploy fetches the latest skill from main."""
     name = scenarios.load()['capability']['name']
     checks = {
-        'deploy-all.sh': ['SKILL_REF="main"', f'SKILL_TESTED_COMMIT="{tested}"', 'SKILL_AGENT_TYPES="CHAT,INCIDENT_RCA"',
+        'deploy-all.sh': ['SKILL_REF="main"', 'SKILL_AGENT_TYPES="CHAT,INCIDENT_RCA"',
                           '--ref "$SKILL_REF"', '--agent-types "$SKILL_AGENT_TYPES"', '--agent-space-id "$AGENT_SPACE_ID"'],
-        'deploy-all.ps1': ['$skillRef = "main"', f'$skillTestedCommit = "{tested}"', '$skillAgentTypes = @("CHAT", "INCIDENT_RCA")',
+        'deploy-all.ps1': ['$skillRef = "main"', '$skillAgentTypes = @("CHAT", "INCIDENT_RCA")',
                            '-Ref $skillRef', '-AgentTypes $skillAgentTypes', '-AgentSpaceId $agentSpaceId'],
     }
     for script, needles in checks.items():
@@ -193,9 +191,9 @@ def test_deploy_scripts_register_the_skill_from_main_for_chat_and_incident_rca()
         for needle in needles:
             assert needle in text, f'{script}: {needle}'
         assert 'GENERIC' not in text, f'{script}: register for the declared types, not GENERIC'
-        assert f'--ref "{tested}"' not in text and f'-Ref "{tested}"' not in text, f'{script}: a SHA cannot be cloned with --branch'
+        assert not re.search(r'[0-9a-f]{40}', text), f'{script}: no pinned commit, the skill comes from main'
     with open(os.path.join(DEMO_DIR, 'README.md'), encoding='utf-8') as f:
-        assert tested in f.read(), 'the README names the commit the demo was tested with'
+        assert 'tools-for-devops-agent/tree/main/skills/aurora-incident-business-context' in f.read(), 'the README links the skill on main'
     # The Lab's "register it" command takes the same values from scenarios.yaml.
     skill = scenarios.load()['skills'][0]
     assert skill['deployRef'] == 'main'
@@ -212,7 +210,6 @@ def test_register_command_is_the_one_deploy_all_runs_and_can_clone():
     ps, sh = cmd['powershell'], cmd['bash']
     for text in (ps, sh):
         assert not re.search(r'[0-9a-f]{40}', text), f'a commit cannot be cloned with --branch: {text}'
-        assert skill['ref'] not in text
     assert ps == ('& "..\\..\\shared\\devops-agent\\agent-tools\\deploy-skill.ps1" -Skill aurora-incident-business-context '
                   "-Ref main -AgentSpaceId space-123 -AgentSpaceRegion us-west-2 -AgentTypes @('CHAT', 'INCIDENT_RCA')")
     assert sh == ('../../shared/devops-agent/agent-tools/deploy-skill.sh --skill aurora-incident-business-context '

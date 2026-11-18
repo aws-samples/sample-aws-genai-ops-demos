@@ -23,10 +23,8 @@ Set-Location $PSScriptRoot
 $startedAt = Get-Date
 
 $skillName = "aurora-incident-business-context"
-# The shared deploy-skill fetches a branch or tag (git clone --branch), not a commit. The demo was
-# tested with the skill at $skillTestedCommit (lab/scenarios.yaml capability.ref); main is fetched.
+# The skill is fetched from main of the Agent Tools repository, so every deploy gets its latest version.
 $skillRef = "main"
-$skillTestedCommit = "2f3e44ee1b4d9284efb84cb433c4431d335ca5ab"
 $skillAgentTypes = @("CHAT", "INCIDENT_RCA")   # deploy-skill.ps1 takes -AgentTypes as string[]
 
 Write-Host ""
@@ -161,7 +159,7 @@ Write-Host "  Site published." -ForegroundColor Green
 #    the Agent Space through the Asset API for the two motions it declares (Chat, Incident RCA).
 # -----------------------------------------------------------------------------
 Write-Host ""
-Write-Host "[5/5] Skill $skillName from $skillRef (tested with commit $($skillTestedCommit.Substring(0, 7)))..." -ForegroundColor Cyan
+Write-Host "[5/5] Skill $skillName from $skillRef..." -ForegroundColor Cyan
 & "..\..\shared\devops-agent\agent-tools\deploy-skill.ps1" -Skill $skillName -Ref $skillRef `
     -AgentSpaceId $agentSpaceId -AgentSpaceRegion $agentRegion -AgentTypes $skillAgentTypes
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -181,7 +179,7 @@ Write-Host "  Cluster:       $clusterId ($region)" -ForegroundColor Cyan
 Write-Host "  Region:        $region" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Skill:         $skillName registered in the Agent Space (agent types $($skillAgentTypes -join ','))" -ForegroundColor Cyan
-Write-Host "                 fetched from $skillRef; this demo was tested with commit $skillTestedCommit" -ForegroundColor Cyan
+Write-Host "                 latest version, fetched from $skillRef" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Next: open the Lab and inject Connection storm on a business-critical cluster;" -ForegroundColor Yellow
 Write-Host "        the alarm starts an investigation within about 3 minutes." -ForegroundColor Yellow

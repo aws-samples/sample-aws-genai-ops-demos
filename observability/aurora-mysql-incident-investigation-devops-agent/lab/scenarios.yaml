@@ -32,17 +32,11 @@
 #                   edit shared/ or .kiro/steering/; the skill is installed with
 #                   shared/devops-agent/agent-tools/deploy-skill.*, never copied; the old
 #                   us-west-2 demo and stack are left untouched.
-#   Skill ref     : capability.ref is the commit the demo was analysed and tested with. The shared
-#                   deploy-skill clones a branch or tag only, so deploy-all fetches main (build 1
-#                   decision); at build time main's skills/aurora-incident-business-context tree
-#                   was identical to this commit's (tree e73d1bc). Observe run (2026-11-18): the
-#                   skill was registered from main at b91e2c9562bbb26c57d45c36033b0170630d39df;
-#                   skills/aurora-incident-business-context is byte-identical between 2f3e44e
-#                   and b91e2c9 (empty git diff).
+#   Skill ref     : main. deploy-all and the Lab's register command fetch the latest skill from
+#                   the Agent Tools repository on every deploy.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 #
-# withCapability: observed on the deployed demo (account ...8652, us-east-1, Agent Space
-# 8aab12ae, run aurora-bizctx-1, 2026-11-18) for all three scenarios (business-tags-removed
+# withCapability: observed on the deployed demo (us-east-1, 2026-11-18) for all three scenarios (business-tags-removed
 # in a Chat re-run, after a first run where the skill did not load at top level;
 # connection-storm-tagged re-observed after the scoped Agent Space reads were added).
 # withoutCapability is still a PREDICTION from the
@@ -71,7 +65,7 @@ capability:
   kind: skill
   name: aurora-incident-business-context
   source: agent-tools
-  ref: 2f3e44ee1b4d9284efb84cb433c4431d335ca5ab
+  ref: main
   # Declared: "INCIDENT_RCA, CHAT". Both exercised (builder's decision).
   agentTypes: [incident-rca, chat]
   prompt: "The DatabaseConnections alarm is firing on the Aurora MySQL cluster {clusterId} in {region}. Find the technical cause, then tell me who is affected, what it costs, and whether we have a compliance reporting deadline."
@@ -253,10 +247,9 @@ skills:
   - name: aurora-incident-business-context
     source: agent-tools
     kind: skill
-    ref: 2f3e44ee1b4d9284efb84cb433c4431d335ca5ab
+    ref: main
     # What deploy-all passes to the shared deploy-skill, and what the Lab's "register it" command
-    # uses: a branch (deploy-skill runs git clone --branch, which cannot clone a commit) and the
-    # agent types the skill declares. `ref` above stays the tested commit, for the source link.
+    # uses: the latest skill on main, for the agent types the skill declares.
     deployRef: main
     deployAgentTypes: [CHAT, INCIDENT_RCA]
     agentType: Chat, Incident RCA
