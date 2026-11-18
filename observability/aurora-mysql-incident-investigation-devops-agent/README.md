@@ -75,6 +75,7 @@ environment). The builder's answers at each fork, recorded so the next presenter
 - **Skill fetched from `main`.** The deploy scripts and the Lab fetch the latest version of the
   skill from the Agent Tools repository on every deploy, so the demo always runs the current skill.
   The `withCapability` statements were observed on 2026-11-18; if the skill changes, re-check them.
+  Agent output shown was recorded with skill commit `2f3e44ee`. Newer versions may word it differently.
 - **CDK in `cdk/`, not `infrastructure/cdk/`.** The contributor guide's layout shows
   `infrastructure/cdk/`; this demo keeps `cdk/` to match the other AWS DevOps Agent demos
   (`observability/eks-investigation-devops-agent`, `resilience/fsx-windows-sla-review-devops-agent`).
