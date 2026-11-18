@@ -1,194 +1,176 @@
-#!/usr/bin/env bash
-# deploy-all.sh — Deploy the Aurora MySQL incident-investigation demo via CDK,
-# then configure the bastion load-generator and CloudWatch alarms.
+#!/bin/bash
+# Aurora MySQL incident investigation with business context (AWS DevOps Agent): one-command deployment.
 #
-# Usage:
-#   ./deploy-all.sh --key-file <path> [--key-pair <name>] \
-#                   [--webhook-url <url>] [--webhook-secret <secret>] \
-#                   [--ssh-cidr <cidr>] [--ssh-open]
+#   1. Agent Space (AWS DevOps Agent), in the Agent Space region
+#   2. Database: VPC (no NAT), Aurora MySQL writer with its business tags, the connection load
+#      function, the DatabaseConnections alarm and the alarm -> webhook trigger chain
+#   3. Lab: engine + API + CloudFront site (HTTP Basic authentication)
+#   4. Lab site upload
+#   5. Skill aurora-incident-business-context, fetched from the Agent Tools repository (main) and registered
+#      in the Agent Space for Chat and Incident RCA
+#
+# Region: AWS_REGION / AWS_DEFAULT_REGION / aws configure (this demo was built for us-east-1).
+# Agent Space region: DEVOPS_AGENT_REGION when the deploy region cannot host one (defaults to the deploy region).
+#
+# Usage: ./deploy-all.sh [--project-name aurora-bizctx] [--lab-user presenter] [--lab-password <generated>]
+
 set -e
+cd "$(dirname "$0")"
+STARTED_AT=$(date +%s)
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-KEY_PAIR=""
-KEY_FILE=""
-WEBHOOK_URL=""
-WEBHOOK_SECRET=""
-SSH_CIDR=""
-SSH_OPEN=""
-
-usage() {
-  echo "Usage: $0 --key-file <path> [--key-pair <name>] [--webhook-url <url>] [--webhook-secret <secret>] [--ssh-cidr <cidr>] [--ssh-open]"
-  exit 1
-}
+PROJECT_NAME="aurora-bizctx"
+LAB_USER="presenter"
+LAB_PASSWORD=""
+SKILL_NAME="aurora-incident-business-context"
+# The shared deploy-skill fetches a branch or tag (git clone --branch), not a commit. The demo was
+# tested with the skill at SKILL_TESTED_COMMIT (lab/scenarios.yaml capability.ref); main is fetched.
+SKILL_REF="main"
+SKILL_TESTED_COMMIT="2f3e44ee1b4d9284efb84cb433c4431d335ca5ab"
+SKILL_AGENT_TYPES="CHAT,INCIDENT_RCA"
 
 while [[ $# -gt 0 ]]; do
-  case $1 in
-    --key-pair) KEY_PAIR="$2"; shift 2;;
-    --key-file) KEY_FILE="$2"; shift 2;;
-    --webhook-url) WEBHOOK_URL="$2"; shift 2;;
-    --webhook-secret) WEBHOOK_SECRET="$2"; shift 2;;
-    --ssh-cidr) SSH_CIDR="$2"; shift 2;;
-    --ssh-open) SSH_OPEN="yes"; shift;;
-    -h|--help) usage;;
-    *) echo "Unknown option: $1"; usage;;
-  esac
+    case $1 in
+        --project-name) PROJECT_NAME="$2"; shift 2 ;;
+        --lab-user) LAB_USER="$2"; shift 2 ;;
+        --lab-password) LAB_PASSWORD="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--project-name <name>] [--lab-user <user>] [--lab-password <password>]"; exit 1 ;;
+    esac
 done
 
-[[ -z "$KEY_FILE" ]] && echo "ERROR: --key-file is required" && usage
-[[ ! -f "$KEY_FILE" ]] && echo "ERROR: key file not found: $KEY_FILE" && exit 1
+CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
-# Auto-load the DevOps Agent webhook written by setup-devops-agent.sh, unless the
-# caller passed one explicitly. Lets you run:  ./setup-devops-agent.sh  then  ./deploy-all.sh
-if [[ -z "$WEBHOOK_URL" && -f "$SCRIPT_DIR/.devops-agent.env" ]]; then
-  # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/.devops-agent.env"
-  [[ -n "${WEBHOOK_URL:-}" ]] && echo "  Loaded DevOps Agent webhook from .devops-agent.env"
-fi
+echo ""
+echo -e "${CYAN}========================================================================${NC}"
+echo -e "${CYAN}  Aurora MySQL incident investigation with business context (AWS DevOps Agent)${NC}"
+echo -e "${CYAN}========================================================================${NC}"
+echo "  What this deploys:  an Agent Space, a VPC with no internet path, one Aurora MySQL"
+echo "                      writer (db.t4g.medium) carrying business tags, a connection load"
+echo "                      function, one alarm, and the Demo Lab (control room) behind CloudFront."
+echo "  Time to deploy:     14 minutes measured with the Agent Space already deployed (Aurora stack 468 s);"
+echo "                      a full fresh deploy was not timed."
+echo -e "${YELLOW}  Running cost:       about \$2.35 per day while deployed (Aurora db.t4g.medium ~\$1.75,${NC}"
+echo -e "${YELLOW}                      two interface endpoints ~\$0.48, CloudFront, Lambda, CloudWatch,${NC}"
+echo -e "${YELLOW}                      Secrets Manager ~\$0.10) plus AWS DevOps Agent time at list price${NC}"
+echo -e "${YELLOW}                      (about \$2.50-3 per investigation: 4.5-6 minutes observed; GDPR right after${NC}"
+echo -e "${YELLOW}                      the storm can add a second agent run). Tear down with ./destroy-all.sh.${NC}"
+echo ""
 
-# =============================================================================
-echo "==> Step 1: Check prerequisites..."
-# =============================================================================
-source "$SCRIPT_DIR/../../shared/scripts/check-prerequisites.sh" --require-cdk --skip-service-check
+# -----------------------------------------------------------------------------
+# Prerequisites (shared): tooling, credentials, region, DevOps Agent availability
+# -----------------------------------------------------------------------------
+source ../../shared/scripts/check-prerequisites.sh --required-service devops-agent --min-aws-cli-version 2.34.64 --require-cdk --min-node-version 20
 REGION="$AWS_REGION"
+AGENT_REGION="$DEVOPS_AGENT_REGION"
+echo "  Deploy region: $REGION   Agent Space region: $AGENT_REGION   Account: $AWS_ACCOUNT_ID"
 
-if [[ -z "$KEY_PAIR" ]]; then
-  echo "Available key pairs in $REGION:"
-  aws ec2 describe-key-pairs --region "$REGION" --query 'KeyPairs[].KeyName' --output table --no-cli-pager
-  read -rp "Enter key pair name: " KEY_PAIR
-  [[ -z "$KEY_PAIR" ]] && echo "ERROR: key pair required" && exit 1
-fi
-
-# Resolve SSH CIDR
-if [[ "$SSH_OPEN" == "yes" ]]; then
-  SSH_CIDR="0.0.0.0/0"
-  echo "  ⚠ SSH open to 0.0.0.0/0 (not recommended for production)"
-elif [[ -z "$SSH_CIDR" ]]; then
-  MY_IP=$(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
-  if [[ -n "$MY_IP" ]]; then
-    SSH_CIDR="${MY_IP}/32"
-    echo "  SSH restricted to your IP: $SSH_CIDR"
-  else
-    SSH_CIDR="0.0.0.0/0"
-    echo "  ⚠ Could not detect your IP — SSH open to 0.0.0.0/0"
-  fi
-fi
-
-# =============================================================================
-echo ""
-echo "==> Step 2: Deploy Aurora infrastructure via CDK (cluster creation ~10-15 min)..."
-# =============================================================================
-command -v node >/dev/null 2>&1 || { echo "ERROR: Node.js is required for CDK. Install from https://nodejs.org"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "ERROR: Python 3 is required for CDK. Install from https://python.org"; exit 1; }
-
-CDK_DIR="$SCRIPT_DIR/infrastructure/cdk"
-STACK_NAME="AuroraDemoStack-$REGION"
-
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-# Use a virtual environment so the shared deploy script installs the CDK
-# dependencies there instead of into the system Python.
-python3 -m venv "$CDK_DIR/.venv"
-source "$CDK_DIR/.venv/bin/activate"
-
-CDK_ARGS=(--cdk-directory "$CDK_DIR" --stack-name "$STACK_NAME"
-  --cdk-context "keyPairName=$KEY_PAIR" --cdk-context "sshCidr=$SSH_CIDR")
-[[ -n "$WEBHOOK_URL" ]] && CDK_ARGS+=(--cdk-context "webhookUrl=$WEBHOOK_URL")
-[[ -n "$WEBHOOK_SECRET" ]] && CDK_ARGS+=(--cdk-context "webhookSecret=$WEBHOOK_SECRET")
-bash "$REPO_ROOT/shared/scripts/deploy-cdk.sh" "${CDK_ARGS[@]}"
-
-# =============================================================================
-echo ""
-echo "==> Step 3: Fetch stack outputs..."
-# =============================================================================
-get_output() {
-  aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text --no-cli-pager
+stack_output() {   # stack key [region]
+    local value
+    value=$(aws cloudformation describe-stacks --stack-name "$1" --region "${3:-$REGION}" \
+        --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text --no-cli-pager)
+    if [ -z "$value" ] || [ "$value" = "None" ]; then echo -e "${RED}Stack $1 has no output $2${NC}" >&2; exit 1; fi
+    echo "$value"
 }
 
-CLUSTER_ID=$(get_output ClusterIdentifier)
-WRITER_ENDPOINT=$(get_output WriterEndpoint)
-READER_ENDPOINT=$(get_output ReaderEndpoint)
-DB_PORT=$(get_output DbPort)
-DB_NAME=$(get_output DefaultDatabaseName)
-SECRET_ARN=$(get_output SecretArn)
-BASTION_IP=$(get_output BastionPublicIp)
-
-echo "  Cluster: $CLUSTER_ID"
-echo "  Writer : $WRITER_ENDPOINT | Reader: $READER_ENDPOINT"
-echo "  Bastion: $BASTION_IP"
-
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $KEY_FILE"
-SSH_USER="ec2-user"
-run_ssh() { ssh $SSH_OPTS "${SSH_USER}@${BASTION_IP}" "$1"; }
-
-# =============================================================================
+# -----------------------------------------------------------------------------
+# 1. Agent Space
+# -----------------------------------------------------------------------------
 echo ""
-echo "==> Step 4: Wait for SSH on $BASTION_IP..."
-# =============================================================================
-for i in {1..30}; do
-  ssh $SSH_OPTS -o ConnectTimeout=5 "${SSH_USER}@${BASTION_IP}" "true" 2>/dev/null && break
-  sleep 10; echo "  Waiting... $((i*10))s"
-done
+echo -e "${CYAN}[1/5] Agent Space in $AGENT_REGION...${NC}"
+AGENT_SPACE_STACK="AuroraBizCtxAgentSpace-$AGENT_REGION"
+AWS_REGION="$AGENT_REGION" ../../shared/scripts/deploy-cdk.sh --cdk-directory cdk --stack-name "$AGENT_SPACE_STACK" \
+    --cdk-context "projectName=$PROJECT_NAME" --cdk-context "devOpsAgentRegion=$AGENT_REGION"
+WEBHOOK_URL=$(stack_output "$AGENT_SPACE_STACK" WebhookUrl "$AGENT_REGION")
+WEBHOOK_SECRET_ARN=$(stack_output "$AGENT_SPACE_STACK" WebhookSecretArn "$AGENT_REGION")
+AGENT_SPACE_ID=$(stack_output "$AGENT_SPACE_STACK" AgentSpaceId "$AGENT_REGION")
+echo -e "${GREEN}  Agent Space: $AGENT_SPACE_ID (webhook configured; its secret stays in Secrets Manager)${NC}"
 
-# =============================================================================
-echo "==> Step 5: Wait for UserData (mysql client install) to complete..."
-# =============================================================================
-for i in {1..30}; do
-  run_ssh "grep -q USERDATA_COMPLETE /var/log/aurora-userdata.log 2>/dev/null" && echo "  Done." && break
-  sleep 10; echo "  Installing packages... ($i/30)"
-done
+# Context every remaining stack receives. The secret VALUE never enters this script.
+CONTEXT=(--cdk-context "projectName=$PROJECT_NAME" --cdk-context "devOpsAgentRegion=$AGENT_REGION"
+         --cdk-context "devOpsAgentSpaceId=$AGENT_SPACE_ID" --cdk-context "devOpsAgentWebhookUrl=$WEBHOOK_URL"
+         --cdk-context "devOpsAgentWebhookSecretArn=$WEBHOOK_SECRET_ARN")
 
-# =============================================================================
-echo "==> Step 6: Push bastion scripts + write environment file..."
-# =============================================================================
-scp $SSH_OPTS "$SCRIPT_DIR/bastion-scripts/"* "${SSH_USER}@${BASTION_IP}:/tmp/"
-run_ssh "sudo mkdir -p /opt/aurora-demo && sudo cp /tmp/lib.sh /tmp/inject /tmp/rollback /tmp/status /tmp/list /tmp/seed-data /opt/aurora-demo/ && sudo chmod +x /opt/aurora-demo/inject /opt/aurora-demo/rollback /opt/aurora-demo/status /opt/aurora-demo/list /opt/aurora-demo/seed-data"
-
-run_ssh "sudo tee /opt/aurora-demo/env >/dev/null <<EOF
-REGION=$REGION
-CLUSTER_ID=$CLUSTER_ID
-WRITER_ENDPOINT=$WRITER_ENDPOINT
-READER_ENDPOINT=$READER_ENDPOINT
-DB_PORT=$DB_PORT
-DB_NAME=$DB_NAME
-SECRET_ARN=$SECRET_ARN
-EOF"
-
-# =============================================================================
-echo "==> Step 7: Seed demo schema/data..."
-# =============================================================================
-run_ssh "sudo /opt/aurora-demo/seed-data" || echo "  ⚠ Seeding reported an issue — re-run 'sudo /opt/aurora-demo/seed-data' on the bastion if scenarios fail."
-
-# =============================================================================
-echo "==> Step 8: Disable actions on dedicated alarms (enabled per-scenario)..."
-# =============================================================================
-aws cloudwatch disable-alarm-actions --region "$REGION" \
-  --alarm-names aurora-demo-memory-pressure aurora-demo-replica-lag --no-cli-pager
-echo "  aurora-demo-memory-pressure and aurora-demo-replica-lag start with actions disabled."
-
-# =============================================================================
+# -----------------------------------------------------------------------------
+# 2. Database: VPC, Aurora MySQL, load function, alarm, trigger chain
+# -----------------------------------------------------------------------------
 echo ""
-echo "========================================"
-echo "  Aurora Incident Demo Ready"
-echo "========================================"
+echo -e "${CYAN}[2/5] Aurora MySQL cluster in $REGION (the long step: 468 s measured, little output until done)...${NC}"
+DATABASE_STACK="AuroraBizCtxDatabase-$REGION"
+export AWS_REGION="$REGION"
+../../shared/scripts/deploy-cdk.sh --cdk-directory cdk --stack-name "$DATABASE_STACK" "${CONTEXT[@]}"
+CLUSTER_ID=$(stack_output "$DATABASE_STACK" ClusterIdentifier)
+echo -e "${GREEN}  Cluster $CLUSTER_ID is available, business tags set.${NC}"
+
+# -----------------------------------------------------------------------------
+# 3. Lab: engine, API, site
+# -----------------------------------------------------------------------------
 echo ""
-echo "  Region        : $REGION"
-echo "  Cluster       : $CLUSTER_ID"
-echo "  Writer        : $WRITER_ENDPOINT"
-echo "  Reader        : $READER_ENDPOINT"
-echo "  Bastion (SSH) : ssh -i $KEY_FILE ${SSH_USER}@$BASTION_IP"
+echo -e "${CYAN}[3/5] Demo Lab...${NC}"
+if [ -z "$LAB_PASSWORD" ]; then
+    LAB_PASSWORD=$(LC_ALL=C tr -dc 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789' < /dev/urandom | head -c 16)  # pragma: allowlist secret
+fi
+LAB_STACK="AuroraBizCtxLab-$REGION"
+../../shared/scripts/deploy-cdk.sh --cdk-directory cdk --stack-name "$LAB_STACK" --skip-bootstrap "${CONTEXT[@]}" \
+    --cdk-context "labUser=$LAB_USER" --cdk-context "labPassword=$LAB_PASSWORD"
+LAB_URL=$(stack_output "$LAB_STACK" LabUrl)
+SITE_BUCKET=$(stack_output "$LAB_STACK" SiteBucketName)
+DISTRIBUTION_ID=$(stack_output "$LAB_STACK" DistributionId)
+# Shown now, not only in the summary: if a later step fails, a re-run needs this password
+# (pass it with --lab-password, or a new one is generated and the Lab stack is redeployed).
+echo -e "${GREEN}  Lab: $LAB_URL   user $LAB_USER   password $LAB_PASSWORD${NC}"
+echo -e "${YELLOW}  If a later step fails, re-run with --lab-password '$LAB_PASSWORD' to keep these credentials.${NC}"
+
+# -----------------------------------------------------------------------------
+# 4. Site upload
+# -----------------------------------------------------------------------------
 echo ""
-echo "  Inject a scenario:"
-echo "    bash scripts/inject-failure.sh connection-storm --key-file $KEY_FILE"
-echo "    bash scripts/inject-failure.sh cpu-spike        --key-file $KEY_FILE"
-echo "    bash scripts/inject-failure.sh deadlock         --key-file $KEY_FILE"
-echo "    bash scripts/inject-failure.sh failover         --key-file $KEY_FILE"
-echo "    bash scripts/inject-failure.sh memory-pressure  --key-file $KEY_FILE   # dedicated alarm"
-echo "    bash scripts/inject-failure.sh replica-lag      --key-file $KEY_FILE   # dedicated alarm"
+echo -e "${CYAN}[4/5] Lab site...${NC}"
+FRONTEND_LOG="$(pwd)/frontend-build.log"
+if ! (
+    cd frontend
+    if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+    npm run build
+) > "$FRONTEND_LOG" 2>&1; then
+    echo -e "${RED}  ERROR: the Lab site build failed (npm install or npm run build). Last lines of $FRONTEND_LOG:${NC}"
+    tail -n 25 "$FRONTEND_LOG"
+    exit 1
+fi
+if ! aws s3 sync frontend/dist "s3://$SITE_BUCKET" --delete --region "$REGION" --no-cli-pager > /dev/null; then
+    echo -e "${RED}  ERROR: uploading the Lab site to s3://$SITE_BUCKET failed (see the AWS CLI error).${NC}"
+    exit 1
+fi
+if ! aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --no-cli-pager > /dev/null; then
+    echo -e "${RED}  ERROR: the CloudFront invalidation on $DISTRIBUTION_ID failed (see the AWS CLI error).${NC}"
+    exit 1
+fi
+echo -e "${GREEN}  Site published.${NC}"
+
+# -----------------------------------------------------------------------------
+# 5. Skill: stays in the Agent Tools repository; fetched from main, packaged and registered in
+#    the Agent Space through the Asset API for the two motions it declares (Chat, Incident RCA).
+# -----------------------------------------------------------------------------
 echo ""
-echo "  Roll back:"
-echo "    bash scripts/inject-failure.sh <scenario> --key-file $KEY_FILE --rollback"
+echo -e "${CYAN}[5/5] Skill $SKILL_NAME from $SKILL_REF (tested with commit ${SKILL_TESTED_COMMIT:0:7})...${NC}"
+../../shared/devops-agent/agent-tools/deploy-skill.sh --skill "$SKILL_NAME" --ref "$SKILL_REF" \
+    --agent-space-id "$AGENT_SPACE_ID" --agent-space-region "$AGENT_REGION" --agent-types "$SKILL_AGENT_TYPES"
+
+# -----------------------------------------------------------------------------
+# Summary
+# -----------------------------------------------------------------------------
+ELAPSED=$(( ( $(date +%s) - STARTED_AT ) / 60 ))
 echo ""
-echo "  Status:"
-echo "    bash scripts/inject-failure.sh status --key-file $KEY_FILE"
-echo "========================================"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Deployment Complete! ($ELAPSED min)${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${CYAN}  Demo Lab:      $LAB_URL${NC}"
+echo -e "${CYAN}  Sign in:       user $LAB_USER   password $LAB_PASSWORD${NC}"
+echo -e "${CYAN}  Agent Space:   https://$AGENT_SPACE_ID.aidevops.global.app.aws/  (id $AGENT_SPACE_ID, $AGENT_REGION)${NC}"
+echo -e "${CYAN}  Cluster:       $CLUSTER_ID ($REGION)${NC}"
+echo -e "${CYAN}  Region:        $REGION${NC}"
+echo ""
+echo -e "${CYAN}  Skill:         $SKILL_NAME registered in the Agent Space (agent types $SKILL_AGENT_TYPES)${NC}"
+echo -e "${CYAN}                 fetched from $SKILL_REF; this demo was tested with commit $SKILL_TESTED_COMMIT${NC}"
+echo ""
+echo -e "${YELLOW}  Next: open the Lab and inject Connection storm on a business-critical cluster;${NC}"
+echo -e "${YELLOW}        the alarm starts an investigation within about 3 minutes.${NC}"
+echo ""
+echo -e "${YELLOW}  Running cost about \$2.35/day. Tear down: ./destroy-all.sh${NC}"

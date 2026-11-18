@@ -1,0 +1,19 @@
+# Demo validation contract (see .kiro/steering/contributor-guide.md, "Demo Validation").
+deploy_command: ["./deploy-all.sh"]
+destroy_command: ["./destroy-all.sh"]
+destroy_subdir: "."
+stacks:
+  - "AuroraBizCtxAgentSpace-us-east-1"
+  - "AuroraBizCtxDatabase-us-east-1"
+  - "AuroraBizCtxLab-us-east-1"
+region: "us-east-1"
+verify: "deterministic"
+notes: >
+  Measured deploy: about 14 minutes with the Agent Space stack already in place (the database
+  stack took 468 s, most of it the db.t4g.medium writer); a fully fresh deploy was not timed. Needs AWS DevOps Agent available in the region (or DEVOPS_AGENT_REGION set to one
+  where it is), AWS CLI 2.34.64+ for the skill registration, and Lambda unreserved concurrency
+  of at least 102 in the account (the Lab sets reserved concurrency 2 on the load function).
+  The functional check (inject, read the agent's investigation) needs a person to read the
+  agent's output: deploy/destroy is the signal. destroy-all.sh switches the load off, removes
+  the Lab, the cluster (no final snapshot), the VPC, the Agent Space and the run-time Lambda log
+  groups; teardown takes about 15 minutes.
