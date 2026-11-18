@@ -21,7 +21,7 @@ Automatically track AWS service deprecations, find the resources in your account
 
 Experience this demo in an interactive click-through walkthrough:
 
-▶️ [Launch Interactive Demo](https://app.storylane.io/share/jtv9je6phpy4)
+▶️ [Launch Interactive Demo](https://amazon.storylane.io/share/xn1n1v08drzd)
 
 
 ## Architecture
