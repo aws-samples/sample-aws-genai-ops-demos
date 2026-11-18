@@ -1,0 +1,268 @@
+# DevOps Agent Demo Lab — Aurora MySQL incident investigation with business context
+#
+# Output of the analyse phase (native-agent demo guide, steps 1-4) for the skill
+# aurora-incident-business-context at the pinned commit below. Drives this demo's Lab (engine
+# from shared/devops-agent/lab/): engine handlers, API, UI cards. Handlers will live in
+# lab/handlers.py.
+#
+# ── Decisions (builder's answers, run aurora-bizctx-1) ───────────────────────────────────
+#   Motion        : both declared types, Incident RCA + Chat. RCA on connection-storm-tagged and
+#                   compliance-tag-gdpr (alarm -> SNS -> signed webhook); Chat on
+#                   business-tags-removed and as a follow-up on any scenario.
+#   Scenarios     : connection-storm-tagged (headline: cost per minute from RevenuePerMinute,
+#                   SLA timing from SLAThresholdMinutes, and "Impact on dependent services
+#                   unverified" from the DependentServices tag); compliance-tag-gdpr (kept);
+#                   business-tags-removed (kept as secondary, narrow difference stated honestly;
+#                   observed in a Chat re-run on 2026-11-18).
+#   Compliance    : run as an investigation (GDPR tags + connection storm) so "Reporting
+#                   obligation undetermined" appears as a gap in the summary. The window is
+#                   conditional, for the compliance owner to decide; never "the clock is running".
+#   App tier      : none (confirmed). The dependent services exist only in a tag.
+#   Dropped       : recent-change correlation (without the skill the agent also found the
+#                   parameter-group change), failover (same business-impact difference as the
+#                   storm, plus a real outage and fail-back), cost-from-operator-input (without
+#                   the skill passes 4/5, needs no environment).
+#   Config        : no AWS Config recorder created (one per region, may already exist); the
+#                   agent role gets config:GetResourceConfigHistory. Observed: investigations used
+#                   CloudTrail; the Chat answer reported no Config history and did not query CloudTrail.
+#   Cost / region : about $2.10/day infrastructure + about $4 per 8-minute investigation,
+#                   accepted under a ceiling of about $5/day; deploy about 25-30 min; us-east-1.
+#                   Build: about $2.35/day, a Lambda interface endpoint added (see build notes).
+#   Constraints   : local only; writes only in this demo folder and its root README row; never
+#                   edit shared/ or .kiro/steering/; the skill is installed with
+#                   shared/devops-agent/agent-tools/deploy-skill.*, never copied; the old
+#                   us-west-2 demo and stack are left untouched.
+#   Skill ref     : main. deploy-all and the Lab's register command fetch the latest skill from
+#                   the Agent Tools repository on every deploy.
+# ─────────────────────────────────────────────────────────────────────────────────────────
+#
+# withCapability: observed on the deployed demo (us-east-1, 2026-11-18) for all three scenarios (business-tags-removed
+# in a Chat re-run, after a first run where the skill did not load at top level;
+# connection-storm-tagged re-observed after the scoped Agent Space reads were added).
+# withoutCapability is still a PREDICTION from the
+# skill's functional evals (iteration 3 at the pinned commit, another account); the observe
+# run did not run the agent without the skill.
+#
+# Baseline business tags on the cluster (set by CDK, restored by every revert):
+#   DependentServices   = checkout-service:CRITICAL - order-history-api:HIGH - analytics-etl:MEDIUM
+#   OnCallTeam          = Data Platform / DBRE
+#   RevenuePerMinute    = 5100
+#   SLAThresholdMinutes = 20
+#   DataClassification  = Confidential     (names no framework, so the skill applies none)
+# No compute for checkout-service, order-history-api or analytics-etl exists in the account,
+# on purpose: the DependentServices tag is a claim the skill must label unverified.
+#
+# Environment: one Aurora MySQL writer (db.t4g.medium) in two isolated subnets, no NAT,
+# Performance Insights on; one VPC-attached load Lambda that opens and holds connections while
+# its reserved concurrency is above 0 (the Lab's switch); Secrets Manager and Lambda interface
+# endpoints (one AZ) so that Lambda can read the master secret and its switch; the
+# Lab (S3 + CloudFront + IAM-auth function URL, Basic auth) and the shared engine; the shared
+# Agent Space and AlarmTrigger chain on a DatabaseConnections alarm.
+
+schemaVersion: 1
+
+capability:
+  kind: skill
+  name: aurora-incident-business-context
+  source: agent-tools
+  ref: main
+  # Declared: "INCIDENT_RCA, CHAT". Both exercised (builder's decision).
+  agentTypes: [incident-rca, chat]
+  prompt: "The DatabaseConnections alarm is firing on the Aurora MySQL cluster {clusterId} in {region}. Find the technical cause, then tell me who is affected, what it costs, and whether we have a compliance reporting deadline."
+
+scenarios:
+  - id: connection-storm-tagged
+    name: Connection storm on a business-critical cluster
+    category: Business impact
+    handler: connection_storm
+    demonstrates:
+      check: "Business impact in the investigation: who depends on this cluster, what the outage costs per minute, how long until the SLA is breached"
+      # RE-OBSERVED 2026-11-18 with the scoped Agent Space reads (lambda:GetFunction and
+      # lambda:GetFunctionConcurrency on the load function, rds:DownloadDBLogFilePortion on the
+      # writer), task a1276392-b88f-41ac-883a-e8959e509975 (execution exe-ops1-4c6d2b63), inject
+      # 04:05:13Z, alarm 04:07:21Z, investigation 04:07:25Z-04:12:03Z, skill SKILL.md and
+      # references/evidence-sources.md read. The agent called GetFunctionConcurrency
+      # ("Reserved concurrency is currently 2") and DownloadDBLogFilePortion ("The MySQL error log
+      # was empty"), both succeeded. Verbatim gaps:
+      #   "Impact on dependent services unverified: checkout-service (CRITICAL), order-history-api
+      #    (HIGH) and analytics-etl (MEDIUM) come only from the DependentServices tag. The
+      #    security group and Performance Insights show only the load Lambda connecting to the
+      #    writer."
+      #   "Business cost unconfirmed: ~$25,500 if 04:05–04:10 counts as downtime (5 min ×
+      #    $5,100/min, RevenuePerMinute tag). SLA (20 min) not breached; breach would be ~04:25 UTC
+      #    if this continues. No refused connections were seen (AbortedClients=0, error log
+      #    empty)."
+      #   "Reporting obligation undetermined: The cluster is tagged DataClassification=Confidential,
+      #    but no compliance framework (PCI-DSS/GDPR/HIPAA) is tagged or named, so no reporting
+      #    window can be determined. The compliance owner must decide."
+      # The cause it names: "aurora-bizctx-connection-load Lambda opening and holding 85
+      # connections". The clock times in the cost gap are this run's.
+      # First observe (task 1cd4defb-2c57-4f62-8717-1562e4cbbb2f, 02:33Z, before the scoped reads):
+      # one combined gap "Business cost and compliance exposure unconfirmed", and the agent listed
+      # GetFunctionConcurrency and DownloadDBLogFilePortion as denied.
+      withCapability: "The investigation names the cause \"aurora-bizctx-connection-load Lambda opening and holding 85 connections\" and lists the gaps \"Impact on dependent services unverified\" (\"checkout-service (CRITICAL), order-history-api (HIGH) and analytics-etl (MEDIUM) come only from the DependentServices tag. The security group and Performance Insights show only the load Lambda connecting to the writer.\"), \"Business cost unconfirmed\" (\"~$25,500 if 04:05–04:10 counts as downtime (5 min × $5,100/min, RevenuePerMinute tag). SLA (20 min) not breached; breach would be ~04:25 UTC if this continues. No refused connections were seen (AbortedClients=0, error log empty).\") and \"Reporting obligation undetermined\" (\"no compliance framework (PCI-DSS/GDPR/HIPAA) is tagged or named, so no reporting window can be determined. The compliance owner must decide.\")"
+      withoutCapability: "Finds the connection storm from DatabaseConnections and Performance Insights; the summary has no cost per minute, no SLA timing and no compliance line, and repeats or ignores the DependentServices tag instead of labeling it unverified"
+    triggersAlarm: true
+    alarm:
+      envVar: CONNECTIONS_ALARM_NAME
+      # DatabaseConnections above the threshold for 2 one-minute datapoints.
+      expectFiringWithinSeconds: 180
+    inject:
+      # Observed 2026-11-18 (both runs): 85 held of about 90, AbortedClients 0 (no client refused
+      # yet); the re-observe also found the writer's error log empty.
+      summary: "The load Lambda opens and holds about 85 of the writer's about 90 connections (max_connections on db.t4g.medium), leaving a handful free; in the observed run no client was refused yet (AbortedClients 0)"
+    detect:
+      summary: "The load function's reserved concurrency is above 0 (the storm is switched on) and the cluster has no Compliance=GDPR tag; DatabaseConnections on the writer is shown next to it"
+    revert:
+      summary: "The engine is putting the cluster back: the load stops, then the Lab waits for DatabaseConnections to fall under the alarm threshold (up to 4 minutes)."
+    # Alarm (101-154 s observed) + investigation (4.5-6 min observed) + talk. Past 20 minutes the skill should
+    # report the SLA as breached; that is correct behaviour, not a failure.
+    autoRevertSeconds: 1800
+    description: >-
+      A runaway client opens connection after connection to the writer until it holds about
+      85 of about 90. The DatabaseConnections alarm fires and AWS DevOps Agent investigates. The cluster
+      is tagged as serving checkout and order history at 5,100 USD per minute with a 20-minute
+      SLA: the skill turns the technical finding into what it costs and who to tell, and says
+      which of those claims it could not verify.
+    incidentChain:
+      - The load Lambda opens about 85 connections to the writer and holds them
+      - About 5 of about 90 slots stay free; no client has been refused yet (AbortedClients 0)
+      - DatabaseConnections crosses the threshold, the alarm fires, SNS, signed webhook
+      - The agent investigates with the skill loaded and reads the cluster's business tags and CloudTrail
+    customerImpact:
+      - "No application is deployed: the impact is what the tags claim, and the agent says so"
+      - "The writer is close to max_connections: a few more clients and new connections are refused with Too many connections"
+    demoFlow:
+      - "Choose Inject; the Connections fact climbs within a minute"
+      - The alarm fires within about 3 minutes and the investigation appears under Agent tasks
+      - "Open it: the root cause is the connection storm, and the gaps include Impact on dependent services unverified, Business cost unconfirmed (cost per minute and when the SLA would be breached) and Reporting obligation undetermined"
+      - "Choose Rollback; the connections close and the alarm returns to OK"
+    talkTrack: "The connection storm is the technical cause. The skill adds what it costs per minute, when the SLA breaks, and that the list of affected services comes from a tag nobody has verified."
+
+  - id: compliance-tag-gdpr
+    name: Connection storm on a cluster tagged GDPR
+    category: Compliance
+    handler: compliance_tags_gdpr
+    demonstrates:
+      check: "Compliance exposure: which reporting obligation could apply, without claiming the clock has started"
+      # OBSERVED 2026-11-18, task 010f68ff-0d34-4491-b407-e063bfdc412d (execution
+      # exe-ops1-6612cdc6), inject 02:41:47Z, investigation 02:58:25Z-03:04:24Z, skill SKILL.md and
+      # references/evidence-sources.md read; no other framework and no running clock in its
+      # summary, gaps or findings. Verbatim gap:
+      #   "GDPR reporting obligation undetermined: The cluster is tagged Compliance=GDPR and
+      #    DataClassification=PersonalData. Loss of availability can count as a personal data
+      #    breach, which must be reported within 72 hours where feasible. Whether that applies
+      #    here is for the compliance owner to decide."
+      # Cause it names: "Lambda aurora-bizctx-connection-load holds 85 idle connections,
+      # exhausting max_connections".
+      # Caveat: the first alarm of this inject (02:44:21Z, 154 s after inject, 3 min after the
+      # storm scenario's revert) was attached to the storm's task 1cd4defb, whose updated summary
+      # still read "DataClassification=Confidential with no framework tagged" while the GDPR tags
+      # were on. Task 010f68ff started only when the alarm fired again at 02:58:21Z (the load
+      # Lambda's 900 s hand-over at 02:55:52Z let it drop to OK at 02:56:21Z).
+      withCapability: "The investigation names the cause \"Lambda aurora-bizctx-connection-load holds 85 idle connections, exhausting max_connections\" and lists the gap \"GDPR reporting obligation undetermined\": \"The cluster is tagged Compliance=GDPR and DataClassification=PersonalData. Loss of availability can count as a personal data breach, which must be reported within 72 hours where feasible. Whether that applies here is for the compliance owner to decide.\" No other framework is named and no deadline is said to be running"
+      withoutCapability: "Finds the connection storm; the summary either leaves compliance out or states that the 72-hour GDPR clock is running from the incident start, and may add frameworks nobody tagged"
+    triggersAlarm: true
+    alarm:
+      envVar: CONNECTIONS_ALARM_NAME
+      expectFiringWithinSeconds: 180
+    inject:
+      summary: "AddTagsToResource on the cluster (Compliance=GDPR, DataClassification=PersonalData replacing Confidential), then the load Lambda opens and holds about 85 of about 90 connections"
+    detect:
+      summary: "ListTagsForResource shows Compliance=GDPR; the load switch and DatabaseConnections are shown next to it"
+    revert:
+      summary: "The engine is putting the cluster back: the load stops, the tags return to Confidential, then the Lab waits for DatabaseConnections to fall under the alarm threshold (up to 4 minutes)."
+    autoRevertSeconds: 1800
+    description: >-
+      The cluster is classified as holding personal data under GDPR, and a connection storm
+      fills nearly every connection slot. The skill names GDPR because the tag says so, gives its
+      72-hour window as conditional on a breach determination, and leaves that call to the
+      compliance owner instead of starting a clock.
+    incidentChain:
+      - Compliance=GDPR and DataClassification=PersonalData added to the cluster's tags
+      - The load Lambda opens and holds about 85 of about 90 connections
+      - DatabaseConnections crosses the threshold, the alarm fires, SNS, signed webhook
+      - The investigation has to name the obligation without deciding that a breach occurred
+    customerImpact:
+      - "No application is deployed: the impact is what the tags claim, and the agent says so"
+      - "A wrong compliance answer costs either way: a clock declared running triggers a needless notification, a clock declared not applicable hides one"
+    demoFlow:
+      - "If you ran the connection storm first, wait until its investigation is complete under Agent tasks and the alarm reads OK"
+      - "Choose Inject; the Compliance tag fact reads GDPR and the Connections fact climbs within a minute"
+      - The alarm fires within about 3 minutes and the investigation appears under Agent tasks
+      - "Open it: the gaps include GDPR reporting obligation undetermined, with the 72-hour window conditional on a breach determination by the compliance owner"
+      - "Choose Rollback; the tags return to Confidential, the connections close and the alarm returns to OK"
+    talkTrack: "The skill knows the rule compliance teams care about: a tag tells you which law could apply, never that the clock is running."
+
+  - id: business-tags-removed
+    name: Business tags missing
+    category: Tagging
+    handler: business_tags_removed
+    demonstrates:
+      check: "No evidence, no number: what the agent says when nothing tells it who depends on the cluster or what it earns"
+      # withCapability OBSERVED 2026-11-18 (re-run). Inject 03:53:24Z (all five tags removed,
+      # checked with /admin/status and ListTagsForResource). New chat
+      # 61a80aeb-2336-4c6d-a6b5-121f0427024f, message 03:54:00Z, answer complete 03:54:39Z: the
+      # top-level skill_read of aurora-incident-business-context succeeded and the agent read
+      # references/evidence-sources.md. Reverted 03:55:16Z, confirmed 03:55:28Z.
+      # Differences from the prediction: the Recent changes line comes from the CloudFormation
+      # stack and instance creation times, not CloudTrail ("I didn't query CloudTrail for modify
+      # or failover events since creation"), and it does not mention the Lab's tag removal; the
+      # answer lists the five tags to add in one closing sentence, not on each line. Asking again
+      # after Rollback was not run.
+      # The earlier run (chat a5bb2bbe-f58e-4421-bf5d-5b811ab353e9, 03:11Z) got "Skill not found:
+      # aurora-incident-business-context" at top level and answered without the form.
+      # Secondary scenario: without the skill the agent ALSO declines to invent a figure
+      # (withoutCapability is the eval prediction, bizctx-no-evidence-tagged, with 6/6, without 4/6).
+      withCapability: "A \"Business Impact (provisional: incident not confirmed)\" section with four lines: Dependent services \"None found, and they need tagging\"; Estimated cost \"Not calculable\" (\"There are no `RevenuePerMinute`, `SLAThresholdMinutes` or `SLAPenaltyUsd` tags ... I won't guess one\", \"No SLA threshold was found\"); Compliance exposure \"No `DataClassification` or `Compliance` tag was found ... so I'm not assuming one applies\"; Recent changes \"The cluster is new\" (created by the CloudFormation stack, \"I didn't query CloudTrail for modify or failover events since creation\"). It ends: \"Tagging the cluster with `DependentServices`, `OnCallTeam`, `RevenuePerMinute`, `SLAThresholdMinutes` and `DataClassification` would make this answer automatic next time.\""
+      withoutCapability: "Also says it cannot tell who is affected or what it costs and does not invent a figure; does not check recent changes and does not answer in the four-line form"
+    prompt: "Who depends on the Aurora MySQL cluster {clusterId} in {region}, and what would an outage cost us per minute? Answer in this chat without opening an investigation."
+    triggersAlarm: false
+    inject:
+      summary: "RemoveTagsFromResource on the cluster: DependentServices, OnCallTeam, RevenuePerMinute, SLAThresholdMinutes, DataClassification"
+    detect:
+      summary: "ListTagsForResource on the cluster is missing at least one of the five business tag keys (all five after Inject)"
+    revert:
+      summary: "The engine is putting the five business tags back on the cluster, with the values CDK created."
+    autoRevertSeconds: 900
+    description: >-
+      Strips every business tag from the cluster. Nothing breaks. Asked about business
+      impact, the skill reports each line as not found and names the tags that would fill
+      the gaps, instead of guessing.
+    incidentChain:
+      - The five business tags are removed from the cluster
+      - An operator asks who depends on it and what an outage costs
+      - "Nothing in the account answers either question: the honest answer is the gap list"
+    customerImpact:
+      - Nothing visible today
+      - The next real incident starts with nobody knowing who to page or what it costs
+    demoFlow:
+      - "Choose Inject; the Business tags fact lists all five keys as missing within seconds"
+      - "Copy the prompt from this card and ask it in the Agent Space chat (Open Chat); the response comes back in the chat, not under Agent tasks"
+      - "The response has a Business Impact section: dependent services none found, cost not calculable, no compliance tag found, and recent changes; it ends by naming the five tags to add"
+      - "Choose Rollback; the Business tags fact shows all five keys again"
+    talkTrack: "Even without the skill the agent will not invent a number. With it, you also get the tag that closes each gap."
+
+skills:
+  - name: aurora-incident-business-context
+    source: agent-tools
+    kind: skill
+    ref: main
+    # What deploy-all passes to the shared deploy-skill, and what the Lab's "register it" command
+    # uses: the latest skill on main, for the agent types the skill declares.
+    deployRef: main
+    deployAgentTypes: [CHAT, INCIDENT_RCA]
+    agentType: Chat, Incident RCA
+    feature: "Business impact (dependent services, cost of downtime, compliance exposure, recent changes) added to Aurora and RDS investigations and Chat answers"
+    pitch: >-
+      The agent already reads CloudWatch, Performance Insights and Aurora logs. This skill
+      tells it where the business evidence lives (tags, CloudTrail, AWS Config) and to report
+      only what that evidence supports: a cost tied to real inputs, a compliance window that
+      stays conditional, and a clear gap where nothing is tagged.
+
+notes:
+  - "Run one scenario at a time: concurrent injections make the agent's findings ambiguous. The Lab refuses a second inject while one is active."
+  - "No AWS Config recorder is created. The Recent changes line comes from CloudTrail event history, and the agent may say Config history was not available; that is the skill being honest."
+  - "A fresh deploy puts its own CreateDBCluster and AddTagsToResource calls in the 14-day lookback; the agent may list them under Recent changes. Correlation is not causation, and the skill says so."
+  - "No application is deployed, on purpose: the dependent services exist only in a tag, which is what the skill must label unverified."
+  - "The cost figures are the tags' values (RevenuePerMinute 5100, SLAThresholdMinutes 20), demo data and not a benchmark."
