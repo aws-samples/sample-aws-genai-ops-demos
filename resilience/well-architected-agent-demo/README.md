@@ -1,27 +1,25 @@
-# Well-Architected Agent Review
+# Well-Architected Agent demo
 *Give the Well-Architected Agent a realistic, flawed AWS workload so it has something worth reviewing*
 
 ## Overview
 
-This demo deploys AWS CDK (TypeScript) applications for the Well-Architected Agent to
-review, together with a correctly configured agent profile that reviews them. It is made
-of three independent building blocks:
+This demo deploys an AWS CDK (TypeScript) workload for the Well-Architected Agent to
+review, together with a correctly configured agent profile that reviews it. A deployment
+is one variant, made of two blocks:
 
-| Building block | What it deploys | What it shows |
+| Block | What it deploys | What it shows |
 | --- | --- | --- |
-| Agent profile (shared) | One profile per account and agent Region: execution and access roles, the profile, one goal per pillar. Deployed automatically before the first application | The agent side, configured correctly |
-| Application `single` (default) | Intentionally non-optimized single-instance web app (EC2, MySQL RDS, S3, in one Region), plus a context that registers it in the profile | Obvious anti-patterns across all four pillars the agent analyzes |
-| Application `multi` | Active/active web app in two Regions (ALB, Auto Scaling group, DynamoDB global table), plus a context that registers it in the profile | A design that looks resilient, with documented gaps that break its stated recovery objectives |
+| Workload | Variant `single` (default): intentionally non-optimized single-instance web app (EC2, MySQL RDS, S3, in one Region). Variant `multi`: active/active web app in two Regions (ALB, Auto Scaling group, DynamoDB global table) | `single`: obvious anti-patterns across all four pillars the agent analyzes. `multi`: a design that looks resilient, with documented gaps that break its stated recovery objectives |
+| Agent | Execution and access roles, one agent profile, one goal per pillar and one application context, all configured for the variant | The agent side, configured correctly |
 
-In both applications the anti-patterns span the four pillars the Well-Architected Agent
+In both variants the anti-patterns span the four pillars the Well-Architected Agent
 analyzes (resilience, security, cost optimization and performance), so the agent can
-produce recommendations you can check against a known list. Each application registers
-in the shared profile with its own application context, which declares requirements the
-deployed architecture deliberately cannot meet.
+produce recommendations you can check against a known list. The application context
+declares requirements the deployed architecture deliberately cannot meet.
 
-The applications use distinct stack names and `project` tags, so both can run side by
-side under the same profile. Adding another application means adding its stacks and one
-context stack, with no change to the profile (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+The variants are mutually exclusive: one account and agent Region runs either `single`
+or `multi`, never both. Adding a variant means adding its workload stack and its profile
+spec (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 > Do not use this as a production template. The anti-patterns are deliberate.
 
@@ -38,15 +36,15 @@ the quality of the recommendations easy to judge.
 ## At a Glance
 
 - **Duration**: 20 minutes (`single`) or 30 minutes (`multi`) to deploy, plus usually a few hours (at most 48 hours) before the first scheduled recommendations
-- **Requires**: an AWS Support plan at Business+ or higher in the account (Business+, Enterprise, or Unified Operations); accounts on Basic, Developer or Business cannot use the agent. The demo also needs one free agent profile slot (2 per account on Business+, see [Prerequisites](#prerequisites))
+- **Requires**: an AWS Support plan with access to the Well-Architected Agent. The demo targets **Enterprise Support** and **Unified Operations** customers; Business+ and Enterprise On-Ramp have access too. Basic, Developer and Business do not (see [Prerequisites](#prerequisites))
 - **Difficulty**: Beginner (`single`), Intermediate (`multi`)
 - **Target Audience**: Solutions architects, cloud engineers, platform and resilience teams
-- **Key Technologies**: AWS Well-Architected Agent (preview), AWS CDK, Amazon EC2, Amazon RDS, Amazon S3, AWS Secrets Manager, IAM; for `multi` also Amazon EC2 Auto Scaling, Elastic Load Balancing (ALB), Amazon DynamoDB global tables, Amazon VPC endpoints, AWS Systems Manager Session Manager, Amazon CloudWatch
+- **Key Technologies**: AWS Well-Architected Agent (preview), AWS CDK, Amazon EC2, Amazon RDS, Amazon S3, AWS Secrets Manager, IAM; for `multi` also Amazon EC2 Auto Scaling, Elastic Load Balancing (ALB), Amazon DynamoDB global tables, Amazon VPC endpoints, AWS Systems Manager Session Manager
 - **Estimated Cost**: about $0.22 to $0.23/hour (about $158 to $165/month if left running) depending on the variant, see breakdown below
 
 ## Walkthrough after deployment
 
-Deploy one application first (see [Deployment](#deployment)). The deploy script prints
+Deploy one variant first (see [Deployment](#deployment)). The deploy script prints
 `<AGENT_PROFILE_ARN>` and the agent Region, `<AGENT_REGION>` (`WA_AGENT_REGION`, default
 your Region). Every command below runs against the agent Region, and the AWS WA Agent
 console must be switched to that Region too.
@@ -61,19 +59,19 @@ aws wellarchitected get-agent-profile --profile-arn "<AGENT_PROFILE_ARN>" --regi
 
 `eligible` must be `true`; otherwise `errors` names the field to fix.
 
-In the console, open **Agent profiles**, then **WA Agent Demo Profile** (name
-`wa-agent-demo-profile`):
+In the console, open **Agent profiles**, then **WA Agent Demo Profile (single-region)** or
+**WA Agent Demo Profile (multi-region)** (name `wa-agent-demo-profile`):
 
-- **Profile details** lists the four goals, one per pillar (`PROFILE_GOALS` in
-  `lib/wa-agent.ts`).
-- The **Application context** tab lists one context per deployed application, with its
-  declared requirements, its account and Regions, and its `project` tag:
-  `well-architected-agent-review` for `single`, `well-architected-agent-review-multiregion`
-  for `multi`. That tag is how the agent finds the workload: only resources that carry it
-  are reviewed as part of the application. The profile's **Edit** page does not show the
-  application context at all, so check it on this tab.
+- **Profile details** lists the four goals of the variant, one per pillar
+  (`lib/single-region-profile.ts` or `lib/multi-region-profile.ts`).
+- The **Application context** tab lists the context of the workload, with its declared
+  requirements, its account and Regions, and its `project` tag: `wa-agent-demo-single`
+  for `single`, `wa-agent-demo-multi` for `multi`. That tag is how the agent finds the
+  workload: only resources that carry it are reviewed as part of the application. The
+  profile's **Edit** page does not show the application context at all, so check it on
+  this tab.
 
-The same contexts from the CLI:
+The same context from the CLI:
 
 ```bash
 aws wellarchitected list-agent-contexts --profile-arn "<AGENT_PROFILE_ARN>" --region "<AGENT_REGION>"
@@ -131,7 +129,7 @@ Read it in this order:
 - **Trade-offs**: what the fix costs or risks, for example the hourly cost of the load
   balancer and of the extra instances.
 - **Goals**: the profile goal the recommendation serves, here the resilience goal about
-  the declared RPO and RTO.
+  the declared RPO of 5 minutes and RTO of 2 hours.
 
 ### 5. Compare expected and found
 
@@ -148,9 +146,9 @@ meet them on purpose. Look for the gap in the resilience recommendations
 (`--pillar RESILIENCE` in step 3): their description, impact and insights are where the
 agent can contrast the declared objective with what it found (for `single`, HA and DR
 declared on one public instance and a single-AZ database; for `multi`, alerting within
-5 minutes with no alarms). Their **Goals** entry points to the resilience goal, which asks to meet each
-application's declared RPO and RTO. The wording varies between runs, so treat this as
-where to look rather than a fixed sentence.
+5 minutes with no alarms). Their **Goals** entry points to the resilience goal of the
+variant, which names the same objectives. The wording varies between runs, so treat this
+as where to look rather than a fixed sentence.
 
 ### 7. Optional: fix one anti-pattern and watch it clear
 
@@ -159,7 +157,7 @@ main risk of the variant (see [Prerequisites](#prerequisites)). Find the role an
 policy ARN, then detach it:
 
 ```bash
-aws cloudformation describe-stack-resources --stack-name "WellArchitectedAgentReviewStack-<WORKLOAD_REGION>" --region "<WORKLOAD_REGION>" --query "StackResources[?ResourceType=='AWS::IAM::Role' && starts_with(LogicalResourceId, 'InstanceRole')].PhysicalResourceId" --output text
+aws cloudformation describe-stack-resources --stack-name "WAAgentDemoSingleWorkload-<WORKLOAD_REGION>" --region "<WORKLOAD_REGION>" --query "StackResources[?ResourceType=='AWS::IAM::Role' && starts_with(LogicalResourceId, 'InstanceRole')].PhysicalResourceId" --output text
 aws iam list-attached-role-policies --role-name <INSTANCE_ROLE_NAME>
 aws iam detach-role-policy --role-name <INSTANCE_ROLE_NAME> --policy-arn <ADMIN_POLICY_ARN>
 ```
@@ -180,8 +178,8 @@ in the agent Region. For `single`, synthesize the template and upload it (from
 
 ```bash
 npx cdk synth -c "adminCidr=<YOUR_IP>/32"
-aws s3 mb "s3://wa-agent-review-input-<ACCOUNT_ID>-<AGENT_REGION>" --region "<AGENT_REGION>"
-aws s3 cp "cdk.out/WellArchitectedAgentReviewStack-<WORKLOAD_REGION>.template.json" "s3://wa-agent-review-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json" --region "<AGENT_REGION>"
+aws s3 mb "s3://wa-agent-demo-input-<ACCOUNT_ID>-<AGENT_REGION>" --region "<AGENT_REGION>"
+aws s3 cp "cdk.out/WAAgentDemoSingleWorkload-<WORKLOAD_REGION>.template.json" "s3://wa-agent-demo-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json" --region "<AGENT_REGION>"
 ```
 
 Then start the review from the console (**Architecture review**, with the S3 URI of the
@@ -191,7 +189,7 @@ template) or from the CLI. Bash:
 aws wellarchitected start-agent-recommendation-generation --region "<AGENT_REGION>" \
   --profile-arn "<AGENT_PROFILE_ARN>" --types ARCHITECTURE --name single-template-review \
   --scope '{"pillars": ["RESILIENCE", "SECURITY", "COST_OPTIMIZATION", "PERFORMANCE"]}' \
-  --additional-context '{"s3Uri": "s3://wa-agent-review-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json", "lensArns": ["arn:aws:wellarchitected::aws:lens/wellarchitected"]}'
+  --additional-context '{"s3Uri": "s3://wa-agent-demo-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json", "lensArns": ["arn:aws:wellarchitected::aws:lens/wellarchitected"]}'
 ```
 
 PowerShell 5.1 strips the inner double quotes of JSON arguments passed to native
@@ -199,7 +197,7 @@ commands, so write the JSON to files and pass them with `file://`:
 
 ```powershell
 '{"pillars": ["RESILIENCE", "SECURITY", "COST_OPTIMIZATION", "PERFORMANCE"]}' | Set-Content scope.json -Encoding ascii
-'{"s3Uri": "s3://wa-agent-review-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json", "lensArns": ["arn:aws:wellarchitected::aws:lens/wellarchitected"]}' | Set-Content context.json -Encoding ascii
+'{"s3Uri": "s3://wa-agent-demo-input-<ACCOUNT_ID>-<AGENT_REGION>/single.template.json", "lensArns": ["arn:aws:wellarchitected::aws:lens/wellarchitected"]}' | Set-Content context.json -Encoding ascii
 aws wellarchitected start-agent-recommendation-generation --region "<AGENT_REGION>" `
   --profile-arn "<AGENT_PROFILE_ARN>" --types ARCHITECTURE --name single-template-review `
   --scope file://scope.json --additional-context file://context.json
@@ -209,19 +207,19 @@ Follow it with step 2; the review appears under **Reviews** and its recommendati
 under **Recommendations**. The service documentation lists AWS CDK and Terraform projects
 as supported inputs; if it rejects the synthesized CloudFormation template, upload a .zip
 of `infrastructure/cdk` without `node_modules` and `cdk.out` instead (25 MB at most).
-Remove the bucket afterwards: `aws s3 rb "s3://wa-agent-review-input-<ACCOUNT_ID>-<AGENT_REGION>" --force --region "<AGENT_REGION>"`.
+Remove the bucket afterwards: `aws s3 rb "s3://wa-agent-demo-input-<ACCOUNT_ID>-<AGENT_REGION>" --force --region "<AGENT_REGION>"`.
 
 ### For `multi`
 
-Follow the same steps with the `multi` context (`project` tag
-`well-architected-agent-review-multiregion`, both Regions in its scope). Use the
-[expected findings of `multi`](#expected-findings-1), per Region, and its list of
+Follow the same steps with the `multi` profile (`project` tag `wa-agent-demo-multi`, both
+Regions in its scope). Use the [expected findings of `multi`](#expected-findings-1), per
+Region, and its list of
 [what should not be flagged](#kept-intentionally-correct-should-not-be-flagged-1). For
 step 4, a good example is the recommendation about the primary web tier confined to one
 Availability Zone. For step 8, upload the primary and secondary templates
-(`WellArchitectedAgentReviewMultiPrimary-<primary>.template.json` and
-`WellArchitectedAgentReviewMultiSecondary-<secondary>.template.json`) in one folder and
-pass the folder URI (synthesize with the `multi` command of [Manual synth](#manual-synth)).
+(`WAAgentDemoMultiWorkloadPrimary-<primary>.template.json` and
+`WAAgentDemoMultiWorkloadSecondary-<secondary>.template.json`) in one folder and pass the
+folder URI (synthesize with the `multi` command of [Manual synth](#manual-synth)).
 
 ## Variant `single`: non-optimized single-region workload
 
@@ -242,7 +240,7 @@ The built-in anti-patterns, as a checklist for step 5 of the
 | Security | No server access logging on the S3 bucket | Dedicated recommendation, often of type Resource |
 | Resilience | Single-AZ RDS, automated backups disabled | May appear inside broader resilience recommendations rather than on its own |
 | Security | EBS root volume not encrypted; TLS not enforced on the S3 bucket | May appear only as evidence in other recommendations, or not at all |
-| Cost Optimization | Oversized instance (`m5.xlarge` for a demo web app) | May be missing: the goals favor resilience and security gaps first |
+| Cost Optimization | Oversized instance (`m5.xlarge` for a demo web app) | Right-sizing recommendation, against the goal to reduce compute spend by 30%; may be generic, without a target size |
 
 Count a row as found when it appears in the insights of another recommendation. The agent
 also raises legitimate findings beyond this list, because the variant is weak in more
@@ -250,6 +248,20 @@ ways than the planted ones: SSH access instead of Session Manager, no automatic 
 of the database secret, no patching or vulnerability scanning, no detailed monitoring,
 no MySQL log exports, no incident-response tags, an interactive deployment instead of a
 pipeline.
+
+### Agent configuration
+
+Defined in `singleRegionProfile()` in `lib/single-region-profile.ts`:
+
+| Item | Value |
+| --- | --- |
+| Display name | `WA Agent Demo Profile (single-region)` |
+| Scanned Regions | The workload Region |
+| Goals | Meet the declared RPO of 5 minutes and RTO of 2 hours by removing single points of failure; enforce least-privilege access and encryption of all workload data at rest and in transit; reduce compute spend by at least 30% by rightsizing over-provisioned resources; scale the web tier automatically to sustain peak load |
+| Application context | Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place; scoped by the `project=wa-agent-demo-single` tag, this account and the workload Region |
+
+The declared RPO, RTO and HA/DR contradict the single-AZ, backup-less architecture on
+purpose: the agent should flag the gap between stated requirements and reality.
 
 ### Kept intentionally correct (should not be flagged)
 
@@ -285,8 +297,7 @@ Region:
   the local DynamoDB replica only.
 
 Shared: a DynamoDB global table (on-demand, encrypted at rest, point-in-time recovery on
-both replicas), and a CloudWatch dashboard in the primary Region. The application context
-goes to the agent Region.
+both replicas), owned by the primary stack.
 
 ### Deliberate inefficiencies in the web tier
 
@@ -298,16 +309,16 @@ one distinct resilience story per Region:
 | Primary (`us-east-1`) | Auto Scaling group of 2 to 4 instances, **all in one Availability Zone** | Zonal single point of failure: an AZ impairment takes down the primary web tier. The ALB still spans two AZs with ARC zonal shift enabled, but shifting away from the only AZ that has instances leaves no healthy target, so the control is present but cannot help. |
 | Secondary | **One instance, fixed** (min = max = 1), across two AZs | No static stability: on a Regional failover a single instance that cannot scale must absorb all the traffic of the primary Region, so the declared active/active failover within an RTO of 15 minutes is not achievable. A launch template change also replaces the only instance with an outage. |
 
-Both are marked `WA-ANTIPATTERN` in `lib/region-stack.ts` and set by defaults in
-`lib/config.ts`. `deploy-all` always deploys these defaults. The resilient shape (2 to 4
-instances across two AZs in both Regions) is available through CDK context, from
-`infrastructure/cdk`, for example to compare the two templates:
+Both are marked `WA-ANTIPATTERN` in `lib/multi-region-workload-stack.ts` and set by
+defaults in `lib/multi-region-config.ts`. `deploy-all` always deploys these defaults. The
+resilient shape (2 to 4 instances across two AZs in both Regions) is available through
+CDK context, from `infrastructure/cdk`, for example to compare the two templates:
 
 Windows (PowerShell):
 
 ```powershell
 cd infrastructure\cdk
-npx cdk synth -c variant=multi -c "adminCidr=<YOUR_IP>/32" `
+npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32" `
   -c primaryWebAzCount=2 -c secondaryAsgMinSize=2 -c secondaryAsgMaxSize=4
 ```
 
@@ -315,7 +326,7 @@ Linux / macOS (Bash):
 
 ```bash
 cd infrastructure/cdk
-npx cdk synth -c variant=multi -c "adminCidr=<YOUR_IP>/32" \
+npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32" \
   -c primaryWebAzCount=2 -c secondaryAsgMinSize=2 -c secondaryAsgMaxSize=4
 ```
 
@@ -346,10 +357,14 @@ The agent also raises findings that follow from demo choices, not from planted g
 
 ### Agent configuration
 
+Defined in `multiRegionProfile()` in `lib/multi-region-profile.ts`:
+
 | Item | Value |
 | --- | --- |
-| Profile | The shared `wa-agent-demo-profile` profile (see [Shared agent profile](#shared-agent-profile)) |
-| Application context | `WellArchitectedAgentReviewMultiContext-<primary>`, in the profile Region: business critical, RPO 1 minute, RTO 15 minutes, active/active with automatic Regional failover, failures detected and alerted within 5 minutes; scoped by the `project=well-architected-agent-review-multiregion` tag, this account and both Regions. Defined in `multiRegionApplicationContext()` in `lib/multi-region-agent.ts` |
+| Display name | `WA Agent Demo Profile (multi-region)` |
+| Scanned Regions | The primary and secondary Regions |
+| Goals | Fail over between Regions automatically within the declared RTO of 15 minutes; protect the internet-facing endpoints and encrypt all traffic in transit; match web tier capacity to demand in both Regions; scale the web tier automatically to sustain peak load in each Region |
+| Application context | Business critical, RPO 1 minute, RTO 15 minutes, active/active with automatic Regional failover, failures detected and alerted within 5 minutes; scoped by the `project=wa-agent-demo-multi` tag, this account and both Regions |
 
 ### Kept intentionally correct (should not be flagged)
 
@@ -363,23 +378,20 @@ A recommendation against any of these is a false positive:
 - Encryption at rest declared explicitly (EBS root volumes, DynamoDB).
 - DynamoDB point-in-time recovery enabled in both Regions.
 
-## Shared agent profile
+## Agent stack
 
-Both applications are reviewed by one profile, `WellArchitectedAgentReviewProfile-<agent-region>`,
-created by the first application deploy and updated by every later one:
+Every deployment has one agent stack, `WAAgentDemoProfile-<agent-region>`, the main stack
+of the demo. It is built from the profile spec of the deployed variant:
 
 | Item | Value |
 | --- | --- |
-| Profile | `wa-agent-demo-profile` (display name `WA Agent Demo Profile`), hosted in the agent Region (`WA_AGENT_REGION`, default your Region), termination protection off |
-| Scope | This account, every enabled Region (listed by the deploy script); each application context narrows it to its own `project` tag and Regions |
-| Pillars | Resilience, Security, Cost Optimization, Performance (Operational Excellence and Sustainability are not in scope for the agent) |
-| Goals | One per pillar, written for every application, defined in `PROFILE_GOALS` in `lib/wa-agent.ts` |
-| Roles | `WAAgentExecutionRole-<agent-region>` (assumed by the service) and `WAAgentAccessRole-<agent-region>` (read-only scanning) |
-
-Use the same `WA_AGENT_REGION` for every application of an account: each agent Region gets
-its own profile, and a Business+ plan allows 2 profiles with 7 applications each.
-Destroying an application keeps the profile; remove it once no application is left (see
-[Cleanup](#cleanup)).
+| Profile | `wa-agent-demo-profile`, hosted in the agent Region (`WA_AGENT_REGION`, default your Region), termination protection off. Display name and description from the variant |
+| Scope | This account and the workload Regions of the variant only |
+| Pillars | Resilience, Security, Cost Optimization, Performance, for both variants (Operational Excellence and Sustainability are not in scope for the agent) |
+| Goals | One per pillar, specific to the variant (see the Agent configuration of each variant) |
+| Application context | One, scoped by the variant's `project` tag and Regions. It finds the workload by tag and Region strings, so there is no cross-stack reference |
+| Roles | An execution role (assumed by the service) and an access role (read-only scanning). CloudFormation names them; their ARNs are the `ExecutionRoleArn` and `AccessRoleArn` outputs of the stack |
+| Outputs | `AgentProfileArn`, `ExecutionRoleArn`, `AccessRoleArn`, and `Variant`, `WorkloadRegion` (plus `SecondaryRegion` for `multi`), which the deploy scripts read back |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
@@ -392,41 +404,41 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
   whole account.
 - An AWS account and credentials configured for your shell, allowed to create IAM roles
   and pass them to the agent (`iam:PassRole`)
-- An AWS Support plan at Business+ or higher (Business+, Enterprise, or
-  Unified Operations). Accounts on Basic, Developer or Business do not get the agent.
-- A free agent profile slot in the account. The quota is per account and Support tier:
-  2 profiles with 7 applications each on Business+, 10 profiles with 30 applications each
-  on Enterprise and Unified Operations
-  ([quotas page](https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html)).
-  The demo creates one profile per agent Region (`WA_AGENT_REGION`), shared by both
-  applications: deploying `single` and `multi` with the same `WA_AGENT_REGION` uses one
-  profile and 2 of its application slots, while two different agent Regions use two
-  profiles, the full Business+ quota. On Business+, an account that already has two
-  profiles cannot deploy the demo, and an account with one can deploy it in a single agent
-  Region. Each workload Region of an application takes one application slot. List the
-  existing profiles in each hosting Region with
+- An AWS Support plan with access to the agent. The demo targets Enterprise Support and
+  Unified Operations. Every tier with access, per the
+  [quotas page](https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html):
+
+  | Support tier | Agent profiles per account | Applications per profile |
+  | --- | --- | --- |
+  | Business+ | 2 | 7 |
+  | Enterprise On-Ramp | 10 | 30 |
+  | Enterprise Support | 10 | 30 |
+  | Unified Operations | 10 | 30 |
+
+  Accounts on Basic, Developer or Business do not get the agent.
+- **One free agent profile slot.** A deployment uses one profile and one application.
+  List the existing profiles in each hosting Region with
   `aws wellarchitected list-agent-profiles --region <HOSTING_REGION>`.
 - Regions: the workload deploys in your Region (`AWS_REGION` / `AWS_DEFAULT_REGION`). The
   agent profile (preview) can only be hosted in a few Regions, listed on the
   [quotas page](https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html),
-  but it scans resources in every commercial Region. The profile stack and the context
-  stacks go to `WA_AGENT_REGION`, which defaults to your Region. If your Region cannot host
-  a profile, the deploy script stops before deploying anything and asks you to set
-  `WA_AGENT_REGION` to a hosting Region; the applications still deploy in your Region. See
+  but it can scan resources in any commercial Region. The agent stack goes to
+  `WA_AGENT_REGION`, which defaults to your Region. If your Region cannot host a profile,
+  the deploy script stops before deploying anything and asks you to set `WA_AGENT_REGION`
+  to a hosting Region; the workload still deploys in your Region. See
   [AWS Well-Architected Agent Region](../../shared/README.md#aws-well-architected-agent-region).
-- `ec2:DescribeRegions` for the deploying identity: the script lists the account's enabled
-  Regions for the profile scope and, for `multi`, to choose a secondary Region.
-- For `multi`, a secondary Region: pass it with `-SecondaryRegion` / `--secondary-region`,
-  or let the script choose one from your account's enabled Regions: the first in
-  alphabetical order in the primary's geography, preferring Regions that need no opt-in.
-  For us-east-1 that is us-east-2; for eu-west-3, eu-central-1. A redeploy or a destroy
-  reuses the secondary Region of the deployed stack, so you never pass it again.
-- Either way the secondary Region must be in the **same geography as the primary**: the
-  Region code without its last two segments (`us-east-1` and `us-west-2` are both `us`,
-  `eu-west-3` and `eu-central-1` both `eu`; `us-gov-west-1` is `us-gov`). The deploy stops
-  otherwise, and when your account has no other enabled Region in that geography (for
-  example `sa-east-1`): enable one, or use the `single` variant. The script does not check
-  that the secondary Region offers every service the variant uses.
+- For `multi`, a secondary Region with the **same Region-code prefix** as the primary: the
+  code without its last two segments (`us-east-1` and `us-west-2` are both `us`,
+  `eu-west-3` and `eu-central-1` both `eu`; `us-gov-west-1` is `us-gov`). The prefix is
+  not a data residency boundary: `ap` covers Tokyo, Mumbai and Sydney.
+  - In `us-*` and `eu-*` Regions you can let the script choose: the first enabled Region
+    with the same prefix in alphabetical order, preferring Regions that need no opt-in.
+    For us-east-1 that is us-east-2; for eu-west-3, eu-central-1. This reads the account's
+    enabled Regions, so the deploying identity needs `ec2:DescribeRegions`.
+  - Elsewhere, pass it with `-SecondaryRegion` / `--secondary-region`.
+  - A redeploy or a destroy reuses the secondary Region of the deployment, so you never
+    pass it again. The script does not check that the secondary Region offers every
+    service the variant uses.
 - AWS CLI v2 (2.31.13 or later)
 - Node.js 20+
 - Outbound HTTPS to `checkip.amazonaws.com` (to detect your public IP), or your
@@ -435,42 +447,40 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Deployment
 
-Run the scripts from this demo folder, `resilience/well-architected-agent-review/`. They
+Run the scripts from this demo folder, `resilience/well-architected-agent-demo/`. They
 call the library's shared scripts at `../../shared/scripts`.
 
 The script runs the library's shared prerequisites check, then the shared `deploy-cdk`
-script once per stack, in this order (Regions in the examples: us-east-1, and us-east-2
-as the secondary):
+script once per stack: the workload stacks first, then the agent stack (Regions in the
+examples: us-east-1, and us-east-2 as the secondary):
 
-| Variant | Stacks | Prints |
+| Variant | Stacks, in deploy order | Prints |
 | --- | --- | --- |
-| `single` | `WellArchitectedAgentReviewProfile-us-east-1` (created or updated), `WellArchitectedAgentReviewStack-us-east-1`, `WellArchitectedAgentReviewSingleContext-us-east-1` | Instance IP, database endpoint, bucket name, agent profile ARN |
-| `multi` | `WellArchitectedAgentReviewProfile-us-east-1` (created or updated), `WellArchitectedAgentReviewMultiPrimary-us-east-1`, `WellArchitectedAgentReviewMultiSecondary-us-east-2`, `WellArchitectedAgentReviewMultiContext-us-east-1`, `WellArchitectedAgentReviewMultiDashboard-us-east-1`; CDK is bootstrapped in both Regions | ALB DNS names, table name, agent profile ARN, dashboard URL |
-| `profile` | `WellArchitectedAgentReviewProfile-us-east-1` only | Agent profile ARN, scanned Regions |
+| `single` | `WAAgentDemoSingleWorkload-us-east-1`, `WAAgentDemoProfile-us-east-1` | Instance IP, database endpoint, bucket name, agent profile ARN |
+| `multi` | `WAAgentDemoMultiWorkloadPrimary-us-east-1`, `WAAgentDemoMultiWorkloadSecondary-us-east-2`, `WAAgentDemoProfile-us-east-1`; CDK is bootstrapped in both Regions | ALB DNS names, table name, agent profile ARN |
 
-The profile and context stacks always go to `WA_AGENT_REGION`; the context stack name
-carries the workload Region, so the same application can run in several Regions under
-one profile. For `multi`, the dashboard stack receives the ALB and target group
-identifiers of both Regions as `--context`, read from the region stack outputs.
+**One variant at a time.** Before deploying, the script reads the outputs of the agent
+stack in `WA_AGENT_REGION` (`Variant`, `WorkloadRegion`, `SecondaryRegion`). If it already
+deploys another variant or another workload Region, the script stops and prints the
+destroy command to run first. A redeploy of the same variant updates it in place.
 
 Options, the same in both scripts:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| Variant | `single` | What to deploy or destroy: application `single` or `multi` (each also deploys or updates the profile), or `profile` alone |
+| Variant | `single` | What to deploy: `single` or `multi`. Not needed to destroy |
 | Admin CIDR | your public IPv4 `/32` (detected via `checkip.amazonaws.com`) | CIDR allowed to reach the workload. If detection fails, the script stops and asks for it |
 | Domain and zone | none | HTTPS for `multi` only (ACM certificate per Region, DNS-validated in your hosted zone); both must be passed together |
-| Secondary Region | the deployed one, else chosen by the script (see [Prerequisites](#prerequisites)) | `multi` only: Region of the secondary stack |
-| Destroy | off | Tear the selected variant down instead of deploying it |
+| Secondary Region | the deployed one, else chosen by the script in `us-*` and `eu-*` (see [Prerequisites](#prerequisites)) | `multi` only: Region of the secondary stack |
+| Destroy | off | Remove the deployed variant: agent stack, then workload stacks |
 
-The workload and profile Regions are environment variables, not options: set `AWS_REGION`
-and `AWS_DEFAULT_REGION` (workload) and, when needed, `WA_AGENT_REGION` (agent profile)
-before running the script, and use the same values to destroy. Invalid values (an unknown
-variant, a domain without a zone, a domain or a secondary Region outside `multi`,
-a profile Region that cannot host a profile, a secondary Region outside the primary's
-geography or different from the one
-already deployed, or a run outside the library checkout) stop the script with an error
-before anything is deployed.
+The workload and agent Regions are environment variables, not options: set `AWS_REGION`
+and `AWS_DEFAULT_REGION` (workload) and, when needed, `WA_AGENT_REGION` (agent stack)
+before running the script. Destroy needs only the same `WA_AGENT_REGION`. Invalid values
+(an unknown variant, a domain without a zone, a domain or a secondary Region outside
+`multi`, an agent Region that cannot host a profile, a secondary Region with another
+prefix or different from the deployed one, another variant already deployed, or a run
+outside the library checkout) stop the script with an error before anything is deployed.
 
 ### Windows (PowerShell)
 
@@ -480,7 +490,7 @@ If the execution policy blocks the script, allow it for the current session only
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-Deploy:
+Deploy one variant:
 
 ```powershell
 $env:AWS_REGION = "us-east-1"; $env:AWS_DEFAULT_REGION = "us-east-1"
@@ -492,13 +502,13 @@ $env:AWS_REGION = "us-east-1"; $env:AWS_DEFAULT_REGION = "us-east-1"
 .\deploy-all.ps1 -Variant multi -Domain app.example.com -Zone example.com    # multi with HTTPS
 ```
 
-Workload in a Region that cannot host the profile (example: Paris), profile in us-east-1:
+Workload in a Region that cannot host the profile (example: Paris), agent stack in us-east-1:
 
 ```powershell
 $env:AWS_REGION = "eu-west-3"; $env:AWS_DEFAULT_REGION = "eu-west-3"; $env:WA_AGENT_REGION = "us-east-1"
 
 .\deploy-all.ps1                                                             # variant single
-.\deploy-all.ps1 -Variant multi -SecondaryRegion eu-central-1                # variant multi
+.\deploy-all.ps1 -Variant multi                                              # variant multi (eu-west-3 + eu-central-1)
 ```
 
 Check that the agent profile is eligible for scheduled recommendations (the deploy script
@@ -509,23 +519,15 @@ aws wellarchitected get-agent-profile --profile-arn "<AGENT_PROFILE_ARN>" --regi
   --query "{eligible: eligibleForScheduledGeneration, errors: fieldErrors}"
 ```
 
-Clean up (applications first, then the shared profile):
+Clean up (whichever variant is deployed, same `WA_AGENT_REGION`):
 
 ```powershell
-.\deploy-all.ps1 -Destroy                    # application single (keeps the profile)
-.\deploy-all.ps1 -Variant multi -Destroy     # application multi (keeps the profile)
-.\deploy-all.ps1 -Variant profile -Destroy   # shared profile, once no application is left
-```
-
-Deploy the profile alone, without an application:
-
-```powershell
-.\deploy-all.ps1 -Variant profile
+.\deploy-all.ps1 -Destroy
 ```
 
 ### Linux / macOS (Bash)
 
-Deploy:
+Deploy one variant:
 
 ```bash
 export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
@@ -537,13 +539,13 @@ export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 ./deploy-all.sh --variant multi --domain app.example.com --zone example.com   # multi with HTTPS
 ```
 
-Workload in a Region that cannot host the profile (example: Paris), profile in us-east-1:
+Workload in a Region that cannot host the profile (example: Paris), agent stack in us-east-1:
 
 ```bash
 export AWS_REGION=eu-west-3 AWS_DEFAULT_REGION=eu-west-3 WA_AGENT_REGION=us-east-1
 
 ./deploy-all.sh                                                               # variant single
-./deploy-all.sh --variant multi --secondary-region eu-central-1               # variant multi
+./deploy-all.sh --variant multi                                               # variant multi (eu-west-3 + eu-central-1)
 ```
 
 Check that the agent profile is eligible for scheduled recommendations (the deploy script
@@ -554,18 +556,10 @@ aws wellarchitected get-agent-profile --profile-arn "<AGENT_PROFILE_ARN>" --regi
   --query '{eligible: eligibleForScheduledGeneration, errors: fieldErrors}'
 ```
 
-Clean up (applications first, then the shared profile):
+Clean up (whichever variant is deployed, same `WA_AGENT_REGION`):
 
 ```bash
-./deploy-all.sh --destroy                    # application single (keeps the profile)
-./deploy-all.sh --variant multi --destroy    # application multi (keeps the profile)
-./deploy-all.sh --variant profile --destroy  # shared profile, once no application is left
-```
-
-Deploy the profile alone, without an application:
-
-```bash
-./deploy-all.sh --variant profile
+./deploy-all.sh --destroy
 ```
 
 ### When recommendations appear
@@ -573,11 +567,10 @@ Deploy the profile alone, without an application:
 The documentation gives an upper bound: scheduled recommendations start within 24 hours
 of profile setup according to the console guide, and within 48 hours according to the API
 quickstart. In practice the first scheduled generation usually starts and completes much
-sooner, often within a few hours. Follow
-it with `list-agent-recommendation-generations` (step 2 of the
-[walkthrough](#walkthrough-after-deployment)); the deploy script prints the command. If
-nothing is queued, run the eligibility check above for your shell: if `eligible` is
-`false`, `errors` names the field to fix.
+sooner, often within a few hours. Follow it with `list-agent-recommendation-generations`
+(step 2 of the [walkthrough](#walkthrough-after-deployment)); the deploy script prints the
+command. If nothing is queued, run the eligibility check above for your shell: if
+`eligible` is `false`, `errors` names the field to fix.
 
 ### Manual synth
 
@@ -586,9 +579,8 @@ Windows (PowerShell):
 ```powershell
 cd infrastructure\cdk
 npm install
-npx cdk synth -c "adminCidr=<YOUR_IP>/32"                                              # profile + single (three stacks)
-npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32"   # profile + multi (five stacks)
-npx cdk synth -c variant=profile                                                        # profile alone
+npx cdk synth -c "adminCidr=<YOUR_IP>/32"                                                # single: workload + agent stack
+npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32"   # multi: primary, secondary + agent stack
 ```
 
 Linux / macOS (Bash):
@@ -596,23 +588,21 @@ Linux / macOS (Bash):
 ```bash
 cd infrastructure/cdk
 npm install
-npx cdk synth -c "adminCidr=<YOUR_IP>/32"                                              # profile + single (three stacks)
-npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32"   # profile + multi (five stacks)
-npx cdk synth -c variant=profile                                                        # profile alone
+npx cdk synth -c "adminCidr=<YOUR_IP>/32"                                                # single: workload + agent stack
+npx cdk synth -c variant=multi -c secondaryRegion=us-east-2 -c "adminCidr=<YOUR_IP>/32"   # multi: primary, secondary + agent stack
 ```
 
-A manual synth differs from the scripts in three ways:
+A manual synth differs from the scripts in two ways:
 - `multi` needs the secondary Region (`-c secondaryRegion=...` or
   `WA_DEMO_SECONDARY_REGION`): only the deploy scripts choose one;
-- the profile scans only its own Region unless you pass `-c scanRegions=<r1>,<r2>,...` or
-  `WA_AGENT_SCAN_REGIONS` (the scripts pass every enabled Region);
-- `WA_AGENT_REGION` is read but not checked against the hosting Regions: only the deploy
-  scripts, through the shared prerequisites check, do.
+- `WA_AGENT_REGION` is read but not checked against the hosting Regions, and no check
+  keeps one variant per agent Region: only the deploy scripts do both.
 
 ### Configuration of the `multi` variant
 
 Settings are CDK context values, overridable with `-c key=value`; defaults live in
-`infrastructure/cdk/lib/config.ts`. Nothing account or deployment specific is committed.
+`infrastructure/cdk/lib/multi-region-config.ts`. Nothing account or deployment specific is
+committed.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -628,28 +618,30 @@ Settings are CDK context values, overridable with `-c key=value`; defaults live 
 | `appDomainName` / `route53ZoneName` | empty | Enable HTTPS for this FQDN, validated in this hosted zone |
 | `appDomainAltNames` | `[]` | Extra certificate SANs |
 | `createCertValidationRecords` | `true` | Set `false` if the ACM validation records already exist in the zone |
-| `globalAcceleratorId` | empty | Add a Global Accelerator row to the dashboard |
-| `projectTag` | `well-architected-agent-review-multiregion` | Value of the `project` tag, the scope of this application's context |
+| `projectTag` | `wa-agent-demo-multi` | Value of the `project` tag, the scope of the application context |
 
-To test the `multi` application, open `http://<AlbDnsName>/cgi-bin/app.sh` in each
-Region: the page shows the serving Region and instance and a visit counter shared by
-both Regions through the global table.
+To test the `multi` workload, open `http://<AlbDnsName>/cgi-bin/app.sh` in each Region:
+the page shows the serving Region and instance and a visit counter shared by both
+Regions through the global table.
 
 ## Troubleshooting
 
-**The profile stack fails with `ServiceQuotaExceededException` on
+**The agent stack fails with `ServiceQuotaExceededException` on
 `AWS::WellArchitected::AgentProfile`.** The account has reached the agent profile quota of
-its Support tier (2 profiles on Business+, see [Prerequisites](#prerequisites)). The deploy
-script stops at the profile stack, before any application is deployed. List the profiles in
-each hosting Region:
+its Support tier (2 profiles on Business+, see [Prerequisites](#prerequisites)). The
+workload stacks are deployed by then; the agent stack is not. List the profiles in each
+hosting Region:
 
 ```bash
 aws wellarchitected list-agent-profiles --region <HOSTING_REGION>
 ```
 
-Then set `WA_AGENT_REGION` to the Region of an existing `wa-agent-demo-profile`
-profile so the demo reuses it, delete an unused profile, or upgrade the Support tier, and
-run the deploy script again.
+Then delete an unused profile or upgrade the Support tier, and run the deploy script
+again. Or remove the workload with `-Destroy` / `--destroy`.
+
+**The deploy stops with "already deploys variant ...".** Another variant, or the same
+variant in another workload Region, is deployed with this `WA_AGENT_REGION`. Run the
+destroy command the script prints, then deploy again.
 
 **`eligibleForScheduledGeneration` is `false`, or no recommendations appear.** Read
 `fieldErrors` (step 1 of the [walkthrough](#walkthrough-after-deployment)) and see
@@ -657,23 +649,28 @@ run the deploy script again.
 
 ## Cleanup
 
-Run the clean-up command for your shell from the deployment section above
-([Windows (PowerShell)](#windows-powershell) or [Linux / macOS (Bash)](#linux--macos-bash)).
-Run it with the same `AWS_REGION` and `WA_AGENT_REGION` as the deploy; for `multi` the
-script reads the secondary Region from the deployed primary stack. Cleanup has two steps:
+One command removes whatever variant is deployed, with the same `WA_AGENT_REGION` as the
+deploy:
 
-1. **Each application**: `-Destroy` / `--destroy` (with `-Variant multi` / `--variant multi`
-   for `multi`) destroys its context stack first, then its workload stacks (for `multi`:
-   dashboard, context, secondary, primary). The shared profile stays for the other
-   applications.
-2. **The profile**: `-Variant profile -Destroy` / `--variant profile --destroy`, once no
-   application is left. The script lists the stacks that still import the profile ARN and
-   stops with their names if there are any; CloudFormation would refuse anyway.
+```powershell
+.\deploy-all.ps1 -Destroy
+```
+
+```bash
+./deploy-all.sh --destroy
+```
+
+The script reads the variant and the workload Regions from the outputs of the agent stack,
+so it needs neither the variant nor the Regions. It destroys the agent stack first, then
+the workload stacks (for `multi`: secondary, then primary, which deletes the global table
+and its replica). If the agent stack is missing, for example after a failed deploy, the
+script removes what is left of the variant you pass (`-Variant` / `--variant`, default
+`single`) in your Region; for `multi` it reads the secondary Region from the primary
+stack, or asks for `-SecondaryRegion` / `--secondary-region`.
 
 All stacks go through the shared `deploy-cdk` script. Every resource is removed with its
 stack, including the log groups of the CDK-managed Lambdas; the CDK bootstrap stacks
-(`CDKToolkit`) stay in place. Until step 2 the profile stays in the account, with no cost
-estimated here (see below).
+(`CDKToolkit`) stay in place.
 
 ## Estimated Cost Breakdown
 
@@ -689,24 +686,24 @@ Approximate us-east-1 on-demand prices. Check the
 | RDS storage, 20 GiB | | ~$2.30 |
 | EBS root volume, 50 GiB | | ~$4-5 |
 | Public IPv4 address | $0.005 | ~$3.65 |
-| Well-Architected Agent (preview) | | Not estimated here; see the [preview terms](https://aws.amazon.com/service-terms/) (Betas and Previews). Needs a Business+ Support plan |
+| Well-Architected Agent (preview) | | Not estimated here; see the [preview terms](https://aws.amazon.com/service-terms/) (Betas and Previews). Needs a Support plan with access to the agent |
 | Secrets Manager secret | | $0.40 |
 | S3 bucket (empty) | | < $0.01 |
 | **Total** | **~$0.23** | **~$165** |
 
 ### Variant `multi`
 
-On-demand prices for us-east-1 and us-west-2 (identical for these items), taken from the
-AWS Price List bulk files. The default secondary Region for us-east-1 is now us-east-2:
-check the [AWS Pricing Calculator](https://calculator.aws/) for that pair or any other.
+On-demand prices for the default pair, us-east-1 (primary) and us-east-2 (secondary),
+identical in both Regions for these items, taken from the AWS Price List bulk files.
+Check the [AWS Pricing Calculator](https://calculator.aws/) for another pair.
 
-| Resource | Primary (hourly) | Secondary (hourly) | Both Regions (hourly) | Both Regions (monthly, 730 h) |
-| --- | --- | --- | --- |
+| Resource | Primary, us-east-1 (hourly) | Secondary, us-east-2 (hourly) | Both Regions (hourly) | Both Regions (monthly, 730 h) |
+| --- | --- | --- | --- | --- |
 | EC2 `t3.micro`, Linux ($0.0104/h each): 2 primary + 1 secondary | $0.0208 | $0.0104 | $0.0312 | ~$22.78 |
 | Application Load Balancer ($0.0225/h) | $0.0225 | $0.0225 | $0.0450 | ~$32.85 |
 | Interface VPC endpoints, 3 x 2 AZs ($0.01/h per endpoint per AZ) | $0.0600 | $0.0600 | $0.1200 | ~$87.60 |
 | Public IPv4 on the ALB, 2 addresses minimum, one per AZ ($0.005/h each) | $0.0100 | $0.0100 | $0.0200 | ~$14.60 |
-| Well-Architected Agent (preview) | | | | Not estimated here; see the [preview terms](https://aws.amazon.com/service-terms/) (Betas and Previews). Needs a Business+ Support plan |
+| Well-Architected Agent (preview) | | | | Not estimated here; see the [preview terms](https://aws.amazon.com/service-terms/) (Betas and Previews). Needs a Support plan with access to the agent |
 | **Total (fixed hourly items)** | **~$0.113** | **~$0.103** | **~$0.22** | **~$158** |
 
 With the resilient shape (2 instances in each Region) add one `t3.micro`: about $0.23/hour,
@@ -714,8 +711,7 @@ about $165/month.
 
 Not included for `multi` (usage-based, small for a demo): ALB LCUs, DynamoDB on-demand
 requests and replicated writes, EBS root volumes, interface endpoint data processing,
-cross-Region data transfer, the CloudWatch dashboard. Gateway endpoints (S3, DynamoDB)
-have no additional charge.
+cross-Region data transfer. Gateway endpoints (S3, DynamoDB) have no additional charge.
 
 - **Demo cost**: a few dollars for a day-long session, plus the time you leave it running
   while waiting for recommendations. There are no Bedrock inference costs in this stack.
@@ -728,39 +724,38 @@ have no additional charge.
 
 This folder contains:
 
-- `infrastructure/cdk/`: CDK app (`bin/app.ts`: the profile stack, plus the stacks of the
-  selected variant) and stacks (`lib/`):
-  - `wa-agent.ts`: the agent side, reusable by any application: `WaAgentProfileStack`
-    (roles, profile, `PROFILE_GOALS`) and `WaApplicationContextStack` (one application
-    context in the profile)
-  - `well-architected-agent-review-stack.ts`: application `single` and its context
-    (`singleRegionApplicationContext()`)
-  - `region-stack.ts`, `dashboard-stack.ts`, `config.ts`, `userdata.ts`: application
-    `multi`; `multi-region-agent.ts`: its context (`multiRegionApplicationContext()`)
-  - `cdk-log-groups.ts`: managed log groups for CDK Lambdas. The Region is resolved with
-    the library's `shared/utils/aws-utils.ts`
-- `deploy-all.ps1` / `deploy-all.sh`: deployment and cleanup scripts for the profile and
-  both applications
-- `validation.yaml`: deploy / verify / destroy contract (profile and application `single`)
+- `infrastructure/cdk/`: CDK app (`bin/app.ts`: picks the variant, then its workload
+  stacks and the agent stack built from its profile spec) and `lib/`, one stack per file:
+  - `agent-profile-stack.ts`: `AgentProfileStack`, the agent side of every variant: roles,
+    profile, goals and application context, all from a profile spec
+  - `single-region-workload-stack.ts`: `SingleRegionWorkloadStack`, the `single` workload;
+    `single-region-profile.ts`: its profile spec (goals, context, Regions)
+  - `multi-region-workload-stack.ts`: `MultiRegionWorkloadStack`, one per Region of the
+    `multi` workload; `multi-region-profile.ts`: its profile spec;
+    `multi-region-config.ts`: its settings; `multi-region-user-data.ts`: its instance
+    user data
+  - `regions.ts`: workload and agent Region resolution, with the library's
+    `shared/utils/aws-utils.ts`
+  - `cdk-log-groups.ts`: managed log groups for CDK Lambdas
+- `deploy-all.ps1` / `deploy-all.sh`: deployment and cleanup scripts
+- `validation.yaml`: deploy / verify / destroy contract (variant `single`)
 - `ARCHITECTURE.md`, `assets/architecture.svg` and `assets/architecture-multiregion.svg`:
   design and diagrams
 
-Solution adoption tracking: `(uksb-do9bhieqqh)(tag:well-architected-agent-review,resilience)`, set on
-the shared profile stack in `infrastructure/cdk/bin/app.ts`, the one stack every
-deployment has. The application and context stacks carry none.
+Solution adoption tracking: `(uksb-do9bhieqqh)(tag:well-architected-agent-demo,resilience)`,
+set on the agent stack in `infrastructure/cdk/bin/app.ts`, the one stack every deployment
+has. The workload stacks carry none.
 
 ## Available Extensions
 
 - Fix one anti-pattern at a time and wait for the next generation to watch the
   recommendation clear.
-- Change the goals (`PROFILE_GOALS` in `lib/wa-agent.ts`) to see how they reprioritize
-  recommendations for every application.
-- Deploy both applications under the same profile (one profile, 2 of its application slots)
-  and compare how the agent scores an
-  obviously flawed workload against a nearly resilient one.
-- Add your own application: its workload stacks plus one `WaApplicationContextStack`
-  under a new variant in `bin/app.ts`, with no change to the profile (see
-  [ARCHITECTURE.md](ARCHITECTURE.md)).
+- Change the goals of a variant (`lib/single-region-profile.ts` or
+  `lib/multi-region-profile.ts`) to see how they reprioritize the recommendations.
+- Deploy `single`, collect the recommendations, destroy it, then deploy `multi`, and
+  compare how the agent scores an obviously flawed workload against a nearly resilient one.
+- Add your own variant: `<variant>-workload-stack.ts`, `<variant>-profile.ts` and one more
+  branch in `bin/app.ts` (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 - Assess the `multi` workload with AWS Resilience Hub as well, using its `project` tag as the
   discovery source, and compare the findings with the agent's.
 - Add more anti-patterns for pillars you want to emphasize.

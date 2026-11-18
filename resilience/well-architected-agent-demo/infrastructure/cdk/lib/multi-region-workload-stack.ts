@@ -15,14 +15,14 @@ import {
   aws_route53 as route53,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { AppConfig } from './config';
-import { renderUserData } from './userdata';
+import { MultiRegionConfig } from './multi-region-config';
+import { renderUserData } from './multi-region-user-data';
 import { lockProviderLogGroup } from './cdk-log-groups';
 
 export type RegionRole = 'primary' | 'secondary';
 
-export interface RegionStackProps extends StackProps {
-  cfg: AppConfig;
+export interface MultiRegionWorkloadStackProps extends StackProps {
+  cfg: MultiRegionConfig;
   roleLabel: RegionRole;
   vpcCidr: string;
 }
@@ -36,15 +36,14 @@ export interface RegionStackProps extends StackProps {
  * Remaining gaps are marked inline with `WA-ANTIPATTERN` so the Well-Architected
  * Agent findings can be checked against a known list.
  * The primary stack also owns the DynamoDB global table (replica in the
- * secondary region). The
- * Well-Architected Agent lives in the shared profile stack and this application's
- * context stack (lib/wa-agent.ts).
+ * secondary region). The Well-Architected Agent is not part of this stack: the
+ * agent stack (lib/agent-profile-stack.ts) finds it by its `project` tag and Regions.
  */
-export class RegionStack extends Stack {
+export class MultiRegionWorkloadStack extends Stack {
   public readonly alb: elbv2.ApplicationLoadBalancer;
   public readonly targetGroup: elbv2.ApplicationTargetGroup;
 
-  constructor(scope: Construct, id: string, props: RegionStackProps) {
+  constructor(scope: Construct, id: string, props: MultiRegionWorkloadStackProps) {
     super(scope, id, props);
 
     // Feature flags of this variant, set on the stack so they do not change the
@@ -123,7 +122,7 @@ export class RegionStack extends Stack {
     lockProviderLogGroup(
       this,
       'Custom::VpcRestrictDefaultSGCustomResourceProvider',
-      `WAAgentReviewMR-RestrictDefaultSG-${region}`,
+      `WAAgentDemoMR-RestrictDefaultSG-${region}`,
       'RestrictDefaultSgLogGroup',
     );
 
@@ -289,7 +288,7 @@ export class RegionStack extends Stack {
       this.targetGroup.addTarget(new elbv2Targets.InstanceTarget(instance, 80));
     }
 
-    // Auto Scaling group. Its shape differs per Region on purpose (config.ts, `web`):
+    // Auto Scaling group. Its shape differs per Region on purpose (multi-region-config.ts, `web`):
     //  - primary (default): confined to ONE Availability Zone.
     //    WA-ANTIPATTERN (Resilience): zonal single point of failure. An AZ
     //    impairment takes down the whole web tier of the primary Region. The ALB
@@ -302,7 +301,7 @@ export class RegionStack extends Stack {
     //    the traffic, so the declared active/active failover within an RTO of
     //    15 minutes is not achievable.
     // Override with -c primaryWebAzCount=2 / -c secondaryAsgMaxSize=4 (and the
-    // other keys in config.ts) to deploy the resilient shape instead.
+    // other keys in multi-region-config.ts) to deploy the resilient shape instead.
     const webShape = cfg.web[roleLabel];
     const webAzs = vpc.availabilityZones.slice(0, webShape.azCount);
     let asg: autoscaling.AutoScalingGroup | undefined;
@@ -422,7 +421,7 @@ export class RegionStack extends Stack {
     // you configure by hand (see ARCHITECTURE.md). This contradicts the automatic
     // failover declared in the agent's application context.
     // WA-ANTIPATTERN (Resilience): no CloudWatch alarms (5xx, unhealthy hosts,
-    // latency) and no notifications; failures are only visible on the dashboard.
+    // latency) and no notifications: nobody is told when the web tier fails.
     new CfnOutput(this, 'AlbDnsName', {
       description: `${roleLabel} ALB DNS name (Route 53 alias target)`,
       value: this.alb.loadBalancerDnsName,
@@ -430,16 +429,6 @@ export class RegionStack extends Stack {
     new CfnOutput(this, 'AlbZoneId', {
       description: `${roleLabel} ALB hosted zone ID (Route 53 alias records)`,
       value: this.alb.loadBalancerCanonicalHostedZoneId,
-    });
-    // CloudWatch dimension values, read by the deploy script and passed to the
-    // dashboard stack as --context (no cross-Region references).
-    new CfnOutput(this, 'AlbFullName', {
-      description: `${roleLabel} ALB CloudWatch dimension (app/<name>/<id>)`,
-      value: this.alb.loadBalancerFullName,
-    });
-    new CfnOutput(this, 'TargetGroupFullName', {
-      description: `${roleLabel} target group CloudWatch dimension (targetgroup/<name>/<id>)`,
-      value: this.targetGroup.targetGroupFullName,
     });
     if (instance) {
       new CfnOutput(this, 'InstanceId', { description: `${roleLabel} single EC2 instance ID`, value: instance.instanceId });

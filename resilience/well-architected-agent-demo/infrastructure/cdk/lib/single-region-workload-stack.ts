@@ -4,32 +4,15 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { WaApplicationContext } from './wa-agent';
 import { lockProviderLogGroup } from './cdk-log-groups';
 
-/** Tag that marks every resource of this application for the agent's context. */
-const PROJECT_TAG = 'well-architected-agent-review';
-
-/**
- * How the single-region application registers in the shared agent profile
- * (WaApplicationContextStack, deployed in the profile Region). The declared
- * requirements intentionally contradict what is deployed, so the agent can flag
- * the gap between the stated objectives and the actual architecture.
- */
-export function singleRegionApplicationContext(workloadRegion: string): WaApplicationContext {
-  return {
-    projectTag: PROJECT_TAG,
-    regions: [workloadRegion],
-    title: 'Well-Architected Agent demo web application',
-    applicationOverview: 'Customer-facing web application with a MySQL database and an S3 asset store.',
-    architectureOverview:
-      'Single EC2 web instance, single RDS MySQL instance, S3 asset bucket, credentials in Secrets Manager.',
-    additionalContext: 'Business critical, RPO 5 minutes, RTO 2 hours, HA and DR in place',
-  };
+export interface SingleRegionWorkloadStackProps extends cdk.StackProps {
+  /** Value of the `project` tag; the agent's application context is scoped by it. */
+  projectTag: string;
 }
 
 /**
- * WellArchitectedAgentReviewStack
+ * SingleRegionWorkloadStack
  *
  * A DELIBERATELY NON-OPTIMIZED architecture. The point of this stack is to give
  * the Well-Architected Agent plenty of findings to generate recommendations against.
@@ -43,8 +26,8 @@ export function singleRegionApplicationContext(workloadRegion: string): WaApplic
  * no data is ever exposed to the internet. Every other dimension is left
  * sub-optimal on purpose.
  */
-export class WellArchitectedAgentReviewStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+export class SingleRegionWorkloadStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props: SingleRegionWorkloadStackProps) {
     super(scope, id, props);
 
     // -----------------------------------------------------------------------
@@ -54,7 +37,7 @@ export class WellArchitectedAgentReviewStack extends cdk.Stack {
     //  - "project": identifies these resources so they can be filtered and
     //    selected for the Well-Architected Agent.
     // -----------------------------------------------------------------------
-    cdk.Tags.of(this).add('project', PROJECT_TAG);
+    cdk.Tags.of(this).add('project', props.projectTag);
 
     // -----------------------------------------------------------------------
     // Networking
@@ -222,12 +205,12 @@ export class WellArchitectedAgentReviewStack extends cdk.Stack {
     lockProviderLogGroup(
       this,
       'Custom::S3AutoDeleteObjectsCustomResourceProvider',
-      `WAAgentReview-S3AutoDeleteObjects-${this.region}`,
+      `WAAgentDemo-S3AutoDeleteObjects-${this.region}`,
       'AutoDeleteObjectsLogGroup',
     );
 
-    // The Well-Architected Agent is not part of this stack: the shared profile
-    // stack and this application's context stack (lib/wa-agent.ts) review it.
+    // The Well-Architected Agent is not part of this stack: the agent stack
+    // (lib/agent-profile-stack.ts) finds it by its `project` tag and Region.
 
     // -----------------------------------------------------------------------
     // Outputs

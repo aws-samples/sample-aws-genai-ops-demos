@@ -1,5 +1,5 @@
 {
-  "name": "well-architected-agent-review",
+  "name": "well-architected-agent-demo",
   "version": "0.1.0",
   "description": "Intentionally non-optimized CDK app for Well-Architected Agent analysis",
   "scripts": {

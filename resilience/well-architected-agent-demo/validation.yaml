@@ -1,0 +1,30 @@
+# Demo validation contract (see contributor-guide.md, "Demo Validation").
+# Validates the default variant (single). The multi variant is deployed with
+# `./deploy-all.sh --variant multi` (see README) and is not part of this contract,
+# because the schema carries one deploy command and one region.
+# Deploys the single workload, then the agent stack that reviews it.
+deploy_command: ["./deploy-all.sh"]
+# One command: reads the deployed variant and Regions from the agent stack, removes
+# it, then the workload. Goes through the shared deploy-cdk script.
+destroy_command: ["./deploy-all.sh", "--destroy"]
+destroy_subdir: "."
+# Region-suffixed stack IDs produced by infrastructure/cdk/bin/app.ts (variant single,
+# agent stack in the same Region).
+stacks:
+  - "WAAgentDemoProfile-us-east-1"
+  - "WAAgentDemoSingleWorkload-us-east-1"
+region: "us-east-1"
+verify: deterministic
+notes: >
+  Two stacks: the agent stack (main stack, adoption tracking: roles, profile, goals,
+  application context) and the deliberately non-optimized single-region workload. The
+  agent requires a Business+ (or higher) Support plan in the test account and a free
+  agent profile slot. us-east-1 can host the profile; in a Region that cannot, set
+  WA_AGENT_REGION and the agent stack goes there (the shared prerequisites check names
+  the hosting Regions). Recommendations take hours (up to 48), so CI can only check
+  deploy and destroy. The admin CIDR defaults to the runner's public IPv4 (/32).
+  To validate the multi variant by hand: ./deploy-all.sh --variant multi, then
+  ./deploy-all.sh --destroy (stacks WAAgentDemoMultiWorkloadPrimary-us-east-1,
+  WAAgentDemoMultiWorkloadSecondary-us-east-2, WAAgentDemoProfile-us-east-1; the
+  secondary Region is chosen by the script and read back from the agent stack on
+  destroy). One variant at a time per account and agent Region.
