@@ -18,6 +18,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | AI Lambda Runtime Migration Assistant | Operations Automation | Assess deprecated-runtime Lambda functions across an AWS Organization: org-wide multi-account discovery via Trusted Advisor, AI assessment with Amazon Nova, a durable 5-step Refresh pipeline and a React dashboard | [operations-automation/ai-lambda-runtime-migration/](operations-automation/ai-lambda-runtime-migration/README.md) |
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | AI Load Test Generator Agent | Resilience | Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing | [resilience/ai-load-test-generation-with-dlt/](resilience/ai-load-test-generation-with-dlt/README.md) |
+| EKS Self-Healing Agent (Agatha) | Resilience | In-cluster agent that detects CrashLoopBackOff pods on Amazon EKS, runs root cause analysis with Amazon Bedrock, and patches the Deployment memory limit after an operator approves the fix | [resilience/eks-self-healing-agent/](resilience/eks-self-healing-agent/README.md) |
 | FSx for Windows SLA Review with AWS DevOps Agent | Resilience | Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix | [resilience/fsx-windows-sla-review-devops-agent/](resilience/fsx-windows-sla-review-devops-agent/README.md) |
 | Well-Architected Agent demo | Resilience | Deploy a deliberately flawed workload (single-Region, or active/active in two Regions with documented gaps) with a Well-Architected Agent profile configured to review it, and check its resilience, security, cost and performance recommendations against a known list | [resilience/well-architected-agent-demo/](resilience/well-architected-agent-demo/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
@@ -55,6 +56,7 @@ observability/
 resilience/
 ├── ai-chaos-engineering-with-fis/
 ├── ai-load-test-generation-with-dlt/
+├── eks-self-healing-agent/
 ├── fsx-windows-sla-review-devops-agent/
 └── well-architected-agent-demo/
 security/

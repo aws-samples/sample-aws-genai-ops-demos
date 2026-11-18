@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agatha-binding
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: agatha-role
+  apiGroup: rbac.authorization.k8s.io

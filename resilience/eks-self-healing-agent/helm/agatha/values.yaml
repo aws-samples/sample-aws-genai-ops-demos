@@ -1,0 +1,17 @@
+# The CDK stack sets image, region, model and role ARN when it installs this
+# chart. Replace every <UPPER_SNAKE> token only for a manual helm install.
+image:
+  repository: "<ECR_REPOSITORY_URI>"
+  tag: "<IMAGE_TAG>"
+  pullPolicy: IfNotPresent
+config:
+  # Region the agent calls Amazon Bedrock in (usually the cluster region)
+  awsRegion: "<AWS_REGION>"
+  # Bedrock model or inference profile ID available in that region
+  bedrockModel: "<BEDROCK_MODEL_ID>"
+  skipNamespaces: "kube-system,kube-public"
+  restartThreshold: "3"
+serviceAccount:
+  name: agatha-sa
+  # ARN of the IAM role created by the CDK stack (stack output AgentRoleArn)
+  irsaRoleArn: "<AGATHA_IRSA_ROLE_ARN>"

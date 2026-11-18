@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agatha-role
+rules:
+
+  # Watch pods + read logs + read events
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "replicationcontrollers"]
+    verbs: ["get", "list", "watch"]
+
+  # Annotate pods (for approval tracking)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["patch"]
+
+  # Read ReplicaSets to find parent Deployment
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+
+  # Patch Deployments to apply memory fix
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]

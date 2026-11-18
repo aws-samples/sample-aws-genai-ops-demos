@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agatha                               # ← Changed
+  namespace: default
+  labels:
+    app: agatha                              # ← Changed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agatha
+  template:
+    metadata:
+      labels:
+        app: agatha
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: agatha-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.config.awsRegion }}
+            - name: BEDROCK_MODEL
+              value: {{ .Values.config.bedrockModel }}
+            - name: SKIP_NAMESPACES
+              value: {{ .Values.config.skipNamespaces }}
+            - name: RESTART_THRESHOLD
+              value: {{ .Values.config.restartThreshold | quote }}
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
