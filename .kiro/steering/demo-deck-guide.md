@@ -1,5 +1,5 @@
 ---
-inclusion: auto
+inclusion: manual
 name: demo-deck-guide
 description: Use when asked to create, update or review the presentation deck of a demo in this repository. Covers the shared deck template (title, slots, fixed slides), where each slide's content comes from in the demo's README, what to do when a piece is missing, and the clone, fill, review workflow on the team's presentation platform MCP.
 ---
@@ -12,7 +12,14 @@ asset: it tells a customer-facing audience what problem the demo solves, how it 
 and how to try it, in eight slides.
 
 Decks live on the team's presentation platform, in the **GenAI Ops Library** section.
-They are authored through its MCP server, never by hand-editing exported HTML.
+They are authored through its MCP server, never by hand-editing exported HTML. The one
+exception is template maintenance: the template owner may publish the whole template
+with `put_deck_html` when its structure changes. It is reserved to the owner because a
+whole-deck publish drops template variables and slide locks, which the owner then
+restores (see "Maintaining the template"). Demo decks are never published that way.
+
+This guide is loaded on request: reference `#demo-deck-guide` in chat when working on a
+deck.
 
 ## The template
 
@@ -50,7 +57,13 @@ Observability, Resilience.
 - **Architecture image:** upload the image the README links as a deck asset, as PNG. The
   platform refuses SVG files that carry embedded data URLs, which every draw.io SVG
   export does. When the README links one, export the `.drawio` source next to it to PNG
-  and upload that. Never redraw the diagram with the platform's diagram tools.
+  with the draw.io desktop CLI and upload that:
+
+  ```
+  drawio --export --format png --scale 2 --output architecture.png architecture.drawio
+  ```
+
+  Never redraw the diagram with the platform's diagram tools.
 - **Word budget:** 10 to 40 audience-visible words per slide. Headlines state a
   conclusion, not a topic. Detail goes in the speaker notes.
 - **Speaker notes carry the receipts.** Each number's source is named in the notes as
@@ -58,7 +71,7 @@ Observability, Resilience.
 - **Costs** are quoted as the README states them, with its qualifier (per 1,000
   functions, per month, per run). Never round into a stronger claim.
 - **AWS names** are validated with `validate_aws_offering_names` in one call before the
-  fill. Pass the copy you will write as `text`; the tool takes free text, not a list of
+  fill. Pass the drafted slide copy as `text`; the tool takes free text, not a list of
   names. Fix `wrong-prefix` findings; leave `advisory` ones unless the author confirms.
   Wrap repository paths, branch names and other identifiers in `<code>`, otherwise the
   check reads `ai-lambda-runtime-migration` as a mis-capitalised service name.
@@ -87,17 +100,20 @@ gap is visible and consistent:
 
 1. Read the demo's README and ARCHITECTURE.md. Collect the fields of the slide
    contract and note which sources are missing.
-2. `validate_aws_offering_names` for every service name you will write.
-3. `clone_template` with the template located by title, `new_slug` and `new_title` from
-   "Naming", `section` GenAI Ops Library, and `variables` for the title slide.
-4. Upload the architecture image as PNG with the asset tool when the README links one
-   (see "Architecture image" under Content rules for draw.io SVG files).
-5. `fill_template_slots` once, with all six slots. Each fill is a complete
+2. Draft the six slot fills locally: visible copy and speaker notes for each slot, or
+   the placeholder slide where a source is missing. Each fill is a complete
    `<section class="slide ...">` with `data-slide-id`, visible copy within budget and a
    `.speaker-notes` block.
-6. `review_deck` once. Poll until ready. Apply findings about the slides you filled.
+3. `validate_aws_offering_names` once on the drafted copy (visible text and speaker
+   notes). Fix `wrong-prefix` findings in the drafts.
+4. `clone_template` with the template located by title, `new_slug` and `new_title` from
+   "Naming", `section` GenAI Ops Library, and `variables` for the title slide.
+5. Upload the architecture image as PNG with the asset tool when the README links one
+   (see "Architecture image" under Content rules for draw.io SVG files).
+6. `fill_template_slots` once, with the six validated drafts.
+7. `review_deck` once. Poll until ready. Apply findings about the slides you filled.
    Findings about the fixed slides go to the template owner, not into the copy.
-7. Report: deck title and slug, the slots filled from the README, the slots filled with
+8. Report: deck title and slug, the slots filled from the README, the slots filled with
    a placeholder and what the owner must add.
 
 ## Maintaining the template
