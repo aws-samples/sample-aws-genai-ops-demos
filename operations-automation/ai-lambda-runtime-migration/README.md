@@ -19,7 +19,7 @@ A React dashboard built with the Cloudscape Design System provides the inventory
 
 Experience this demo in an interactive walkthrough:
 
-▶ [Launch Interactive Demo](https://amazon.storylane.io/share/ndbigbdev9nb)
+▶️  [Launch Interactive Demo](https://amazon.storylane.io/share/ndbigbdev9nb)
 
 ## Architecture
 
