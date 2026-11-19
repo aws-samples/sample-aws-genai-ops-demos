@@ -157,6 +157,63 @@ Two rules to preserve:
   regions that are not yet documented, so the probe catches unreachable regions, not
   undocumented-but-reachable ones.
 
+## AWS Well-Architected Agent Region
+
+Well-Architected Agent demos involve two regions, and they may differ:
+
+| Variable | Controls |
+|---|---|
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | Where the workload stacks deploy |
+| `WA_AGENT_REGION` | Where the **agent profile** is hosted |
+
+**Default: same region.** `WA_AGENT_REGION` is opt-in. Leave it unset and the profile is
+hosted in the deploy region. Set it when the deploy region cannot host a profile: only a
+few regions can, while the agent scans resources in every commercial region wherever the
+profile is hosted ([quotas and limits](https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html)).
+The workload stays in your region either way.
+
+```bash
+export WA_AGENT_REGION=us-east-1
+```
+
+```powershell
+$env:WA_AGENT_REGION = "us-east-1"
+```
+
+### For demo authors
+
+Ask for the check, then read the resolved value. Do not re-derive it:
+
+```powershell
+& "..\..\shared\scripts\check-prerequisites.ps1" -RequiredService "wellarchitected-agent" -MinAwsCliVersion "2.31.13"
+$region      = $global:AWS_REGION          # deploy the workload here
+$agentRegion = $global:WA_AGENT_REGION     # host the agent profile here
+```
+
+```bash
+source ../../shared/scripts/check-prerequisites.sh --required-service wellarchitected-agent --min-aws-cli-version 2.31.13
+# $AWS_REGION       - deploy the workload here
+# $WA_AGENT_REGION  - host the agent profile here
+```
+
+Create the profile, and anything that references it, in stacks deployed in
+`WA_AGENT_REGION`: a CloudFormation stack only creates resources in its own region, so a
+workload stack in another region cannot hold them. Pass `--region "$WA_AGENT_REGION"` on every
+`aws wellarchitected` agent call. On an unsupported region the check stops and names
+`WA_AGENT_REGION`, with the link above.
+
+Two rules to preserve:
+
+- **The value is published only when you request the `wellarchitected-agent` check**, for
+  the same sourcing reason as `DEVOPS_AGENT_REGION`.
+- **The hosting-region list lives in one place**: the `wellarchitected-agent` case of
+  `check-prerequisites.ps1` and `.sh`. It is the documented exception to "never hardcode a
+  region list", because hosting cannot be probed: outside the hosting regions
+  `list-agent-profiles` succeeds with an empty list, `get-agent-profile` returns the same
+  `ResourceNotFoundException` as inside them, and the SSM region list for the service names
+  API endpoints, not hosting regions. Demos must not keep their own copy. Update both
+  scripts when the quotas page changes.
+
 ## Bedrock Model ID (Cross-Region Inference)
 
 Newer Bedrock models (Claude Sonnet 4, 4.5, 4.6) are often only available via cross-region inference (CRIS) profiles. Use the shared utility to get the correct CRIS-prefixed model ID for the deployment region:
@@ -239,7 +296,7 @@ Validates common requirements before deployment:
 ```
 
 **Parameters**:
-- `-RequiredService` / `--required-service`: AWS service to check — `bedrock`, `agentcore`, `agentcore-browser`, `devops-agent`, `nova-act`, `transform`
+- `-RequiredService` / `--required-service`: AWS service to check — `bedrock`, `agentcore`, `agentcore-browser`, `devops-agent`, `wellarchitected-agent`, `nova-act`, `transform`
 - `-MinAwsCliVersion` / `--min-aws-cli-version`: Minimum AWS CLI version required
 - `-RequireCDK` / `--require-cdk`: Validate CDK installation
 - `-RequireKubectl` / `--require-kubectl`: Validate kubectl installation
@@ -251,9 +308,13 @@ Validates common requirements before deployment:
 - `$global:AWS_ARN` / `AWS_ARN`: Caller identity ARN
 - `$global:DEVOPS_AGENT_REGION` / `DEVOPS_AGENT_REGION`: Agent Space region — equals the
   deploy region unless overridden. See [AWS DevOps Agent Region](#aws-devops-agent-region).
+- `$global:WA_AGENT_REGION` / `WA_AGENT_REGION`: Well-Architected Agent profile region —
+  equals the deploy region unless overridden. Published only with
+  `wellarchitected-agent`. See [AWS Well-Architected Agent Region](#aws-well-architected-agent-region).
 
-> `devops-agent` probes the **Agent Space region**, not the deploy region — the two can
-> differ. Every other service is probed in the deploy region.
+> `devops-agent` probes the **Agent Space region**, and `wellarchitected-agent` checks the
+> **profile region** against its hosting list, not the deploy region — the two can differ.
+> Every other service is probed in the deploy region.
 
 ### Multi-account (hub-and-spoke) Check
 

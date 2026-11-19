@@ -19,6 +19,7 @@ This repository contains deployable code samples demonstrating how generative AI
 | Natural Language Chaos Engineering with AWS FIS | Resilience | Transform natural language descriptions into validated AWS FIS experiment templates with current capabilities and intelligent caching | [resilience/ai-chaos-engineering-with-fis/](resilience/ai-chaos-engineering-with-fis/README.md) |
 | AI Load Test Generator Agent | Resilience | Turn an API spec (OpenAPI/Swagger or HAR) into a runnable load-test script with Amazon Bedrock AgentCore, and optionally launch it via AWS Distributed Load Testing | [resilience/ai-load-test-generation-with-dlt/](resilience/ai-load-test-generation-with-dlt/README.md) |
 | FSx for Windows SLA Review with AWS DevOps Agent | Resilience | Mis-configure an FSx for Windows file system on purpose (rotated AD credentials, backups off, no alarm) and let AWS DevOps Agent, with the FSx SLA optimizer skill, rate its availability posture and name the fix | [resilience/fsx-windows-sla-review-devops-agent/](resilience/fsx-windows-sla-review-devops-agent/README.md) |
+| Well-Architected Agent demo | Resilience | Deploy a deliberately flawed workload (single-Region, or active/active in two Regions with documented gaps) with a Well-Architected Agent profile configured to review it, and check its resilience, security, cost and performance recommendations against a known list | [resilience/well-architected-agent-demo/](resilience/well-architected-agent-demo/README.md) |
 | Intelligent EKS Incident Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose EKS infrastructure incidents using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/eks-investigation-devops-agent/](observability/eks-investigation-devops-agent/README.md) |
 | Intelligent AWS Site-to-Site VPN Tunnel Investigation with Amazon DevOps Agent | Observability | Automatically detect, investigate, and diagnose Site-to-Site VPN tunnel failures with BGP routing using Amazon DevOps Agent — reducing mean time to resolution from hours to minutes | [observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/](observability/aws-site-to-site-vpn-tunnel-investigation-devops-agent/README.md) |
 | Aurora MySQL Incident Investigation with Business Context (AWS DevOps Agent) | Observability | Start a connection storm on a business-tagged Aurora MySQL cluster, or change its tags, from a Demo Lab, and let AWS DevOps Agent with the aurora-incident-business-context skill add who is affected, the cost per minute, SLA timing and compliance exposure to its investigation | [observability/aurora-mysql-incident-investigation-devops-agent/](observability/aurora-mysql-incident-investigation-devops-agent/README.md) |
@@ -54,7 +55,8 @@ observability/
 resilience/
 ├── ai-chaos-engineering-with-fis/
 ├── ai-load-test-generation-with-dlt/
-└── fsx-windows-sla-review-devops-agent/
+├── fsx-windows-sla-review-devops-agent/
+└── well-architected-agent-demo/
 security/
 ├── ai-iam-access-analyzer-assistant/
 ├── ai-incident-response-playbook-builder/

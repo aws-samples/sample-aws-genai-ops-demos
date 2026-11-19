@@ -1,0 +1,11 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# CDK asset staging directory and synth output (cdk.out, cdk.out.<hash>, ...)
+.cdk.staging
+cdk.out*
+
+# CDK context cache (account/region-specific lookups; not shared across clones)
+cdk.context.json
