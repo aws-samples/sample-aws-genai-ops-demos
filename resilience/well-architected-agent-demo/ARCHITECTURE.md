@@ -317,6 +317,40 @@ rules of the VPC default security group; its log group is managed by the stack (
 no CDK cross-Region references, so no other CDK-managed Lambdas exist. The CDK bootstrap
 stacks (`CDKToolkit`) are left in place in both Regions.
 
+## Resilience design rationale
+
+The resilience anti-patterns in each variant are not arbitrary. Each one deliberately
+breaks a specific best-practice area of the AWS Well-Architected Reliability Pillar, so
+the recommendations the agent produces can be read against the framework rather than as a
+flat list. The tables below pair each planted resilience gap with what is made deficient
+on purpose and the Reliability Pillar best-practice area it maps to. Security, cost and
+performance are covered by the "Intended findings by pillar" table of each variant.
+
+The declared requirements in the application context (RPO, RTO, HA/DR) are the fixed
+point: the architecture cannot meet them on purpose, so the agent has a stated objective
+to contrast its findings against. That gap is itself a Reliability Pillar concern
+(REL13, plan for disaster recovery).
+
+### Variant `single`
+
+| Planted gap | What is deficient on purpose | Reliability Pillar best-practice area |
+| --- | --- | --- |
+| Single EC2 instance, no Auto Scaling group, no load balancer | No healthy resource to fail over to: the web tier is a single point of failure | [REL11-BP02 Fail over to healthy resources](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11.html); [REL10-BP01 Deploy the workload to multiple locations](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel10.html) |
+| Single-AZ RDS | The data tier is confined to one Availability Zone | [REL10 Use fault isolation to protect your workload](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel10.html) |
+| RDS automated backups disabled | No backup to recover from within the declared RPO | [REL09 Back up data](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel09.html) |
+| Declared RPO 5 minutes, RTO 2 hours and HA/DR on a single-instance, single-AZ, backup-less design | No recovery objective can actually be met | [REL13 Plan for Disaster Recovery (DR)](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel13.html) |
+
+### Variant `multi`
+
+| Planted gap | What is deficient on purpose | Reliability Pillar best-practice area |
+| --- | --- | --- |
+| Primary web tier confined to one Availability Zone; ARC zonal shift has no second AZ with targets to shift to | Fault isolation and automatic failover are present but cannot act | [REL10-BP01 Deploy the workload to multiple locations](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel10.html); [REL11-BP02 Fail over to healthy resources](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11.html) |
+| Secondary web tier fixed at one instance (min = max = 1) | No capacity provisioned ahead of a Regional failover, so the workload behaves one way in normal operation and another during failure (bimodal) | [REL11-BP05 Use static stability to prevent bimodal behavior](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11-bp05.html) |
+| No Route 53 records or health checks | Regional failover depends on a manual control-plane change, contradicting the declared automatic failover | [REL13-BP02 Use defined recovery strategies to meet the recovery objectives](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel13.html); [REL11-BP02 Fail over to healthy resources](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11.html) |
+| No CloudWatch alarms or notifications | A failure is not detected or announced within the declared 5 minutes | [REL11-BP01 Monitor all components of the workload to detect failures](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11.html); [REL11-BP06 Send notifications when events impact availability](https://docs.aws.amazon.com/wellarchitected/latest/framework/rel11.html) |
+
+Sources: AWS Well-Architected Framework, Reliability Pillar — REL09, REL10, REL11 (incl. REL11-BP05), REL13 (`docs.aws.amazon.com/wellarchitected/latest/framework/`).
+
 ## Shared building blocks
 
 ### Variant selection
