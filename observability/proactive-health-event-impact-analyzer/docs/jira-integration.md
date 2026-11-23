@@ -268,8 +268,9 @@ the first time, you must re-upload the skill so the agent picks up Step 6:
 Without this step, the agent will run Steps 1–5 of the skill and silently
 skip Step 6 even though the MCP integration and SSM params are correctly
 set up. The investigation will return free-form prose, the callback parser
-will see no `## Key Findings` section, and findings/recommendations come
-back empty.
+will see no `## Key Findings` section, and findings come back empty (the
+parser has no fallback to other sections). If `## Summary` is also missing,
+the notification shows the fail-safe summary text instead.
 
 ---
 

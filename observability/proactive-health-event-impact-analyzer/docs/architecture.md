@@ -104,6 +104,9 @@ Uses the **Wait for Task Token** integration pattern:
 **Callback (inbound):**
 - Listens for `aws.aidevops` EventBridge events
 - Retrieves the stored task token from DynamoDB
+- Reads the agent's recent assistant journal messages and merges the report per section (summary and findings from the most recent message that has them, recommendations from the most recent message that has the actions section)
+- Parses `## Key Findings` (top-level bullets only) into findings; the priority is the highest explicit severity among them, with the intake priority used only when none is stated
+- Replaces a missing or first-person/process-narration `## Summary` with a fail-safe text (output did not match the expected format; open the DevOps Agent console)
 - Sends investigation results back to Step Functions
 
 ### 4. OpsCenter Integration (Systems Manager)

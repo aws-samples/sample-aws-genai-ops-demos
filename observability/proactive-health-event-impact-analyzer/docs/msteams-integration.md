@@ -115,6 +115,8 @@ The notifier sends an **Adaptive Card** to Microsoft Teams with the following st
 - **Recommendations section**: Numbered action items
 - **Action button**: Direct link to the DevOps Agent investigation
 
+The card renders the fields parsed by the Investigation Callback. The priority is the highest explicit severity among the agent's `## Key Findings`. When no findings or recommendations could be parsed, the card shows `No specific resources identified` / `No recommendations`. When the agent's output did not match the expected format, the Summary fact contains a fail-safe text asking the reader to open the investigation in the DevOps Agent console.
+
 ### JSON Payload (what the Lambda sends)
 
 ```json
