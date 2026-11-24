@@ -29,11 +29,15 @@ In the webhook trigger step, add these variables:
 | Variable Name | Data Type | Description |
 |---------------|-----------|-------------|
 | `title` | Text | Alert header (e.g., "⚠️ Health Event Impact — All Teams") |
-| `priority` | Text | Severity level: CRITICAL, HIGH, MEDIUM, LOW |
+| `priority` | Text | Severity level: CRITICAL, HIGH, MEDIUM, LOW. Highest explicit severity from the agent's Key Findings; the intake priority is used only when none is stated |
 | `summary` | Text | One-line description of the impact |
-| `findings` | Text | Affected resources with severity |
+| `findings` | Text | Affected resources with severity (`See investigation details` when none could be parsed) |
 | `recommendations` | Text | Recommended actions list |
 | `investigation_link` | Text | Direct URL to DevOps Agent investigation |
+
+> `recommendations` may read `"Review in DevOps Agent console: <link>"` instead of the
+> bare string when no recommendations could be parsed but an investigation link is
+> available — don't hardcode an assumption that this field is always a clean list.
 
 ### Step 3: Add a "Send Message" Step
 
@@ -236,3 +240,4 @@ Expected output:
 | Workflow shows but no variables | Variables not configured in trigger | Edit workflow → webhook trigger → add variables |
 | Message shows `{{variable}}` literally | Variable names don't match payload keys | Ensure names match exactly: `title`, `priority`, `summary`, `findings`, `recommendations`, `investigation_link` |
 | No message in channel | Workflow not published | Click Publish in Workflow Builder |
+| Summary says the output did not match the expected format | The agent's last message was not the complete structured report, or the skill is outdated | Re-upload `devops-agent-skill/SKILL.md` to the Agent Space and open the investigation link to review the full findings |

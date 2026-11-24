@@ -566,7 +566,10 @@ function formatWorkflowTriggerPayload(message: any): object {
     priority: priority || 'UNKNOWN',
     summary: summary || 'Health event detected',
     findings: findings || 'See investigation details',
-    recommendations: recommendations || 'Review in DevOps Agent console',
+    recommendations: recommendations ||
+      ((message as any).investigationLink
+        ? `Review in DevOps Agent console: ${(message as any).investigationLink}`
+        : 'Review in DevOps Agent console'),
     investigation_link: (message as any).investigationLink || '',
     opsitem_link: (message as any).opsItemUrl || '',
   };
