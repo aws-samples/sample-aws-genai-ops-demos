@@ -613,7 +613,9 @@ describe('Investigation Callback — Key Findings Denylist & Date Filter', () =>
 });
 
 describe('Investigation Callback — Recommendations Resilient Fallback', () => {
-  // Mirrors the recsText fallback logic: recsSection?.[1] ?? analysis.
+  // Mirrors the recsText fallback logic: the table-row pattern falls back to the
+  // whole analysis (recsSection?.[1] ?? analysis); the numbered list is read only
+  // from a real recommendations section and is anchored to line starts.
   function extractRecommendations(analysis: string): Array<{ description: string; priority: string }> {
     const mapPriority = (p: string): string => {
       const map: Record<string, string> = { P1: 'CRITICAL', P2: 'HIGH', P3: 'MEDIUM', P4: 'LOW' };
@@ -632,11 +634,11 @@ describe('Investigation Callback — Recommendations Resilient Fallback', () => 
         }
       }
     }
-    if (recommendations.length === 0) {
-      const numbered = recsText.match(/\d+\.\s+(.+)/g);
+    if (recommendations.length === 0 && recsSection) {
+      const numbered = recsText.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/gm);
       if (numbered) {
         for (const item of numbered.slice(0, 5)) {
-          const itemMatch = item.match(/\d+\.\s+(.+)/);
+          const itemMatch = item.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/);
           if (itemMatch) {
             recommendations.push({ description: itemMatch[1].trim(), priority: 'MEDIUM' });
           }
@@ -681,24 +683,79 @@ describe('Investigation Callback — Recommendations Resilient Fallback', () => 
     expect(recs).toEqual([{ description: 'Patch the base AMI', priority: 'CRITICAL' }]);
   });
 
-  test('finds a numbered list anywhere in the analysis when the heading is absent', () => {
+  test('does not use a numbered list found outside a recommendations section', () => {
     const analysis = [
       '## Key Findings',
       '',
       '- **web-tier**: HIGH — degraded',
       '',
       'Suggested next steps:',
+      '1. do x',
+      '2. do y',
+      '',
+    ].join('\n');
+    expect(extractRecommendations(analysis)).toEqual([]);
+  });
+
+  test('keeps the whole-report table fallback when the heading is absent', () => {
+    const analysis = [
+      '## Summary',
+      '',
+      'Instance i-0123456789abcdef0 in account 123456789012 is affected.',
+      '',
+      '| Priority | Action |',
+      '|----------|--------|',
+      '| **P1** | Replace the instance |',
+      '',
+    ].join('\n');
+    expect(extractRecommendations(analysis)).toEqual([{ description: 'Replace the instance', priority: 'CRITICAL' }]);
+  });
+
+  test('parses a numbered list inside a real Recommended Actions section, unindented and indented', () => {
+    const plain = [
+      '## Recommended Actions',
+      '',
       '1. Scale out the ASG',
       '2. Enable detailed monitoring',
       '',
+      '## Notification Routing',
     ].join('\n');
-    const recs = extractRecommendations(analysis);
-    expect(recs).toEqual([
+    const indented = plain.replace('1. Scale', '   1. Scale').replace('2. Enable', '   2. Enable');
+    const expected = [
+      { description: 'Scale out the ASG', priority: 'MEDIUM' },
+      { description: 'Enable detailed monitoring', priority: 'MEDIUM' },
+    ];
+    expect(extractRecommendations(plain)).toEqual(expected);
+    expect(extractRecommendations(indented)).toEqual(expected);
+  });
+
+  test('ignores a prose sentence ending in a digit and a period inside the recommendations section', () => {
+    const analysis = [
+      '## Recommended Actions',
+      '',
+      '1. Scale out the ASG',
+      'See region us-east-1. Then proceed.',
+      '2. Enable detailed monitoring',
+      '',
+      '## Notification Routing',
+    ].join('\n');
+    expect(extractRecommendations(analysis)).toEqual([
       { description: 'Scale out the ASG', priority: 'MEDIUM' },
       { description: 'Enable detailed monitoring', priority: 'MEDIUM' },
     ]);
   });
 
+  test('does not treat a year at line start as a list item', () => {
+    const analysis = [
+      '## Recommended Actions',
+      '',
+      '2026. something happened',
+      '1. Patch the base AMI',
+      '',
+      '## Notification Routing',
+    ].join('\n');
+    expect(extractRecommendations(analysis)).toEqual([{ description: 'Patch the base AMI', priority: 'MEDIUM' }]);
+  });
   test('returns empty when neither a table nor a numbered list exists anywhere', () => {
     const analysis = '## Key Findings\n\n- **web-tier**: HIGH — degraded\n\nNo actionable items identified.\n';
     expect(extractRecommendations(analysis)).toEqual([]);
@@ -857,6 +914,15 @@ describe('Investigation Callback — Multi-Message Report Merge & Severity Sourc
       for (const row of tableRows) {
         const rowMatch = row.match(/\|\s*\*\*(P\d+)\*\*\s*\|\s*(.+?)\s*\|/);
         if (rowMatch) result.recommendations.push({ description: rowMatch[2].trim(), priority: mapPriority(rowMatch[1]) });
+      }
+    }
+    if (result.recommendations.length === 0 && recsSection) {
+      const numbered = recsText.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/gm);
+      if (numbered) {
+        for (const item of numbered.slice(0, 5)) {
+          const itemMatch = item.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/);
+          if (itemMatch) result.recommendations.push({ description: itemMatch[1].trim(), priority: 'MEDIUM' });
+        }
       }
     }
 
@@ -1098,6 +1164,19 @@ describe('Investigation Callback — Multi-Message Report Merge & Severity Sourc
     expect(result.overallSeverity).toBe('HIGH');
   });
 
+  // Summary-only no-impact report: a sentence ending in "us-east-1." must not become a recommendation.
+  test('a no-impact report without a recommendations section yields no recommendations and no impact', () => {
+    const analysis = [
+      '## Summary',
+      '',
+      'The event affects EC2 hosts in us-east-1. No workloads in this account use the affected instance types, so there is no operational impact.',
+      '',
+      '## Notification Routing',
+    ].join('\n');
+    const result = parseAnalysisMirror(analysis, 'MEDIUM');
+    expect(result.recommendations).toEqual([]);
+    expect(result.hasImpact).toBe(false);
+  });
   // The journal paging loop cannot run in tests; pin its shape in the source.
   test('callback source pages the journal with the SDK limit/nextToken fields', () => {
     const source = fs.readFileSync(

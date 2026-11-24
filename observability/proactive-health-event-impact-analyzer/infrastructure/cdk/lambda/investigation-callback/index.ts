@@ -477,9 +477,12 @@ function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
   // Extract recommendations from priority tables or numbered lists.
   const recsSection = analysis.match(/(?:### 4\.|## (?:Recommended )?Actions|What actions)([\s\S]*?)(?=\n## (?!Rec)|\n---|\*\*No immediate)/);
   // FR-B4: when the heading itself is missing (e.g. a delegated plan whose table
-  // landed outside any recognized section), fall back to scanning the whole
-  // analysis for the same two patterns before giving up — table pattern first,
-  // then numbered list — rather than leaving recommendations empty.
+  // landed outside any recognized section), the table-row pattern (P1/P2/...)
+  // falls back to the whole analysis rather than leaving recommendations empty.
+  // The numbered-list pattern is used only inside a real recommendations section
+  // and is anchored to line starts: an unanchored pattern matches sentences that
+  // end with a number (for example a region name such as us-east-1.) and would
+  // turn a no-impact report into a recommendation.
   const recsText = recsSection?.[1] ?? analysis;
 
   const tableRows = recsText.match(/\|\s*\*\*P\d+\*\*\s*\|\s*(.+?)\s*\|/g);
@@ -495,11 +498,11 @@ function parseAgentAnalysis(analysis: string, fallbackPriority: string): {
     }
   }
 
-  if (result.recommendations.length === 0) {
-    const numbered = recsText.match(/\d+\.\s+(.+)/g);
+  if (result.recommendations.length === 0 && recsSection) {
+    const numbered = recsText.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/gm);
     if (numbered) {
       for (const item of numbered.slice(0, 5)) {
-        const itemMatch = item.match(/\d+\.\s+(.+)/);
+        const itemMatch = item.match(/^[ \t]*\d{1,2}\.[ \t]+(.+)$/);
         if (itemMatch) {
           result.recommendations.push({
             description: itemMatch[1].trim(),
