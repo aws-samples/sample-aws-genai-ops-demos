@@ -1,0 +1,10 @@
+cdk.out*
+node_modules
+.lab-stage/
+__pycache__/
+.pytest_cache/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+# Skill package produced by deploy-all (shared deploy-skill.*)
+*.zip
+frontend-build.log

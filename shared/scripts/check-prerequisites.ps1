@@ -246,11 +246,41 @@ if ([string]::IsNullOrEmpty($devOpsAgentRegion)) {
     Write-Host "      INFO: DevOps Agent region overridden: $devOpsAgentRegion (deploy region: $currentRegion)" -ForegroundColor Cyan
 }
 
+# --- AWS Well-Architected Agent profile region resolution --------------------
+# A demo's workload can deploy in any Region, but a Well-Architected Agent
+# profile can only be HOSTED in a few Regions. The agent then scans resources in
+# every commercial Region, wherever the profile is hosted:
+# https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html
+#
+#   1. WA_AGENT_REGION - explicit override, wins outright
+#   2. the resolved deploy region - same-region default
+#
+# Unlike "devops-agent", hosting cannot be probed, so this is the ONE place the
+# hosting-Region list lives (Bash twin: check-prerequisites.sh, keep in sync).
+# Outside the hosting Regions the API still answers: list-agent-profiles
+# succeeds with an empty list, get-agent-profile returns the same
+# ResourceNotFoundException as in a hosting Region, and the SSM global
+# infrastructure Region list for wellarchitectedagent names API endpoints, not
+# hosting Regions. Update this list when the quotas page changes.
+$waAgentHostingRegions = @("us-east-1", "us-east-2", "us-west-2")
+$waAgentRegion = ""
+if ($RequiredService.ToLower() -eq "wellarchitected-agent") {
+    $waAgentRegion = if ([string]::IsNullOrEmpty($env:WA_AGENT_REGION)) { $currentRegion } else { $env:WA_AGENT_REGION }
+    if ($waAgentRegion -ne $currentRegion) {
+        Write-Host "      INFO: Well-Architected Agent profile region overridden: $waAgentRegion (deploy region: $currentRegion)" -ForegroundColor Cyan
+    }
+}
+
 # Check specific AWS service availability (if specified)
 if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) {
     # DevOps Agent is probed in the Agent Space region (which may differ from the
     # deploy region); every other service is probed in the deploy region.
-    $serviceCheckRegion = if ($RequiredService.ToLower() -eq "devops-agent") { $devOpsAgentRegion } else { $currentRegion }
+    # Likewise the Well-Architected Agent is checked in the profile region.
+    $serviceCheckRegion = switch ($RequiredService.ToLower()) {
+        "devops-agent" { $devOpsAgentRegion }
+        "wellarchitected-agent" { $waAgentRegion }
+        default { $currentRegion }
+    }
     Write-Host "`nChecking $RequiredService availability in $serviceCheckRegion..." -ForegroundColor Yellow
     switch ($RequiredService.ToLower()) {
         "bedrock" {
@@ -309,6 +339,26 @@ if (-not $SkipServiceCheck -and -not [string]::IsNullOrEmpty($RequiredService)) 
                 Write-Host "      OK: AWS DevOps Agent is available in $devOpsAgentRegion" -ForegroundColor Green
             }
         }
+        "wellarchitected-agent" {
+            # Checked against the hosting-Region list resolved above: the service
+            # cannot be probed for hosting support (see the comment there).
+            if ($waAgentHostingRegions -notcontains $waAgentRegion) {
+                Write-Host "      ERROR: A Well-Architected Agent profile cannot be hosted in region: $waAgentRegion" -ForegroundColor Red
+                Write-Host "" -ForegroundColor Red
+                Write-Host "      Host the profile in a supported Region and re-run (the workload still deploys in ${currentRegion}):" -ForegroundColor Yellow
+                Write-Host ('        $env:WA_AGENT_REGION = "' + $waAgentHostingRegions[0] + '"') -ForegroundColor Cyan
+                Write-Host "" -ForegroundColor Yellow
+                Write-Host "      Hosting Regions: $($waAgentHostingRegions -join ', ')" -ForegroundColor Gray
+                Write-Host "      The agent scans resources in every commercial Region, wherever the profile is hosted." -ForegroundColor Gray
+                Write-Host "      https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html" -ForegroundColor Gray
+                exit 1
+            }
+            if ($waAgentRegion -ne $currentRegion) {
+                Write-Host "      OK: Well-Architected Agent profiles can be hosted in $waAgentRegion (profile region)" -ForegroundColor Green
+            } else {
+                Write-Host "      OK: Well-Architected Agent profiles can be hosted in $waAgentRegion" -ForegroundColor Green
+            }
+        }
         "nova-act" {
             $null = aws nova-act list-workflow-definitions --region $currentRegion 2>&1
             if ($LASTEXITCODE -ne 0) {
@@ -350,4 +400,10 @@ $global:AWS_ARN = $arn
 # own default) must not have it decided for them here.
 if ($RequiredService.ToLower() -eq "devops-agent") {
     $global:DEVOPS_AGENT_REGION = $devOpsAgentRegion
+}
+# Well-Architected Agent profile region: equals $global:AWS_REGION unless
+# WA_AGENT_REGION was set by the caller. Same rule: published ONLY when the caller
+# requested the wellarchitected-agent check.
+if ($RequiredService.ToLower() -eq "wellarchitected-agent") {
+    $global:WA_AGENT_REGION = $waAgentRegion
 }

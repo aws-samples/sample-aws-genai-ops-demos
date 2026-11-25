@@ -97,6 +97,32 @@ describe('Notifier — Secrets Cache Environment Variables', () => {
   });
 });
 
+describe('Notifier — Workflow Trigger Recommendations Fallback', () => {
+  // Mirrors the updated `recommendations` fallback expression in
+  // formatWorkflowTriggerPayload (notifier/index.ts).
+  function recommendationsFallback(recommendations: string, investigationLink: string): string {
+    return recommendations ||
+      (investigationLink
+        ? `Review in DevOps Agent console: ${investigationLink}`
+        : 'Review in DevOps Agent console');
+  }
+
+  test('surfaces the investigation link when recommendations is empty and a link exists', () => {
+    const result = recommendationsFallback('', 'https://abc123.aidevops.global.app.aws/investigation/inv-456');
+    expect(result).toBe('Review in DevOps Agent console: https://abc123.aidevops.global.app.aws/investigation/inv-456');
+  });
+
+  test('falls back to the bare string when both recommendations and link are empty (AC-12, regression)', () => {
+    const result = recommendationsFallback('', '');
+    expect(result).toBe('Review in DevOps Agent console');
+  });
+
+  test('passes through real recommendations unchanged when present', () => {
+    const result = recommendationsFallback('1. [HIGH] Pre-warm standby instances', 'https://example.com/investigation/1');
+    expect(result).toBe('1. [HIGH] Pre-warm standby instances');
+  });
+});
+
 describe('Notifier — Error propagation on non-retryable failures', () => {
   test('4xx errors include status code in error message', () => {
     const statusCode = 403;

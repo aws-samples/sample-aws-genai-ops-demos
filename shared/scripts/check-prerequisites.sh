@@ -295,15 +295,44 @@ if [ "$_DEVOPS_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
     echo -e "\033[0;36m      ℹ DevOps Agent region overridden: $_DEVOPS_AGENT_REGION_EFFECTIVE (deploy region: $CURRENT_REGION)\033[0m"
 fi
 
+# --- AWS Well-Architected Agent profile region resolution --------------------
+# A demo's workload can deploy in any Region, but a Well-Architected Agent
+# profile can only be HOSTED in a few Regions. The agent then scans resources in
+# every commercial Region, wherever the profile is hosted:
+# https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html
+#
+#   1. WA_AGENT_REGION - explicit override, wins outright
+#   2. the resolved deploy region - same-region default
+#
+# Unlike "devops-agent", hosting cannot be probed, so this is the ONE place the
+# hosting-Region list lives (PowerShell twin: check-prerequisites.ps1, keep in
+# sync). Outside the hosting Regions the API still answers: list-agent-profiles
+# succeeds with an empty list, get-agent-profile returns the same
+# ResourceNotFoundException as in a hosting Region, and the SSM global
+# infrastructure Region list for wellarchitectedagent names API endpoints, not
+# hosting Regions. Update this list when the quotas page changes.
+#
+# Same sourcing rule as DEVOPS_AGENT_REGION: held internally, published as
+# WA_AGENT_REGION only when the caller asked for the wellarchitected-agent check.
+_WA_AGENT_HOSTING_REGIONS="us-east-1 us-east-2 us-west-2"
+_WA_AGENT_REGION_EFFECTIVE=""
+if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "wellarchitected-agent" ]; then
+    _WA_AGENT_REGION_EFFECTIVE="${WA_AGENT_REGION:-$CURRENT_REGION}"
+    if [ "$_WA_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+        echo -e "\033[0;36m      ℹ Well-Architected Agent profile region overridden: $_WA_AGENT_REGION_EFFECTIVE (deploy region: $CURRENT_REGION)\033[0m"
+    fi
+fi
+
 # Check specific AWS service availability (if specified)
 if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
     # DevOps Agent is probed in the Agent Space region (which may differ from the
     # deploy region); every other service is probed in the deploy region.
-    if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent" ]; then
-        SERVICE_CHECK_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
-    else
-        SERVICE_CHECK_REGION="$CURRENT_REGION"
-    fi
+    # Likewise the Well-Architected Agent is checked in the profile region.
+    case "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" in
+        "devops-agent")          SERVICE_CHECK_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE" ;;
+        "wellarchitected-agent") SERVICE_CHECK_REGION="$_WA_AGENT_REGION_EFFECTIVE" ;;
+        *)                       SERVICE_CHECK_REGION="$CURRENT_REGION" ;;
+    esac
     echo -e "\n\033[0;33mChecking $REQUIRED_SERVICE availability in $SERVICE_CHECK_REGION...\033[0m"
 
     case "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" in
@@ -361,6 +390,29 @@ if [ "$SKIP_SERVICE_CHECK" = false ] && [ -n "$REQUIRED_SERVICE" ]; then
                 echo -e "\033[0;32m      ✓ AWS DevOps Agent is available in $_DEVOPS_AGENT_REGION_EFFECTIVE\033[0m"
             fi
             ;;
+        "wellarchitected-agent")
+            # Checked against the hosting-Region list resolved above: the service
+            # cannot be probed for hosting support (see the comment there).
+            case " $_WA_AGENT_HOSTING_REGIONS " in
+                *" $_WA_AGENT_REGION_EFFECTIVE "*) ;;
+                *)
+                    echo -e "\033[0;31m      ❌ A Well-Architected Agent profile cannot be hosted in region: $_WA_AGENT_REGION_EFFECTIVE\033[0m"
+                    echo -e ""
+                    echo -e "\033[0;33m      Host the profile in a supported Region and re-run (the workload still deploys in $CURRENT_REGION):\033[0m"
+                    echo -e "\033[0;36m        export WA_AGENT_REGION=${_WA_AGENT_HOSTING_REGIONS%% *}\033[0m"
+                    echo -e ""
+                    echo -e "\033[0;90m      Hosting Regions: ${_WA_AGENT_HOSTING_REGIONS// /, }\033[0m"
+                    echo -e "\033[0;90m      The agent scans resources in every commercial Region, wherever the profile is hosted.\033[0m"
+                    echo -e "\033[0;90m      https://docs.aws.amazon.com/wellarchitected/latest/userguide/agent-quotas.html\033[0m"
+                    exit 1
+                    ;;
+            esac
+            if [ "$_WA_AGENT_REGION_EFFECTIVE" != "$CURRENT_REGION" ]; then
+                echo -e "\033[0;32m      ✓ Well-Architected Agent profiles can be hosted in $_WA_AGENT_REGION_EFFECTIVE (profile region)\033[0m"
+            else
+                echo -e "\033[0;32m      ✓ Well-Architected Agent profiles can be hosted in $_WA_AGENT_REGION_EFFECTIVE\033[0m"
+            fi
+            ;;
         "nova-act")
             if ! aws nova-act list-workflow-definitions --region "$CURRENT_REGION" > /dev/null 2>&1; then
                 echo -e "\033[0;31m      ❌ Amazon Nova Act is not available in region: $CURRENT_REGION\033[0m"
@@ -407,3 +459,10 @@ if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "devops-agent"
     export DEVOPS_AGENT_REGION="$_DEVOPS_AGENT_REGION_EFFECTIVE"
 fi
 unset _DEVOPS_AGENT_REGION_EFFECTIVE
+# Well-Architected Agent profile region: equals $AWS_REGION unless WA_AGENT_REGION
+# was set by the caller. Published ONLY when the wellarchitected-agent check was
+# requested, for the same sourcing reason as DEVOPS_AGENT_REGION.
+if [ "$(echo "$REQUIRED_SERVICE" | tr '[:upper:]' '[:lower:]')" = "wellarchitected-agent" ]; then
+    export WA_AGENT_REGION="$_WA_AGENT_REGION_EFFECTIVE"
+fi
+unset _WA_AGENT_REGION_EFFECTIVE _WA_AGENT_HOSTING_REGIONS

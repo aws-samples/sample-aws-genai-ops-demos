@@ -17,6 +17,10 @@ A React dashboard built with the Cloudscape Design System provides the inventory
 - **Key Technologies**: AWS Lambda durable functions, Amazon Nova, Amazon API Gateway (HTTP API), Amazon Cognito, Amazon CloudFront, Cloudscape Design System
 - **Estimated Cost**: ~$5 to discover and assess 1,000 functions, plus ~$0.40 per migrated function for AWS Transform and CodeBuild (see [Cost Estimate](#cost-estimate))
 
+Experience this demo in an interactive walkthrough:
+
+▶️  [Launch Interactive Demo](https://amazon.storylane.io/share/ndbigbdev9nb)
+
 ## Architecture
 
 ![Architecture](docs/architecture.drawio.svg)
