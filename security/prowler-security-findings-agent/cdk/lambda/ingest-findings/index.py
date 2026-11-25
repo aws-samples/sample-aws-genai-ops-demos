@@ -1,9 +1,11 @@
 """
 Ingest Prowler OCSF findings.
 
-Triggered by S3:ObjectCreated on raw-reports/*.ocsf.json. Parses the OCSF
-document (one JSON object per line OR a JSON array — Prowler has shipped both
-shapes across versions), upserts one item per finding to DynamoDB, and:
+Triggered by S3:ObjectCreated on raw-reports/*.ocsf.json (full scans) and,
+when event scans are on, event-reports/*.ocsf.json (targeted partial scans).
+Parses the OCSF document (one JSON object per line OR a JSON array — Prowler
+has shipped both shapes across versions), upserts one item per finding to
+DynamoDB, and:
 
     - For CRITICAL/HIGH findings: publishes to the DevOps Agent SNS topic and
       invokes the remediation-context Lambda asynchronously so Bedrock
@@ -393,7 +395,7 @@ def handler(event, context):
 
         obj = _s3.get_object(Bucket=bucket, Key=key)
         findings = _load_ocsf(obj['Body'].read())
-        scan_id = key.split('/')[1] if key.startswith('raw-reports/') else 'unknown'
+        scan_id = key.split('/')[1] if key.startswith(('raw-reports/', 'event-reports/')) else 'unknown'
         now = datetime.utcnow().isoformat() + 'Z'
 
         # Build all items first so we know which UIDs to pre-fetch for history.

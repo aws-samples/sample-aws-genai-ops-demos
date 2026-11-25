@@ -42,6 +42,11 @@ const autoInvestigate = (app.node.tryGetContext('autoInvestigate') || 'false') =
 // scannerNatGateway=true → scanner runs in private subnets behind a NAT gateway
 // (~$33/month). deploy-all turns it on when VPC Block Public Access is block-ingress.
 const scannerNatGateway = (app.node.tryGetContext('scannerNatGateway') || 'false') === 'true';
+// eventScans=true → risky CloudTrail write calls (security group ingress, S3 public
+// access, admin policy on IAM users, public Lambda, public RDS) start targeted Prowler
+// scans within minutes. Off by default; needs a CloudTrail trail. deploy-all sets it
+// from EVENT_SCANS=true.
+const eventScans = String(app.node.tryGetContext('eventScans') ?? 'false') === 'true';
 
 // 1. Data — DynamoDB findings table + S3 raw-reports and remediations buckets
 const dataStack = new DataStack(app, `ProwlerSecurityData-${region}`, {
@@ -75,6 +80,7 @@ const scannerStack = new ScannerStack(app, `ProwlerSecurityScanner-${region}`, {
   rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
   scanSchedule,
   natGateway: scannerNatGateway,
+  eventScans,
   description: 'Prowler Security Findings + DevOps Agent + Bedrock Nova Lite remediation (uksb-do9bhieqqh)(tag:prowler-security-findings-agent,security)',
 });
 scannerStack.addDependency(dataStack);
@@ -89,6 +95,7 @@ const ingestStack = new IngestStack(app, `ProwlerSecurityIngest-${region}`, {
   devOpsAgentTriggerTopicArn: devOpsAgentStack.triggerTopicArn,
   bedrockModelId,
   autoInvestigate,
+  eventScans,
   description: 'Prowler Security Findings: ingest Lambda + Bedrock Nova Lite remediation context + SNS fan-out',
 });
 ingestStack.addDependency(dataStack);
