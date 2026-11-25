@@ -14,7 +14,8 @@ Write-Host ""
 $AwsRegion = $global:AWS_REGION
 $AccountId = $global:AWS_ACCOUNT_ID
 
-$DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
+# Agent Space region: the deploy region unless DEVOPS_AGENT_REGION overrides it (as in deploy-all.sh).
+$DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { $AwsRegion }
 # BedrockModelId is resolved by cdk/bin/app.ts from the deploy region when
 # not set — the inference-profile prefix (eu./us./apac.) is region-gated, so
 # leaving it empty here lets CDK pick the right profile for any region.
@@ -44,7 +45,7 @@ if (-not $ScannerNatGateway) {
 
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
     . "$ScriptDir\scripts\setup-devops-agent.ps1"
-    Invoke-SetupDevOpsAgent -AgentSpaceName $ProjectName
+    Invoke-SetupDevOpsAgent -AgentSpaceName $ProjectName -Region $DevOpsAgentRegion
 }
 
 $DevOpsAgentSpaceId = if ($env:DEVOPS_AGENT_SPACE_ID) { $env:DEVOPS_AGENT_SPACE_ID } else { "" }

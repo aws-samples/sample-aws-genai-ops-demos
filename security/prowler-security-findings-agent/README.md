@@ -252,7 +252,7 @@ bash scripts/cleanup.sh        # macOS / Linux
 ./scripts/cleanup.ps1          # Windows
 ```
 
-Destroys all 8 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles.
+Destroys all 8 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles. Like `deploy-all`, cleanup looks for the Agent Space in the deploy region; if you deployed with `DEVOPS_AGENT_REGION` set, export the same value first.
 
 ## Troubleshooting
 

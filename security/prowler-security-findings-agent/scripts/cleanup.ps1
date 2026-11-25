@@ -3,7 +3,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot = (Resolve-Path "$ScriptDir\..\..\..").Path
 . "$RepoRoot\shared\scripts\check-prerequisites.ps1" -SkipServiceCheck
 $Region = $global:AWS_REGION
-$DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
+$DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { $Region }
 
 # CDK synth needs to resolve every stack's assets before it can destroy
 # anything. The FrontendStack references frontend/dist as a BucketDeployment

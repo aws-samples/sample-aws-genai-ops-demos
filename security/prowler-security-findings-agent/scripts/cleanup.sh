@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$REPO_ROOT/shared/utils/aws-utils.sh"
 REGION="$(get_aws_region)"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-us-east-1}"
+DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-$REGION}"
 
 echo "=============================================="
 echo " Prowler Security Demo — Cleanup"

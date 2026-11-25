@@ -1,9 +1,18 @@
 function Invoke-SetupDevOpsAgent {
     param(
-        [string]$AgentSpaceName = "prowler-security"
+        [string]$AgentSpaceName = "prowler-security",
+        # Agent Space region. Default: DEVOPS_AGENT_REGION, else the deploy region, resolved
+        # like check-prerequisites.ps1 (AWS_DEFAULT_REGION, AWS_REGION, aws configure).
+        [string]$Region = ""
     )
 
-    $DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } else { "us-east-1" }
+    $DevOpsAgentRegion = if ($Region) { $Region }
+        elseif ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION }
+        elseif ($global:AWS_REGION) { $global:AWS_REGION }
+        elseif ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION }
+        elseif ($env:AWS_REGION) { $env:AWS_REGION }
+        else { aws configure get region 2>$null }
+    if (-not $DevOpsAgentRegion) { $DevOpsAgentRegion = "us-east-1" }
     $AccountId = aws sts get-caller-identity --query Account --output text
 
     Write-Host "=============================================="
