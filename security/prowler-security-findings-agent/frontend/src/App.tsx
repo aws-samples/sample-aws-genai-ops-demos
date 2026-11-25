@@ -1,21 +1,32 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   AppLayout,
+  Box,
   SideNavigation,
+  StatusIndicator,
   TopNavigation,
 } from '@cloudscape-design/components';
 import { applyMode, Mode } from '@cloudscape-design/global-styles';
-import Dashboard from './pages/Dashboard';
-import Findings from './pages/Findings';
-import FindingDetail from './pages/FindingDetail';
-import Compliance from './pages/Compliance';
-import Investigations from './pages/Investigations';
-import Cost from './pages/Cost';
 import AuthModal from './AuthModal';
 import KeyboardShortcuts from './KeyboardShortcuts';
 import CommandPalette from './CommandPalette';
 import { getCurrentUser, signOut, AuthUser } from './auth';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Findings = lazy(() => import('./pages/Findings'));
+const FindingDetail = lazy(() => import('./pages/FindingDetail'));
+const Compliance = lazy(() => import('./pages/Compliance'));
+const Investigations = lazy(() => import('./pages/Investigations'));
+const Cost = lazy(() => import('./pages/Cost'));
+
+function PageLoading() {
+  return (
+    <Box textAlign="center" padding={{ vertical: 'xxxl' }}>
+      <StatusIndicator type="loading">Loading</StatusIndicator>
+    </Box>
+  );
+}
 
 type Theme = 'system' | 'light' | 'dark';
 
@@ -163,14 +174,16 @@ export default function App() {
         toolsHide
         content={
           <div id="soc-main" tabIndex={-1}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/findings" element={<Findings />} />
-              <Route path="/findings/:findingUid" element={<FindingDetail />} />
-              <Route path="/compliance" element={<Compliance />} />
-              <Route path="/investigations" element={<Investigations />} />
-              <Route path="/cost" element={<Cost />} />
-            </Routes>
+            <Suspense fallback={<PageLoading />}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/findings" element={<Findings />} />
+                <Route path="/findings/:findingUid" element={<FindingDetail />} />
+                <Route path="/compliance" element={<Compliance />} />
+                <Route path="/investigations" element={<Investigations />} />
+                <Route path="/cost" element={<Cost />} />
+              </Routes>
+            </Suspense>
           </div>
         }
       />

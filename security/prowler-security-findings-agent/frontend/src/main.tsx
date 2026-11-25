@@ -15,6 +15,17 @@ import './index.css';
 applyOneTheme();
 applyBrandTheme();
 
+// A redeploy deletes the previous build's page chunks. Reload to pick up the new build, at most
+// every 10 s so a broken deploy cannot loop.
+window.addEventListener('vite:preloadError', () => {
+  try {
+    const last = Number(sessionStorage.getItem('soc-chunk-reload') || 0);
+    if (Date.now() - last < 10000) return;
+    sessionStorage.setItem('soc-chunk-reload', String(Date.now()));
+  } catch { /* storage unavailable: reload anyway */ }
+  window.location.reload();
+});
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
