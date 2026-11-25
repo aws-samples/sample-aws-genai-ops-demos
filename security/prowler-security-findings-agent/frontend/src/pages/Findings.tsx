@@ -16,7 +16,7 @@ import {
   Toggle,
 } from '@cloudscape-design/components';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Finding, generateInsights, investigateFinding, listFindings } from '../api';
+import { Finding, generateInsights, investigateFinding, listAllFindings } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { FRAMEWORKS, frameworkLabelsForFinding, getFrameworkByKey, matchesFramework } from '../frameworks';
 import { badgeFromHistory } from '../status-history';
@@ -276,7 +276,7 @@ export default function Findings() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listFindings({ limit: 500 });
+      const res = await listAllFindings();
       setItems(res.items || []);
     } catch (e: any) {
       setError(e?.message || 'Failed to load findings');

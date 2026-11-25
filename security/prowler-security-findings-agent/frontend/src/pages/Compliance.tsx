@@ -9,7 +9,7 @@ import {
   Header,
   SpaceBetween,
 } from '@cloudscape-design/components';
-import { Finding, listFindings } from '../api';
+import { Finding, listAllFindings } from '../api';
 import { COLOR } from '../theme';
 
 import { FRAMEWORKS, matchesFramework } from '../frameworks';
@@ -78,7 +78,7 @@ export default function Compliance() {
     setLoading(true);
     setError(null);
     try {
-      const r = await listFindings({ limit: 500 });
+      const r = await listAllFindings();
       setItems(r.items || []);
     } catch (e: any) {
       setError(e?.message || 'Failed to load findings');

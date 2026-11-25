@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Finding, listFindings, runScan } from './api';
+import { Finding, listAllFindings, runScan } from './api';
 
 /**
  * Global ⌘K / Ctrl+K / "/" command palette.
@@ -62,7 +62,7 @@ async function loadFindingsCached(): Promise<Finding[]> {
     return _findingsCache.items;
   }
   try {
-    const r = await listFindings({ limit: 500 });
+    const r = await listAllFindings();
     _findingsCache = { ts: Date.now(), items: r.items || [] };
     return _findingsCache.items;
   } catch {

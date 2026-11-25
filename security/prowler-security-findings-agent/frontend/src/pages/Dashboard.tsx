@@ -17,7 +17,7 @@ import {
 } from '@cloudscape-design/components';
 import {
   getRunningScanLogs,
-  listFindings,
+  listAllFindings,
   listRunningScans,
   listScans,
   runScan,
@@ -105,7 +105,7 @@ export default function Dashboard() {
     setError(null);
     try {
       const [res, sc, rn] = await Promise.all([
-        listFindings({ limit: 500 }),
+        listAllFindings(),
         listScans(),
         listRunningScans(),
       ]);
@@ -137,7 +137,7 @@ export default function Dashboard() {
     if (!hasActiveScan) return;
     const id = setInterval(() => {
       refreshRunning();
-      listFindings({ limit: 500 }).then((r) => setFindings(r.items || [])).catch(() => {});
+      listAllFindings().then((r) => setFindings(r.items || [])).catch(() => {});
     }, 10000);
     return () => clearInterval(id);
   }, [hasActiveScan]);

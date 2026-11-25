@@ -169,13 +169,27 @@ export interface Finding {
   raw?: string;
 }
 
-export const listFindings = (filters: { severity?: string; status?: string; limit?: number } = {}) => {
+export const listFindings = (filters: { severity?: string; status?: string; limit?: number; next?: string } = {}) => {
   const qs = new URLSearchParams();
   if (filters.severity) qs.set('severity', filters.severity);
   if (filters.status) qs.set('status', filters.status);
   if (filters.limit) qs.set('limit', String(filters.limit));
+  if (filters.next) qs.set('next', filters.next);
   const path = '/findings' + (qs.toString() ? `?${qs}` : '');
-  return signedFetch('GET', path) as Promise<{ items: Finding[]; count: number }>;
+  return signedFetch('GET', path) as Promise<{ items: Finding[]; count: number; next?: string | null }>;
+};
+
+/** Every finding, following the API's `next` cursor (each page is capped to keep responses under the Lambda limit). */
+export const listAllFindings = async (filters: { severity?: string; status?: string } = {}) => {
+  const items: Finding[] = [];
+  let next: string | null | undefined;
+  for (let page = 0; page < 100; page++) {
+    const r = await listFindings({ ...filters, limit: 500, next: next ?? undefined });
+    items.push(...(r.items || []));
+    next = r.next;
+    if (!next) break;
+  }
+  return { items, count: items.length };
 };
 
 export const getFinding = (findingUid: string) =>
