@@ -109,6 +109,7 @@ class DevOpsAgentWire:
         self.by_type = {}
         self.errors = {}
         self.calls = []
+        self.task_page_size = None
 
     def add_records(self, execution_id, record_type, records):
         self.by_type[(execution_id, record_type)] = copy.deepcopy(records)
@@ -117,7 +118,12 @@ class DevOpsAgentWire:
         if operation in self.errors:
             return self.errors[operation]
         if operation == 'ListBacklogTasks':
-            return 200, {'tasks': self.tasks}
+            start = int(body.get('nextToken') or 0)
+            size = self.task_page_size or max(len(self.tasks), 1)
+            page = {'tasks': self.tasks[start:start + size]}
+            if start + size < len(self.tasks):
+                page['nextToken'] = str(start + size)
+            return 200, page
         if operation == 'ListExecutions':
             return 200, self.executions.get(body['taskId'], {'executions': []})
         if operation == 'ListJournalRecords':

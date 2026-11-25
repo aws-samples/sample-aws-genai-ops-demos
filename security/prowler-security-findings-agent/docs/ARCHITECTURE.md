@@ -74,7 +74,9 @@ The HMAC-signed POST body schema matches what the EKS demo uses (eventType/incid
 
 ## Reading investigations back
 
-`dashboard-api` reads the Agent Space with the boto3 `devops-agent` client (IAM actions `aidevops:ListBacklogTasks`, `aidevops:ListExecutions` and `aidevops:ListJournalRecords`). Both investigation routes, `GET /findings/{finding_uid}/investigation` and `GET /investigations`, return a `summary` per investigation: `{content, updatedAt, final}`, or `null` when the agent has written none.
+`dashboard-api` reads the Agent Space with the boto3 `devops-agent` client (IAM actions `aidevops:ListBacklogTasks`, `aidevops:ListExecutions` and `aidevops:ListJournalRecords`). `GET /findings/{finding_uid}/investigation` reports the newest backlog task that matches the finding, so a re-investigation shows its own progress. Its `status` is `in_progress`, `pending` (queued or waiting for an approval), `completed`, or `failed` (the task `FAILED`, `TIMED_OUT`, was `CANCELED` or `SKIPPED`); the dashboard polls only while it is `pending` or `in_progress`. A `LINKED` task, a duplicate incident the agent attached to an earlier one, reports that primary task. `tasks` lists the matching tasks newest first, with their raw backlog status.
+
+Both investigation routes, `GET /findings/{finding_uid}/investigation` and `GET /investigations`, return a `summary` per investigation: `{content, updatedAt, final}`, or `null` when the agent has written none.
 
 - While the investigation runs, `content` is the newest `ui_investigation_summary` journal record rendered as markdown (`final: false`). That record is the live summary the DevOps Agent console shows: a JSON UI tree the agent rewrites every few seconds; only its summary card (incident, current root-cause hypothesis, focus and plan) is kept.
 - Once the backlog task is `COMPLETED`, `content` is the `investigation_summary_md` record followed by `mitigation_summary_md` (`final: true`).

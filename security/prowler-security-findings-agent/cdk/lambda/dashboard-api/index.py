@@ -145,6 +145,48 @@ def _iso8601(value: Any) -> str | None:
     return str(value) if value else None
 
 
+# Backlog task status -> investigation status. The dashboard polls only while 'pending' or 'in_progress'.
+# Anything not listed (PENDING_TRIAGE, PENDING_START, WAITING, PENDING_CUSTOMER_APPROVAL) is 'pending'.
+_INVESTIGATION_STATUS = {
+    'COMPLETED': 'completed',
+    'LINKED': 'completed',  # only when its primary task is not listed (see _primary_task)
+    'IN_PROGRESS': 'in_progress',
+    'RUNNING': 'in_progress',
+    'ACTIVE': 'in_progress',
+    'FAILED': 'failed',
+    'TIMED_OUT': 'failed',
+    'CANCELED': 'failed',
+    'SKIPPED': 'failed',
+}
+
+
+def _epoch(value: Any) -> float:
+    """Seconds since the epoch of a wire timestamp (ISO-8601 string or epoch number); 0 when unknown."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _list_backlog_tasks(agent_space_id: str) -> list[dict[str, Any]]:
+    """Every backlog task of the Agent Space (pages of 100, ordered by task id rather than time)."""
+    tasks: list[dict[str, Any]] = []
+    for page in _devops().get_paginator('list_backlog_tasks').paginate(agentSpaceId=agent_space_id):
+        tasks.extend(page.get('tasks', []))
+    return tasks
+
+
+def _primary_task(task: dict[str, Any], all_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """The task that carries the investigation: a LINKED task (a duplicate incident) defers to its primary."""
+    if (task.get('status') or '').upper() == 'LINKED' and task.get('primaryTaskId'):
+        return next((t for t in all_tasks if t.get('taskId') == task['primaryTaskId']), task)
+    return task
+
+
 def _execution_id(agent_space_id: str, task: dict[str, Any]) -> str | None:
     """Task's execution id; a task that does not carry one yet is resolved with ListExecutions."""
     exec_id = task.get('executionId')
@@ -580,8 +622,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops().list_backlog_tasks(agentSpaceId=agent_space_id)
-        all_tasks = tasks_resp.get('tasks', [])
+        all_tasks = _list_backlog_tasks(agent_space_id)
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks failed: %s', exc)
         return _json(200, {
@@ -624,11 +665,14 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             return True
         return False
 
-    matching = [t for t in all_tasks if _task_matches(t)]
+    # Newest first: a re-investigation is a new task, and the newest one is the investigation to report.
+    matching = sorted((t for t in all_tasks if _task_matches(t)), key=lambda t: _epoch(t.get('createdAt')), reverse=True)
+    current = _primary_task(matching[0], all_tasks) if matching else None
 
     journal = []
     execution_ids: dict[Any, str | None] = {}
-    for task in matching[:3]:
+    sources = [current] + [t for t in matching if t is not current] if current else []
+    for task in sources[:3]:
         exec_id = execution_ids[task.get('taskId')] = _execution_id(agent_space_id, task)
         if not exec_id:
             continue
@@ -639,30 +683,23 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             logger.warning('ListJournalRecords failed for %s: %s', exec_id, exc)
 
     summary = None
-    if matching:
-        latest = max(matching, key=lambda t: t.get('createdAt') or '')
-        latest_id = latest.get('taskId')
-        exec_id = execution_ids[latest_id] if latest_id in execution_ids else _execution_id(agent_space_id, latest)
-        summary = _investigation_summary(agent_space_id, exec_id, latest.get('status'))
+    current_exec_id = None
+    if current:
+        current_exec_id = execution_ids.get(current.get('taskId'))
+        summary = _investigation_summary(agent_space_id, current_exec_id, current.get('status'))
 
     # 'idle' means "no task has ever been dispatched for this finding".
     # 'pending' is only meaningful after a task has been queued.
-    if not matching:
+    if not current:
         status = 'idle'
     else:
-        statuses = {t.get('status') for t in matching}
-        if 'COMPLETED' in statuses:
-            status = 'completed'
-        elif any(s in statuses for s in ('IN_PROGRESS', 'RUNNING', 'ACTIVE')):
-            status = 'in_progress'
-        else:
-            status = 'pending'
+        status = _INVESTIGATION_STATUS.get((current.get('status') or '').upper(), 'pending')
 
     return _json(200, {
         'incidentId': incident_id,
         'status': status,
         'agentSpaceId': agent_space_id,
-        'executionId': (matching[0].get('executionId') if matching else None),
+        'executionId': current_exec_id,
         'tasks': [
             {
                 'taskId': t.get('taskId'),
@@ -838,8 +875,7 @@ def _list_investigations() -> dict[str, Any]:
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops().list_backlog_tasks(agentSpaceId=agent_space_id)
-        all_tasks = tasks_resp.get('tasks', [])
+        all_tasks = _list_backlog_tasks(agent_space_id)
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks (investigations) failed: %s', exc)
         return _json(200, {'investigations': [], 'error': str(exc), 'status': 'error'})
