@@ -1,0 +1,107 @@
+{
+  "list_backlog_tasks": {
+    "tasks": [
+      {
+        "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+        "taskId": "task-system-learning-0003",
+        "executionId": "exe-system-learning-0003",
+        "title": "Create Understanding Pipeline Skills",
+        "description": "understanding-pipeline: Create understanding of the pipeline topology",
+        "taskType": "SYSTEM_LEARNING",
+        "priority": "HIGH",
+        "status": "COMPLETED",
+        "createdAt": "2026-07-03T10:13:49.887Z",
+        "updatedAt": "2026-07-03T13:58:08.322Z",
+        "version": 3,
+        "hasLinkedTasks": false
+      },
+      {
+        "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+        "taskId": "task-confused-deputy-0002",
+        "executionId": "exe-ops1-confused-deputy-0002",
+        "title": "Prowler finding: IAM service role prevents cross-service confused deputy attack",
+        "description": "A Prowler finding with severity HIGH was detected in AWS account 111122223333 (us-east-1).\n\nCheck ID: iam_role_cross_service_confused_deputy_prevention\nResource: arn:aws:iam::111122223333:role/AWS-QuickSetup-StackSet-Local-AdministrationRole\nService: IAM\nCompliance: ASD-Essential-Eight-Nov 2023, AWS-AI-Security-Framework-1.0, AWS-Account-Security-Onboarding, AWS-Foundational-Technical-Review, AWS-Well-Architected-Framework-Security-Pillar, C5-2025\n",
+        "reference": {
+          "system": "Event Channel",
+          "title": "EventChannel-prowler-iam-role-cross-service-confused-deputy-prevention-arn-aws-iam--111122223333-role-AWS-QuickSetup-StackSet-Local-AdministrationRole",
+          "referenceId": "prowler-iam-role-cross-service-confused-deputy-prevention-arn-aws-iam--111122223333-role-AWS-QuickSetup-StackSet-Local-AdministrationRole",
+          "referenceUrl": "",
+          "associationId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        },
+        "taskType": "INVESTIGATION",
+        "priority": "HIGH",
+        "status": "COMPLETED",
+        "createdAt": "2026-06-23T14:21:57.522Z",
+        "updatedAt": "2026-06-23T14:23:21.32Z",
+        "version": 4,
+        "hasLinkedTasks": false
+      },
+      {
+        "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+        "taskId": "task-iam-policy-0001",
+        "executionId": "exe-ops1-iam-policy-0001",
+        "title": "Prowler finding: Attached AWS-managed IAM policy does not allow '*:*' administrative privileges",
+        "description": "INCIDENT_START_TIME: 2026-11-25T18:45:19.331325Z\n\nA Prowler finding with severity CRITICAL was detected in AWS account 111122223333 (us-east-1).\n\nCheck ID: iam_aws_attached_policy_no_administrative_privileges\nResource: arn:aws:iam::aws:policy/aws-service-role/AWSSecurityHubServiceRolePolicy\nService: IAM\nCompliance: ASD-Essential-Eight-Nov 2023, AWS-AI-Security-Framework-1.0, AWS-Foundational-Security-Best-Practices, AWS-Well-Architected-Framework-Security-Pillar, C5-2025, CCC-v2025.10\n",
+        "reference": {
+          "system": "Event Channel",
+          "title": "EventChannel-prowler-iam-aws-attached-policy-no-administrative-privileges-arn-aws-iam--aws-policy-aws-service-role-AWSSecurityHubServiceRolePolicy",
+          "referenceId": "prowler-iam-aws-attached-policy-no-administrative-privileges-arn-aws-iam--aws-policy-aws-service-role-AWSSecurityHubServiceRolePolicy",
+          "referenceUrl": "",
+          "associationId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        },
+        "taskType": "INVESTIGATION",
+        "priority": "CRITICAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-11-25T18:46:34.765Z",
+        "updatedAt": "2026-11-25T18:52:16.974Z",
+        "version": 4,
+        "hasLinkedTasks": false
+      }
+    ]
+  },
+  "list_executions": {
+    "task-confused-deputy-0002": {
+      "executions": [
+        {
+          "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+          "executionId": "exe-ops1-confused-deputy-0002",
+          "agentSubTask": "oncall",
+          "createdAt": 1782224517.522,
+          "updatedAt": 1782224601.314,
+          "executionStatus": "STOPPED",
+          "agentType": "ops1"
+        }
+      ]
+    }
+  },
+  "list_journal_records": {
+    "exe-ops1-confused-deputy-0002": {
+      "records": [
+        {
+          "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+          "executionId": "exe-ops1-confused-deputy-0002",
+          "recordId": "716058e1-1368-4807-9e4a-0df4cc29eefb",
+          "content": "{\"metadata\": {\"version\": \"0.1\"}, \"data\": {\"context_window\": {\"utilization\": 9.3, \"compaction_count\": 0}, \"agents_md\": {\"utilization\": 0.0}, \"skills\": {\"metadata\": {\"utilization\": 0.9}, \"bundles\": [{\"name\": \"compliance-framework-translator\", \"utilization\": 0.2}]}, \"subagents\": [], \"tools\": [{\"name\": \"use_aws\", \"tool_use_count\": 4, \"distill_count\": 0, \"utilization\": 0.4}]}}",
+          "createdAt": 1782224601.045,
+          "recordType": "utilization"
+        },
+        {
+          "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+          "executionId": "exe-ops1-confused-deputy-0002",
+          "recordId": "d54594c2-a3fe-4635-bf08-eb320932312f",
+          "content": "{\"id\": \"d54594c2-a3fe-4635-bf08-eb320932312f\", \"role\": \"user\", \"content\": [{\"id\": \"tooluse_example\", \"content\": [{\"text\": \"{\\\"111122223333\\\": {\\\"RoleName\\\": \\\"AWS-QuickSetup-StackSet-Local-AdministrationRole\\\", \\\"PolicyName\\\": \\\"AssumeRole-AWS-QuickSetup-StackSet-Local-ExecutionRole\\\", \\\"PolicyDocument\\\": {\\\"Version\\\": \\\"2012-10-17\\\", \\\"Statement\\\": [{\\\"Action\\\": [\\\"sts:AssumeRole\\\"], \\\"Resource\\\": [\\\"arn:*:iam::*:role/AWS-QuickSetup-StackSet-Local-ExecutionRole\\\"], \\\"Effect\\\": \\\"Allow\\\"}]}}}\"}], \"status\": \"success\", \"type\": \"tool_result\"}], \"user_reference\": null}",
+          "createdAt": 1782224572.216,
+          "recordType": "message"
+        },
+        {
+          "agentSpaceId": "11111111-2222-4333-8444-555555555555",
+          "executionId": "exe-ops1-confused-deputy-0002",
+          "recordId": "dfccfbac-7da0-4e5e-b297-d319f2a6e84d",
+          "content": "{\"id\": \"dfccfbac-7da0-4e5e-b297-d319f2a6e84d\", \"role\": \"assistant\", \"content\": [{\"id\": \"tooluse_example\", \"tool_name\": \"use_aws\", \"input\": {\"aws_account_id\": \"111122223333\", \"aws_region\": \"us-east-1\", \"operation_name\": \"get_role_policy\", \"parameters\": {\"RoleName\": \"AWS-QuickSetup-StackSet-Local-AdministrationRole\", \"PolicyName\": \"AssumeRole-AWS-QuickSetup-StackSet-Local-ExecutionRole\"}, \"service_name\": \"iam\"}, \"type\": \"tool_use\"}], \"user_reference\": null}",
+          "createdAt": 1782224571.547,
+          "recordType": "message"
+        }
+      ]
+    }
+  }
+}

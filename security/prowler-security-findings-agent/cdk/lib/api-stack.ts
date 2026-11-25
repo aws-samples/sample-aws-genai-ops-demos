@@ -142,8 +142,8 @@ export class ApiStack extends cdk.Stack {
     }));
 
     // Read-only queries against AWS DevOps Agent for the Investigation tab.
-    // The IAM service namespace is `aidevops` (not `devops-agent` — that's only
-    // the AWS CLI command surface).
+    // The IAM service namespace is `aidevops` (not `devops-agent`, which is
+    // the AWS CLI and boto3 service name).
     role.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
@@ -185,7 +185,9 @@ export class ApiStack extends cdk.Stack {
       functionName: 'prowler-security-dashboard-api',
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'dashboard-api')),
+      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'dashboard-api'), {
+        exclude: ['tests', '__pycache__', '.pytest_cache'],
+      }),
       role,
       // Lazy Bedrock Insights invocation is synchronous — the remediation
       // Lambda has a 5 min timeout; keep a safe margin above that.

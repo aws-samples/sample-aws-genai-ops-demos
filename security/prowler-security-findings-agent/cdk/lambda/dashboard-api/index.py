@@ -82,13 +82,9 @@ REMEDIATION_LAMBDA = os.environ.get('REMEDIATION_LAMBDA', '')
 COST_EVENTS_TABLE_NAME = os.environ.get('COST_EVENTS_TABLE', '')
 COST_TABLE = _ddb.Table(COST_EVENTS_TABLE_NAME) if COST_EVENTS_TABLE_NAME else None
 
-# The Lambda runtime's bundled botocore does not yet ship the devops-agent
-# service model, so we call the DevOps Agent HTTPS API directly with SigV4
-# signing via botocore's internal primitives (no extra dependencies).
-from botocore.auth import SigV4Auth  # noqa: E402
-from botocore.awsrequest import AWSRequest  # noqa: E402
+import botocore.session  # noqa: E402
+from botocore.config import Config  # noqa: E402
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
-from urllib import error as urllib_error, request as urllib_request  # noqa: E402
 
 
 def _incident_id(finding_uid: str) -> str:
@@ -104,55 +100,25 @@ def _incident_id(finding_uid: str) -> str:
     return f'prowler-{safe}'
 
 
-DEVOPS_SAFE_ERRORS = (RuntimeError, urllib_error.URLError, json.JSONDecodeError, BotoCoreError, ClientError)
+DEVOPS_SAFE_ERRORS = (RuntimeError, BotoCoreError, ClientError)
+_devops_client = None
 
 
-def _devops_request(path: str, body: dict | None = None) -> dict:
-    """POST to the DevOps Agent REST API with SigV4 auth.
-
-    The service uses REST-style endpoints under
-    https://dp.aidevops.{region}.api.aws/{path}  (SigV4 service name: 'aidevops').
-    Returns parsed JSON body on success, raises on error.
-    """
-    if not DEVOPS_AGENT_REGION:
-        raise RuntimeError('DEVOPS_AGENT_REGION not set')
-    host = f'dp.aidevops.{DEVOPS_AGENT_REGION}.api.aws'
-    if not path.startswith('/'):
-        path = '/' + path
-    url = f'https://{host}{path}'
-    data = json.dumps(body or {}).encode('utf-8')
-    req = AWSRequest(
-        method='POST',
-        url=url,
-        data=data,
-        headers={
-            'Content-Type': 'application/json',
-            'Host': host,
-        },
-    )
-    creds = boto3.Session().get_credentials().get_frozen_credentials()
-    SigV4Auth(creds, 'aidevops', DEVOPS_AGENT_REGION).add_auth(req)
-    py_req = urllib_request.Request(
-        url,
-        data=data,
-        method='POST',
-        headers=dict(req.headers.items()),
-    )
-    # Defense-in-depth: guarantee the URL is HTTPS against the expected host
-    # before calling urlopen, even though both are constructed above from the
-    # Lambda env var (itself set by CDK, not user input). This keeps static
-    # analysis (bandit B310 / semgrep dynamic-urllib) from flagging the call.
-    if not py_req.full_url.startswith(f'https://{host}/'):
-        raise RuntimeError(f'refusing to call non-HTTPS or unexpected host: {py_req.full_url!r}')
-    try:
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-        with urllib_request.urlopen(py_req, timeout=10) as resp:  # nosec B310 - scheme+host validated above
-            raw = resp.read().decode('utf-8') or '{}'
-            return json.loads(raw)
-    except urllib_error.HTTPError as e:
-        err = e.read().decode('utf-8')
-        logger.warning('aidevops POST %s -> %s %s', path, e.code, err)
-        raise RuntimeError(f'{e.code}: {err}')
+def _devops():
+    """AWS DevOps Agent client (botocore service `devops-agent`, IAM prefix `aidevops`)."""
+    global _devops_client
+    if _devops_client is None:
+        if not DEVOPS_AGENT_REGION:
+            raise RuntimeError('DEVOPS_AGENT_REGION not set')
+        session = botocore.session.get_session()
+        # Keep timestamps as sent on the wire (ISO strings for tasks, epoch seconds for executions and records).
+        session.get_component('response_parser_factory').set_parser_defaults(timestamp_parser=lambda value: value)
+        _devops_client = boto3.Session(botocore_session=session).client(
+            'devops-agent',
+            region_name=DEVOPS_AGENT_REGION,
+            config=Config(connect_timeout=5, read_timeout=10, retries={'mode': 'standard'}),
+        )
+    return _devops_client
 
 
 def _devops_available() -> tuple[bool, str | None]:
@@ -471,10 +437,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops_request(
-            f'/backlog/agent-space/{agent_space_id}/tasks/list',
-            {},
-        )
+        tasks_resp = _devops().list_backlog_tasks(agentSpaceId=agent_space_id)
         all_tasks = tasks_resp.get('tasks', [])
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks failed: %s', exc)
@@ -529,10 +492,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             if not task_id:
                 continue
             try:
-                e = _devops_request(
-                    f'/journal/agent-space/{agent_space_id}/executions',
-                    {'taskId': task_id},
-                )
+                e = _devops().list_executions(agentSpaceId=agent_space_id, taskId=task_id)
                 execs = e.get('executions', [])
                 if execs:
                     exec_id = execs[0].get('executionId')
@@ -541,10 +501,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             if not exec_id:
                 continue
         try:
-            j = _devops_request(
-                f'/journal/agent-space/{agent_space_id}/journalRecords',
-                {'executionId': exec_id},
-            )
+            j = _devops().list_journal_records(agentSpaceId=agent_space_id, executionId=exec_id)
             journal.extend(j.get('records', []))
         except DEVOPS_SAFE_ERRORS as exc:
             logger.warning('ListJournalRecords failed for %s: %s', exec_id, exc)
@@ -741,10 +698,7 @@ def _list_investigations() -> dict[str, Any]:
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops_request(
-            f'/backlog/agent-space/{agent_space_id}/tasks/list',
-            {},
-        )
+        tasks_resp = _devops().list_backlog_tasks(agentSpaceId=agent_space_id)
         all_tasks = tasks_resp.get('tasks', [])
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks (investigations) failed: %s', exc)
