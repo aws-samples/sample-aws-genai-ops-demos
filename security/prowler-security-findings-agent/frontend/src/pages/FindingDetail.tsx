@@ -873,9 +873,8 @@ export default function FindingDetail() {
                         </Box>
                         {investigationError && <Alert type="error">{investigationError}</Alert>}
                         {!investigation && <Spinner />}
-                        {investigation && (
-                          <>
-                            <div style={{ padding: '14px 18px', background: 'var(--soc-bg-elev-2)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
+                        {investigation && [
+                            <div key="status" style={{ padding: '14px 18px', background: 'var(--soc-bg-elev-2)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -959,10 +958,9 @@ export default function FindingDetail() {
                                   })()}
                                 </div>
                               </div>
-                            </div>
-
-                            {investigation.status === 'pending' && investigation.tasks.length === 0 ? (
-                              <Alert type="info">
+                            </div>,
+                            investigation.status === 'pending' && investigation.tasks.length === 0 ? (
+                              <Alert key="waiting" type="info">
                                 <SpaceBetween size="xs" direction="horizontal">
                                   <Spinner />
                                   <span>
@@ -973,12 +971,11 @@ export default function FindingDetail() {
                                 </SpaceBetween>
                               </Alert>
                             ) : investigation.tasks.length === 0 ? (
-                              <Alert type="info">
+                              <Alert key="none" type="info">
                                 No investigation yet. Click <strong>Investigate with DevOps Agent</strong> above to dispatch one. The agent will inspect your AWS resources and stream its journal here.
                               </Alert>
-                            ) : (
-                              <>
-                                <div>
+                            ) : [
+                                <div key="tasks">
                                   <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Agent tasks</div>
                                   <ol style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                     {investigation.tasks.map((t, i) => {
@@ -999,9 +996,8 @@ export default function FindingDetail() {
                                       );
                                     })}
                                   </ol>
-                                </div>
-
-                                <div>
+                                </div>,
+                                <div key="journal">
                                   <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                                     Agent reasoning steps (most recent first)
                                   </div>
@@ -1012,12 +1008,9 @@ export default function FindingDetail() {
                                       <AgentJournal records={investigation.journal} />
                                     </LiveRegion>
                                   )}
-                                </div>
-                              </>
-                            )}
-
-                          </>
-                        )}
+                                </div>,
+                              ],
+                        ]}
                       </SpaceBetween>
                     </div>
                   ),
