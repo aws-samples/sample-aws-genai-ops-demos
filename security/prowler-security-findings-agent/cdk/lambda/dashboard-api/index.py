@@ -19,6 +19,7 @@ Routes (matched against event['requestContext']['http']['path'] + method):
     POST /scans                                    — start a Prowler Fargate task on-demand
 """
 
+import base64
 import json
 import logging
 import os
@@ -327,28 +328,58 @@ def _list_findings(qs: dict[str, str]) -> dict[str, Any]:
     limit = int(qs.get('limit', '50'))
     limit = max(1, min(limit, 500))
 
+    try:
+        start_key = _decode_cursor(qs.get('next'))
+    except ValueError:
+        return _json(400, {'error': 'invalid next cursor'})
+
     if severity:
-        resp = TABLE.query(
+        read = lambda **kw: TABLE.query(  # noqa: E731
             IndexName='severity-index',
             KeyConditionExpression=Key('severity').eq(severity.upper()),
-            Limit=limit,
-            ScanIndexForward=False,
-        )
+            ScanIndexForward=False, **kw)
     elif status:
-        resp = TABLE.query(
+        read = lambda **kw: TABLE.query(  # noqa: E731
             IndexName='status-index',
             KeyConditionExpression=Key('status').eq(status.upper()),
-            Limit=limit,
-            ScanIndexForward=False,
-        )
+            ScanIndexForward=False, **kw)
     else:
-        resp = TABLE.scan(Limit=limit)
+        read = TABLE.scan
 
-    items = resp.get('Items', [])
+    # DynamoDB stops each page at 1 MB (about 100 findings), so keep reading until `limit` is reached.
+    items: list[dict[str, Any]] = []
+    while True:
+        kwargs: dict[str, Any] = {'Limit': limit - len(items)}
+        if start_key:
+            kwargs['ExclusiveStartKey'] = start_key
+        resp = read(**kwargs)
+        items.extend(resp.get('Items', []))
+        start_key = resp.get('LastEvaluatedKey')
+        if not start_key or len(items) >= limit:
+            break
+
     # Strip raw payload from list view — it's huge.
     for i in items:
         i.pop('raw', None)
-    return _json(200, {'items': items, 'count': len(items)})
+    return _json(200, {'items': items, 'count': len(items), 'next': _encode_cursor(start_key)})
+
+
+def _encode_cursor(key: dict[str, Any] | None) -> str | None:
+    if not key:
+        return None
+    return base64.urlsafe_b64encode(json.dumps(key, default=str).encode()).decode()
+
+
+def _decode_cursor(cursor: str | None) -> dict[str, Any] | None:
+    if not cursor:
+        return None
+    try:
+        key = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, TypeError) as exc:
+        raise ValueError('bad cursor') from exc
+    if not isinstance(key, dict) or not all(isinstance(v, str) for v in key.values()):
+        raise ValueError('bad cursor')
+    return key
 
 
 def _get_finding(finding_uid: str) -> dict[str, Any]:
