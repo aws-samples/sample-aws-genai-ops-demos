@@ -53,7 +53,7 @@ Secondary indexes: `severity-index` (PK severity, SK last_seen_at) and `status-i
 
 ## Prowler execution
 
-- Official `toniblyx/prowler` image (built once into ECR by the CodeBuild project).
+- `python:3.12-slim` image with Prowler installed from PyPI at the version pinned by `ARG PROWLER_VERSION` in `scanner/Dockerfile` (built into ECR by the CodeBuild project).
 - Task role: `SecurityAudit` + `ViewOnlyAccess` managed policies plus a small `ProwlerExtras` statement for the permissions Prowler needs that aren't in those two (credential report generation, service last accessed, etc.).
 - Command: `prowler aws --output-formats json-ocsf csv html -S` — `-S` additionally sends ASFF to Security Hub so findings are queryable there too.
 - The entrypoint uploads `{account}.ocsf.json` (and human-readable csv/html) to `s3://raw-reports/raw-reports/{scan_id}/`.

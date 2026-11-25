@@ -140,6 +140,10 @@ aws cognito-idp admin-set-user-password \
 4. Open **Findings** → click any CRITICAL/HIGH item → press **Generate AI Insights** to produce the Bedrock-generated playbook on demand (shown in the Overview tab).
 5. From the same finding, press **Investigate with DevOps Agent** to dispatch a single incident to the Agent. The Investigation tab streams backlog task status and journal records live; the Agent Operator console shows the full reasoning trace.
 
+### Prowler version
+
+`scanner/Dockerfile` pins Prowler with `ARG PROWLER_VERSION` (currently `5.52.0`), so every image build runs the same checks. To upgrade, set it to a release listed on [PyPI](https://pypi.org/project/prowler/#history) and rebuild the image with `bash scripts/build-scanner-image.sh <RawReportsBucketName> <BuildProjectName>` (outputs of the Data and Scanner stacks) or by re-running `deploy-all.sh`. The image is pushed as `:latest`, so the next scan uses it.
+
 ## CDK Stacks
 
 All stack IDs include the region suffix for multi-region deployments.
@@ -180,7 +184,7 @@ prowler-security-findings-agent/
 │       ├── devops-agent-trigger/index.py
 │       └── dashboard-api/index.py
 ├── scanner/
-│   ├── Dockerfile                      ← FROM toniblyx/prowler
+│   ├── Dockerfile                      ← python:3.12-slim + Prowler pinned by PROWLER_VERSION
 │   └── entrypoint.sh                   ← prowler aws --output-formats json-ocsf -S
 ├── scripts/
 │   ├── setup-devops-agent.sh / .ps1
@@ -257,7 +261,7 @@ Destroys all 8 stacks in reverse dependency order and (after confirmation) delet
 | Problem | Cause | Fix |
 |---|---|---|
 | `The provided model identifier is invalid` or `isn't supported` when calling Converse | Model access not enabled in the inference-profile regions | Enable Nova Lite 2 in Bedrock console > Model access > Manage across the regions the selected profile covers (the `global.*` profile spans all supported regions — the console has a one-click enable). |
-| CodeBuild fails to pull `toniblyx/prowler` | Docker Hub rate limits | Re-run `bash scripts/build-scanner-image.sh`; or switch to an ECR Public mirror in `scanner/Dockerfile`. |
+| CodeBuild fails installing Prowler | PyPI unreachable from CodeBuild, or `PROWLER_VERSION` set to a release that does not exist | Check the build log in `/aws/codebuild/<BuildProjectName>`, fix `PROWLER_VERSION` in `scanner/Dockerfile`, and re-run `bash scripts/build-scanner-image.sh`. |
 | Fargate task fails with `AccessDenied` on S3 | Bucket region mismatch | Confirm `RawReportsBucket` is in the same region as the scanner task; rerun `deploy-all.sh`. |
 | DevOps Agent never receives incidents | Webhook URL/secret still placeholders | Run `bash scripts/setup-devops-agent.sh` — it live-updates the deployed Lambda and Secrets Manager. |
 | Dashboard returns 403 calling the API | Authenticated role missing `lambda:InvokeFunctionUrl` | Redeploy `ProwlerSecurityApi-{region}` and `ProwlerSecurityAuth-{region}`. |
@@ -276,7 +280,7 @@ Same reason the runtime-migration demo does not have API Gateway: fewer moving p
 
 ### Why ECS Fargate for Prowler (not Lambda)?
 
-Prowler scans a medium-sized account in 3–10 minutes — too long for Lambda's 15-minute hard limit when scanning multiple regions, and awkward to package with its dependencies. Fargate runs the official `toniblyx/prowler` image as-is.
+Prowler scans a medium-sized account in 3–10 minutes — too long for Lambda's 15-minute hard limit when scanning multiple regions, and awkward to package with its dependencies. Fargate runs a small image with the pinned Prowler release from PyPI.
 
 ## Contributing
 
