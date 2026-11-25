@@ -6,11 +6,13 @@ import { Buffer } from 'buffer';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import '@cloudscape-design/global-styles/index.css';
+import '@cloudscape-design/global-styles/index-base.css';
 import App from './App';
+import { applyOneTheme } from './one-theme';
 import { applyBrandTheme } from './theme';
 import './index.css';
 
+applyOneTheme();
 applyBrandTheme();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -82,7 +82,7 @@ export default function KeyboardShortcuts() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15, 20, 26, 0.55)',
+        background: 'var(--soc-backdrop)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -94,12 +94,12 @@ export default function KeyboardShortcuts() {
         style={{
           background: 'var(--soc-popover-bg)',
           border: '1px solid var(--soc-popover-border)',
-          borderRadius: 16,
+          borderRadius: 'var(--soc-radius-popover)',
           padding: '20px 26px',
           minWidth: 360,
           maxWidth: 520,
           color: 'var(--soc-fg)',
-          boxShadow: '0 16px 40px rgba(0, 7, 22, 0.24), 0 2px 8px rgba(0, 7, 22, 0.12)',
+          boxShadow: 'var(--soc-shadow-raised)',
         }}
       >
         <h2 style={{ marginTop: 0, marginBottom: 14, fontSize: 18 }}>Keyboard shortcuts</h2>

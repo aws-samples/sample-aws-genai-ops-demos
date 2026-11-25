@@ -987,7 +987,7 @@ export default function FindingDetail() {
                                                        : COLOR.medium;
                                       return (
                                         <li key={t.taskId} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 14px', background: 'var(--soc-bg-elev)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
-                                          <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, borderRadius: '50%', background: statusColor, color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                                          <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, borderRadius: '50%', background: statusColor, color: '#fff', fontSize: 11, fontWeight: 600 }}>{i + 1}</span>
                                           <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ color: COLOR.fg, fontWeight: 600 }}>{t.title}</div>
                                             <div style={{ color: COLOR.fgDim, fontSize: 11, marginTop: 4 }}>

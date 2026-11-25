@@ -1,9 +1,7 @@
 /**
- * Theme setup. The look comes from Cloudscape itself: One Theme is switched on with the
- * official global-styles helper, and custom elements read Cloudscape design tokens through
- * the `--soc-*` aliases below, so light/dark mode and future token updates flow through.
+ * Shared colours and severity helpers. Custom elements read Cloudscape design tokens through
+ * the `--soc-*` aliases below, so light/dark mode and the One Theme values flow through.
  */
-import { setThemeClass, Theme } from '@cloudscape-design/global-styles';
 import * as awsui from '@cloudscape-design/design-tokens';
 import { SEVERITIES } from './constants';
 
@@ -76,15 +74,17 @@ const TOKEN_ALIASES: Record<string, string> = {
   '--soc-radius': awsui.borderRadiusContainer,
   '--soc-radius-item': awsui.borderRadiusItem,
   '--soc-radius-badge': awsui.borderRadiusBadge,
+  '--soc-radius-popover': awsui.borderRadiusPopover,
+  '--soc-backdrop': awsui.colorBackgroundBackdrop,
+  '--soc-shadow-raised': awsui.shadowContainerActive,
 };
 
 let themeApplied = false;
 
-/** Turns on Cloudscape One Theme and exposes its design tokens to the custom CSS. */
+/** Exposes Cloudscape design tokens to the custom CSS. */
 export function applyBrandTheme(): void {
   if (themeApplied) return;
   themeApplied = true;
-  setThemeClass(Theme.OneTheme);
   const body = document.body.style;
   for (const [name, value] of Object.entries(TOKEN_ALIASES)) body.setProperty(name, value);
 }

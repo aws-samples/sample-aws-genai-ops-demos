@@ -19,6 +19,8 @@
     "@cloudscape-design/components": "^3.0.1423",
     "@cloudscape-design/design-tokens": "^3.0.119",
     "@cloudscape-design/global-styles": "^1.0.72",
+    "@fontsource-variable/roboto": "^5.3.0",
+    "@fontsource-variable/roboto-mono": "^5.3.0",
     "@smithy/protocol-http": "^5.3.14",
     "@smithy/signature-v4": "^5.3.14",
     "amazon-cognito-identity-js": "^6.3.15",

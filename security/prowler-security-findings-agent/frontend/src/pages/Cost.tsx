@@ -331,7 +331,7 @@ export default function Cost() {
               {
                 id: 'cost',
                 header: 'Cost',
-                cell: (e) => <span style={{ color: COLOR.fg, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--soc-font-mono)' }}>{fmtUsd(e.cost_usd, 4)}</span>,
+                cell: (e) => <span style={{ color: COLOR.fg, fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--soc-font-mono)' }}>{fmtUsd(e.cost_usd, 4)}</span>,
                 minWidth: 90,
               },
               {

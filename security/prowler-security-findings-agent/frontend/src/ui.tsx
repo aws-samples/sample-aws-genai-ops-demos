@@ -37,9 +37,9 @@ export function SeverityBadge({ severity }: { severity?: string }) {
 export function BrandMark({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect width="24" height="24" rx="6" fill="#0f141a" />
-      <rect x="5" y="5.5" width="14" height="2.6" rx="1.3" fill="#fe6e73" />
-      <rect x="5" y="9.3" width="11" height="2.6" rx="1.3" fill="#ff8a4c" />
+      <rect width="24" height="24" rx="4" fill="#161512" />
+      <rect x="5" y="5.5" width="14" height="2.6" rx="1.3" fill="#d63f38" />
+      <rect x="5" y="9.3" width="11" height="2.6" rx="1.3" fill="#fe6e73" />
       <rect x="5" y="13.1" width="8" height="2.6" rx="1.3" fill="#f89256" />
       <rect x="5" y="16.9" width="5" height="2.6" rx="1.3" fill="#f2cd54" />
     </svg>

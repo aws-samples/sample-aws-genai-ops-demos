@@ -176,7 +176,7 @@ export default function Compliance() {
                   alignItems: 'stretch',
                 }}
               >
-                <div style={{ color: COLOR.fg, fontWeight: 700, fontSize: 16 }}>{fw.label}</div>
+                <div style={{ color: COLOR.fg, fontWeight: 600, fontSize: 16 }}>{fw.label}</div>
                 <div style={{ color: COLOR.fgDim, fontSize: 12, lineHeight: 1.4 }}>{fw.description}</div>
                 <div style={{ width: '100%', marginTop: 4, textAlign: 'center' }}>
                   {fw.total > 0 ? (

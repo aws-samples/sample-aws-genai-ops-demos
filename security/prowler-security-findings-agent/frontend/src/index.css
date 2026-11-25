@@ -91,9 +91,9 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
 }
 .soc-hero h1 {
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 30px;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   margin: 0 0 4px;
   color: var(--soc-fg-heading);
 }
@@ -181,7 +181,7 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
 .soc-kpi--lead .soc-kpi-value {
   font-size: 34px;
   line-height: 42px;
-  font-weight: 700;
+  font-weight: 500;
 }
 .soc-kpi .soc-kpi-hint {
   font-size: 12px;
@@ -550,7 +550,7 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
   color: var(--soc-fg-heading);
   margin-top: 24px;
   margin-bottom: 8px;
-  font-weight: 700;
+  font-weight: 500;
 }
 .soc-markdown h2 {
   font-size: 18px;
@@ -601,14 +601,15 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
 @media (min-width: 960px) {
   .soc-auth { grid-template-columns: minmax(0, 1.1fr) minmax(440px, 1fr); }
 }
+/* The story panel stays dark in both modes, on One Theme's top-navigation surface and text colours. */
 .soc-auth-story {
   display: none;
   flex-direction: column;
   justify-content: space-between;
   gap: 40px;
   padding: 40px 56px;
-  background: #0f141a;
-  color: #ebebf0;
+  background: #161512;
+  color: #bab7b0;
 }
 @media (min-width: 960px) {
   .soc-auth-story { display: flex; }
@@ -618,16 +619,17 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
   align-items: center;
   gap: 10px;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
+  color: #f9f9f9;
 }
 .soc-auth-claim {
   margin: 0;
   max-width: 16ch;
   font-size: 42px;
   line-height: 1.1;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #ffffff;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: #f9f9f9;
 }
 .soc-auth-steps {
   list-style: none;
@@ -643,23 +645,23 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
   gap: 16px;
   font-size: 14px;
   line-height: 20px;
-  color: #c6c6cd;
+  color: #bab7b0;
 }
-.soc-auth-steps li strong { color: #ffffff; font-weight: 600; }
+.soc-auth-steps li strong { color: #eeedeb; font-weight: 600; }
 .soc-auth-ramp {
   display: flex;
   gap: 2px;
   height: 10px;
   max-width: 420px;
-  border-radius: 5px;
+  border-radius: 2px;
   overflow: hidden;
 }
-.soc-auth-ramp > span:nth-child(1) { flex: 3; background: #fe6e73; }
-.soc-auth-ramp > span:nth-child(2) { flex: 9; background: #ff8a4c; }
+.soc-auth-ramp > span:nth-child(1) { flex: 3; background: #d63f38; }
+.soc-auth-ramp > span:nth-child(2) { flex: 9; background: #fe6e73; }
 .soc-auth-ramp > span:nth-child(3) { flex: 20; background: #f89256; }
 .soc-auth-ramp > span:nth-child(4) { flex: 6; background: #f2cd54; }
-.soc-auth-ramp > span:nth-child(5) { flex: 4; background: #656871; }
-.soc-auth-foot { font-size: 12px; line-height: 18px; color: #a4a4ad; }
+.soc-auth-ramp > span:nth-child(5) { flex: 4; background: #6f6b63; }
+.soc-auth-foot { font-size: 12px; line-height: 18px; color: #949088; }
 
 .soc-auth-panel {
   display: flex;
@@ -672,7 +674,8 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
   margin: 0 0 6px;
   font-size: 24px;
   line-height: 30px;
-  font-weight: 700;
+  font-weight: 500;
+  letter-spacing: -0.015em;
   color: var(--soc-fg-heading);
 }
 .soc-auth-card .soc-auth-sub {
@@ -687,7 +690,7 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
   gap: 10px;
   margin-bottom: 32px;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
 }
 @media (min-width: 960px) {
   .soc-auth-mobile-brand { display: none; }
@@ -704,7 +707,7 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
 .soc-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 20, 26, 0.55);
+  background: var(--soc-backdrop);
   display: flex;
   justify-content: center;
   z-index: 9999;
@@ -712,8 +715,8 @@ code, .soc-tabnum, [data-numeric] { font-variant-numeric: tabular-nums; }
 .soc-dialog {
   background: var(--soc-popover-bg);
   border: 1px solid var(--soc-popover-border);
-  border-radius: 16px;
-  box-shadow: 0 16px 40px rgba(0, 7, 22, 0.24), 0 2px 8px rgba(0, 7, 22, 0.12);
+  border-radius: var(--soc-radius-popover);
+  box-shadow: var(--soc-shadow-raised);
   color: var(--soc-fg);
 }
 .soc-kbd {

@@ -224,7 +224,7 @@ export default function CommandPalette() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15, 20, 26, 0.55)',
+        background: 'var(--soc-backdrop)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -237,12 +237,12 @@ export default function CommandPalette() {
         style={{
           background: 'var(--soc-popover-bg)',
           border: '1px solid var(--soc-popover-border)',
-          borderRadius: 16,
+          borderRadius: 'var(--soc-radius-popover)',
           width: 'min(640px, 92vw)',
           maxHeight: '70vh',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '0 16px 40px rgba(0, 7, 22, 0.24), 0 2px 8px rgba(0, 7, 22, 0.12)',
+          boxShadow: 'var(--soc-shadow-raised)',
           overflow: 'hidden',
           color: 'var(--soc-fg)',
         }}
