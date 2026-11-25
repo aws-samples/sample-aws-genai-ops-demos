@@ -56,6 +56,13 @@ Assign severity per affected workload:
 
 Overall investigation severity = highest individual workload severity.
 
+When the same underlying condition recurs across investigations (same event type,
+same resource class, same redundancy posture), assign it the **same severity** each
+time. Base the severity strictly on the criteria above (service availability impact,
+redundancy) — never on investigation-to-investigation wording choices. Do not
+upgrade or downgrade a recurring fact pattern based on how you happen to phrase it
+this time.
+
 ## Step 4: Identify Responsible Teams
 
 For each affected workload, determine the owning team by checking:
@@ -80,6 +87,66 @@ Prioritize recommendations by:
 1. Time sensitivity (maintenance window approaching)
 2. Impact severity (CRITICAL workloads first)
 3. Effort required (quick wins before complex changes)
+
+## Delegation and Sub-Agent Output
+
+If any part of your analysis, mitigation plan, or recommendations was produced by a
+sub-agent (e.g. `propose-mitigation`) and delivered to you as a separate artifact,
+you MUST still restate its substance inline in this response's `## Key Findings` and
+`## Recommended Actions` sections below. The artifact is a supplement for a human who
+wants full detail — it is never a substitute for the structured sections the
+callback parser reads.
+
+Never write a sentence that merely refers to the artifact without summarizing it.
+Forbidden pattern (do not write anything like this):
+
+> "...reaches you as its own artifact — I won't duplicate it here."
+
+Instead, lift the plan's substance into the structured sections. Template for pulling
+1-3 action items out of a delegated plan into `## Recommended Actions`:
+
+| Priority | Action |
+|----------|--------|
+| **P1**   | <first action item from the sub-agent's plan, restated in your own words> |
+| **P2**   | <second action item, if present> |
+| **P3**   | <third action item, if present> |
+
+Do the same for findings: restate each affected workload/resource the sub-agent's
+plan addressed as its own `## Key Findings` bullet (see the rules below), even
+though a fuller version of that resource's mitigation exists in the artifact.
+
+### Final Message Is the Complete Report
+
+The callback reads your journal and takes each section from the most recent message
+that contains it, so a partial final message silently overrides or loses content.
+When a sub-agent or background task returns after you already wrote the report and
+its result changes your assessment (a corrected fact, a new severity, an updated
+plan), your final message MUST re-send the complete structured report: all six
+headings (`## Summary`, `## Key Findings`, `## Answers to Your Questions`,
+`## Recommended Actions`, `## Notification Routing`, `## Jira Tracking`) with the
+updated content. Do not send a short addendum or a lone recommendations table, and do
+not put a correction in a lead-in paragraph before the headings. Put it inside the
+relevant section. (On the "no impact" path below, the report is just `## Summary`.)
+
+Every row of the `## Recommended Actions` table must be self-contained: write the
+concrete command or step inline in the row. Never write "the command above", "as
+described above" or any other reference to text outside the table. Only the table
+rows reach the notification channel.
+
+### Re-notifying on an Existing Finding
+
+When this investigation determines there is no new information since a prior
+notification for the same event/finding (for example, a repeat Inspector2 scan sweep
+that re-confirms earlier CVEs), still write a normal, factual `## Summary` describing
+the *finding* — what the batch is, that it is a repeat, and any delta from last time.
+Never write a `## Summary` that is a meta-comment about the act of re-reporting.
+
+Forbidden pattern (do not write anything like this):
+
+> "No new information — these are more CVEs from the same Inspector2 scan sweep..."
+
+Instead write, for example: "Inspector2 re-scan confirms 6 previously reported HIGH
+CVEs on `web-tier`; no new findings since the last notification."
 
 ## Step 6: Jira ticket tracking (when Jira is configured)
 
@@ -196,7 +263,7 @@ free-form prose without these headings will result in empty findings.
 ```
 ## Summary
 
-<one-paragraph executive summary, ≤ 500 chars>
+<one-paragraph, third-person, factual impact statement, ≤ 500 chars — see rules below>
 
 ## Key Findings
 
@@ -234,11 +301,29 @@ For each owning team:
 - Use `## Summary`, `## Key Findings`, `## Answers to Your Questions`,
   `## Recommended Actions`, `## Notification Routing`, and
   `## Jira Tracking` exactly. The callback parser pattern-matches on these.
+- `## Summary` must contain only factual, third-person impact statements — what is
+  affected, how severely, and why. It must **never** contain first-person narration
+  about your own process, confidence, delegation, or next steps (e.g. "I now
+  have...", "Let me...", "I've confirmed...", "I won't duplicate..."). If unsure what
+  to write, default to this shape: `<N> <category> finding(s) affecting
+  <workload/resource>; <one-line impact>.`
 - Each finding bullet must follow the `- **<title>**: <detail>` shape.
   The parser extracts the bolded title and the detail after the colon.
+- `## Key Findings` is **mandatory** whenever there is any impact (the only
+  exception is the "no impact" path below, which omits it entirely). Every bullet's
+  bold label MUST be the name of an affected workload or resource — never
+  `Mitigation`, `Jira`, `Tracking`, `Impact`, `Severity`, `Root Cause`, a date, or
+  any other meta-label. Mitigation status, Jira ticket status, and tracking info
+  belong only in `## Notification Routing` / `## Jira Tracking`, never here. If,
+  after full analysis, there are genuinely no affected resources but impact still
+  exists in some other sense, include a single explicit bullet such as
+  `- **No affected resources identified**: impact assessed as <severity> based on
+  <reason>.` rather than omitting the section — the notifier depends on `##
+  Key Findings` always being present when there is impact.
 - Recommendations must be in a markdown table whose first column is
   `**P1**` / `**P2**` / `**P3**` (or higher). The parser maps these
-  priority labels onto OpsItem priority levels.
+  priority labels onto OpsItem priority levels. Each row must be self-contained (see
+  "Final Message Is the Complete Report").
 - If there is genuinely no impact, still emit the `## Summary` section
   with one paragraph explaining why, and skip the rest. Do not fabricate
   empty sections — the parser interprets emptiness correctly.
