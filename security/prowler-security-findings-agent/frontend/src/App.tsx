@@ -33,7 +33,7 @@ function applyTheme(theme: Theme) {
 
   // theme-color meta for mobile chrome
   const meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
-  if (meta) meta.content = effective === Mode.Light ? '#f4f6fb' : '#0b0f1a';
+  if (meta) meta.content = effective === Mode.Light ? '#f6f6f6' : '#111111';
 }
 
 function getInitialTheme(): Theme {
@@ -89,6 +89,11 @@ export default function App() {
         identity={{
           href: '/',
           title: 'AI-Assisted Security Triage',
+          logo: { src: '/favicon.svg', alt: '' },
+          onFollow: (e) => {
+            e.preventDefault();
+            navigate('/');
+          },
         }}
         utilities={[
           {
@@ -131,7 +136,7 @@ export default function App() {
         navigationHide={false}
         navigation={
           <SideNavigation
-            header={{ href: '/', text: 'Navigation' }}
+            header={{ href: '/', text: 'Security triage' }}
             activeHref={location.pathname === '/' ? '/' : location.pathname.startsWith('/findings') ? '/findings' : location.pathname}
             onFollow={(e) => {
               if (!e.detail.external) {

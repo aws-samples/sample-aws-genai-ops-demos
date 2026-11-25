@@ -31,6 +31,7 @@ import {
 
 import { COLOR } from '../theme';
 import { badgeFromHistory } from '../status-history';
+import { SeverityBadge } from '../ui';
 
 function investigationBadge(status: InvestigationState['status']) {
   const map: Record<string, { color: string; text: string }> = {
@@ -194,7 +195,7 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
     <div style={{
       padding: '12px 14px',
       borderLeft: `3px solid ${badgeColor}`,
-      background: 'rgba(0,0,0,0.04)',
+      background: 'var(--soc-bg-elev-2)',
       borderRadius: 4,
       marginBottom: 8,
       minWidth: 0,
@@ -205,7 +206,7 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
         gap: 8,
         marginBottom: entry.body ? 8 : 0,
       }}>
-        <span style={{ color: badgeColor, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        <span style={{ color: badgeColor, fontWeight: 600, fontSize: 12 }}>
           {entry.title}
         </span>
         {entry.subtitle && (
@@ -464,27 +465,15 @@ export default function FindingDetail() {
   if (!item) return null;
 
   const raw = item.raw;
-  const sevColor: string = (() => {
-    switch (item.severity) {
-      case 'CRITICAL': return COLOR.critical;
-      case 'HIGH':     return COLOR.high;
-      case 'MEDIUM':   return COLOR.medium;
-      case 'LOW':      return COLOR.low;
-      case 'INFO':     return COLOR.info;
-      default:         return COLOR.fgMuted;
-    }
-  })();
 
   return (
     <ContentLayout
       header={
-        <div className="soc-hero" style={{ borderLeft: `4px solid ${sevColor}` }}>
+        <div className="soc-hero">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-                <span className={`soc-severity-chip soc-severity-chip--${item.severity}`} style={{ fontSize: 12, padding: '4px 12px' }}>
-                  {item.severity}
-                </span>
+                <SeverityBadge severity={item.severity} />
                 <span style={{ color: item.status === 'FAIL' ? COLOR.critical : COLOR.ok, fontWeight: 600, fontSize: 13 }}>
                   {item.status}
                 </span>
@@ -510,15 +499,15 @@ export default function FindingDetail() {
                   <span style={{ color: COLOR.accent, fontSize: 12, fontWeight: 600 }}>· Bedrock insight ready</span>
                 )}
               </div>
-              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: COLOR.fg, letterSpacing: '-0.01em' }}>
+              <h1 style={{ margin: 0 }}>
                 {item.check_title || item.check_id}
               </h1>
-              <div style={{ color: COLOR.fgMuted, fontSize: 12, fontFamily: 'JetBrains Mono, monospace', marginTop: 6 }}>
+              <div style={{ color: COLOR.fgMuted, fontSize: 12, fontFamily: 'var(--soc-font-mono)', marginTop: 6 }}>
                 {item.check_id}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Button onClick={() => navigate('/findings')}>← Back</Button>
+              <Button iconName="arrow-left" onClick={() => navigate('/findings')}>Back</Button>
               <Button
                 onClick={toggleSuppress}
                 iconName={item.suppressed_at ? 'undo' : 'status-stopped'}
@@ -560,50 +549,50 @@ export default function FindingDetail() {
           <Container header={<Header variant="h2">Incident facts</Header>}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Severity</div>
-                <span className={`soc-severity-chip soc-severity-chip--${item.severity}`}>{item.severity}</span>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Severity</div>
+                <SeverityBadge severity={item.severity} />
               </div>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Status</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Status</div>
                 <div style={{ color: item.status === 'FAIL' ? COLOR.critical : COLOR.ok, fontWeight: 600 }}>{item.status}</div>
               </div>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Service</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Service</div>
                 <div style={{ color: COLOR.fg }}>{item.service_name}</div>
               </div>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Resource</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Resource</div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                   <code translate="no" style={{ fontSize: 11, color: COLOR.fg, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.resource_uid}</code>
                   <CopyButton text={item.resource_uid} label="resource ARN" />
                 </div>
               </div>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Region / Account</div>
-                <div style={{ color: COLOR.fg, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{item.region} · {item.account_id}</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Region / Account</div>
+                <div style={{ color: COLOR.fg, fontFamily: 'var(--soc-font-mono)', fontSize: 12 }}>{item.region} · {item.account_id}</div>
               </div>
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Last seen</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Last seen</div>
                 <div style={{ color: COLOR.fg, fontSize: 12 }}>{item.last_seen_at && new Date(item.last_seen_at).toLocaleString()}</div>
               </div>
               {item.scan_id && (
                 <div>
-                  <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Scan</div>
+                  <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Scan</div>
                   <code style={{ fontSize: 11, color: COLOR.accent }}>{item.scan_id}</code>
                 </div>
               )}
               {(item.compliance_frameworks || []).length > 0 && (
                 <div>
-                  <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Compliance</div>
+                  <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Compliance</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                     {item.compliance_frameworks!.map((f) => (
-                      <span key={f} className="soc-severity-chip" style={{ background: 'rgba(79,143,255,0.15)', color: COLOR.accent, border: `1px solid ${COLOR.accent}` }}>{f}</span>
+                      <span key={f} className="soc-tag">{f}</span>
                     ))}
                   </div>
                 </div>
               )}
               <div>
-                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Finding UID</div>
+                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Finding UID</div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                   <code translate="no" style={{ fontSize: 10.5, color: COLOR.fgDim, wordBreak: 'break-all', lineHeight: 1.4 }}>{item.finding_uid}</code>
                   <CopyButton text={item.finding_uid} label="finding UID" />
@@ -633,7 +622,7 @@ export default function FindingDetail() {
 
                         {item.status_extended && (
                           <div>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Status detail from Prowler</div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Status detail from Prowler</div>
                             <div className="soc-markdown">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.status_extended}</ReactMarkdown>
                             </div>
@@ -642,7 +631,7 @@ export default function FindingDetail() {
 
                         {item.risk_details && (
                           <div>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Risk</div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Risk</div>
                             <div className="soc-markdown">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.risk_details}</ReactMarkdown>
                             </div>
@@ -650,8 +639,8 @@ export default function FindingDetail() {
                         )}
 
                         {item.remediation_guidance && (
-                          <div style={{ padding: '12px 14px', background: 'rgba(79,143,255,0.05)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Prowler remediation guidance</div>
+                          <div style={{ padding: '12px 14px', background: 'var(--soc-bg-elev-2)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Prowler remediation guidance</div>
                             <div className="soc-markdown">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.remediation_guidance}</ReactMarkdown>
                             </div>
@@ -667,7 +656,7 @@ export default function FindingDetail() {
 
                         {item.additional_urls && item.additional_urls.length > 0 && (
                           <div>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Additional references</div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Additional references</div>
                             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: COLOR.accent }}>
                               {item.additional_urls.map((u) => (
                                 <li key={u}><a href={u} target="_blank" rel="noopener noreferrer" style={{ color: COLOR.accent }}>{u}</a></li>
@@ -680,23 +669,23 @@ export default function FindingDetail() {
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
                             {item.categories && item.categories.length > 0 && (
                               <div>
-                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Categories</div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Categories</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                   {item.categories.map((c) => (
-                                    <span key={c} className="soc-severity-chip" style={{ background: 'rgba(140,100,200,0.15)', color: '#B48CE6', border: '1px solid #B48CE6' }}>{c}</span>
+                                    <span key={c} className="soc-tag">{c}</span>
                                   ))}
                                 </div>
                               </div>
                             )}
                             {item.notes && (
                               <div>
-                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Notes</div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Notes</div>
                                 <div style={{ fontSize: 12, color: COLOR.fg }}>{item.notes}</div>
                               </div>
                             )}
                             {item.finding_types && item.finding_types.length > 0 && (
                               <div>
-                                <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Finding types</div>
+                                <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Finding types</div>
                                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: COLOR.fg }}>
                                   {item.finding_types.map((t) => (<li key={t}>{t}</li>))}
                                 </ul>
@@ -707,10 +696,10 @@ export default function FindingDetail() {
 
                         {item.status_history && item.status_history.length > 0 && (
                           <div>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                               History
                               {item.first_seen_at && (
-                                <span style={{ marginLeft: 8, color: COLOR.fgDim, textTransform: 'none', fontWeight: 400 }}>
+                                <span style={{ marginLeft: 8, color: COLOR.fgDim, fontWeight: 400 }}>
                                   first seen {new Date(item.first_seen_at).toLocaleDateString()}
                                 </span>
                               )}
@@ -754,14 +743,14 @@ export default function FindingDetail() {
 
                         {item.compliance_controls && Object.keys(item.compliance_controls).length > 0 && (
                           <div>
-                            <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Compliance controls</div>
+                            <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Compliance controls</div>
                             <div style={{ display: 'grid', gap: 8 }}>
                               {Object.entries(item.compliance_controls).sort(([a],[b]) => a.localeCompare(b)).map(([fw, ids]) => (
-                                <div key={fw} style={{ padding: '8px 12px', background: 'rgba(79,143,255,0.03)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
+                                <div key={fw} style={{ padding: '8px 12px', background: 'var(--soc-bg-elev-2)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
                                   <div style={{ fontSize: 11, fontWeight: 600, color: COLOR.accent, marginBottom: 4 }}>{fw}</div>
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                     {ids.map((id) => (
-                                      <code key={id} style={{ fontSize: 10.5, padding: '2px 6px', background: 'rgba(79,143,255,0.1)', color: COLOR.fg, borderRadius: 3 }}>{id}</code>
+                                      <code key={id} style={{ fontSize: 10.5, padding: '2px 6px', background: 'var(--soc-bg-elev)', color: COLOR.fg, borderRadius: 3 }}>{id}</code>
                                     ))}
                                   </div>
                                 </div>
@@ -786,7 +775,7 @@ export default function FindingDetail() {
                         <div className="soc-markdown">
                           <Box margin={{ bottom: 's' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: `1px solid ${COLOR.border}`, borderRadius: 999, background: 'rgba(79,143,255,0.08)', fontSize: 11, color: COLOR.accent, fontWeight: 600 }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: `1px solid ${COLOR.border}`, borderRadius: 999, background: 'var(--soc-status-info-bg)', fontSize: 11, color: COLOR.accent, fontWeight: 600 }}>
                                 <Icon name="gen-ai" variant="subtle" />
                                 Generated by AI
                               </span>
@@ -874,7 +863,7 @@ export default function FindingDetail() {
                     <div style={{ padding: '4px 8px' }}>
                       <SpaceBetween size="m">
                         <Box>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: `1px solid ${COLOR.border}`, borderRadius: 999, background: 'rgba(79,143,255,0.08)', fontSize: 11, color: COLOR.accent, fontWeight: 600 }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: `1px solid ${COLOR.border}`, borderRadius: 999, background: 'var(--soc-status-info-bg)', fontSize: 11, color: COLOR.accent, fontWeight: 600 }}>
                             <Icon name="gen-ai" variant="subtle" />
                             Generated by AI
                           </span>
@@ -886,7 +875,7 @@ export default function FindingDetail() {
                         {!investigation && <Spinner />}
                         {investigation && (
                           <>
-                            <div style={{ padding: '14px 18px', background: 'rgba(79,143,255,0.05)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
+                            <div style={{ padding: '14px 18px', background: 'var(--soc-bg-elev-2)', border: `1px solid ${COLOR.border}`, borderRadius: 8 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                                 <div style={{ minWidth: 0 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -900,7 +889,7 @@ export default function FindingDetail() {
                                           padding: '2px 8px',
                                           border: `1px solid ${COLOR.border}`,
                                           borderRadius: 999,
-                                          background: 'rgba(79,143,255,0.06)',
+                                          background: 'var(--soc-bg-elev-2)',
                                         }}
                                         aria-live="polite"
                                       >
@@ -990,14 +979,14 @@ export default function FindingDetail() {
                             ) : (
                               <>
                                 <div>
-                                  <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Agent tasks</div>
+                                  <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Agent tasks</div>
                                   <ol style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                     {investigation.tasks.map((t, i) => {
                                       const statusColor = t.status === 'COMPLETED' ? COLOR.ok
                                                        : t.status === 'IN_PROGRESS' || t.status === 'RUNNING' || t.status === 'ACTIVE' ? COLOR.accent
                                                        : COLOR.medium;
                                       return (
-                                        <li key={t.taskId} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
+                                        <li key={t.taskId} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 14px', background: 'var(--soc-bg-elev)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
                                           <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, borderRadius: '50%', background: statusColor, color: '#fff', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
                                           <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ color: COLOR.fg, fontWeight: 600 }}>{t.title}</div>
@@ -1013,7 +1002,7 @@ export default function FindingDetail() {
                                 </div>
 
                                 <div>
-                                  <div style={{ color: COLOR.fgMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                                  <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                                     Agent reasoning steps (most recent first)
                                   </div>
                                   {investigation.journal.length === 0 ? (

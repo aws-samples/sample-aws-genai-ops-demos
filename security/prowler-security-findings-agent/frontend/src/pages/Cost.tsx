@@ -20,9 +20,9 @@ const TYPE_LABEL: Record<string, string> = {
   scan: 'Prowler scan',
 };
 const TYPE_COLOR: Record<string, string> = {
-  bedrock_insights: 'var(--soc-accent)',
-  devops_agent_dispatch: 'var(--soc-high)',
-  scan: 'var(--soc-ok)',
+  bedrock_insights: 'var(--soc-cat-1)',
+  devops_agent_dispatch: 'var(--soc-cat-2)',
+  scan: 'var(--soc-cat-3)',
 };
 
 function fmtUsd(n: number | undefined, digits = 4): string {
@@ -94,39 +94,32 @@ function CumulativeChart({ events }: { events: CostEvent[] }) {
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
-      <defs>
-        <linearGradient id="cost-area-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--soc-accent)" stopOpacity="0.4" />
-          <stop offset="100%" stopColor="var(--soc-accent)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
       {/* Grid lines */}
       {yTicks.map((t, i) => (
         <g key={i}>
           <line x1={padding.left} y1={t.y} x2={width - padding.right} y2={t.y}
-                stroke="var(--soc-border)" strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
-          <text x={padding.left - 8} y={t.y + 3} textAnchor="end" fontSize={10} fill="var(--soc-fg-muted)" fontFamily="JetBrains Mono, monospace">
+                stroke="var(--soc-border-soft)" strokeWidth={1} />
+          <text x={padding.left - 8} y={t.y + 3} textAnchor="end" fontSize={10} fill="var(--soc-fg-muted)">
             {fmtUsd(t.v)}
           </text>
         </g>
       ))}
       {/* Area fill */}
-      <path d={areaD} fill="url(#cost-area-grad)" />
+      <path d={areaD} fill="var(--soc-cat-1)" fillOpacity={0.12} />
       {/* Line */}
-      <path d={pathD} fill="none" stroke="var(--soc-accent)" strokeWidth={2}
-            style={{ filter: 'drop-shadow(0 0 6px var(--soc-accent-glow))' }} />
+      <path d={pathD} fill="none" stroke="var(--soc-cat-1)" strokeWidth={2} />
       {/* Dots */}
       {points.map((p, i) => (
         <circle key={i} cx={xScale(p.t)} cy={yScale(p.v)} r={3}
-                fill={TYPE_COLOR[p.type] || 'var(--soc-accent)'} stroke="var(--soc-bg-elev)" strokeWidth={1.5}>
+                fill={TYPE_COLOR[p.type] || 'var(--soc-cat-1)'} stroke="var(--soc-bg-elev)" strokeWidth={1.5}>
           <title>{TYPE_LABEL[p.type] || p.type} · {fmtUsd(p.v)} cumulative · {new Date(p.t).toLocaleString()}</title>
         </circle>
       ))}
       {/* X axis labels: first + last */}
-      <text x={padding.left} y={height - 8} fontSize={10} fill="var(--soc-fg-muted)" fontFamily="JetBrains Mono, monospace">
+      <text x={padding.left} y={height - 8} fontSize={10} fill="var(--soc-fg-muted)">
         {new Date(minT).toLocaleTimeString()}
       </text>
-      <text x={width - padding.right} y={height - 8} fontSize={10} fill="var(--soc-fg-muted)" textAnchor="end" fontFamily="JetBrains Mono, monospace">
+      <text x={width - padding.right} y={height - 8} fontSize={10} fill="var(--soc-fg-muted)" textAnchor="end">
         {new Date(maxT).toLocaleTimeString()}
       </text>
     </svg>
@@ -165,8 +158,8 @@ function Donut({ data, size = 180 }: { data: Array<{ label: string; value: numbe
         <text x="50%" y="48%" textAnchor="middle" fontSize={size * 0.14} fontWeight={700} fill="currentColor">
           {fmtUsd(total, 4)}
         </text>
-        <text x="50%" y="62%" textAnchor="middle" fontSize={size * 0.07} fill="var(--soc-fg-muted)" letterSpacing="0.08em">
-          TOTAL
+        <text x="50%" y="62%" textAnchor="middle" fontSize={size * 0.07} fill="var(--soc-fg-muted)">
+          Total
         </text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
@@ -222,7 +215,7 @@ export default function Cost() {
     return Object.entries(by).map(([k, v]) => ({
       label: TYPE_LABEL[k] || k,
       value: v.cost_usd || 0,
-      color: TYPE_COLOR[k] || 'var(--soc-medium)',
+      color: TYPE_COLOR[k] || 'var(--soc-info)',
     }));
   }, [summary]);
 
@@ -236,14 +229,14 @@ export default function Cost() {
               <div className="soc-hero-sub">
                 Every AI-generated insight, DevOps Agent dispatch, and Prowler scan — live, per-event, with token-level pricing.
               </div>
-              <div style={{ marginTop: 10, fontSize: 12, color: COLOR.fgDim, maxWidth: 720 }}>
+              <div style={{ marginTop: 8, fontSize: 12, lineHeight: '18px', color: COLOR.fgDim, maxWidth: 760 }}>
                 Prices are hardcoded for the demo (Nova Lite 2: $0.00006 in / $0.00024 out per 1K tokens · DevOps Agent: flat $0.50 per incident · Prowler scan: flat $0.02 per run). Real billing lives in AWS Cost Explorer.
               </div>
             </div>
             <Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginTop: 24 }}>
+          <div className="soc-kpi-strip" style={{ marginTop: 20 }}>
             <div className="soc-kpi soc-kpi--accent">
               <div className="soc-kpi-label">Total (demo)</div>
               <div className="soc-kpi-value">{loading && !summary ? '…' : fmtUsd(total, 4)}</div>
@@ -277,7 +270,7 @@ export default function Cost() {
           </Alert>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <div className="soc-row soc-row--2-1 soc-row--stretch">
           <Container header={<Header variant="h2" description="Running USD total since the demo started">Cumulative cost</Header>}>
             <CumulativeChart events={events} />
           </Container>
@@ -315,7 +308,7 @@ export default function Cost() {
               {
                 id: 'when',
                 header: 'When',
-                cell: (e) => <span style={{ color: COLOR.fgMuted, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{relativeTime(e.created_at)}</span>,
+                cell: (e) => <span style={{ color: COLOR.fgMuted, fontFamily: 'var(--soc-font-mono)', fontSize: 12 }}>{relativeTime(e.created_at)}</span>,
                 minWidth: 110,
               },
               {
@@ -327,7 +320,7 @@ export default function Cost() {
                     padding: '3px 10px', borderRadius: 999,
                     border: `1px solid ${TYPE_COLOR[e.event_type] || 'var(--soc-border)'}`,
                     color: TYPE_COLOR[e.event_type] || COLOR.fg,
-                    fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                    fontSize: 12, fontWeight: 600,
                   }}>
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: TYPE_COLOR[e.event_type] || 'var(--soc-border)' }} />
                     {TYPE_LABEL[e.event_type] || e.event_type}
@@ -338,7 +331,7 @@ export default function Cost() {
               {
                 id: 'cost',
                 header: 'Cost',
-                cell: (e) => <span style={{ color: COLOR.fg, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'JetBrains Mono, monospace' }}>{fmtUsd(e.cost_usd, 4)}</span>,
+                cell: (e) => <span style={{ color: COLOR.fg, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--soc-font-mono)' }}>{fmtUsd(e.cost_usd, 4)}</span>,
                 minWidth: 90,
               },
               {
@@ -347,7 +340,7 @@ export default function Cost() {
                 cell: (e) => {
                   if (!e.input_tokens && !e.output_tokens) return <span style={{ color: COLOR.fgDim }}>—</span>;
                   return (
-                    <span style={{ color: COLOR.fgMuted, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                    <span style={{ color: COLOR.fgMuted, fontFamily: 'var(--soc-font-mono)', fontSize: 12 }}>
                       {fmtInt(e.input_tokens)} / {fmtInt(e.output_tokens)}
                     </span>
                   );

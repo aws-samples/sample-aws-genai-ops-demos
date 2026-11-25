@@ -15,6 +15,7 @@ import {
 import { InvestigationSummary, listInvestigations } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { AGENT_SKILLS } from '../agent-skills';
+import { SeverityBadge } from '../ui';
 
 function statusIndicator(status?: string) {
   const s = (status || '').toUpperCase();
@@ -38,7 +39,7 @@ function SkillField({
 }) {
   return (
     <div>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>{label}</span>
         <Button
           variant="inline-link"
@@ -127,7 +128,7 @@ export default function Investigations() {
               id: 'severity',
               header: 'Severity',
               cell: (it) => (it.severity
-                ? <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
+                ? <SeverityBadge severity={it.severity} />
                 : <Box color="text-status-inactive" variant="small">—</Box>),
               sortingField: 'severity',
               sortingComparator: (a, b) => (SEVERITY_ORDER[a.severity ?? ''] ?? 99) - (SEVERITY_ORDER[b.severity ?? ''] ?? 99),

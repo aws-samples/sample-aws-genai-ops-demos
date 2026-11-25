@@ -41,7 +41,8 @@ async function credentialsProvider() {
   }
   if (!_cognitoClient) _cognitoClient = new CognitoIdentityClient({ region });
   const provider = fromCognitoIdentityPool({
-    client: _cognitoClient,
+    // Same client at runtime; the provider's typings pin a different @smithy/types copy.
+    client: _cognitoClient as unknown as Parameters<typeof fromCognitoIdentityPool>[0]['client'],
     identityPoolId,
     logins: {
       [`cognito-idp.${region}.amazonaws.com/${userPoolId}`]: idToken,

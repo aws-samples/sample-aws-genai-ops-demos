@@ -8,7 +8,10 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import '@cloudscape-design/global-styles/index.css';
 import App from './App';
+import { applyBrandTheme } from './theme';
 import './index.css';
+
+applyBrandTheme();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

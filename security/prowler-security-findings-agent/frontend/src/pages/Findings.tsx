@@ -20,6 +20,7 @@ import { Finding, generateInsights, investigateFinding, listFindings } from '../
 import { SEVERITY_ORDER } from '../theme';
 import { FRAMEWORKS, frameworkLabelsForFinding, getFrameworkByKey, matchesFramework } from '../frameworks';
 import { badgeFromHistory } from '../status-history';
+import { SeverityBadge } from '../ui';
 
 function statusChip(s: string) {
   if (s === 'FAIL') return <StatusIndicator type="error">FAIL</StatusIndicator>;
@@ -44,7 +45,7 @@ const COLUMN_DEFINITIONS = [
       const suppressed = Boolean(it.suppressed_at);
       return (
         <span style={{ opacity: suppressed ? 0.55 : 1 }}>
-          <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
+          <SeverityBadge severity={it.severity} />
           {badge.kind !== 'stable' && !suppressed && (
             <span
               className={`soc-history-chip soc-history-chip--${badge.kind}`}
@@ -59,8 +60,7 @@ const COLUMN_DEFINITIONS = [
           )}
           {suppressed && (
             <span
-              className="soc-history-chip"
-              style={{ background: 'rgba(255,140,26,0.15)', color: 'var(--soc-high)', border: '1px solid var(--soc-high)' }}
+              className="soc-history-chip soc-history-chip--suppressed"
               title={it.suppress_reason || 'Suppressed'}
             >
               Suppressed
@@ -112,7 +112,7 @@ const COLUMN_DEFINITIONS = [
           <Box variant="small">
             <span style={{ fontStyle: 'italic' }}>{it.resource_uid}</span>
             {fail > 0 && (
-              <span style={{ marginLeft: 8, color: 'var(--soc-critical)', fontWeight: 600 }}>
+              <span style={{ marginLeft: 8, color: 'var(--soc-error-text)', fontWeight: 600 }}>
                 {fail} FAIL
               </span>
             )}
@@ -292,7 +292,7 @@ export default function Findings() {
     return items.filter((item) => {
       if (fw && !matchesFramework(item, fw.match)) return false;
       return query.tokens.every((t) => {
-        const val = String((item as Record<string, unknown>)[t.propertyKey] ?? '').toLowerCase();
+        const val = String((item as unknown as Record<string, unknown>)[t.propertyKey] ?? '').toLowerCase();
         const needle = String(t.value).toLowerCase();
         if (t.operator === '=') return val === needle;
         if (t.operator === '!=') return val !== needle;
