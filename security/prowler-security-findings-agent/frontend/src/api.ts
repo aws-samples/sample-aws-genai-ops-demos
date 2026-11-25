@@ -233,6 +233,13 @@ export interface AgentJournalRecord {
   content?: string;
 }
 
+/** The DevOps Agent's latest investigation summary; final once the root cause and mitigation are in. */
+export interface LiveSummary {
+  content: string;
+  updatedAt: string;
+  final: boolean;
+}
+
 export interface InvestigationState {
   incidentId: string;
   status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'not_configured' | 'error';
@@ -240,6 +247,7 @@ export interface InvestigationState {
   executionId?: string;
   tasks: AgentTask[];
   journal: AgentJournalRecord[];
+  summary?: LiveSummary | null;
   error?: string;
 }
 
@@ -286,6 +294,7 @@ export interface InvestigationSummary {
   severity?: string;
   service_name?: string;
   resource_uid?: string;
+  summary?: LiveSummary | null;
 }
 
 export const listInvestigations = () =>

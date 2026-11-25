@@ -32,6 +32,8 @@ import {
 import { COLOR } from '../theme';
 import { badgeFromHistory } from '../status-history';
 import { SeverityBadge } from '../ui';
+import { hasSummary, isInvestigationRunning } from '../investigation-status';
+import { LiveSummaryPanel } from '../LiveSummary';
 
 function investigationBadge(status: InvestigationState['status']) {
   const map: Record<string, { color: string; text: string }> = {
@@ -310,7 +312,6 @@ export default function FindingDetail() {
   const [investigationError, setInvestigationError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
-  const pollRef = useRef<number | null>(null);
   // Track the last dispatch timestamp so we can ignore stale 'idle' polls
   // during the ~30-60s window before the task shows up in the backlog.
   const lastDispatchAtRef = useRef<number>(0);
@@ -357,28 +358,24 @@ export default function FindingDetail() {
     refreshInvestigation();
   }, [findingUid, refreshInvestigation]);
 
+  // Depends on the running flag, not the investigation object: each poll result would otherwise
+  // restart the timer and the 10 s phase would never start.
+  const polling = isInvestigationRunning(investigation)
+    || (investigation?.status === 'pending' && dispatchedAt > 0 && Date.now() - dispatchedAt < 90000);
   useEffect(() => {
-    if (!investigation) return;
-    const inFlight = investigation.status === 'pending' || investigation.status === 'in_progress';
-    if (!inFlight) {
-      if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
-      return;
-    }
-    if (pollRef.current) return;
+    if (!polling) return;
     // Adaptive polling: the webhook → backlog-task hop takes 30-90 s; poll
     // every 3 s during that window so the UI feels responsive, then back off
     // to 10 s for the longer investigation phase.
-    const sinceDispatch = () => Date.now() - lastDispatchAtRef.current;
+    const nextDelay = () => (Date.now() - lastDispatchAtRef.current < 90000 ? 3000 : 10000);
+    let timer = 0;
     const tick = () => {
       refreshInvestigation();
-      const nextDelay = sinceDispatch() < 90000 ? 3000 : 10000;
-      pollRef.current = window.setTimeout(tick, nextDelay) as unknown as number;
+      timer = window.setTimeout(tick, nextDelay());
     };
-    pollRef.current = window.setTimeout(tick, 3000) as unknown as number;
-    return () => {
-      if (pollRef.current) { window.clearTimeout(pollRef.current); pollRef.current = null; }
-    };
-  }, [investigation, refreshInvestigation]);
+    timer = window.setTimeout(tick, nextDelay());
+    return () => window.clearTimeout(timer);
+  }, [polling, refreshInvestigation]);
 
   async function dispatchGenerateInsights() {
     if (!findingUid) return;
@@ -542,6 +539,10 @@ export default function FindingDetail() {
           </Alert>
         )}
         {dispatchMessage && <Alert type="success" dismissible onDismiss={() => setDispatchMessage(null)}>{dispatchMessage}</Alert>}
+
+        {hasSummary(investigation?.summary) && (
+          <LiveSummaryPanel summary={investigation.summary} running={isInvestigationRunning(investigation)} />
+        )}
 
         {/* 2-col: overview + tabs (stacks on mobile) */}
         <div className="soc-grid-sidebar">

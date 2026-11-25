@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -12,10 +12,14 @@ import {
   StatusIndicator,
   Table,
 } from '@cloudscape-design/components';
-import { InvestigationSummary, listInvestigations } from '../api';
+import { InvestigationSummary, LiveSummary, listInvestigations } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { AGENT_SKILLS } from '../agent-skills';
 import { SeverityBadge } from '../ui';
+import { hasSummary, isTaskRunning } from '../investigation-status';
+
+// Loaded only when an investigation has a summary: it brings react-markdown.
+const LiveSummaryList = lazy(() => import('../LiveSummary').then((m) => ({ default: m.LiveSummaryList })));
 
 function statusIndicator(status?: string) {
   const s = (status || '').toUpperCase();
@@ -71,22 +75,36 @@ export default function Investigations() {
   const [error, setError] = useState<string | null>(null);
   const [agentSpaceId, setAgentSpaceId] = useState<string | undefined>();
 
-  async function load() {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const r = await listInvestigations();
       setItems(r.investigations || []);
       setAgentSpaceId(r.agentSpaceId);
-      if (r.error) setError(r.error);
+      if (r.error && !silent) setError(r.error);
     } catch (e: any) {
-      setError(e?.message || 'Failed to load investigations');
+      if (!silent) setError(e?.message || 'Failed to load investigations');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const anyRunning = items.some((it) => isTaskRunning(it.status));
+  useEffect(() => {
+    if (!anyRunning) return;
+    const id = window.setInterval(() => load(true), 10000);
+    return () => window.clearInterval(id);
+  }, [anyRunning, load]);
+
+  const withSummary = items
+    .filter((it): it is InvestigationSummary & { summary: LiveSummary } => hasSummary(it.summary))
+    .sort((a, b) => Number(isTaskRunning(b.status)) - Number(isTaskRunning(a.status))
+      || (b.summary.updatedAt || '').localeCompare(a.summary.updatedAt || ''));
 
   const operatorBase = agentSpaceId ? `https://${agentSpaceId}.aidevops.global.app.aws` : null;
 
@@ -96,7 +114,7 @@ export default function Investigations() {
         <Header
           variant="h1"
           description="Every finding that's been dispatched to AWS DevOps Agent from this demo. Click a row to re-open the finding detail with the full agent journal."
-          actions={<Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>}
+          actions={<Button iconName="refresh" onClick={() => load()} loading={loading}>Refresh</Button>}
         >
           DevOps Agent investigations
         </Header>
@@ -113,6 +131,21 @@ export default function Investigations() {
               </>
             ) : error}
           </Alert>
+        )}
+
+        {withSummary.length > 0 && (
+          <Suspense fallback={null}>
+            <LiveSummaryList
+              onFollow={navigate}
+              items={withSummary.map((it) => ({
+                id: it.finding_uid,
+                heading: it.check_title || it.check_id || it.title || it.finding_uid,
+                href: `/findings/${encodeURIComponent(it.finding_uid)}`,
+                summary: it.summary,
+                running: isTaskRunning(it.status),
+              }))}
+            />
+          </Suspense>
         )}
 
         <Table

@@ -191,6 +191,7 @@ prowler-security-findings-agent/
 │       ├── one-theme/                   ← Cloudscape One Theme port (generated)
 │       ├── CommandPalette.tsx           ← global ⌘K navigation + actions
 │       ├── KeyboardShortcuts.tsx        ← j/k/?/g* navigation
+│       ├── LiveSummary.tsx              ← DevOps Agent live investigation summary
 │       ├── status-history.ts            ← per-finding timeline persisted in IndexedDB
 │       ├── agent-skills.ts              ← seeded DevOps Agent skills (copy-paste-ready)
 │       └── pages/
