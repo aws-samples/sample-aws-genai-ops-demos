@@ -10,6 +10,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { LiveSummary } from './api';
+import type { RunState } from './investigation-status';
 
 function updatedAgo(iso: string | undefined, now: number): string {
   const then = iso ? new Date(iso).getTime() : NaN;
@@ -32,9 +33,10 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-function SummaryStatus({ summary, running }: { summary: LiveSummary; running: boolean }) {
+function SummaryStatus({ summary, state }: { summary: LiveSummary; state: RunState }) {
   if (summary.final) return <StatusIndicator type="success">Final summary</StatusIndicator>;
-  if (running) return <StatusIndicator type="in-progress">In progress</StatusIndicator>;
+  if (state === 'running') return <StatusIndicator type="in-progress">In progress</StatusIndicator>;
+  if (state === 'failed') return <StatusIndicator type="error">Investigation failed</StatusIndicator>;
   return <StatusIndicator type="stopped">Stopped</StatusIndicator>;
 }
 
@@ -54,14 +56,14 @@ function SummaryBody({ content }: { content: string }) {
 }
 
 /** The DevOps Agent summary of one investigation, for the finding detail page. */
-export function LiveSummaryPanel({ summary, running }: { summary: LiveSummary; running: boolean }) {
+export function LiveSummaryPanel({ summary, state }: { summary: LiveSummary; state: RunState }) {
   return (
     <Container
       header={
         <Header
           variant="h2"
           description={<Updated iso={summary.updatedAt} source="AWS DevOps Agent" />}
-          actions={<SummaryStatus summary={summary} running={running} />}
+          actions={<SummaryStatus summary={summary} state={state} />}
         >
           Live summary
         </Header>
@@ -77,7 +79,7 @@ export interface LiveSummaryItem {
   heading: string;
   href: string;
   summary: LiveSummary;
-  running: boolean;
+  state: RunState;
 }
 
 /** Every investigation that has a summary, for the Investigations page. Running ones start expanded. */
@@ -99,12 +101,12 @@ export function LiveSummaryList({ items, onFollow }: { items: LiveSummaryItem[];
         {items.map((it) => (
           <ExpandableSection
             key={it.id}
-            defaultExpanded={it.running && !it.summary.final}
+            defaultExpanded={it.state === 'running' && !it.summary.final}
             headerText={it.heading}
             headerDescription={updatedAgo(it.summary.updatedAt, now) || undefined}
             headerActions={
               <SpaceBetween direction="horizontal" size="s" alignItems="center">
-                <SummaryStatus summary={it.summary} running={it.running} />
+                <SummaryStatus summary={it.summary} state={it.state} />
                 <Link
                   href={it.href}
                   onFollow={(e) => {

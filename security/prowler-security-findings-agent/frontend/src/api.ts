@@ -228,7 +228,9 @@ export interface AgentTask {
 }
 
 export interface AgentJournalRecord {
+  /** ISO-8601. */
   timestamp?: string;
+  /** DevOps Agent recordType: message, utilization, observation, finding, ui_investigation_summary, ... */
   type?: string;
   content?: string;
 }
@@ -242,7 +244,7 @@ export interface LiveSummary {
 
 export interface InvestigationState {
   incidentId: string;
-  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'not_configured' | 'error';
+  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'failed' | 'not_configured' | 'error';
   agentSpaceId?: string;
   executionId?: string;
   tasks: AgentTask[];

@@ -16,17 +16,26 @@ import { InvestigationSummary, LiveSummary, listInvestigations } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { AGENT_SKILLS } from '../agent-skills';
 import { SeverityBadge } from '../ui';
-import { hasSummary, isTaskRunning } from '../investigation-status';
+import { hasSummary, isTaskRunning, taskState } from '../investigation-status';
 
 // Loaded only when an investigation has a summary: it brings react-markdown.
 const LiveSummaryList = lazy(() => import('../LiveSummary').then((m) => ({ default: m.LiveSummaryList })));
+
+const STATUS_LABELS: Record<string, string> = {
+  FAILED: 'Failed',
+  ERROR: 'Failed',
+  TIMED_OUT: 'Timed out',
+  CANCELED: 'Canceled',
+  CANCELLED: 'Canceled',
+  SKIPPED: 'Skipped',
+};
 
 function statusIndicator(status?: string) {
   const s = (status || '').toUpperCase();
   if (s === 'COMPLETED') return <StatusIndicator type="success">Completed</StatusIndicator>;
   if (s === 'IN_PROGRESS' || s === 'RUNNING' || s === 'ACTIVE') return <StatusIndicator type="in-progress">In progress</StatusIndicator>;
-  if (s === 'FAILED' || s === 'ERROR') return <StatusIndicator type="error">Failed</StatusIndicator>;
-  if (s === 'PENDING') return <StatusIndicator type="pending">Pending</StatusIndicator>;
+  if (taskState(s) === 'failed') return <StatusIndicator type="error">{STATUS_LABELS[s]}</StatusIndicator>;
+  if (taskState(s) === 'running') return <StatusIndicator type="pending">Pending</StatusIndicator>;
   return <StatusIndicator type="info">{status || 'unknown'}</StatusIndicator>;
 }
 
@@ -142,7 +151,7 @@ export default function Investigations() {
                 heading: it.check_title || it.check_id || it.title || it.finding_uid,
                 href: `/findings/${encodeURIComponent(it.finding_uid)}`,
                 summary: it.summary,
-                running: isTaskRunning(it.status),
+                state: taskState(it.status),
               }))}
             />
           </Suspense>

@@ -32,8 +32,13 @@ import {
 import { COLOR } from '../theme';
 import { badgeFromHistory } from '../status-history';
 import { SeverityBadge } from '../ui';
-import { hasSummary, isInvestigationRunning } from '../investigation-status';
+import { hasSummary, investigationState, isInvestigationRunning, isShownJournalRecord, taskState } from '../investigation-status';
 import { LiveSummaryPanel } from '../LiveSummary';
+
+// After a dispatch: poll every 3 s for this long, and keep showing 'pending' until the new
+// backlog task appears, for at most DISPATCH_GRACE_MS.
+const FAST_POLL_MS = 90000;
+const DISPATCH_GRACE_MS = 180000;
 
 function investigationBadge(status: InvestigationState['status']) {
   const map: Record<string, { color: string; text: string }> = {
@@ -41,6 +46,7 @@ function investigationBadge(status: InvestigationState['status']) {
     completed:      { color: COLOR.ok,       text: 'Investigation completed' },
     in_progress:    { color: COLOR.accent,   text: 'Agent investigating…' },
     pending:        { color: COLOR.medium,   text: 'Dispatched · waiting' },
+    failed:         { color: COLOR.critical, text: 'Investigation failed' },
     not_configured: { color: COLOR.fgDim,    text: 'DevOps Agent not configured' },
     error:          { color: COLOR.critical, text: 'API error' },
   };
@@ -69,20 +75,53 @@ function investigationBadge(status: InvestigationState['status']) {
  * results, and metadata; we surface the parts that matter and hide telemetry.
  */
 interface ParsedEntry {
-  kind: 'reasoning' | 'tool-call' | 'tool-result' | 'text' | 'user-prompt' | 'skip';
+  kind: 'reasoning' | 'tool-call' | 'tool-result' | 'text' | 'user-prompt' | 'record' | 'skip';
   title: string;
   subtitle?: string;
   body?: string;
   status?: 'success' | 'error';
+  timestamp?: string;
+}
+
+const RECORD_TITLES: Record<string, string> = {
+  observation: 'Observation',
+  finding: 'Finding',
+  symptom: 'Symptom',
+  investigation_gap: 'Investigation gap',
+};
+
+function recordTitle(type: string): string {
+  return RECORD_TITLES[type] || type.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
+/** Best-effort markdown for a journal record type whose schema the dashboard does not parse. */
+function recordText(v: any): string | null {
+  if (typeof v === 'string') return v.trim() ? v : null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const pick = (...keys: string[]) => keys.map((k) => v[k]).find((x) => typeof x === 'string' && x.trim());
+  const title = pick('title', 'name');
+  const text = pick('description', 'summary', 'text', 'details', 'content');
+  if (title || text) return [title && `**${title}**`, text].filter(Boolean).join('\n\n');
+  return v.content && typeof v.content === 'object' ? recordText(v.content) : null;
 }
 
 function parseJournalRecord(r: AgentJournalRecord): ParsedEntry[] {
+  return parseJournalContent(r).map((e) => ({ ...e, timestamp: r.timestamp }));
+}
+
+function parseJournalContent(r: AgentJournalRecord): ParsedEntry[] {
   if (!r.content) return [];
+  const type = (r.type || '').toLowerCase();
   let root: any;
   try {
     root = JSON.parse(r.content);
   } catch {
+    if (type && type !== 'message') return [{ kind: 'record', title: recordTitle(type), body: r.content }];
     return [{ kind: 'text', title: 'event', body: r.content }];
+  }
+  if (type && type !== 'message') {
+    const body = recordText(root) ?? '```json\n' + JSON.stringify(root, null, 2) + '\n```';
+    return [{ kind: 'record', title: recordTitle(type), body }];
   }
   // Metadata / context-window noise — discard entirely.
   if (root?.metadata && root?.data?.context_window) return [];
@@ -158,6 +197,7 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
     entry.kind === 'reasoning'     ? COLOR.fgMuted :
     entry.kind === 'user-prompt'   ? COLOR.high :
     entry.kind === 'text'          ? COLOR.ok :
+    entry.kind === 'record'        ? COLOR.info :
     COLOR.fgDim;
 
   const body = entry.body || '';
@@ -167,8 +207,10 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
   const alwaysCollapsed = entry.kind === 'reasoning' || entry.kind === 'user-prompt';
   const isLong = body.length > 600;
   const showCollapsed = alwaysCollapsed || isLong;
+  const at = entry.timestamp ? new Date(entry.timestamp) : null;
+  const hasTime = !!at && !Number.isNaN(at.getTime());
 
-  const renderedBody = entry.kind === 'text' ? (
+  const renderedBody = entry.kind === 'text' || entry.kind === 'record' ? (
     <div className="soc-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
     </div>
@@ -214,6 +256,15 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
         {entry.subtitle && (
           <code style={{ color: COLOR.fgMuted, fontSize: 11 }}>{entry.subtitle}</code>
         )}
+        {hasTime && (
+          <time
+            dateTime={entry.timestamp}
+            title={at!.toLocaleString()}
+            style={{ marginLeft: 'auto', color: COLOR.fgDim, fontSize: 11, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+          >
+            {at!.toLocaleTimeString()}
+          </time>
+        )}
       </div>
       {entry.body && (
         showCollapsed ? (
@@ -232,11 +283,20 @@ function JournalEntry({ entry, defaultExpanded }: { entry: ParsedEntry; defaultE
   );
 }
 
+/** The API returns the newest record first; show the oldest first, by timestamp when every record has one. */
+function chronological(records: AgentJournalRecord[]): AgentJournalRecord[] {
+  const oldestFirst = records.slice().reverse();
+  const times = oldestFirst.map((r) => (r.timestamp ? Date.parse(r.timestamp) : NaN));
+  if (times.some(Number.isNaN)) return oldestFirst;
+  return oldestFirst
+    .map((r, i) => ({ r, t: times[i] }))
+    .sort((a, b) => a.t - b.t)
+    .map(({ r }) => r);
+}
+
 function AgentJournal({ records }: { records: AgentJournalRecord[] }) {
-  // Journal order on the wire is *most recent first*. Flip it so the reader
-  // sees the investigation chronologically: briefing → reasoning → tool
-  // calls → final response.
-  const entries = records.slice().reverse().flatMap(parseJournalRecord);
+  // Chronological: briefing → reasoning → tool calls → final response.
+  const entries = chronological(records).flatMap(parseJournalRecord);
   if (entries.length === 0) return <Box color="text-status-inactive">No displayable records.</Box>;
   // Find the last 'text' (final agent response) and default-expand it so the
   // conclusion is visible without hunting.
@@ -312,9 +372,10 @@ export default function FindingDetail() {
   const [investigationError, setInvestigationError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
-  // Track the last dispatch timestamp so we can ignore stale 'idle' polls
-  // during the ~30-60s window before the task shows up in the backlog.
+  // Track the last dispatch so we can ignore stale polls while the agent has not created the
+  // backlog task yet: the API reports the newest task, which is still the previous one (or none).
   const lastDispatchAtRef = useRef<number>(0);
+  const tasksBeforeDispatchRef = useRef<Set<string>>(new Set());
   // State mirror of the ref so the "Xs ago" pill re-renders every tick
   // while an investigation is in flight.
   const [dispatchedAt, setDispatchedAt] = useState<number>(0);
@@ -325,9 +386,10 @@ export default function FindingDetail() {
     getInvestigation(findingUid)
       .then((s) => {
         const sinceDispatch = Date.now() - lastDispatchAtRef.current;
-        if (s.status === 'idle' && sinceDispatch < 90000) {
-          // Agent hasn't picked up the task yet — don't drop the optimistic
-          // 'pending' badge onto 'Not yet investigated'.
+        const hasNewTask = s.tasks.some((t) => !tasksBeforeDispatchRef.current.has(t.taskId));
+        if (sinceDispatch < DISPATCH_GRACE_MS && !hasNewTask) {
+          // Agent hasn't picked up the task yet — keep the optimistic 'pending' badge
+          // instead of 'Not yet investigated' or the previous investigation's result.
           setInvestigation((prev) => prev ?? { ...s, status: 'pending' });
         } else {
           setInvestigation(s);
@@ -361,13 +423,13 @@ export default function FindingDetail() {
   // Depends on the running flag, not the investigation object: each poll result would otherwise
   // restart the timer and the 10 s phase would never start.
   const polling = isInvestigationRunning(investigation)
-    || (investigation?.status === 'pending' && dispatchedAt > 0 && Date.now() - dispatchedAt < 90000);
+    || (investigation?.status === 'pending' && dispatchedAt > 0 && now - dispatchedAt < DISPATCH_GRACE_MS);
   useEffect(() => {
     if (!polling) return;
     // Adaptive polling: the webhook → backlog-task hop takes 30-90 s; poll
     // every 3 s during that window so the UI feels responsive, then back off
     // to 10 s for the longer investigation phase.
-    const nextDelay = () => (Date.now() - lastDispatchAtRef.current < 90000 ? 3000 : 10000);
+    const nextDelay = () => (Date.now() - lastDispatchAtRef.current < FAST_POLL_MS ? 3000 : 10000);
     let timer = 0;
     const tick = () => {
       refreshInvestigation();
@@ -417,10 +479,12 @@ export default function FindingDetail() {
     if (!findingUid) return;
     setDispatching(true);
     setDispatchMessage(null);
+    const tasksBefore = new Set((investigation?.tasks || []).map((t) => t.taskId));
     try {
       const res = await investigateFinding(findingUid);
       setDispatchMessage(`Dispatched — incident ${res.incidentId}. Expect 30–90 s for the backlog task to appear, and 1–3 min for the full investigation.`);
       const ts = Date.now();
+      tasksBeforeDispatchRef.current = tasksBefore;
       lastDispatchAtRef.current = ts;
       setDispatchedAt(ts);
       setNow(ts);
@@ -462,6 +526,8 @@ export default function FindingDetail() {
   if (!item) return null;
 
   const raw = item.raw;
+  // Telemetry and the summary records (shown in the Live summary panel) stay out of the journal.
+  const shownJournal = (investigation?.journal || []).filter(isShownJournalRecord);
 
   return (
     <ContentLayout
@@ -518,7 +584,7 @@ export default function FindingDetail() {
                 disabled={investigation?.status === 'in_progress' || investigation?.status === 'pending'}
                 iconName="status-positive"
               >
-                {investigation?.status === 'completed' ? 'Re-investigate' : 'Investigate with DevOps Agent'}
+                {investigation?.status === 'completed' || investigation?.status === 'failed' ? 'Re-investigate' : 'Investigate with DevOps Agent'}
               </Button>
             </div>
           </div>
@@ -541,7 +607,7 @@ export default function FindingDetail() {
         {dispatchMessage && <Alert type="success" dismissible onDismiss={() => setDispatchMessage(null)}>{dispatchMessage}</Alert>}
 
         {hasSummary(investigation?.summary) && (
-          <LiveSummaryPanel summary={investigation.summary} running={isInvestigationRunning(investigation)} />
+          <LiveSummaryPanel summary={investigation.summary} state={investigationState(investigation)} />
         )}
 
         {/* 2-col: overview + tabs (stacks on mobile) */}
@@ -982,6 +1048,7 @@ export default function FindingDetail() {
                                     {investigation.tasks.map((t, i) => {
                                       const statusColor = t.status === 'COMPLETED' ? COLOR.ok
                                                        : t.status === 'IN_PROGRESS' || t.status === 'RUNNING' || t.status === 'ACTIVE' ? COLOR.accent
+                                                       : taskState(t.status) === 'failed' ? COLOR.critical
                                                        : COLOR.medium;
                                       return (
                                         <li key={t.taskId} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 14px', background: 'var(--soc-bg-elev)', border: `1px solid ${COLOR.border}`, borderRadius: 6 }}>
@@ -1000,13 +1067,13 @@ export default function FindingDetail() {
                                 </div>,
                                 <div key="journal">
                                   <div style={{ color: COLOR.fgMuted, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                                    Agent reasoning steps (most recent first)
+                                    Agent reasoning steps (oldest first)
                                   </div>
-                                  {investigation.journal.length === 0 ? (
+                                  {shownJournal.length === 0 ? (
                                     <Box color="text-status-inactive">Waiting for first reasoning step…</Box>
                                   ) : (
                                     <LiveRegion>
-                                      <AgentJournal records={investigation.journal} />
+                                      <AgentJournal records={shownJournal} />
                                     </LiveRegion>
                                   )}
                                 </div>,
