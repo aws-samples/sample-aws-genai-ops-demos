@@ -1,0 +1,407 @@
+{
+ "message": "AWS policy AWSSecurityHubServiceRolePolicy is attached but does not allow '*:*' administrative privileges.",
+ "metadata": {
+  "event_code": "iam_aws_attached_policy_no_administrative_privileges",
+  "product": {
+   "name": "Prowler",
+   "uid": "prowler",
+   "vendor_name": "Prowler",
+   "version": "5.52.0"
+  },
+  "profiles": [
+   "cloud",
+   "datetime"
+  ],
+  "tenant_uid": "arn:aws:organizations::111122223333:organization/o-exampleorg",
+  "version": "1.5.0"
+ },
+ "severity_id": 5,
+ "severity": "Critical",
+ "status": "New",
+ "status_code": "PASS",
+ "status_detail": "AWS policy AWSSecurityHubServiceRolePolicy is attached but does not allow '*:*' administrative privileges.",
+ "status_id": 1,
+ "unmapped": {
+  "related_url": "",
+  "categories": [
+   "identity-access"
+  ],
+  "depends_on": [],
+  "related_to": [],
+  "additional_urls": [
+   "https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess.html",
+   "https://support.icompaas.com/support/solutions/articles/62000233815-ensure-iam-roles-do-not-have-administratoraccess-policy-attached",
+   "http://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"
+  ],
+  "notes": "CAF Security Epic: IAM",
+  "compliance": {
+   "ASD-Essential-Eight-Nov 2023": [
+    "E8-4.4"
+   ],
+   "AWS-AI-Security-Framework-1.0": [
+    "AISF-IAM-02"
+   ],
+   "AWS-Foundational-Security-Best-Practices": [
+    "IAM.1"
+   ]
+  },
+  "scan_id": "01a213fd-fd35-7e08-8253-1a1386818630",
+  "provider_uid": "111122223333",
+  "provider": "aws"
+ },
+ "activity_name": "Create",
+ "activity_id": 1,
+ "finding_info": {
+  "analytic": {
+   "category": "iam",
+   "name": "Attached AWS-managed IAM policy does not allow '*:*' administrative privileges",
+   "type": "Rule",
+   "type_id": 1,
+   "uid": "iam_aws_attached_policy_no_administrative_privileges"
+  },
+  "created_time": 1795631742,
+  "created_time_dt": "2026-11-25T18:35:42.261580",
+  "desc": "**IAM AWS-managed policies** attached to identities are inspected for statements that allow `Action:'*'` on `Resource:'*'`-i.e., full administrative `*:*` permissions",
+  "attacks": [
+   {
+    "tactic": {
+     "name": "Defense Evasion"
+    },
+    "technique": {
+     "name": "Valid Accounts",
+     "src_url": "https://attack.mitre.org/techniques/T1078/",
+     "uid": "T1078"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Persistence"
+    },
+    "technique": {
+     "name": "Valid Accounts",
+     "src_url": "https://attack.mitre.org/techniques/T1078/",
+     "uid": "T1078"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Privilege Escalation"
+    },
+    "technique": {
+     "name": "Valid Accounts",
+     "src_url": "https://attack.mitre.org/techniques/T1078/",
+     "uid": "T1078"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Initial Access"
+    },
+    "technique": {
+     "name": "Valid Accounts",
+     "src_url": "https://attack.mitre.org/techniques/T1078/",
+     "uid": "T1078"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Execution"
+    },
+    "technique": {
+     "name": "Serverless Execution",
+     "src_url": "https://attack.mitre.org/techniques/T1648/",
+     "uid": "T1648"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Persistence"
+    },
+    "technique": {
+     "name": "Account Manipulation",
+     "src_url": "https://attack.mitre.org/techniques/T1098/",
+     "uid": "T1098"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Defense Evasion"
+    },
+    "technique": {
+     "name": "Modify Cloud Compute Infrastructure",
+     "src_url": "https://attack.mitre.org/techniques/T1578/",
+     "uid": "T1578"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Defense Evasion"
+    },
+    "technique": {
+     "name": "Use Alternate Authentication Material",
+     "src_url": "https://attack.mitre.org/techniques/T1550/",
+     "uid": "T1550"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Lateral Movement"
+    },
+    "technique": {
+     "name": "Use Alternate Authentication Material",
+     "src_url": "https://attack.mitre.org/techniques/T1550/",
+     "uid": "T1550"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Credential Access"
+    },
+    "technique": {
+     "name": "Network Sniffing",
+     "src_url": "https://attack.mitre.org/techniques/T1040/",
+     "uid": "T1040"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Discovery"
+    },
+    "technique": {
+     "name": "Network Sniffing",
+     "src_url": "https://attack.mitre.org/techniques/T1040/",
+     "uid": "T1040"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Discovery"
+    },
+    "technique": {
+     "name": "Cloud Infrastructure Discovery",
+     "src_url": "https://attack.mitre.org/techniques/T1580/",
+     "uid": "T1580"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Discovery"
+    },
+    "technique": {
+     "name": "Cloud Service Dashboard",
+     "src_url": "https://attack.mitre.org/techniques/T1538/",
+     "uid": "T1538"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Discovery"
+    },
+    "technique": {
+     "name": "Cloud Storage Object Discovery",
+     "src_url": "https://attack.mitre.org/techniques/T1619/",
+     "uid": "T1619"
+    }
+   },
+   {
+    "tactic": {
+     "name": "Discovery"
+    },
+    "technique": {
+     "name": "Password Policy Discovery",
+     "src_url": "https://attack.mitre.org/techniques/T1201/",
+     "uid": "T1201"
+    }
+   }
+  ],
+  "title": "Attached AWS-managed IAM policy does not allow '*:*' administrative privileges",
+  "types": [
+   "Software and Configuration Checks/AWS Security Best Practices",
+   "Software and Configuration Checks/Industry and Regulatory Standards/AWS Foundational Security Best Practices",
+   "Software and Configuration Checks/Industry and Regulatory Standards/CIS AWS Foundations Benchmark",
+   "TTPs/Privilege Escalation"
+  ],
+  "uid": "prowler-aws-iam_aws_attached_policy_no_administrative_privileges-111122223333-us-east-1-AWSSecurityHubServiceRolePolicy"
+ },
+ "resources": [
+  {
+   "cloud_partition": "aws",
+   "region": "us-east-1",
+   "data": {
+    "details": "",
+    "metadata": {
+     "name": "AWSSecurityHubServiceRolePolicy",
+     "arn": "arn:aws:iam::aws:policy/aws-service-role/AWSSecurityHubServiceRolePolicy",
+     "entity": "ANPAJQPCESDDYDLLSOGYO",
+     "version_id": "v16",
+     "type": "AWS",
+     "attached": true,
+     "document": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "SecurityHubServiceRolePermissions",
+        "Effect": "Allow",
+        "Action": [
+         "cloudtrail:DescribeTrails",
+         "cloudtrail:GetTrailStatus",
+         "cloudtrail:GetEventSelectors",
+         "cloudwatch:DescribeAlarms",
+         "cloudwatch:DescribeAlarmsForMetric",
+         "logs:DescribeMetricFilters",
+         "sns:ListSubscriptionsByTopic",
+         "config:DescribeConfigurationRecorders",
+         "config:DescribeConfigurationRecorderStatus",
+         "config:DescribeConfigRules",
+         "config:DescribeConfigRuleEvaluationStatus",
+         "config:BatchGetResourceConfig",
+         "config:SelectResourceConfig",
+         "iam:GenerateCredentialReport",
+         "organizations:ListAccounts",
+         "config:PutEvaluations",
+         "tag:GetResources",
+         "iam:GetCredentialReport",
+         "organizations:DescribeAccount",
+         "organizations:DescribeOrganization",
+         "organizations:ListChildren",
+         "organizations:ListAWSServiceAccessForOrganization",
+         "organizations:DescribeOrganizationalUnit",
+         "securityhub:BatchDisableStandards",
+         "securityhub:BatchEnableStandards",
+         "securityhub:BatchUpdateStandardsControlAssociations",
+         "securityhub:BatchGetSecurityControls",
+         "securityhub:BatchGetStandardsControlAssociations",
+         "securityhub:CreateMembers",
+         "securityhub:DeleteMembers",
+         "securityhub:DescribeHub",
+         "securityhub:DescribeOrganizationConfiguration",
+         "securityhub:DescribeStandards",
+         "securityhub:DescribeStandardsControls",
+         "securityhub:DisassociateFromAdministratorAccount",
+         "securityhub:DisassociateMembers",
+         "securityhub:DisableSecurityHub",
+         "securityhub:EnableSecurityHub",
+         "securityhub:GetEnabledStandards",
+         "securityhub:ListStandardsControlAssociations",
+         "securityhub:ListSecurityControlDefinitions",
+         "securityhub:UpdateOrganizationConfiguration",
+         "securityhub:UpdateSecurityControl",
+         "securityhub:UpdateSecurityHubConfiguration",
+         "securityhub:UpdateStandardsControl"
+        ],
+        "Resource": "*"
+       },
+       {
+        "Sid": "SecurityHubServiceRoleConfigPermissions",
+        "Effect": "Allow",
+        "Action": [
+         "config:PutConfigRule",
+         "config:DeleteConfigRule",
+         "config:GetComplianceDetailsByConfigRule"
+        ],
+        "Resource": "arn:aws:config:*:*:config-rule/aws-service-rule/*securityhub*"
+       },
+       {
+        "Sid": "SecurityHubServiceRoleOrganizationsPermissions",
+        "Effect": "Allow",
+        "Action": [
+         "organizations:ListDelegatedAdministrators"
+        ],
+        "Resource": "*",
+        "Condition": {
+         "StringEquals": {
+          "organizations:ServicePrincipal": [
+           "securityhub.amazonaws.com"
+          ]
+         }
+        }
+       },
+       {
+        "Sid": "SecurityHubCSPMServiceRoleConfig",
+        "Effect": "Allow",
+        "Action": [
+         "config:PutServiceLinkedConfigurationRecorder",
+         "config:PutThirdPartyServiceLinkedConfigurationRecorder",
+         "config:DeleteServiceLinkedConfigurationRecorder",
+         "config:DescribeConfigurationRecorders",
+         "config:DescribeConfigurationRecorderStatus"
+        ],
+        "Resource": [
+         "arn:aws:config:*:*:configuration-recorder/*ConfigurationRecorderForSecurityHubCSPM*"
+        ]
+       },
+       {
+        "Sid": "SecurityHubCSPMServiceRoleConfigListAndGet",
+        "Effect": "Allow",
+        "Action": [
+         "config:ListConfigurationRecorders",
+         "config:GetConnector"
+        ],
+        "Resource": "*"
+       },
+       {
+        "Sid": "SecurityHubCSPMServiceRoleIamPermissions",
+        "Effect": "Allow",
+        "Action": [
+         "iam:CreateServiceLinkedRole"
+        ],
+        "Resource": "arn:aws:iam::*:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig",
+        "Condition": {
+         "StringEquals": {
+          "iam:AWSServiceName": "config.amazonaws.com"
+         }
+        }
+       },
+       {
+        "Sid": "SecurityHubCSPMServiceRoleConfigMetricsPermissions",
+        "Effect": "Allow",
+        "Action": "cloudwatch:GetMetricData",
+        "Resource": "*"
+       }
+      ]
+     },
+     "tags": []
+    }
+   },
+   "group": {
+    "name": "iam"
+   },
+   "labels": [],
+   "name": "AWSSecurityHubServiceRolePolicy",
+   "type": "AwsIamPolicy",
+   "uid": "arn:aws:iam::aws:policy/aws-service-role/AWSSecurityHubServiceRolePolicy"
+  }
+ ],
+ "category_name": "Findings",
+ "category_uid": 2,
+ "class_name": "Detection Finding",
+ "class_uid": 2004,
+ "cloud": {
+  "account": {
+   "name": "example-account",
+   "type": "AWS Account",
+   "type_id": 10,
+   "uid": "111122223333",
+   "labels": []
+  },
+  "org": {
+   "name": "o-exampleorg",
+   "ou_uid": "",
+   "ou_name": "",
+   "uid": "arn:aws:organizations::111122223333:organization/o-exampleorg"
+  },
+  "provider": "aws",
+  "region": "us-east-1"
+ },
+ "remediation": {
+  "desc": "Apply **least privilege**: avoid attaching AWS-managed policies that grant `*:*`.\n- Use **customer-managed, scoped policies** per role\n- Enforce **separation of duties** and **permissions boundaries**\n- Prefer **temporary, time-bound elevation** for emergencies with MFA\n- Regularly review access and use conditions to constrain context",
+  "references": [
+   "https://hub.prowler.com/check/iam_aws_attached_policy_no_administrative_privileges"
+  ]
+ },
+ "risk_details": "**Unrestricted `*:*` access** enables any action on any resource, risking:\n- Data exfiltration (**confidentiality**)\n- Unauthorized changes and policy tampering (**integrity**)\n- Service deletion or shutdown (**availability**)\nAttackers can disable logging, create backdoor principals, and expand lateral movement.",
+ "time": 1795631742,
+ "time_dt": "2026-11-25T18:35:42.261580",
+ "type_uid": 200401,
+ "type_name": "Detection Finding: Create"
+}

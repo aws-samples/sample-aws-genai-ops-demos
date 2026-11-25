@@ -147,7 +147,9 @@ export class IngestStack extends cdk.Stack {
       functionName: 'prowler-security-ingest',
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'ingest-findings')),
+      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'ingest-findings'), {
+        exclude: ['tests', '__pycache__', '.pytest_cache'],
+      }),
       role: ingestRole,
       timeout: cdk.Duration.minutes(5),
       memorySize: 512,
