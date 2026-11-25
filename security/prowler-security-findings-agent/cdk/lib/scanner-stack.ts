@@ -12,6 +12,8 @@ import { Construct } from 'constructs';
 export interface ScannerStackProps extends cdk.StackProps {
   rawReportsBucketName: string;
   scanSchedule: string;
+  /** Run the task in private subnets behind a NAT gateway instead of public subnets. */
+  natGateway?: boolean;
 }
 
 /**
@@ -32,11 +34,17 @@ export interface ScannerStackProps extends cdk.StackProps {
  * A default VPC with two public subnets is provisioned so Prowler can reach
  * AWS service endpoints without a NAT gateway; Fargate platform 1.4+
  * assignPublicIp=ENABLED gives the task an egress IP.
+ *
+ * With `natGateway: true` the task runs in private subnets behind one NAT
+ * gateway instead. Needed in accounts where VPC Block Public Access is set to
+ * `block-ingress`, which drops replies to traffic sent straight through the
+ * internet gateway, so the task can't reach ECR.
  */
 export class ScannerStack extends cdk.Stack {
   public readonly clusterArn: string;
   public readonly taskDefinitionArn: string;
   public readonly subnetIds: string[];
+  public readonly assignPublicIp: boolean;
   public readonly securityGroupId: string;
   public readonly logGroupName: string;
 
@@ -44,6 +52,7 @@ export class ScannerStack extends cdk.Stack {
     super(scope, id, props);
 
     const { rawReportsBucketName, scanSchedule } = props;
+    const natGateway = props.natGateway ?? false;
 
     const ecrRepo = new ecr.Repository(this, 'ScannerRepo', {
       repositoryName: 'prowler-security-scanner',
@@ -100,13 +109,18 @@ export class ScannerStack extends cdk.Stack {
 
     // Default VPC — simple public-subnet-only setup keeps the demo cheap
     // (no NAT gateway). The task gets a public IP for egress.
+    const subnetConfiguration: ec2.SubnetConfiguration[] = [
+      { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+    ];
+    if (natGateway) {
+      subnetConfiguration.push({ name: 'private', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 });
+    }
     const vpc = new ec2.Vpc(this, 'ScannerVpc', {
       maxAzs: 2,
-      natGateways: 0,
-      subnetConfiguration: [
-        { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
-      ],
+      natGateways: natGateway ? 1 : 0,
+      subnetConfiguration,
     });
+    const taskSubnetType = natGateway ? ec2.SubnetType.PRIVATE_WITH_EGRESS : ec2.SubnetType.PUBLIC;
 
     const securityGroup = new ec2.SecurityGroup(this, 'ScannerSg', {
       vpc,
@@ -202,8 +216,8 @@ export class ScannerStack extends cdk.Stack {
     rule.addTarget(new eventsTargets.EcsTask({
       cluster,
       taskDefinition,
-      subnetSelection: { subnetType: ec2.SubnetType.PUBLIC },
-      assignPublicIp: true,
+      subnetSelection: { subnetType: taskSubnetType },
+      assignPublicIp: !natGateway,
       securityGroups: [securityGroup],
       launchType: ecs.LaunchType.FARGATE,
       platformVersion: ecs.FargatePlatformVersion.LATEST,
@@ -211,7 +225,12 @@ export class ScannerStack extends cdk.Stack {
 
     this.clusterArn = cluster.clusterArn;
     this.taskDefinitionArn = taskDefinition.taskDefinitionArn;
-    this.subnetIds = vpc.publicSubnets.map((s) => s.subnetId);
+    this.subnetIds = vpc.selectSubnets({ subnetType: taskSubnetType }).subnetIds;
+    this.assignPublicIp = !natGateway;
+    if (natGateway) {
+      // Keep the public-subnet exports an existing ApiStack still imports, so switching modes needs no two-phase deploy.
+      vpc.publicSubnets.forEach((s) => this.exportValue(s.subnetId));
+    }
     this.securityGroupId = securityGroup.securityGroupId;
     this.logGroupName = logGroup.logGroupName;
 
@@ -227,5 +246,6 @@ export class ScannerStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'TaskDefinitionArn', { value: taskDefinition.taskDefinitionArn });
     new cdk.CfnOutput(this, 'ScannerSubnetIds', { value: this.subnetIds.join(',') });
     new cdk.CfnOutput(this, 'ScannerSecurityGroupId', { value: this.securityGroupId });
+    new cdk.CfnOutput(this, 'ScannerAssignPublicIp', { value: natGateway ? 'DISABLED' : 'ENABLED' });
   }
 }

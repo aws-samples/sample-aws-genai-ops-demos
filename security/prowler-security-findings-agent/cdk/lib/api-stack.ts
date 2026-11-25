@@ -13,6 +13,8 @@ export interface ApiStackProps extends cdk.StackProps {
   scannerClusterArn: string;
   scannerTaskDefinitionArn: string;
   scannerSubnetIds: string[];
+  /** False when the scanner runs in private subnets behind a NAT gateway. */
+  scannerAssignPublicIp: boolean;
   scannerSecurityGroupId: string;
   /** CloudWatch log group the scanner writes to — used by /scans/running/{taskArn}/logs. */
   scannerLogGroupName: string;
@@ -196,6 +198,7 @@ export class ApiStack extends cdk.Stack {
         SCANNER_CLUSTER_ARN: props.scannerClusterArn,
         SCANNER_TASK_DEFINITION_ARN: props.scannerTaskDefinitionArn,
         SCANNER_SUBNET_IDS: props.scannerSubnetIds.join(','),
+        SCANNER_ASSIGN_PUBLIC_IP: props.scannerAssignPublicIp ? 'ENABLED' : 'DISABLED',
         SCANNER_SECURITY_GROUP_ID: props.scannerSecurityGroupId,
         SCANNER_LOG_GROUP: props.scannerLogGroupName,
         DEVOPS_AGENT_TOPIC_ARN: props.devOpsAgentTopicArn,
