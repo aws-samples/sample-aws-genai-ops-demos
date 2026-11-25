@@ -12,7 +12,9 @@ SKIP_BOOTSTRAP=false
 # Optional CDK context entries (--cdk-context key=value, repeatable), passed as
 # `--context key=value`. Lets a demo enable optional stacks (e.g. multi-account
 # rollout) without hardcoding account/organization ids in cdk.json.
-CDK_CONTEXT_ARGS=""
+# Kept as an array so each value reaches cdk as one argument, exactly as given
+# (no word splitting, globbing or `$` expansion).
+CDK_CONTEXT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -33,7 +35,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --cdk-context)
-            CDK_CONTEXT_ARGS="$CDK_CONTEXT_ARGS --context \"$2\""
+            CDK_CONTEXT_ARGS+=(--context "$2")
             shift 2
             ;;
         *)
@@ -47,6 +49,13 @@ done
 if [ -z "$CDK_DIRECTORY" ]; then
     echo "❌ --cdk-directory is required"
     exit 1
+fi
+
+# --stack-name may list several stacks separated by spaces (CloudFormation stack
+# names contain none); each becomes one cdk argument, never glob-expanded.
+STACK_ARGS=()
+if [ -n "$STACK_NAME" ]; then
+    read -r -a STACK_ARGS <<< "$STACK_NAME"
 fi
 
 # Set PYTHONPATH to include shared utilities
@@ -91,7 +100,7 @@ echo ""
 echo -e "\033[0;33mInstalling CDK dependencies...\033[0m"
 
 # Determine CDK app override for Python projects (use python3 for cross-platform compatibility)
-CDK_APP_OVERRIDE=""
+CDK_APP_OVERRIDE=()
 
 if [ -f "requirements.txt" ]; then
     # Python CDK project. Install deps and FAIL LOUDLY if the install does not succeed.
@@ -157,7 +166,7 @@ if [ -f "requirements.txt" ]; then
     # Pin the CDK app command to the SAME interpreter we installed into and verified above,
     # by absolute path -- not a bare `python3`, which npx cdk could re-resolve to a different
     # interpreter that lacks the deps (the root cause of the ModuleNotFoundError-after-OK bug).
-    CDK_APP_OVERRIDE="--app '$PY app.py'"
+    CDK_APP_OVERRIDE=(--app "$PY app.py")
     echo -e "\033[0;32m      OK: Python CDK dependencies installed (interpreter: $PY)\033[0m"
 elif [ -f "package.json" ]; then
     # TypeScript/JavaScript CDK project.
@@ -184,7 +193,7 @@ if [ "$SKIP_BOOTSTRAP" = false ]; then
     echo ""
     echo -e "\033[0;33mEnsuring CDK bootstrap is up to date...\033[0m"
     set +e
-    eval npx -y cdk bootstrap "aws://$ACCOUNT_ID/$CURRENT_REGION" --no-cli-pager $CDK_APP_OVERRIDE 2>&1
+    npx -y cdk bootstrap "aws://$ACCOUNT_ID/$CURRENT_REGION" --no-cli-pager "${CDK_APP_OVERRIDE[@]}" 2>&1
     bootstrap_exit=$?
     set -e
     if [ $bootstrap_exit -ne 0 ]; then
@@ -200,11 +209,7 @@ if [ "$DESTROY_STACK" = true ]; then
     echo ""
     echo -e "\033[0;33mDestroying CDK stack...\033[0m"
     set +e
-    if [ -z "$STACK_NAME" ]; then
-        eval npx -y cdk destroy --force --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
-    else
-        eval npx -y cdk destroy "$STACK_NAME" --force --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
-    fi
+    npx -y cdk destroy "${STACK_ARGS[@]}" --force --no-cli-pager "${CDK_CONTEXT_ARGS[@]}" "${CDK_APP_OVERRIDE[@]}" 2>&1
     cdk_exit=$?
     set -e
     if [ $cdk_exit -ne 0 ]; then
@@ -216,11 +221,7 @@ else
     echo ""
     echo -e "\033[0;33mDeploying CDK stack...\033[0m"
     set +e
-    if [ -z "$STACK_NAME" ]; then
-        eval npx -y cdk deploy --require-approval never --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
-    else
-        eval npx -y cdk deploy "$STACK_NAME" --require-approval never --no-cli-pager $CDK_CONTEXT_ARGS $CDK_APP_OVERRIDE 2>&1
-    fi
+    npx -y cdk deploy "${STACK_ARGS[@]}" --require-approval never --no-cli-pager "${CDK_CONTEXT_ARGS[@]}" "${CDK_APP_OVERRIDE[@]}" 2>&1
     cdk_exit=$?
     set -e
     if [ $cdk_exit -ne 0 ]; then
