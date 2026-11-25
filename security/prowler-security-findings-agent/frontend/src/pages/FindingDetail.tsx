@@ -371,6 +371,7 @@ export default function FindingDetail() {
   const [investigation, setInvestigation] = useState<InvestigationState | null>(null);
   const [investigationError, setInvestigationError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   // Track the last dispatch so we can ignore stale polls while the agent has not created the
   // backlog task yet: the API reports the newest task, which is still the previous one (or none).
@@ -482,6 +483,7 @@ export default function FindingDetail() {
     const tasksBefore = new Set((investigation?.tasks || []).map((t) => t.taskId));
     try {
       const res = await investigateFinding(findingUid);
+      setActiveTab('investigation');
       setDispatchMessage(`Dispatched — incident ${res.incidentId}. Expect 30–90 s for the backlog task to appear, and 1–3 min for the full investigation.`);
       const ts = Date.now();
       tasksBeforeDispatchRef.current = tasksBefore;
@@ -606,10 +608,6 @@ export default function FindingDetail() {
         )}
         {dispatchMessage && <Alert type="success" dismissible onDismiss={() => setDispatchMessage(null)}>{dispatchMessage}</Alert>}
 
-        {hasSummary(investigation?.summary) && (
-          <LiveSummaryPanel summary={investigation.summary} state={investigationState(investigation)} />
-        )}
-
         {/* 2-col: overview + tabs (stacks on mobile) */}
         <div className="soc-grid-sidebar">
           {/* Left sidebar: facts */}
@@ -671,6 +669,8 @@ export default function FindingDetail() {
           {/* Right: tabs */}
           <div style={{ minWidth: 0 }}><Container>
             <Tabs
+              activeTabId={activeTab}
+              onChange={({ detail }) => setActiveTab(detail.activeTabId)}
               tabs={[
                 {
                   id: 'overview',
@@ -1026,6 +1026,9 @@ export default function FindingDetail() {
                                 </div>
                               </div>
                             </div>,
+                            hasSummary(investigation.summary) ? (
+                              <LiveSummaryPanel key="summary" embedded summary={investigation.summary} state={investigationState(investigation)} />
+                            ) : null,
                             investigation.status === 'pending' && investigation.tasks.length === 0 ? (
                               <Alert key="waiting" type="info">
                                 <SpaceBetween size="xs" direction="horizontal">

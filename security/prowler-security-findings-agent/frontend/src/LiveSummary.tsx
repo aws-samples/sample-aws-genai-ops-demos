@@ -56,7 +56,21 @@ function SummaryBody({ content }: { content: string }) {
 }
 
 /** The DevOps Agent summary of one investigation, for the finding detail page. */
-export function LiveSummaryPanel({ summary, state }: { summary: LiveSummary; state: RunState }) {
+export function LiveSummaryPanel({ summary, state, embedded = false }: { summary: LiveSummary; state: RunState; embedded?: boolean }) {
+  if (embedded) {
+    return (
+      <SpaceBetween size="xs">
+        <Header
+          variant="h3"
+          description={<Updated iso={summary.updatedAt} source="AWS DevOps Agent" />}
+          actions={<SummaryStatus summary={summary} state={state} />}
+        >
+          Live summary
+        </Header>
+        <SummaryBody content={summary.content} />
+      </SpaceBetween>
+    );
+  }
   return (
     <Container
       header={
