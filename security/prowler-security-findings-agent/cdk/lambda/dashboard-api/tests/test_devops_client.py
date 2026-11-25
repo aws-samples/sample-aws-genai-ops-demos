@@ -31,8 +31,21 @@ def test_investigation_uses_the_same_routes_and_passes_values_through(wire):
     }]
     recorded = wire.journal['exe-ops1-confused-deputy-0002']['records']
     assert [r['content'] for r in body['journal']] == [r['content'] for r in recorded]
+    assert [(r['type'], r['timestamp']) for r in body['journal']] == [
+        ('utilization', '2026-06-23T14:23:21.045Z'),
+        ('message', '2026-06-23T14:22:52.216Z'),
+        ('message', '2026-06-23T14:22:51.547Z'),
+    ]
     assert ('ListBacklogTasks', TASKS_PATH, {}) in wire.calls
     assert ('ListJournalRecords', JOURNAL_PATH, {'executionId': 'exe-ops1-confused-deputy-0002'}) in wire.calls
+
+
+def test_journal_record_without_type_or_time_keeps_nulls(wire):
+    wire.journal['exe-ops1-confused-deputy-0002'] = {'records': [{'recordId': 'r1', 'content': 'plain text'}]}
+
+    _, body = get(f'/findings/{DEPUTY_UID}/investigation')
+
+    assert body['journal'] == [{'timestamp': None, 'type': None, 'content': 'plain text'}]
 
 
 def test_task_without_execution_id_resolves_it_with_list_executions(wire):

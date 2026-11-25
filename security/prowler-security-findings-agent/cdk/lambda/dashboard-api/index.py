@@ -677,8 +677,8 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
         ],
         'journal': [
             {
-                'timestamp': r.get('timestamp'),
-                'type': r.get('type'),
+                'timestamp': _iso8601(r.get('createdAt')) or r.get('timestamp'),
+                'type': r.get('recordType') or r.get('type'),
                 'content': r.get('content'),
             }
             for r in journal[:50]  # cap payload
