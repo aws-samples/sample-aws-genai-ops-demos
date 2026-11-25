@@ -37,7 +37,8 @@ echo ""
 
 # DevOps Agent setup — runs if EITHER the Agent Space ID or the webhook
 # creds are missing. The script creates the Agent Space (if needed) and
-# prompts for the webhook; both outputs are used below to build CDK context.
+# prompts for the webhook; the Agent Space ID goes into the CDK context and
+# the webhook into Secrets Manager after the deploy.
 if [ -z "${DEVOPS_AGENT_SPACE_ID:-}" ] \
     || [ -z "${DEVOPS_AGENT_WEBHOOK_URL:-}" ] \
     || [ -z "${DEVOPS_AGENT_WEBHOOK_SECRET:-}" ]; then
@@ -84,19 +85,20 @@ if [ -z "${SCANNER_NAT_GATEWAY:-}" ]; then
     esac
 fi
 
-# Pass CDK context as an array so values with spaces or shell metacharacters
-# survive expansion. SCAN_SCHEDULE in particular contains `*` and `?` which
-# bash would otherwise word-split and glob-expand at the deploy call site,
-# breaking the argv CDK receives.
+# Same context on every deploy-cdk.sh call: each one synthesizes the whole app and deploys the
+# stack's dependencies too. The webhook URL and HMAC secret stay out of it (Secrets Manager only).
 CDK_CONTEXT=(
-    -c "devOpsAgentWebhookUrl=$DEVOPS_AGENT_WEBHOOK_URL"
-    -c "devOpsAgentWebhookSecret=$DEVOPS_AGENT_WEBHOOK_SECRET"
-    -c "devOpsAgentRegion=$DEVOPS_AGENT_REGION"
-    -c "devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
-    -c "bedrockModelId=$BEDROCK_MODEL_ID"
-    -c "scanSchedule=$SCAN_SCHEDULE"
-    -c "scannerNatGateway=$SCANNER_NAT_GATEWAY"
+    --cdk-context "devOpsAgentRegion=$DEVOPS_AGENT_REGION"
+    --cdk-context "devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
+    --cdk-context "bedrockModelId=$BEDROCK_MODEL_ID"
+    --cdk-context "scanSchedule=$SCAN_SCHEDULE"
+    --cdk-context "scannerNatGateway=$SCANNER_NAT_GATEWAY"
 )
+deploy_stack() {   # stack-name [deploy-cdk.sh flags]
+    # bash -f: deploy-cdk.sh expands context values unquoted, so SCAN_SCHEDULE's * and ? must not glob.
+    bash -f "$REPO_ROOT/shared/scripts/deploy-cdk.sh" --cdk-directory "$SCRIPT_DIR/cdk" \
+        --stack-name "$1" "${@:2}" "${CDK_CONTEXT[@]}"
+}
 
 # ── Timing helpers ────────────────────────────────────────────────
 # `timed_step` prints "[N/TOTAL] Label..." at the start and
@@ -113,39 +115,25 @@ timed_step_done() {
     printf "  done in %dm %02ds.\n\n" $((s/60)) $((s%60))
 }
 
-# Step 1: install CDK deps
-timed_step_start "[1/7] Installing CDK dependencies..."
-cd "$SCRIPT_DIR/cdk"
-npm install --silent
-cd "$SCRIPT_DIR"
-timed_step_done
-
-# Step 2: deploy all non-frontend stacks
-timed_step_start "[2/7] Deploying CDK stacks (all except Frontend)..."
-cd "$SCRIPT_DIR/cdk"
+# Step 1: deploy all non-frontend stacks, one shared deploy-cdk.sh call each, in
+# dependency order (the first call also checks the CDK bootstrap).
+timed_step_start "[1/6] Deploying CDK stacks (all except Frontend)..."
 # Build a dummy frontend/dist so FrontendStack's BucketDeployment doesn't fail if we
-# accidentally include it; we'll deploy the real one in step 6.
+# accidentally include it; we'll deploy the real one in step 5.
 mkdir -p "$SCRIPT_DIR/frontend/dist"
 if [ ! -f "$SCRIPT_DIR/frontend/dist/index.html" ]; then
   echo "<!doctype html><html><body>Prowler Security Dashboard — building…</body></html>" > "$SCRIPT_DIR/frontend/dist/index.html"
 fi
 
-npx cdk deploy \
-    "ProwlerSecurityData-$AWS_REGION" \
-    "ProwlerSecurityAuth-$AWS_REGION" \
-    "ProwlerSecurityDevOpsAgent-$AWS_REGION" \
-    "ProwlerSecurityScanner-$AWS_REGION" \
-    "ProwlerSecurityIngest-$AWS_REGION" \
-    "ProwlerSecurityApi-$AWS_REGION" \
-    "ProwlerSecurityObservability-$AWS_REGION" \
-    "${CDK_CONTEXT[@]}" \
-    --require-approval never \
-    --no-cli-pager
-cd "$SCRIPT_DIR"
+BOOTSTRAP_FLAG=()
+for STACK in Data Auth DevOpsAgent Scanner Ingest Api Observability; do
+    deploy_stack "ProwlerSecurity$STACK-$AWS_REGION" "${BOOTSTRAP_FLAG[@]}"
+    BOOTSTRAP_FLAG=(--skip-bootstrap)
+done
 timed_step_done
 
-# Step 3: build scanner image
-timed_step_start "[3/7] Building Prowler scanner image via CodeBuild..."
+# Step 2: build scanner image
+timed_step_start "[2/6] Building Prowler scanner image via CodeBuild..."
 RAW_BUCKET=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityData-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='RawReportsBucketName'].OutputValue" \
@@ -157,8 +145,8 @@ BUILD_PROJECT=$(aws cloudformation describe-stacks \
 bash "$SCRIPT_DIR/scripts/build-scanner-image.sh" "$RAW_BUCKET" "$BUILD_PROJECT"
 timed_step_done
 
-# Step 4: pull CDK outputs for frontend config
-timed_step_start "[4/7] Fetching CDK outputs for frontend build..."
+# Step 3: pull CDK outputs for frontend config
+timed_step_start "[3/6] Fetching CDK outputs for frontend build..."
 USER_POOL_ID=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityAuth-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
@@ -177,20 +165,15 @@ echo "  IdentityPoolId:   $IDENTITY_POOL_ID"
 echo "  API URL:          $API_FUNCTION_URL"
 timed_step_done
 
-# Step 5: build frontend
-timed_step_start "[5/7] Building frontend..."
+# Step 4: build frontend
+timed_step_start "[4/6] Building frontend..."
 bash "$SCRIPT_DIR/scripts/build-frontend.sh" \
     "$AWS_REGION" "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$IDENTITY_POOL_ID" "$API_FUNCTION_URL"
 timed_step_done
 
-# Step 6: deploy frontend stack
-timed_step_start "[6/7] Deploying Frontend stack..."
-cd "$SCRIPT_DIR/cdk"
-npx cdk deploy "ProwlerSecurityFrontend-$AWS_REGION" \
-    "${CDK_CONTEXT[@]}" \
-    --require-approval never \
-    --no-cli-pager
-cd "$SCRIPT_DIR"
+# Step 5: deploy frontend stack
+timed_step_start "[5/6] Deploying Frontend stack..."
+deploy_stack "ProwlerSecurityFrontend-$AWS_REGION" --skip-bootstrap
 timed_step_done
 
 WEBSITE_URL=$(aws cloudformation describe-stacks \
@@ -201,27 +184,35 @@ WEBSITE_URL=$(aws cloudformation describe-stacks \
 # into the Secrets Manager secret created by CDK. This is run AFTER the CDK
 # deploy so the secret resource exists. CDK only sets a placeholder on create;
 # the real values live here and survive every subsequent partial `cdk deploy`.
+# A bundle that already holds a webhook is never overwritten (rotate with setup-devops-agent).
 if [ -n "${DEVOPS_AGENT_WEBHOOK_URL:-}" ] && [ -n "${DEVOPS_AGENT_WEBHOOK_SECRET:-}" ]; then
     SECRET_NAME="prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
-    BUNDLE=$(jq -n \
-        --arg url "$DEVOPS_AGENT_WEBHOOK_URL" \
-        --arg secret "$DEVOPS_AGENT_WEBHOOK_SECRET" \
-        --arg space "${DEVOPS_AGENT_SPACE_ID:-}" \
-        '{webhookUrl: $url, webhookSecret: $secret, agentSpaceId: $space}')
-    if aws secretsmanager put-secret-value \
-        --secret-id "$SECRET_NAME" \
-        --secret-string "$BUNDLE" \
-        --no-cli-pager >/dev/null 2>&1; then
-        echo "  DevOps Agent bundle written to Secrets Manager."
+    if ! STORED_URL=$(set -o pipefail; aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" \
+        --query SecretString --output text --no-cli-pager 2>/dev/null | jq -r '.webhookUrl // ""'); then
+        echo "  WARN: could not read the DevOps Agent bundle, so it was not written. Run scripts/setup-devops-agent.sh to retry."
+    elif [ -n "$STORED_URL" ] && [ "$STORED_URL" != "NOT_CONFIGURED" ]; then
+        echo "  DevOps Agent bundle already holds a webhook; left unchanged."
     else
-        echo "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.sh manually to retry."
+        BUNDLE=$(jq -n \
+            --arg url "$DEVOPS_AGENT_WEBHOOK_URL" \
+            --arg secret "$DEVOPS_AGENT_WEBHOOK_SECRET" \
+            --arg space "${DEVOPS_AGENT_SPACE_ID:-}" \
+            '{webhookUrl: $url, webhookSecret: $secret, agentSpaceId: $space}')
+        if aws secretsmanager put-secret-value \
+            --secret-id "$SECRET_NAME" \
+            --secret-string "$BUNDLE" \
+            --no-cli-pager >/dev/null 2>&1; then
+            echo "  DevOps Agent bundle written to Secrets Manager."
+        else
+            echo "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.sh manually to retry."
+        fi
     fi
 fi
 
-# Step 7: create a default demo user so the dashboard is usable out of the box
+# Step 6: create a default demo user so the dashboard is usable out of the box
 DEMO_USERNAME="${DEMO_USERNAME:-demo@prowler-security.local}"
 DEMO_PASSWORD="${DEMO_PASSWORD:-ProwlerDemo2026!}"
-timed_step_start "[7/7] Creating default Cognito user $DEMO_USERNAME..."
+timed_step_start "[6/6] Creating default Cognito user $DEMO_USERNAME..."
 if aws cognito-idp admin-get-user --user-pool-id "$USER_POOL_ID" --username "$DEMO_USERNAME" --no-cli-pager >/dev/null 2>&1; then
     echo "  User already exists — refreshing password."
 else
@@ -241,7 +232,7 @@ aws cognito-idp admin-set-user-password \
     --no-cli-pager >/dev/null
 timed_step_done
 
-# Kick off the first scan now — image is in ECR (step 3 already pushed it),
+# Kick off the first scan now — image is in ECR (step 2 already pushed it),
 # so the Fargate task will pull it cleanly. Doing this here instead of from
 # a CDK custom resource at stack-create time avoids the race where the
 # stack creates faster than CodeBuild publishes :latest.

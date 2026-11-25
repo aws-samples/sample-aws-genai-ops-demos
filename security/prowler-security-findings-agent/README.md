@@ -63,10 +63,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture
 - **Node.js 20+** and **npm**
 - **Python 3.12+** (for Lambda packaging inspection; not required at runtime)
 - **zip** utility
-- **CDK bootstrap** for the target account/region. If you haven't bootstrapped yet:
-  ```bash
-  npx cdk bootstrap aws://<account-id>/<region>
-  ```
+- **jq** on macOS / Linux (the bash scripts read and write the DevOps Agent webhook bundle with it)
+- **CDK bootstrap**: nothing to do. `deploy-all` deploys every stack through `shared/scripts/deploy-cdk`, which bootstraps the account/region (or updates the bootstrap stack) on its first call.
 - **Bedrock model access** — enable **Amazon Nova Lite 2** in your region via the Bedrock console (Model access > Manage model access). The demo defaults to the global inference profile `global.amazon.nova-2-lite-v1:0`, which routes to the closest supported region automatically; the base model must be enabled in the regions the profile covers (the console lets you enable them in one click).
 - **AWS DevOps Agent** is available in `us-east-1`, `us-west-2`, and `eu-west-1`. If your infrastructure region is different, set `DEVOPS_AGENT_REGION` before deploying.
 
@@ -99,7 +97,7 @@ The script walks through:
 
 1. Prerequisites check (region, CDK, AWS CLI version, zip)
 2. **Interactive DevOps Agent setup** — creates the Agent Space + IAM roles, prompts you to generate a webhook URL and secret in the DevOps Agent console, then captures them and live-patches both Lambdas (trigger + dashboard-api) with the webhook URL, HMAC secret, and Space ID
-3. Deploys 7 CDK stacks (everything except frontend): Data, Auth, DevOpsAgent, Scanner, Ingest, Api, Observability
+3. Deploys 7 CDK stacks (everything except frontend), one `shared/scripts/deploy-cdk` call each: Data, Auth, DevOpsAgent, Scanner, Ingest, Api, Observability
 4. Builds the Prowler container image via CodeBuild and pushes to ECR
 5. Rebuilds the React dashboard with the CDK outputs baked in
 6. Deploys the frontend stack (CloudFront + S3 + OAC)
@@ -220,7 +218,7 @@ This demo was built to slot cleanly next to the existing patterns:
 
 - **DevOps Agent webhook** (`cdk/lib/devops-agent-stack.ts` + `cdk/lambda/devops-agent-trigger/index.py`) is an adaptation of [`observability/eks-investigation-devops-agent`](../../observability/eks-investigation-devops-agent/), replacing CloudWatch-alarm payloads with Prowler OCSF findings.
 - **React/Cloudscape dashboard** follows [`operations-automation/ai-lambda-runtime-migration`](../../operations-automation/ai-lambda-runtime-migration/): Cognito User Pool → Identity Pool → SigV4 → IAM-authorized Lambda Function URL (instead of AgentCore Runtime).
-- **Shared tooling**: `shared/scripts/check-prerequisites.sh` and `shared/utils/aws-utils.sh` are used verbatim for region detection and prereq validation.
+- **Shared tooling**: `shared/scripts/check-prerequisites.sh` and `shared/utils/aws-utils.sh` are used verbatim for region detection and prereq validation, and `shared/scripts/deploy-cdk.sh` / `.ps1` runs every CDK deploy and destroy.
 
 ## Cost
 

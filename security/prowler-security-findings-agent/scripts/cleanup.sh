@@ -27,7 +27,8 @@ if [ ! -f "$SCRIPT_DIR/../frontend/dist/index.html" ]; then
     echo '<!doctype html><html><body>cleanup placeholder</body></html>' > "$SCRIPT_DIR/../frontend/dist/index.html"
 fi
 
-cd "$SCRIPT_DIR/../cdk"
+CDK_DIR="$(cd "$SCRIPT_DIR/../cdk" && pwd)"
+export AWS_REGION="$REGION"
 
 # If GuardDuty Runtime Monitoring is on for ECS Fargate, it auto-creates an
 # interface endpoint (com.amazonaws.<region>.guardduty-data) plus a security
@@ -71,6 +72,7 @@ fi
 
 STACKS=(
   "ProwlerSecurityFrontend-$REGION"
+  "ProwlerSecurityObservability-$REGION"
   "ProwlerSecurityApi-$REGION"
   "ProwlerSecurityIngest-$REGION"
   "ProwlerSecurityScanner-$REGION"
@@ -80,7 +82,7 @@ STACKS=(
 )
 for STACK in "${STACKS[@]}"; do
   echo "[cleanup] destroying $STACK..."
-  npx cdk destroy "$STACK" --force --no-cli-pager || true
+  bash "$REPO_ROOT/shared/scripts/deploy-cdk.sh" --cdk-directory "$CDK_DIR" --stack-name "$STACK" --destroy --skip-bootstrap || true
 done
 
 # Agent Space (best-effort — only if the user wants it gone)

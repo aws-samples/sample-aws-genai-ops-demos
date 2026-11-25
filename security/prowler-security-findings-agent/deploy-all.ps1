@@ -47,19 +47,25 @@ if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET
     Invoke-SetupDevOpsAgent -AgentSpaceName $ProjectName
 }
 
-$DevOpsAgentWebhookUrl = if ($env:DEVOPS_AGENT_WEBHOOK_URL) { $env:DEVOPS_AGENT_WEBHOOK_URL } else { "" }
-$DevOpsAgentWebhookSecret = if ($env:DEVOPS_AGENT_WEBHOOK_SECRET) { $env:DEVOPS_AGENT_WEBHOOK_SECRET } else { "" }
 $DevOpsAgentSpaceId = if ($env:DEVOPS_AGENT_SPACE_ID) { $env:DEVOPS_AGENT_SPACE_ID } else { "" }
 
+# Same context on every deploy-cdk.ps1 call: each one synthesizes the whole app and deploys the
+# stack's dependencies too. The webhook URL and HMAC secret stay out of it (Secrets Manager only).
 $CdkContext = @(
-    "-c", "devOpsAgentWebhookUrl=$DevOpsAgentWebhookUrl",
-    "-c", "devOpsAgentWebhookSecret=$DevOpsAgentWebhookSecret",
-    "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
-    "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
-    "-c", "bedrockModelId=$BedrockModelId",
-    "-c", "scanSchedule=$ScanSchedule",
-    "-c", "scannerNatGateway=$ScannerNatGateway"
+    "devOpsAgentRegion=$DevOpsAgentRegion",
+    "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
+    "bedrockModelId=$BedrockModelId",
+    "scanSchedule=$ScanSchedule",
+    "scannerNatGateway=$ScannerNatGateway"
 )
+# deploy-cdk.ps1 reads the region from $env:AWS_REGION; keep it on the region checked above.
+$env:AWS_REGION = $AwsRegion
+
+function Deploy-Stack([string]$StackName, [switch]$SkipBootstrap) {
+    & "$RepoRoot\shared\scripts\deploy-cdk.ps1" -CdkDirectory "$ScriptDir\cdk" -StackName $StackName `
+        -SkipBootstrap:$SkipBootstrap -CdkContext $CdkContext
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
 
 # ── Timing helpers ────────────────────────────────────────────────
 # Mirrors deploy-all.sh: each step prints its label, runs, then
@@ -78,47 +84,34 @@ function End-Step {
     Write-Host ""
 }
 
-Start-Step "[1/7] Installing CDK dependencies..."
-Push-Location "$ScriptDir\cdk"
-npm install --silent
-Pop-Location
-End-Step
-
 if (-not (Test-Path "$ScriptDir\frontend\dist\index.html")) {
     New-Item -ItemType Directory -Force -Path "$ScriptDir\frontend\dist" | Out-Null
     "<!doctype html><html><body>Prowler Security Dashboard — building...</body></html>" | Out-File -Encoding utf8 "$ScriptDir\frontend\dist\index.html"
 }
 
-Start-Step "[2/7] Deploying CDK stacks (all except Frontend)..."
-Push-Location "$ScriptDir\cdk"
-npx cdk deploy `
-    "ProwlerSecurityData-$AwsRegion" `
-    "ProwlerSecurityAuth-$AwsRegion" `
-    "ProwlerSecurityDevOpsAgent-$AwsRegion" `
-    "ProwlerSecurityScanner-$AwsRegion" `
-    "ProwlerSecurityIngest-$AwsRegion" `
-    "ProwlerSecurityApi-$AwsRegion" `
-    "ProwlerSecurityObservability-$AwsRegion" `
-    @CdkContext `
-    --require-approval never `
-    --no-cli-pager
-Pop-Location
+# One shared deploy-cdk.ps1 call per stack, in dependency order; the first one also checks the CDK bootstrap.
+Start-Step "[1/6] Deploying CDK stacks (all except Frontend)..."
+$skipBootstrap = $false
+foreach ($stack in @("Data", "Auth", "DevOpsAgent", "Scanner", "Ingest", "Api", "Observability")) {
+    Deploy-Stack "ProwlerSecurity$stack-$AwsRegion" -SkipBootstrap:$skipBootstrap
+    $skipBootstrap = $true
+}
 End-Step
 
-Start-Step "[3/7] Building Prowler scanner image..."
+Start-Step "[2/6] Building Prowler scanner image..."
 $RawBucket = aws cloudformation describe-stacks --stack-name "ProwlerSecurityData-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='RawReportsBucketName'].OutputValue" --output text
 $BuildProject = aws cloudformation describe-stacks --stack-name "ProwlerSecurityScanner-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='BuildProjectName'].OutputValue" --output text
 & "$ScriptDir\scripts\build-scanner-image.ps1" -RawBucket $RawBucket -BuildProject $BuildProject
 End-Step
 
-Start-Step "[4/7] Fetching CDK outputs for frontend build..."
+Start-Step "[3/6] Fetching CDK outputs for frontend build..."
 $UserPoolId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text
 $UserPoolClientId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text
 $IdentityPoolId = aws cloudformation describe-stacks --stack-name "ProwlerSecurityAuth-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='IdentityPoolId'].OutputValue" --output text
 $ApiFunctionUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityApi-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" --output text
 End-Step
 
-Start-Step "[5/7] Building frontend..."
+Start-Step "[4/6] Building frontend..."
 & "$ScriptDir\scripts\build-frontend.ps1" `
     -Region $AwsRegion `
     -UserPoolId $UserPoolId `
@@ -127,10 +120,8 @@ Start-Step "[5/7] Building frontend..."
     -ApiFunctionUrl $ApiFunctionUrl
 End-Step
 
-Start-Step "[6/7] Deploying Frontend stack..."
-Push-Location "$ScriptDir\cdk"
-npx cdk deploy "ProwlerSecurityFrontend-$AwsRegion" @CdkContext --require-approval never --no-cli-pager
-Pop-Location
+Start-Step "[5/6] Deploying Frontend stack..."
+Deploy-Stack "ProwlerSecurityFrontend-$AwsRegion" -SkipBootstrap
 End-Step
 
 $WebsiteUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityFrontend-$AwsRegion" --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text
@@ -138,25 +129,37 @@ $WebsiteUrl = aws cloudformation describe-stacks --stack-name "ProwlerSecurityFr
 # Write the DevOps Agent webhook bundle into Secrets Manager AFTER CDK has
 # created the secret resource. CDK only ships a placeholder on create; the
 # real values live here and survive every subsequent partial cdk deploy.
+# A bundle that already holds a webhook is never overwritten (rotate with setup-devops-agent).
 if ($env:DEVOPS_AGENT_WEBHOOK_URL -and $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
     $SecretName = "prowler-security/devops-agent-webhook-secret"  # pragma: allowlist secret
-    $Bundle = @{
-        webhookUrl    = $env:DEVOPS_AGENT_WEBHOOK_URL
-        webhookSecret = $env:DEVOPS_AGENT_WEBHOOK_SECRET
-        agentSpaceId  = $env:DEVOPS_AGENT_SPACE_ID
-    } | ConvertTo-Json -Compress
-    aws secretsmanager put-secret-value --secret-id $SecretName --secret-string $Bundle --no-cli-pager *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  DevOps Agent bundle written to Secrets Manager."
+    $storedUrl = $null
+    try {
+        $storedBundle = aws secretsmanager get-secret-value --secret-id $SecretName --query SecretString --output text --no-cli-pager 2>$null
+        if ($LASTEXITCODE -eq 0) { $storedUrl = [string](($storedBundle | Out-String) | ConvertFrom-Json).webhookUrl }
+    } catch { $storedUrl = $null }
+    if ($null -eq $storedUrl) {
+        Write-Host "  WARN: could not read the DevOps Agent bundle, so it was not written. Run scripts/setup-devops-agent.ps1 to retry."
+    } elseif ($storedUrl -and $storedUrl -ne "NOT_CONFIGURED") {
+        Write-Host "  DevOps Agent bundle already holds a webhook; left unchanged."
     } else {
-        Write-Host "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.ps1 manually to retry."
+        $Bundle = @{
+            webhookUrl    = $env:DEVOPS_AGENT_WEBHOOK_URL
+            webhookSecret = $env:DEVOPS_AGENT_WEBHOOK_SECRET
+            agentSpaceId  = $env:DEVOPS_AGENT_SPACE_ID
+        } | ConvertTo-Json -Compress
+        aws secretsmanager put-secret-value --secret-id $SecretName --secret-string $Bundle --no-cli-pager *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  DevOps Agent bundle written to Secrets Manager."
+        } else {
+            Write-Host "  WARN: failed to write DevOps Agent bundle. Run scripts/setup-devops-agent.ps1 manually to retry."
+        }
     }
 }
 
-# Step 7: create a default demo user so the dashboard is usable out of the box
+# Step 6: create a default demo user so the dashboard is usable out of the box
 $DemoUsername = if ($env:DEMO_USERNAME) { $env:DEMO_USERNAME } else { "demo@prowler-security.local" }
 $DemoPassword = if ($env:DEMO_PASSWORD) { $env:DEMO_PASSWORD } else { "ProwlerDemo2026!" }
-Start-Step "[7/7] Creating default Cognito user $DemoUsername..."
+Start-Step "[6/6] Creating default Cognito user $DemoUsername..."
 $userExists = $false
 try {
     aws cognito-idp admin-get-user --user-pool-id $UserPoolId --username $DemoUsername --no-cli-pager *> $null

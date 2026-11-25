@@ -17,7 +17,8 @@ if (-not (Test-Path "$DistDir\index.html")) {
     "<!doctype html><html><body>cleanup placeholder</body></html>" | Out-File -Encoding utf8 "$DistDir\index.html"
 }
 
-Push-Location "$ScriptDir\..\cdk"
+$CdkDir = (Resolve-Path "$ScriptDir\..\cdk").Path
+$env:AWS_REGION = $Region
 
 # If GuardDuty Runtime Monitoring is on for ECS Fargate, it auto-creates an
 # interface endpoint (com.amazonaws.<region>.guardduty-data) plus a security
@@ -59,6 +60,7 @@ if ($ScannerVpc -and $ScannerVpc -ne "None") {
 
 $Stacks = @(
   "ProwlerSecurityFrontend-$Region",
+  "ProwlerSecurityObservability-$Region",
   "ProwlerSecurityApi-$Region",
   "ProwlerSecurityIngest-$Region",
   "ProwlerSecurityScanner-$Region",
@@ -68,9 +70,8 @@ $Stacks = @(
 )
 foreach ($s in $Stacks) {
   Write-Host "[cleanup] destroying $s..."
-  npx cdk destroy $s --force --no-cli-pager
+  & "$RepoRoot\shared\scripts\deploy-cdk.ps1" -CdkDirectory $CdkDir -StackName $s -DestroyStack -SkipBootstrap
 }
-Pop-Location
 
 $AgentSpace = "prowler-security"
 $SpaceId = aws devops-agent list-agent-spaces --region $DevOpsAgentRegion --query "agentSpaces[?name=='$AgentSpace'].agentSpaceId | [0]" --output text --no-cli-pager 2>$null
