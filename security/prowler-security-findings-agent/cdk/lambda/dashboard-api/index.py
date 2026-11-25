@@ -46,6 +46,7 @@ REMEDIATIONS_BUCKET = os.environ['REMEDIATIONS_BUCKET']
 CLUSTER_ARN = os.environ['SCANNER_CLUSTER_ARN']
 TASK_DEF_ARN = os.environ['SCANNER_TASK_DEFINITION_ARN']
 SUBNETS = [s for s in os.environ['SCANNER_SUBNET_IDS'].split(',') if s]
+ASSIGN_PUBLIC_IP = os.environ.get('SCANNER_ASSIGN_PUBLIC_IP', 'ENABLED')
 SG_ID = os.environ['SCANNER_SECURITY_GROUP_ID']
 SCANNER_LOG_GROUP = os.environ.get('SCANNER_LOG_GROUP', '/aws/ecs/prowler-security-scanner')
 DEVOPS_AGENT_TOPIC_ARN = os.environ.get('DEVOPS_AGENT_TOPIC_ARN', '')
@@ -708,7 +709,7 @@ def _run_scan() -> dict[str, Any]:
             'awsvpcConfiguration': {
                 'subnets': SUBNETS,
                 'securityGroups': [SG_ID],
-                'assignPublicIp': 'ENABLED',
+                'assignPublicIp': ASSIGN_PUBLIC_IP,
             }
         },
     )

@@ -39,6 +39,9 @@ const scanSchedule = app.node.tryGetContext('scanSchedule') || 'cron(0 6 * * ? *
 // autoInvestigate=true → ingest Lambda auto-publishes every CRITICAL/HIGH to the
 // DevOps Agent webhook. Default false: TAM-driven, click a finding to investigate.
 const autoInvestigate = (app.node.tryGetContext('autoInvestigate') || 'false') === 'true';
+// scannerNatGateway=true → scanner runs in private subnets behind a NAT gateway
+// (~$33/month). deploy-all turns it on when VPC Block Public Access is block-ingress.
+const scannerNatGateway = (app.node.tryGetContext('scannerNatGateway') || 'false') === 'true';
 
 // 1. Data — DynamoDB findings table + S3 raw-reports and remediations buckets
 const dataStack = new DataStack(app, `ProwlerSecurityData-${region}`, {
@@ -71,6 +74,7 @@ const scannerStack = new ScannerStack(app, `ProwlerSecurityScanner-${region}`, {
   env,
   rawReportsBucketName: dataStack.rawReportsBucket.bucketName,
   scanSchedule,
+  natGateway: scannerNatGateway,
   description: 'Prowler Security Findings + DevOps Agent + Bedrock Nova Lite remediation (uksb-do9bhieqqh)(tag:prowler-security-findings-agent,security)',
 });
 scannerStack.addDependency(dataStack);
@@ -100,6 +104,7 @@ const apiStack = new ApiStack(app, `ProwlerSecurityApi-${region}`, {
   scannerClusterArn: scannerStack.clusterArn,
   scannerTaskDefinitionArn: scannerStack.taskDefinitionArn,
   scannerSubnetIds: scannerStack.subnetIds,
+  scannerAssignPublicIp: scannerStack.assignPublicIp,
   scannerSecurityGroupId: scannerStack.securityGroupId,
   scannerLogGroupName: scannerStack.logGroupName,
   authenticatedRoleArn: authStack.authenticatedRoleArn,

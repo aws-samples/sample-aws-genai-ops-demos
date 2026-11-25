@@ -65,6 +65,25 @@ DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-}"
 SCAN_SCHEDULE="${SCAN_SCHEDULE:-cron(0 6 * * ? *)}"
 
+# VPC Block Public Access in block-ingress mode drops replies to traffic the
+# scanner sends straight through the internet gateway, so it can't pull its
+# image from ECR. NAT gateway traffic is still allowed, so switch to it.
+# Override with SCANNER_NAT_GATEWAY=true|false.
+if [ -z "${SCANNER_NAT_GATEWAY:-}" ]; then
+    BPA_MODE=$(aws ec2 describe-vpc-block-public-access-options --region "$AWS_REGION" \
+        --query 'VpcBlockPublicAccessOptions.InternetGatewayBlockMode' --output text 2>/dev/null || echo "off")
+    case "$BPA_MODE" in
+        block-ingress)
+            echo "VPC Block Public Access is block-ingress: the scanner will use a NAT gateway (~\$33/month)."
+            SCANNER_NAT_GATEWAY=true ;;
+        block-bidirectional)
+            echo "WARNING: VPC Block Public Access is block-bidirectional; scans need a BPA exclusion for the scanner VPC."
+            SCANNER_NAT_GATEWAY=false ;;
+        *)
+            SCANNER_NAT_GATEWAY=false ;;
+    esac
+fi
+
 # Pass CDK context as an array so values with spaces or shell metacharacters
 # survive expansion. SCAN_SCHEDULE in particular contains `*` and `?` which
 # bash would otherwise word-split and glob-expand at the deploy call site,
@@ -76,6 +95,7 @@ CDK_CONTEXT=(
     -c "devOpsAgentSpaceId=$DEVOPS_AGENT_SPACE_ID"
     -c "bedrockModelId=$BEDROCK_MODEL_ID"
     -c "scanSchedule=$SCAN_SCHEDULE"
+    -c "scannerNatGateway=$SCANNER_NAT_GATEWAY"
 )
 
 # ── Timing helpers ────────────────────────────────────────────────
@@ -237,11 +257,14 @@ SCANNER_SUBNETS=$(aws cloudformation describe-stacks \
 SCANNER_SG=$(aws cloudformation describe-stacks \
     --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='ScannerSecurityGroupId'].OutputValue" --output text)
+SCANNER_PUBLIC_IP=$(aws cloudformation describe-stacks \
+    --stack-name "ProwlerSecurityScanner-$AWS_REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerAssignPublicIp'].OutputValue" --output text)
 
 echo "Starting first Prowler scan..."
-NETWORK_CFG=$(printf '{"awsvpcConfiguration":{"subnets":[%s],"securityGroups":["%s"],"assignPublicIp":"ENABLED"}}' \
+NETWORK_CFG=$(printf '{"awsvpcConfiguration":{"subnets":[%s],"securityGroups":["%s"],"assignPublicIp":"%s"}}' \
     "$(echo "$SCANNER_SUBNETS" | awk -F, '{for(i=1;i<=NF;i++) printf (i>1?",":"") "\"" $i "\""}')" \
-    "$SCANNER_SG")
+    "$SCANNER_SG" "${SCANNER_PUBLIC_IP:-ENABLED}")
 if aws ecs run-task \
     --cluster "$SCANNER_CLUSTER_ARN" \
     --task-definition "$SCANNER_TASK_DEF" \

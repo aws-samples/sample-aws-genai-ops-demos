@@ -85,6 +85,10 @@ export DEVOPS_AGENT_REGION=eu-west-1
 # region automatically. Override only if you want a specific model or an
 # on-demand (non-profile) ID.
 # export BEDROCK_MODEL_ID=global.amazon.nova-2-lite-v1:0
+# The scanner runs in public subnets (no NAT). If VPC Block Public Access is
+# set to block-ingress in the region, deploy-all switches to private subnets
+# behind a NAT gateway (~$33/month) automatically. Force either mode with:
+# export SCANNER_NAT_GATEWAY=true
 
 # Deploy
 bash deploy-all.sh          # macOS / Linux
@@ -227,6 +231,7 @@ All costs approximate, `us-east-1` pricing.
 | CloudFront + Cognito | Minimal traffic | ~$1 |
 | ECR image | 1 GB image stored | ~$0.10 |
 | Secrets Manager | 1 secret | $0.40 |
+| NAT gateway | Only when `SCANNER_NAT_GATEWAY=true` or VPC Block Public Access is `block-ingress` | ~$33 + data |
 
 ### Per scan (~$0.50 + Bedrock usage)
 

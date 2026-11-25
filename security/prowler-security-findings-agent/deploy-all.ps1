@@ -21,6 +21,27 @@ $DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } 
 $BedrockModelId = if ($env:BEDROCK_MODEL_ID) { $env:BEDROCK_MODEL_ID } else { "" }
 $ScanSchedule = if ($env:SCAN_SCHEDULE) { $env:SCAN_SCHEDULE } else { "cron(0 6 * * ? *)" }
 
+# VPC Block Public Access in block-ingress mode drops replies to traffic the
+# scanner sends straight through the internet gateway, so it can't pull its
+# image from ECR. NAT gateway traffic is still allowed, so switch to it.
+# Override with SCANNER_NAT_GATEWAY=true|false.
+$ScannerNatGateway = $env:SCANNER_NAT_GATEWAY
+if (-not $ScannerNatGateway) {
+    $BpaMode = aws ec2 describe-vpc-block-public-access-options --region $AwsRegion `
+        --query 'VpcBlockPublicAccessOptions.InternetGatewayBlockMode' --output text 2>$null
+    switch ($BpaMode) {
+        "block-ingress" {
+            Write-Host "VPC Block Public Access is block-ingress: the scanner will use a NAT gateway (~`$33/month)."
+            $ScannerNatGateway = "true"
+        }
+        "block-bidirectional" {
+            Write-Host "WARNING: VPC Block Public Access is block-bidirectional; scans need a BPA exclusion for the scanner VPC."
+            $ScannerNatGateway = "false"
+        }
+        default { $ScannerNatGateway = "false" }
+    }
+}
+
 if (-not $env:DEVOPS_AGENT_WEBHOOK_URL -or -not $env:DEVOPS_AGENT_WEBHOOK_SECRET) {
     . "$ScriptDir\scripts\setup-devops-agent.ps1"
     Invoke-SetupDevOpsAgent -AgentSpaceName $ProjectName
@@ -36,7 +57,8 @@ $CdkContext = @(
     "-c", "devOpsAgentRegion=$DevOpsAgentRegion",
     "-c", "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
     "-c", "bedrockModelId=$BedrockModelId",
-    "-c", "scanSchedule=$ScanSchedule"
+    "-c", "scanSchedule=$ScanSchedule",
+    "-c", "scannerNatGateway=$ScannerNatGateway"
 )
 
 # ── Timing helpers ────────────────────────────────────────────────
@@ -177,10 +199,14 @@ $ScannerSubnetsCsv = aws cloudformation describe-stacks `
 $ScannerSg = aws cloudformation describe-stacks `
     --stack-name "ProwlerSecurityScanner-$AwsRegion" `
     --query "Stacks[0].Outputs[?OutputKey=='ScannerSecurityGroupId'].OutputValue" --output text
+$ScannerPublicIp = aws cloudformation describe-stacks `
+    --stack-name "ProwlerSecurityScanner-$AwsRegion" `
+    --query "Stacks[0].Outputs[?OutputKey=='ScannerAssignPublicIp'].OutputValue" --output text
+if (-not $ScannerPublicIp -or $ScannerPublicIp -eq "None") { $ScannerPublicIp = "ENABLED" }
 
 Write-Host "Starting first Prowler scan..."
 $SubnetsJson = ($ScannerSubnetsCsv.Split(',') | ForEach-Object { '"' + $_ + '"' }) -join ','
-$NetworkCfg = '{"awsvpcConfiguration":{"subnets":[' + $SubnetsJson + '],"securityGroups":["' + $ScannerSg + '"],"assignPublicIp":"ENABLED"}}'
+$NetworkCfg = '{"awsvpcConfiguration":{"subnets":[' + $SubnetsJson + '],"securityGroups":["' + $ScannerSg + '"],"assignPublicIp":"' + $ScannerPublicIp + '"}}'
 aws ecs run-task `
     --cluster $ScannerClusterArn `
     --task-definition $ScannerTaskDef `
