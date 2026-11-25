@@ -11,7 +11,7 @@ Routes (matched against event['requestContext']['http']['path'] + method):
     GET  /findings/{finding_uid}                   — full finding + presigned URL to remediation markdown
     POST /findings/{finding_uid}/insights          — generate Bedrock insight for finding (sync)
     POST /findings/{finding_uid}/investigate       — dispatch DevOps Agent investigation
-    GET  /findings/{finding_uid}/investigation     — DevOps Agent status + journal for finding
+    GET  /findings/{finding_uid}/investigation     — DevOps Agent status, journal and summary for finding
     GET  /investigations                           — every DevOps Agent backlog task dispatched by this demo
     GET  /scans                                    — most recent scan_ids (derived from findings)
     GET  /scans/running                            — ECS tasks currently running/recently stopped
@@ -23,7 +23,8 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote
 
@@ -127,6 +128,147 @@ def _devops_available() -> tuple[bool, str | None]:
     if not _get_agent_space_id():
         return False, 'DEVOPS_AGENT_SPACE_ID not set — run scripts/setup-devops-agent.sh'
     return True, None
+
+
+# Journal record types behind the DevOps Agent console's investigation summary.
+LIVE_SUMMARY_RECORD = 'ui_investigation_summary'
+FINAL_SUMMARY_RECORDS = ('investigation_summary_md', 'mitigation_summary_md')
+_TERMINAL_TASK_STATUSES = {'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED'}
+_settled_summaries: dict[str, dict | None] = {}
+
+
+def _iso8601(value: Any) -> str | None:
+    if isinstance(value, (int, float)):
+        value = datetime.fromtimestamp(value, tz=timezone.utc)
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return str(value) if value else None
+
+
+def _execution_id(agent_space_id: str, task: dict[str, Any]) -> str | None:
+    """Task's execution id; a task that does not carry one yet is resolved with ListExecutions."""
+    exec_id = task.get('executionId')
+    task_id = task.get('taskId')
+    if exec_id or not task_id:
+        return exec_id
+    try:
+        execs = _devops().list_executions(agentSpaceId=agent_space_id, taskId=task_id).get('executions', [])
+    except DEVOPS_SAFE_ERRORS as exc:
+        logger.warning('ListExecutions failed for task %s: %s', task_id, exc)
+        return None
+    return execs[0].get('executionId') if execs else None
+
+
+def _latest_record(agent_space_id: str, execution_id: str, record_type: str) -> dict[str, Any] | None:
+    resp = _devops().list_journal_records(
+        agentSpaceId=agent_space_id, executionId=execution_id, recordType=record_type, order='DESC', limit=1,
+    )
+    records = resp.get('records') or []
+    return records[0] if records else None
+
+
+def _ui_children(node: dict[str, Any]) -> list[dict[str, Any]]:
+    return [c for c in node.get('children') or [] if isinstance(c, dict)]
+
+
+def _ui_text(node: dict[str, Any]) -> str:
+    text = node.get('text')
+    return text.strip() if isinstance(text, str) else ''
+
+
+def _ui_inline(node: dict[str, Any]) -> str:
+    text = _ui_text(node)
+    if node.get('type') == 'badge':
+        return f'`{text}`' if text else ''
+    parts = [text] + [_ui_inline(c) for c in _ui_children(node)]
+    return ' '.join(p for p in parts if p)
+
+
+def _ui_heading(node: dict[str, Any]) -> str:
+    if node.get('type') == 'card-title':
+        return '###'
+    try:
+        level = int((node.get('props') or {}).get('level') or 3)
+    except (TypeError, ValueError):
+        level = 3
+    return '#' * max(2, min(level + 1, 6))
+
+
+def _ui_markdown_blocks(node: dict[str, Any], blocks: list[str]) -> None:
+    kind = node.get('type')
+    children = _ui_children(node)
+    text = _ui_text(node)
+    if kind in ('card-title', 'title'):
+        line = _ui_inline(node)
+        blocks.append(f'{_ui_heading(node)} {line}' if line else '')
+    elif kind == 'container' and (node.get('props') or {}).get('layout') == 'horizontal':
+        line = _ui_inline(node)
+        if line and children and children[0].get('type') in ('card-title', 'title'):
+            line = f'{_ui_heading(children[0])} {line}'
+        blocks.append(line)
+    elif kind in ('markdown', 'text', 'card-description'):
+        blocks.append(text)
+    elif kind == 'badge':
+        blocks.append(_ui_inline(node))
+    elif kind == 'separator':
+        blocks.append('---')
+    elif kind == 'list':
+        blocks.append('\n'.join(f'- {_ui_inline(c)}' for c in children))
+    else:
+        blocks.append(text)
+        for child in children:
+            _ui_markdown_blocks(child, blocks)
+
+
+def _ui_summary_markdown(content: Any) -> str:
+    """Markdown for the summary card of a ui_investigation_summary record (a JSON UI tree)."""
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except json.JSONDecodeError:
+            return content.strip()
+    tree = content.get('content') if isinstance(content, dict) else None
+    if not isinstance(tree, dict):
+        return ''
+    card = next((c for c in _ui_children(tree) if c.get('id') == 'summary'), tree)
+    blocks: list[str] = []
+    _ui_markdown_blocks(card, blocks)
+    return '\n\n'.join(b for b in blocks if b.strip())
+
+
+def _final_summary(agent_space_id: str, execution_id: str) -> dict[str, Any] | None:
+    records = [_latest_record(agent_space_id, execution_id, t) for t in FINAL_SUMMARY_RECORDS]
+    records = [r for r in records if r and isinstance(r.get('content'), str) and r['content'].strip()]
+    if not records:
+        return None
+    return {
+        'content': '\n\n'.join(r['content'].strip() for r in records),
+        'updatedAt': _iso8601(max(r.get('createdAt') or 0 for r in records)),
+        'final': True,
+    }
+
+
+def _investigation_summary(agent_space_id: str, execution_id: str | None, task_status: str | None) -> dict[str, Any] | None:
+    """Latest live summary of an execution, or its final root cause and mitigation once the task completed."""
+    if not execution_id:
+        return None
+    if execution_id in _settled_summaries:
+        return _settled_summaries[execution_id]
+    try:
+        summary = _final_summary(agent_space_id, execution_id) if task_status == 'COMPLETED' else None
+        if summary is None:
+            record = _latest_record(agent_space_id, execution_id, LIVE_SUMMARY_RECORD)
+            content = _ui_summary_markdown(record.get('content')) if record else ''
+            if content:
+                summary = {'content': content, 'updatedAt': _iso8601(record.get('createdAt')), 'final': False}
+    except DEVOPS_SAFE_ERRORS as exc:
+        logger.warning('Summary lookup failed for execution %s: %s', execution_id, exc)
+        return None
+    if task_status in _TERMINAL_TASK_STATUSES:
+        if len(_settled_summaries) >= 500:
+            _settled_summaries.clear()
+        _settled_summaries[execution_id] = summary
+    return summary
 
 
 def _json(status: int, body: Any) -> dict[str, Any]:
@@ -433,6 +575,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'tasks': [],
             'journal': [],
             'error': err,
+            'summary': None,
         })
 
     agent_space_id = _get_agent_space_id()
@@ -448,6 +591,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'tasks': [],
             'journal': [],
             'agentSpaceId': agent_space_id,
+            'summary': None,
         })
 
     # Strict match: the backlog task belongs to this finding only if *both*
@@ -483,28 +627,23 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
     matching = [t for t in all_tasks if _task_matches(t)]
 
     journal = []
+    execution_ids: dict[Any, str | None] = {}
     for task in matching[:3]:
-        exec_id = task.get('executionId')
+        exec_id = execution_ids[task.get('taskId')] = _execution_id(agent_space_id, task)
         if not exec_id:
-            # Task has no execution yet → try to resolve the latest execution
-            # via ListExecutions (POST /journal/agent-space/{id}/executions).
-            task_id = task.get('taskId')
-            if not task_id:
-                continue
-            try:
-                e = _devops().list_executions(agentSpaceId=agent_space_id, taskId=task_id)
-                execs = e.get('executions', [])
-                if execs:
-                    exec_id = execs[0].get('executionId')
-            except DEVOPS_SAFE_ERRORS as exc:
-                logger.warning('ListExecutions failed for task %s: %s', task_id, exc)
-            if not exec_id:
-                continue
+            continue
         try:
             j = _devops().list_journal_records(agentSpaceId=agent_space_id, executionId=exec_id)
             journal.extend(j.get('records', []))
         except DEVOPS_SAFE_ERRORS as exc:
             logger.warning('ListJournalRecords failed for %s: %s', exec_id, exc)
+
+    summary = None
+    if matching:
+        latest = max(matching, key=lambda t: t.get('createdAt') or '')
+        latest_id = latest.get('taskId')
+        exec_id = execution_ids[latest_id] if latest_id in execution_ids else _execution_id(agent_space_id, latest)
+        summary = _investigation_summary(agent_space_id, exec_id, latest.get('status'))
 
     # 'idle' means "no task has ever been dispatched for this finding".
     # 'pending' is only meaningful after a task has been queued.
@@ -544,6 +683,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             }
             for r in journal[:50]  # cap payload
         ],
+        'summary': summary,
     })
 
 
@@ -778,6 +918,12 @@ def _list_investigations() -> dict[str, Any]:
         if not existing or updated > (existing.get('updatedAt') or existing.get('createdAt') or ''):
             by_finding[matched_uid] = t
 
+    def _task_summary(task: dict[str, Any]) -> dict[str, Any] | None:
+        return _investigation_summary(agent_space_id, _execution_id(agent_space_id, task), task.get('status'))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        summaries = dict(zip(by_finding, pool.map(_task_summary, by_finding.values())))
+
     # Hydrate with check metadata from DynamoDB (best-effort).
     out: list[dict[str, Any]] = []
     for finding_uid, task in by_finding.items():
@@ -805,6 +951,7 @@ def _list_investigations() -> dict[str, Any]:
             'severity': meta.get('severity'),
             'service_name': meta.get('service_name'),
             'resource_uid': meta.get('resource_uid'),
+            'summary': summaries.get(finding_uid),
         })
 
     out.sort(key=lambda r: (r.get('updatedAt') or r.get('createdAt') or ''), reverse=True)

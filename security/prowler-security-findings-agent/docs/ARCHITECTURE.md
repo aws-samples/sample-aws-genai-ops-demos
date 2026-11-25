@@ -72,6 +72,14 @@ The HMAC-signed POST body schema matches what the EKS demo uses (eventType/incid
 - `description` embeds the Bedrock markdown when available (up to 20 KB).
 - `data.remediationS3Key` is passed so the agent can fetch the full markdown directly if needed.
 
+## Reading investigations back
+
+`dashboard-api` reads the Agent Space with the boto3 `devops-agent` client (IAM actions `aidevops:ListBacklogTasks`, `aidevops:ListExecutions` and `aidevops:ListJournalRecords`). Both investigation routes, `GET /findings/{finding_uid}/investigation` and `GET /investigations`, return a `summary` per investigation: `{content, updatedAt, final}`, or `null` when the agent has written none.
+
+- While the investigation runs, `content` is the newest `ui_investigation_summary` journal record rendered as markdown (`final: false`). That record is the live summary the DevOps Agent console shows: a JSON UI tree the agent rewrites every few seconds; only its summary card (incident, current root-cause hypothesis, focus and plan) is kept.
+- Once the backlog task is `COMPLETED`, `content` is the `investigation_summary_md` record followed by `mitigation_summary_md` (`final: true`).
+- `updatedAt` is the ISO-8601 creation time of the record the content came from.
+
 ## Extending this demo
 
 Ideas intentionally **out of scope** for the first version:

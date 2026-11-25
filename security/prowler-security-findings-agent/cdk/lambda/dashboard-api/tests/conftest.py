@@ -144,6 +144,7 @@ class DevOpsAgentWire:
 def wire(monkeypatch):
     monkeypatch.setattr(index, 'TABLE', FakeTable(FINDINGS))
     monkeypatch.setattr(index, '_devops_client', None)
+    monkeypatch.setattr(index, '_settled_summaries', {})
     stub = DevOpsAgentWire(load_fixture('devops_agent_wire.json'))
     index._devops().meta.events.register('before-send.devops-agent', stub)
     yield stub
