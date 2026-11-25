@@ -236,7 +236,7 @@ The power automatically configures MCP servers via `mcp.json`. Manual installati
 
 ```bash
 # Install the aws-chaos-engineering MCP server
-uvx aws-chaos-engineering
+uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering
 
 # Install the AWS MCP server (if not already available)
 uvx mcp-proxy-for-aws@latest
@@ -295,7 +295,7 @@ aws sts get-caller-identity
 
 ```bash
 # Test MCP server directly
-uvx aws-chaos-engineering
+uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering
 
 # Check AWS MCP server connectivity
 uvx mcp-proxy-for-aws@latest --help

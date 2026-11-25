@@ -19,6 +19,7 @@ This MCP server transforms natural language descriptions into validated AWS Faul
 ## Prerequisites
 
 - **Python 3.10+** and **uvx** for MCP server installation
+- **git**, because the MCP server is installed from this repository
 - **AWS CLI 2.31.13+** and **AWS Credentials** with FIS permissions
 - **Kiro IDE** (if using as Kiro Power)
 
@@ -47,7 +48,7 @@ Click on the relevant below badge to automatically add this IDE MCP server to yo
 
 | Kiro | Cursor | VS Code |
 |:----:|:------:|:-------:|
-| [![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/mcp/add?name=aws-chaos-engineering&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22aws-chaos-engineering%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22get_valid_fis_actions%22%2C%22validate_fis_template%22%2C%22refresh_valid_fis_actions_cache%22%5D%7D) | [![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en/install-mcp?name=aws-chaos-engineering&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJhd3MtY2hhb3MtZW5naW5lZXJpbmciXSwiZW52Ijp7IkZBU1RNQ1BfTE9HX0xFVkVMIjoiRVJST1IifSwiZGlzYWJsZWQiOmZhbHNlLCJhdXRvQXBwcm92ZSI6WyJnZXRfdmFsaWRfZmlzX2FjdGlvbnMiLCJ2YWxpZGF0ZV9maXNfdGVtcGxhdGUiLCJyZWZyZXNoX3ZhbGlkX2Zpc19hY3Rpb25zX2NhY2hlIl19) | [![Install on VS Code](https://img.shields.io/badge/Install_on-VS_Code-FF9900?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=AWS%20Chaos%20Engineering&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22aws-chaos-engineering%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22get_valid_fis_actions%22%2C%22validate_fis_template%22%2C%22refresh_valid_fis_actions_cache%22%5D%7D) |
+| [![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/mcp/add?name=aws-chaos-engineering&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22git%2Bhttps%3A%2F%2Fgithub.com%2Faws-samples%2Fsample-aws-genai-ops-demos%4008d2abfc5405820aa66c4847bde0617209d8df97%23subdirectory%3Dresilience%2Fai-chaos-engineering-with-fis%22%2C%22aws-chaos-engineering%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22get_valid_fis_actions%22%2C%22validate_fis_template%22%2C%22refresh_valid_fis_actions_cache%22%5D%7D) | [![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en/install-mcp?name=aws-chaos-engineering&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJnaXQraHR0cHM6Ly9naXRodWIuY29tL2F3cy1zYW1wbGVzL3NhbXBsZS1hd3MtZ2VuYWktb3BzLWRlbW9zQDA4ZDJhYmZjNTQwNTgyMGFhNjZjNDg0N2JkZTA2MTcyMDlkOGRmOTcjc3ViZGlyZWN0b3J5PXJlc2lsaWVuY2UvYWktY2hhb3MtZW5naW5lZXJpbmctd2l0aC1maXMiLCJhd3MtY2hhb3MtZW5naW5lZXJpbmciXSwiZW52Ijp7IkZBU1RNQ1BfTE9HX0xFVkVMIjoiRVJST1IifSwiZGlzYWJsZWQiOmZhbHNlLCJhdXRvQXBwcm92ZSI6WyJnZXRfdmFsaWRfZmlzX2FjdGlvbnMiLCJ2YWxpZGF0ZV9maXNfdGVtcGxhdGUiLCJyZWZyZXNoX3ZhbGlkX2Zpc19hY3Rpb25zX2NhY2hlIl19) | [![Install on VS Code](https://img.shields.io/badge/Install_on-VS_Code-FF9900?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=AWS%20Chaos%20Engineering&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22git%2Bhttps%3A%2F%2Fgithub.com%2Faws-samples%2Fsample-aws-genai-ops-demos%4008d2abfc5405820aa66c4847bde0617209d8df97%23subdirectory%3Dresilience%2Fai-chaos-engineering-with-fis%22%2C%22aws-chaos-engineering%22%5D%2C%22env%22%3A%7B%22FASTMCP_LOG_LEVEL%22%3A%22ERROR%22%7D%2C%22disabled%22%3Afalse%2C%22autoApprove%22%3A%5B%22get_valid_fis_actions%22%2C%22validate_fis_template%22%2C%22refresh_valid_fis_actions_cache%22%5D%7D) |
 
 Or manually configure the MCP server in your MCP client configuration:
 
@@ -56,7 +57,11 @@ Or manually configure the MCP server in your MCP client configuration:
   "mcpServers": {
     "aws-chaos-engineering": {
       "command": "uvx",
-      "args": ["aws-chaos-engineering"],
+      "args": [
+        "--from",
+        "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis",
+        "aws-chaos-engineering"
+      ],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"
       },
@@ -66,6 +71,8 @@ Or manually configure the MCP server in your MCP client configuration:
   }
 }
 ```
+
+The install is pinned to a commit of this repository (`--from`). To update, change the commit in the URL.
 
 If you are using Kiro we recommend you to configure this MCP Server as a [Kiro Power](https://kiro.dev/powers/) rather than a simple MCP Server.
 
@@ -82,10 +89,10 @@ Follow these steps to add a Kiro Power:
 
 ```bash
 # Test server startup (should start and wait for input)
-uvx aws-chaos-engineering
+uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering
 
 # Test with sample MCP message (in another terminal)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | uvx aws-chaos-engineering
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering
 ```
 
 **Expected Output:**
@@ -491,7 +498,7 @@ User Input → Kiro Agent → aws-chaos-engineering MCP Server → Validated FIS
 
 3. **Alternative Installation**:
    ```bash
-   pip install aws-chaos-engineering
+   pip install "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis"
    ```
 
 #### Python Version Compatibility
@@ -506,7 +513,7 @@ User Input → Kiro Agent → aws-chaos-engineering MCP Server → Validated FIS
 
 2. **Use Specific Python Version**:
    ```bash
-   python3.8 -m pip install aws-chaos-engineering
+   python3.8 -m pip install "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis"
    ```
 
 3. **Virtual Environment**:
@@ -514,7 +521,7 @@ User Input → Kiro Agent → aws-chaos-engineering MCP Server → Validated FIS
    python -m venv chaos-env
    source chaos-env/bin/activate  # Unix/Linux/macOS
    chaos-env\Scripts\activate     # Windows
-   pip install aws-chaos-engineering
+   pip install "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis"
    ```
 
 ### AWS Configuration Issues
@@ -589,7 +596,7 @@ User Input → Kiro Agent → aws-chaos-engineering MCP Server → Validated FIS
 **Solutions**:
 1. **Check Installation**:
    ```bash
-   uvx aws-chaos-engineering --help
+   uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering --help
    ```
 
 2. **Test Direct Execution**:
@@ -605,7 +612,7 @@ User Input → Kiro Agent → aws-chaos-engineering MCP Server → Validated FIS
 
 4. **View Error Logs**:
    ```bash
-   uvx aws-chaos-engineering 2>&1 | tee server.log
+   uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering 2>&1 | tee server.log
    ```
 
 #### MCP Communication Errors
@@ -666,10 +673,7 @@ If you encounter cache-related errors, check the MCP server logs for specific er
    aws fis list-actions --region us-east-1 | grep stop-instances
    ```
 
-2. **Update to Latest Version**:
-   ```bash
-   uvx upgrade aws-chaos-engineering
-   ```
+2. **Update to a newer version**: the install is pinned to a commit of this repository on purpose. Change the commit in the `--from` URL to a newer commit of `main`.
 
 3. **Report Issue**: If action should be valid, report as bug
 
@@ -753,7 +757,7 @@ When reporting issues, collect these logs:
 
 1. **MCP Server Logs**:
    ```bash
-   uvx aws-chaos-engineering 2>&1 | tee mcp-server.log
+   uvx --from "git+https://github.com/aws-samples/sample-aws-genai-ops-demos@08d2abfc5405820aa66c4847bde0617209d8df97#subdirectory=resilience/ai-chaos-engineering-with-fis" aws-chaos-engineering 2>&1 | tee mcp-server.log
    ```
 
 2. **Kiro Logs**: Check Kiro application logs for MCP communication errors

@@ -133,7 +133,7 @@ Rather than hardcoding FIS action IDs (which change as AWS adds new FIS capabili
 The demo ships as a Kiro Power (`power/` directory) which bundles:
 
 - `POWER.md` — power documentation and tool descriptions
-- `mcp.json` — pre-configured MCP server entry for `uvx aws-chaos-engineering`
+- `mcp.json` — pre-configured MCP server entry that runs `uvx --from <git source pinned to a commit of this repository> aws-chaos-engineering`
 - `steering/` — activation keywords and usage patterns injected into Kiro's context
 
 The power activates automatically on keywords like "chaos engineering", "fault injection", "AWS FIS", and "resilience testing", making the workflow zero-friction for the developer.

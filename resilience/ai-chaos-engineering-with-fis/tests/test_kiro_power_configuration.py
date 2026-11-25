@@ -72,7 +72,7 @@ class TestKiroPowerConfiguration:
         
         # Test aws-chaos-engineering specific fields
         assert aws_chaos_server["command"] == "uvx", "aws-chaos-engineering server must use uvx command"
-        assert aws_chaos_server["args"] == ["aws-chaos-engineering"], "aws-chaos-engineering server args must be ['aws-chaos-engineering']"
+        assert aws_chaos_server["args"][:1] == ["--from"] and aws_chaos_server["args"][-1] == "aws-chaos-engineering", "aws-chaos-engineering server must launch from a pinned --from source"
         assert aws_chaos_server["disabled"] is False, "aws-chaos-engineering server must not be disabled"
         
         # Test autoApprove contains required tools
