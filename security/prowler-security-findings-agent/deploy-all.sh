@@ -65,6 +65,8 @@ DEVOPS_AGENT_SPACE_ID="${DEVOPS_AGENT_SPACE_ID:-}"
 # out of the box anywhere.
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-}"
 SCAN_SCHEDULE="${SCAN_SCHEDULE:-cron(0 6 * * ? *)}"
+# EVENT_SCANS=true: risky CloudTrail write calls start targeted Prowler scans (needs a CloudTrail trail).
+EVENT_SCANS="${EVENT_SCANS:-false}"
 
 # VPC Block Public Access in block-ingress mode drops replies to traffic the
 # scanner sends straight through the internet gateway, so it can't pull its
@@ -93,6 +95,7 @@ CDK_CONTEXT=(
     --cdk-context "bedrockModelId=$BEDROCK_MODEL_ID"
     --cdk-context "scanSchedule=$SCAN_SCHEDULE"
     --cdk-context "scannerNatGateway=$SCANNER_NAT_GATEWAY"
+    --cdk-context "eventScans=$EVENT_SCANS"
 )
 deploy_stack() {   # stack-name [deploy-cdk.sh flags]
     # bash -f: deploy-cdk.sh expands context values unquoted, so SCAN_SCHEDULE's * and ? must not glob.

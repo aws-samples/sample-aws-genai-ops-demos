@@ -87,6 +87,11 @@ export DEVOPS_AGENT_REGION=eu-west-1
 # set to block-ingress in the region, deploy-all switches to private subnets
 # behind a NAT gateway (~$33/month) automatically. Force either mode with:
 # export SCANNER_NAT_GATEWAY=true
+# Event-driven scans are off by default. With EVENT_SCANS=true, risky CloudTrail
+# write calls (security group ingress, S3 public access, admin policy on IAM
+# users, public Lambda or RDS) start a targeted Prowler scan within minutes.
+# Needs a CloudTrail trail that logs write management events.
+# export EVENT_SCANS=true
 
 # Deploy
 bash deploy-all.sh          # macOS / Linux

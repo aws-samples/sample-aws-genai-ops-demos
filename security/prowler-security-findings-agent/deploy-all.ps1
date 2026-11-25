@@ -21,6 +21,8 @@ $DevOpsAgentRegion = if ($env:DEVOPS_AGENT_REGION) { $env:DEVOPS_AGENT_REGION } 
 # leaving it empty here lets CDK pick the right profile for any region.
 $BedrockModelId = if ($env:BEDROCK_MODEL_ID) { $env:BEDROCK_MODEL_ID } else { "" }
 $ScanSchedule = if ($env:SCAN_SCHEDULE) { $env:SCAN_SCHEDULE } else { "cron(0 6 * * ? *)" }
+# EVENT_SCANS=true: risky CloudTrail write calls start targeted Prowler scans (needs a CloudTrail trail).
+$EventScans = if ($env:EVENT_SCANS) { $env:EVENT_SCANS } else { "false" }
 
 # VPC Block Public Access in block-ingress mode drops replies to traffic the
 # scanner sends straight through the internet gateway, so it can't pull its
@@ -57,7 +59,8 @@ $CdkContext = @(
     "devOpsAgentSpaceId=$DevOpsAgentSpaceId",
     "bedrockModelId=$BedrockModelId",
     "scanSchedule=$ScanSchedule",
-    "scannerNatGateway=$ScannerNatGateway"
+    "scannerNatGateway=$ScannerNatGateway",
+    "eventScans=$EventScans"
 )
 # deploy-cdk.ps1 reads the region from $env:AWS_REGION; keep it on the region checked above.
 $env:AWS_REGION = $AwsRegion
