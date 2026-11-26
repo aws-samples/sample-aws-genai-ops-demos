@@ -1,0 +1,30 @@
+# CDK
+cdk.out*
+cdk.context.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Helm
+helm/**/charts/*.tgz
+*.tgz
+
+# Local overrides and secrets
+values.local.yaml
+*.local.yaml
+.env
+.env.*
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

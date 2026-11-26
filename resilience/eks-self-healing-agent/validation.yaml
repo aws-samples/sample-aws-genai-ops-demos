@@ -1,0 +1,32 @@
+# validation.yaml - EKS Self-Healing Agent (Agatha)
+#
+# The demo-validation workflow reads this file to deploy, verify, and tear the
+# demo down in a test account. See .kiro/steering/contributor-guide.md
+# ("Demo Validation (validation.yaml)") for the full schema.
+#
+# <region> is substituted by the workflow with the ambient region.
+
+# The demo's own deploy command, run from the demo folder. Reads CLUSTER_NAME and
+# KUBECTL_ROLE_ARN (and optionally OIDC_ISSUER) from the environment.
+deploy_command: ["./deploy-all.sh"]
+
+# Teardown goes through the demo script because a plain cdk destroy would need the
+# cluster inputs as context. The script reads them back from the stack outputs.
+destroy_command: ["./deploy-all.sh", "--destroy"]
+
+destroy_subdir: "."
+
+# CloudFormation stack to confirm deployed, then confirm gone.
+stacks:
+  - "EksSelfHealingAgent-<region>"
+
+# Deterministic deploy/destroy check: the agent behavior depends on workloads in
+# the cluster and on Bedrock model access, which CI cannot drive.
+verify: "deterministic"
+
+notes: >
+  Requires an existing EKS cluster in the test account with a publicly reachable
+  API endpoint and an IAM OIDC provider, an IAM role mapped to cluster admin that
+  the CDK kubectl handler can assume, and Amazon Bedrock access to the configured
+  Claude Sonnet model. Pass them as CLUSTER_NAME, KUBECTL_ROLE_ARN and optionally
+  OIDC_ISSUER environment variables.
