@@ -194,16 +194,28 @@ def assess(inv, cards, families, inconsistencies):
     rec_known = set(accts) - set(rec_unknown)
     all_accts = bool(rec_known) and set(cfg['recording_accounts']) >= rec_known
     rec_gap = bool(rec_known - set(cfg['recording_accounts']))      # an account is known not to record
-    # Data protection rules are judged per account: one account's rule covers no other account.
-    by_acct = cfg.get('s3_rules_by_account')
-    if by_acct is None:     # inventory without per-account rules: the estate list stands for every readable account
-        by_acct = {a: None if a in rules_unknown else cfg['s3_rules'] for a in accts}
-    rules_read = [a for a in accts if by_acct.get(a) is not None]
-    no_dp = [a for a in rules_read if not dp_of(by_acct[a])]       # read, and no data protection rule
+    # AWS Config is regional: the recorder and the data protection rules are judged in every account and region that
+    # holds in-scope buckets. A rule in one account or region covers no bucket elsewhere; unread cells are unconfirmed.
+    cells = cfg.get('coverage')
+    if cells is None:       # inventory without per-region status: one cell per account, with the estate rule list
+        # (recording stays judged per account above: nothing finer is known)
+        cells = [{'account': a, 'region': None, 'recording': None,
+                  's3_rules': None if a in rules_unknown else cfg['s3_rules']} for a in accts]
+    unit = 'account-regions' if any(c['region'] for c in cells) else 'accounts'
+
+    def cell_gaps(bad, known):
+        names = ', '.join(acct_label(c['account']) + (f" {c['region']}" if c['region'] else '') for c in bad[:5])
+        return f"{len(bad)} of {len(known)} {unit} ({names}{', ...' if len(bad) > 5 else ''})"
+    rules_read = [c for c in cells if c['s3_rules'] is not None]
+    no_dp = [c for c in rules_read if not dp_of(c['s3_rules'])]    # read, and no data protection rule there
     dp_every = bool(rules_read) and not no_dp
     rule_gap = bool(no_dp)
-    missing_dp = (f"{len(no_dp)} of {len(rules_read)} accounts ({', '.join(acct_label(a) for a in no_dp[:5])}"
-                  f"{', ...' if len(no_dp) > 5 else ''})")
+    missing_dp = cell_gaps(no_dp, rules_read)
+    rec_read = [c for c in cells if c['recording'] is not None]
+    unrecorded = [c for c in rec_read if c['recording'] is False]  # the account may record, but not there
+    if unrecorded:
+        all_accts, rec_gap = False, True
+    missing_rec = cell_gaps(unrecorded, rec_read)
     # Above level 3 each rung is scored only when known: automatic remediation (not collectable in v1), then posture
     # reporting (AWS Backup Audit Manager frameworks). An unknown rung neither adds a level nor stops the climb.
     lvl_det = (1 if not cfg['recording_accounts'] and not g['security_hub']['enabled_accounts']
@@ -259,7 +271,8 @@ def assess(inv, cards, families, inconsistencies):
                        'Organization backup policies: not readable from this account' if org_backup_policies is None
                        else f"{org_backup_policies} organization backup policies"],
         'detective': [f"AWS Config recording in {len(cfg['recording_accounts'])} of {len(accts)} accounts"
-                      + (f" (not readable in {len(rec_unknown)})" if rec_unknown else ''),
+                      + (f" (not readable in {len(rec_unknown)})" if rec_unknown else '')
+                      + (f"; not recording where buckets are in {missing_rec}" if unrecorded else ''),
                       ('S3 rules: not readable' if len(rules_unknown) == len(accts) else
                        f"S3 rules: {', '.join(cfg['s3_rules']) or 'none'}"
                        + ('' if dp_rules else ' (no versioning, replication or backup rules)')
@@ -328,6 +341,7 @@ def assess(inv, cards, families, inconsistencies):
         add('MEDIUM', 'No continuous check of the data protection baseline',
             f"AWS Config records in {len(cfg['recording_accounts'])} of {len(accts)} accounts"
             + (f" (not readable in {len(rec_unknown)})" if rec_unknown else '')
+            + (f", but not where buckets are in {missing_rec}" if unrecorded else '')
             + ('' if not rule_gap else ' with no versioning, replication or backup rules' if not dp_rules
                else f"; no versioning, replication or backup rule in {missing_dp}")
             + ('; Security Hub is off.' if not g['security_hub']['enabled_accounts'] and not sh_unknown else '.'),

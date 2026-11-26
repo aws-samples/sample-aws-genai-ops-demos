@@ -34,17 +34,28 @@ def undecided(raw):
     return out
 
 
-def _config(accounts):
+def _config(accounts, buckets):
     """AWS Config signals. An account whose config (or one of its fields) is None could not be read: it is listed
     under recording_unknown / s3_rules_unknown and never counted as "not recording" or "no rules".
-    auto_remediation is not collected in v1: None (unknown)."""
+    auto_remediation is not collected in v1: None (unknown).
+    coverage: one entry per (account, region) that holds in-scope buckets, with that region's recorder state and S3 rules
+    (None = unread). Config is regional, so these are the cells a data protection rule must cover. A scan that kept
+    no per-region status gives the account-level values for each of its bucket regions."""
     cfg = {a: m.get("config") or {} for a, m in accounts.items()}
+    # Only where in-scope buckets live: dev, tooling and log buckets need no data protection rule.
+    cells = sorted({(b["account"], b["region"]) for b in buckets if b.get("role") not in EXCLUDED_ROLES})
+    coverage = []
+    for a, r in cells:
+        c = cfg.get(a, {})
+        reg = (c.get("regions") or {}).get(r) if c.get("regions") is not None else c
+        reg = reg or {}
+        coverage.append({"account": a, "region": r, "recording": reg.get("recording"),
+                         "s3_rules": reg.get("s3_rules")})
     return {"recording_accounts": [a for a, c in cfg.items() if c.get("recording")],
             "recording_unknown": [a for a, c in cfg.items() if c.get("recording") is None],
             "s3_rules": sorted({r for c in cfg.values() for r in c.get("s3_rules") or []}),
-            # Per account (None = unread): a rule in one account says nothing about the others.
-            "s3_rules_by_account": {a: c.get("s3_rules") for a, c in cfg.items()},
             "s3_rules_unknown": [a for a, c in cfg.items() if c.get("s3_rules") is None],
+            "coverage": coverage,
             "auto_remediation": None}
 
 
@@ -157,7 +168,7 @@ def build(raw, ai_roles=None):
         "organizations": None if org is None else {
             "enabled": bool(org), "scps": org.get("scps", []), "backup_policies": org.get("backup_policies", 0),
             "tag_policies": org.get("tag_policies", [])},
-        "config": _config(accounts),
+        "config": _config(accounts, norm),
         "security_hub": {"enabled_accounts": [a for a, m in accounts.items() if m.get("security_hub")],
                          "unknown_accounts": [a for a, m in accounts.items() if m.get("security_hub") is None]},
         "backup_audit_manager_frameworks": posture["frameworks"],

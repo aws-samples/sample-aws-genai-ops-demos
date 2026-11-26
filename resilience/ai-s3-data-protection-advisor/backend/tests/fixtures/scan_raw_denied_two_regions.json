@@ -5,6 +5,16 @@
    "account_bpa_flags": null,
    "config": {
     "recording": null,
+    "regions": {
+     "ap-south-1": {
+      "recording": null,
+      "s3_rules": null
+     },
+     "eu-west-1": {
+      "recording": null,
+      "s3_rules": null
+     }
+    },
     "s3_rules": null,
     "unreadable_regions": [
      "ap-south-1",

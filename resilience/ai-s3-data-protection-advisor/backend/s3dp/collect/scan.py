@@ -313,7 +313,10 @@ def assemble(overview, units):
             "config": {"recording": _merge(acct["config_recording"]),
                        "s3_rules": sorted({x for rs in rules for x in rs}) if rules else None,
                        "unreadable_regions": [r for r, v, x in zip(regions, acct["config_recording"],
-                                                                   acct["config_rules"]) if v is None or x is None]},
+                                                                   acct["config_rules"]) if v is None or x is None],
+                       # Config is regional: a recorder or rule in one region covers no bucket in another.
+                       "regions": {r: {"recording": v, "s3_rules": x} for r, v, x in
+                                   zip(regions, acct["config_recording"], acct["config_rules"])}},
             "security_hub": _merge(acct["security_hub"]),
             "outcome": "scanned" if overview["listed"] else "denied: S3 bucket list"}
     return {

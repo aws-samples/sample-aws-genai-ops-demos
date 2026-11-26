@@ -109,7 +109,8 @@ MEMBER = "222233334444"
 
 
 def _two_accounts(member_rules):
-    """Both accounts record AWS Config; the hub has a versioning rule; the member has `member_rules` (None: unread)."""
+    """Both accounts hold buckets in eu-west-1 and record AWS Config there; the hub has a versioning rule; the member
+    has `member_rules` (None: unread)."""
     inv = inventory.build(_raw())
     hub = inv["hub_account"]
     inv["accounts"][MEMBER] = {"name": "member", "account_bpa": "on"}
@@ -117,8 +118,10 @@ def _two_accounts(member_rules):
     inv["governance"]["config"].update(
         recording_accounts=[hub, MEMBER], recording_unknown=[],
         s3_rules=sorted({"s3-bucket-versioning-enabled", *(member_rules or [])}),
-        s3_rules_by_account={hub: ["s3-bucket-versioning-enabled"], MEMBER: member_rules},
-        s3_rules_unknown=[] if member_rules is not None else [MEMBER])
+        s3_rules_unknown=[] if member_rules is not None else [MEMBER],
+        coverage=[{"account": hub, "region": "eu-west-1", "recording": True,
+                   "s3_rules": ["s3-bucket-versioning-enabled"]},
+                  {"account": MEMBER, "region": "eu-west-1", "recording": True, "s3_rules": member_rules}])
     return inv
 
 
@@ -132,8 +135,27 @@ def test_a_rule_in_one_account_does_not_cover_the_others():
     det = _dim(gov, "detective")
     assert det["level"] == 2
     f = _detective_finding(gov)
-    assert f and f"1 of 2 accounts ({MEMBER} (member))" in f["evidence"]
-    assert any(f"no data protection rule in 1 of 2 accounts ({MEMBER} (member))" in e for e in det["evidence"])
+    assert f and f"1 of 2 account-regions ({MEMBER} (member) eu-west-1)" in f["evidence"]
+    assert any(f"no data protection rule in 1 of 2 account-regions ({MEMBER} (member) eu-west-1)" in e
+               for e in det["evidence"])
+
+
+def test_a_rule_or_recorder_in_one_region_does_not_cover_the_others():
+    inv = inventory.build(_raw())
+    hub = inv["hub_account"]
+    inv["governance"]["security_hub"]["enabled_accounts"] = [hub]
+    inv["governance"]["config"].update(
+        recording_accounts=[hub], recording_unknown=[], s3_rules=["s3-bucket-versioning-enabled"], s3_rules_unknown=[],
+        coverage=[{"account": hub, "region": "eu-west-1", "recording": True, "s3_rules": ["s3-bucket-versioning-enabled"]},
+                  {"account": hub, "region": "us-east-1", "recording": False, "s3_rules": []}])
+    gov = _gov(inv)
+    det = _dim(gov, "detective")
+    assert det["level"] == 2
+    label = f"{hub} ({inv['accounts'][hub]['name']}) us-east-1"
+    assert any(f"no data protection rule in 1 of 2 account-regions ({label})" in e for e in det["evidence"])
+    assert any(f"not recording where buckets are in 1 of 2 account-regions ({label})" in e for e in det["evidence"])
+    f = _detective_finding(gov)
+    assert f and "but not where buckets are in 1 of 2 account-regions" in f["evidence"]
 
 
 def test_rules_in_every_account_reach_the_every_account_level():
@@ -148,14 +170,18 @@ def test_an_unreadable_account_is_unconfirmed_not_a_gap():
     assert any("not readable in 1 accounts" in e for e in det["evidence"])
 
 
-def test_inventory_keeps_config_rules_per_account():
+def test_inventory_keeps_config_status_per_account_and_region():
     raw = _raw()
     hub = raw["hub_account"]
-    raw["accounts"][MEMBER] = dict(raw["accounts"][hub], name="member",
-                                   config={"recording": True, "s3_rules": [], "unreadable_regions": []})
-    raw["regions"][MEMBER] = {}
-    by = inventory.build(raw)["governance"]["config"]["s3_rules_by_account"]
-    assert by[MEMBER] == [] and by[hub] == raw["accounts"][hub]["config"]["s3_rules"]
+    region = raw["buckets"][0]["region"]
+    raw["accounts"][hub]["config"]["regions"] = {region: {"recording": False, "s3_rules": []}}
+    cov = inventory.build(raw)["governance"]["config"]["coverage"]
+    assert {(c["account"], c["region"]) for c in cov} <= {(hub, b["region"]) for b in raw["buckets"]}
+    cell = next(c for c in cov if c["region"] == region)
+    assert cell["recording"] is False and cell["s3_rules"] == []       # the region's own status, not the account's
+    del raw["accounts"][hub]["config"]["regions"]                      # older raw scans: the account-level values
+    cell = next(c for c in inventory.build(raw)["governance"]["config"]["coverage"] if c["region"] == region)
+    assert cell["s3_rules"] == raw["accounts"][hub]["config"]["s3_rules"]
 
 
 def test_a_classification_tag_brings_a_bucket_into_the_regulated_rule():
@@ -168,3 +194,15 @@ def test_a_classification_tag_brings_a_bucket_into_the_regulated_rule():
     assert bucket["role"] == "production" and bucket["regional_required"] is True
     rule = next(p for p in _gov(inv)["policies"] if p["rule"] == "Legal and regulated data is replicated across two regions")
     assert rule["scope"] >= 1 and b["name"] in rule["failing"] and "note" not in rule
+
+
+def test_regions_with_only_out_of_scope_buckets_need_no_rule():
+    accounts = {MEMBER: {"config": {"recording": True, "s3_rules": [], "regions": {
+        "eu-west-1": {"recording": True, "s3_rules": ["s3-bucket-versioning-enabled"]},
+        "us-east-1": {"recording": True, "s3_rules": []}}}}}
+    buckets = [{"account": MEMBER, "region": "eu-west-1", "role": "production"},
+               {"account": MEMBER, "region": "us-east-1", "role": "non_production"},
+               {"account": MEMBER, "region": "us-east-1", "role": "access_logs"}]
+    cov = inventory._config(accounts, buckets)["coverage"]
+    assert cov == [{"account": MEMBER, "region": "eu-west-1", "recording": True,
+                    "s3_rules": ["s3-bucket-versioning-enabled"]}]
