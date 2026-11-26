@@ -30,7 +30,8 @@ env:
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Worst case: 17 min of retry waits (see the scan step) plus one full scan (about 5 min).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -53,7 +54,14 @@ jobs:
           #
           # Retry only when ASH produced no results (crash, or the image build failed, e.g.
           # 429 Too Many Requests from public.ecr.aws). A completed scan is never re-run.
-          for attempt in 1 2 3; do
+          #
+          # The image build pulls its base image from public.ecr.aws without credentials. When
+          # that hits "Data limit exceeded" the 429 does not clear within a minute: all three
+          # tries, 60 s apart, failed in runs 45260554008 and 45391633375, and a re-run of the
+          # second one 40 minutes later passed. So wait longer between tries: 2, 5, then 10 min.
+          delays=(120 300 600)
+          max_attempts=$(( ${#delays[@]} + 1 ))
+          for attempt in $(seq 1 "$max_attempts"); do
             rm -rf .ash/output
             set +e
             uvx --from "git+https://github.com/awslabs/automated-security-helper.git@${ASH_COMMIT}" \
@@ -69,10 +77,14 @@ jobs:
               echo "ASH finished (exit $rc) on attempt $attempt"
               exit $rc
             fi
-            echo "::warning::ASH produced no results (exit $rc) on attempt $attempt"
-            if [ "$attempt" -lt 3 ]; then sleep 60; fi
+            echo "::warning::ASH produced no results (exit $rc) on attempt $attempt of $max_attempts"
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              wait_s="${delays[$((attempt - 1))]}"
+              echo "Waiting ${wait_s}s before attempt $((attempt + 1))"
+              sleep "$wait_s"
+            fi
           done
-          echo "::error::ASH produced no results after 3 attempts"
+          echo "::error::ASH produced no results after $max_attempts attempts"
           exit 1
       - name: Check every scanner completed
         run: |
