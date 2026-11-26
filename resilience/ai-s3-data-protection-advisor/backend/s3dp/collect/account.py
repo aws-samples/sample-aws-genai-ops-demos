@@ -9,16 +9,28 @@ def _code(e):
     return e.response.get("Error", {}).get("Code", "Unknown")
 
 
-def account_bpa(s3control, account_id):
-    """'on' when all four account-level settings are true, 'off' when any is false or none is set, 'unknown' if unread."""
+PAB_FLAGS = ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+
+
+def account_bpa_flags(s3control, account_id):
+    """The four account-level settings {flag: bool} (all False when none is set), or None when unread. S3 combines
+    them flag by flag with the bucket's, so each is kept."""
     try:
         c = s3control.get_public_access_block(AccountId=account_id)["PublicAccessBlockConfiguration"]
-        return "on" if all(c.get(k) for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy",
-                                              "RestrictPublicBuckets")) else "off"
+        return {k: c.get(k) is True for k in PAB_FLAGS}
     except BotoCoreError:
-        return "unknown"
+        return None
     except ClientError as e:
-        return "off" if _code(e) == "NoSuchPublicAccessBlockConfiguration" else "unknown"
+        return dict.fromkeys(PAB_FLAGS, False) if _code(e) == "NoSuchPublicAccessBlockConfiguration" else None
+
+
+def bpa_state(flags):
+    """'on' when all four settings are true, 'off' when any is false, 'unknown' when unread."""
+    return "unknown" if flags is None else "on" if all(flags.values()) else "off"
+
+
+def account_bpa(s3control, account_id):
+    return bpa_state(account_bpa_flags(s3control, account_id))
 
 
 def account_alias(iam):

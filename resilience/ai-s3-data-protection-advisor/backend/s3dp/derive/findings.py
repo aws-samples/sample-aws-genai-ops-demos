@@ -68,7 +68,8 @@ def for_bucket(b, continuous_plans=frozenset()):
                       f"{verb} with a NoncurrentVersionExpiration lifecycle rule"))
     if role == "production" and b["object_lock"] == "None" and b["policy"].get("delete_deny") is False:
         out.append(_f("S3-DEL-01", "MEDIUM", "No delete guard",
-                      "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+                      "No Object Lock, and no bucket policy denies both s3:DeleteObject and s3:DeleteObjectVersion "
+                      "on every object (a s3:DeleteBucket deny protects no data).",
                       "Add a bucket policy that denies deletes outside an approved role"))
     if role == "production" and b["policy"].get("tls_only") is False:
         out.append(_f("S3-ACC-04", "MEDIUM", "TLS not enforced",

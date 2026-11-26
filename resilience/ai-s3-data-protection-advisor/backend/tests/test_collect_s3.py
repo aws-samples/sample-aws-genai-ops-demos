@@ -72,7 +72,20 @@ def test_replication_rules_are_flattened():
     with st:
         raw = col.collect_bucket(c, "orders-prod")
     assert raw["replication"] == {"ok": [{"status": "Enabled", "destination": "orders-prod-dr",
-                                          "storage_class": "GLACIER_IR", "delete_markers": True, "rtc": True}]}
+                                          "storage_class": "GLACIER_IR", "delete_markers": True, "rtc": True,
+                                          "scope": None}]}
+
+
+def test_replication_rule_scope_is_kept():
+    wide = [{}, {"Filter": {}}, {"Filter": {"Prefix": ""}}, {"Prefix": ""}]
+    assert [col.rule_scope(r) for r in wide] == [None] * 4
+    assert col.rule_scope({"Filter": {"Prefix": "exports/"}}) == {"prefix": "exports/", "tags": {}}
+    assert col.rule_scope({"Prefix": "legacy/"}) == {"prefix": "legacy/", "tags": {}}
+    assert col.rule_scope({"Filter": {"Tag": {"Key": "replicate", "Value": "yes"}}}) == \
+        {"prefix": None, "tags": {"replicate": "yes"}}
+    assert col.rule_scope({"Filter": {"And": {"Prefix": "p/", "Tags": [{"Key": "a", "Value": "1"},
+                                                                       {"Key": "b", "Value": "2"}]}}}) == \
+        {"prefix": "p/", "tags": {"a": "1", "b": "2"}}
 
 
 def test_list_buckets_by_region_paginates():

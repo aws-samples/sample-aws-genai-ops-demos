@@ -95,3 +95,16 @@ def test_collect_account_survives_denied_services():
     assert b["aws_backup"] == "NotVerified"
     assert inv["governance"]["config"]["recording_unknown"] == [ACCOUNT]
     assert inv["backup_posture"]["vaults"] is None
+
+
+def test_incomplete_metrics_are_recorded_as_unavailable(monkeypatch):
+    class S:
+        def client(self, *a, **k):
+            return object()
+    monkeypatch.setattr(scan.metrics, "collect_region", lambda cw, names: {
+        "a": {"requests": None, "incomplete": ["requests"]}, "b": {"requests": {"puts": 1}}})
+    monkeypatch.setattr(scan.s3c, "collect_bucket", lambda s3, n: {})
+    run, errors = scan._Run(), {}
+    scan._region_buckets(S(), REGION, ["a", "b"], ACCOUNT, run, errors)
+    assert run.unavailable == [[f"S3 CloudWatch metrics ({REGION}): requests not measured on 1 bucket(s): a",
+                                "metric results did not come back Complete: left unknown"]]

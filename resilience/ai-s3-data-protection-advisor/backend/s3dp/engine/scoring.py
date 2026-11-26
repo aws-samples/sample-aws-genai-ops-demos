@@ -2,6 +2,7 @@
 import re
 from collections import Counter, defaultdict
 
+from s3dp.derive.normalize import regional_copy
 from s3dp.engine import governance, instructions
 from s3dp.model import AI_OFF, CRITICAL_NAMING, NONPROD_NAMING, RISK_LABEL, RISKS, ROLE_LABEL, size_label as tb
 
@@ -32,13 +33,22 @@ def coverage(b):
     v, lock, rep = b['versioning'], b['object_lock'], b['replication']
     he = {'Enabled': 'protected', 'Suspended': 'partial', 'Never enabled': 'unprotected'}.get(v, 'unknown')
     ma = malicious_coverage(v, lock)
-    if v == 'Never enabled':
-        rd = 'unprotected'                  # replication requires versioning
-    elif isinstance(rep, dict):
-        rd = 'protected'                    # CRR source, or the regional copy itself
-    else:
-        rd = {'None': 'unprotected'}.get(rep, 'unknown')
+    # Replication requires versioning; otherwise only a verified, bucket-wide cross-region copy is protected.
+    rd = 'unprotected' if v == 'Never enabled' else regional_copy(rep)
     return {'human_error': he, 'malicious_activity': ma, 'regional_disruption': rd}
+
+
+def replication_label(rep):
+    """One-line replication summary used in the evidence and the bucket comparison."""
+    if not isinstance(rep, dict):
+        return None
+    if 'replica_of' in rep:
+        where = ('same region' if rep.get('srr')
+                 else f"from {rep['source_region']}" if rep.get('source_region') else None)
+        return f"is the regional copy of {rep['replica_of']}" + (f" ({where})" if where else '')
+    kind = 'SRR' if rep.get('srr') else 'CRR'
+    text = f"{kind} → {rep['destination']} ({rep.get('destination_region') or 'region not visible'})"
+    return text + (f", only {rep['filter']}" if rep.get('filter') else '')
 
 
 def controls_matrix(b, third_party=''):
@@ -86,12 +96,19 @@ def controls_matrix(b, third_party=''):
                          cells={'he': g, 'ma': g, 'rd': na()}))
     # Cross-region replication.
     if isinstance(rep, dict) and 'replica_of' in rep:
-        rr = ['ok', f"Is the regional copy of {rep['replica_of']}"]
+        rr = (['missing', f"Same-region copy of {rep['replica_of']}: shares the region's fate"] if rep.get('srr')
+              else ['ok', f"Is the regional copy of {rep['replica_of']}"
+                    + (f" ({rep['source_region']})" if rep.get('source_region') else '')])
     elif isinstance(rep, dict) and rep.get('srr'):
-        rr = ['partial', f"Same-region only → {rep.get('destination', '?')}"]
+        rr = ['missing', f"Same-region only → {rep.get('destination', '?')}: no copy outside the region"]
     elif isinstance(rep, dict):
         dest = f"→ {rep.get('destination', '?')} ({rep.get('destination_region') or 'region not visible'})"
-        rr = ['partial' if rep.get('inferred') else 'ok', dest + (' — inferred, confirm' if rep.get('inferred') else '')]
+        if rep.get('inferred'):
+            rr = ['unknown', dest + ' — destination region not verified, confirm']
+        elif rep.get('filter'):
+            rr = ['partial', dest + f" — only {rep['filter']}: other objects have no copy"]
+        else:
+            rr = ['ok', dest]
     elif v == 'Never enabled' or rep == 'None':
         rr = ['missing', 'Not configured' + (' (needs versioning)' if v == 'Never enabled' else '')]
     else:
@@ -198,10 +215,10 @@ def setting_values(b, inv):
         elif not backup.startswith('n/a'):
             vals['AWS Backup coverage'] = (2 if backup != 'None' else 1, backup)
         rep = b['replication']
-        vals['Replication'] = (None if rep == 'NotVerified' else 2 if isinstance(rep, dict) else 1,
-                               'not verified' if rep == 'NotVerified'
-                               else f"CRR → {rep.get('destination_region') or 'region not visible'}"
-                               if isinstance(rep, dict) else 'none')
+        rd = regional_copy(rep) if b['versioning'] != 'Never enabled' else 'unprotected'
+        # Ranked by the regional copy it gives: an unverified destination region is not compared.
+        vals['Replication'] = ({'protected': 3, 'partial': 2, 'unprotected': 1}.get(rd),
+                               'not verified' if rep == 'NotVerified' else replication_label(rep) or 'none')
     return vals
 
 
@@ -226,7 +243,8 @@ def find_families(buckets, inv):
         rep = b['replication']
         if isinstance(rep, dict) and rep.get('destination') in by_name:
             fams.append(dict(members=[b, by_name[rep['destination']]], match='replication pair',
-                             relation='replication_pair', basis='Confirmed CRR source and destination'))
+                             relation='replication_pair',
+                             basis=f"Confirmed {'SRR' if rep.get('srr') else 'CRR'} source and destination"))
             paired |= {b['name'], rep['destination']}
     groups, sgroups = defaultdict(list), defaultdict(list)
     for b in comparable:
@@ -460,8 +478,12 @@ def build(inv):
         if not is_ok(cov['malicious_activity']) and cov['malicious_activity'] != 'unknown' and 'malicious_activity' in req + rec:
             acts.append('Object Lock (Governance) or vendor-native immutability' if b['role'] == 'backup_target'
                         else 'Add Object Lock (Governance)')
+        rep = b['replication']
         if cov['regional_disruption'] == 'unprotected' and 'regional_disruption' in req:
-            acts.append('Add cross-region replication')
+            acts.append('Replicate to another region (current rule stays in the region)'
+                        if isinstance(rep, dict) and rep.get('srr') else 'Add cross-region replication')
+        elif cov['regional_disruption'] == 'partial' and 'regional_disruption' in req:
+            acts.append(f"Extend cross-region replication to the whole bucket (the rule copies only {rep['filter']})")
         elif cov['regional_disruption'] == 'unprotected' and 'regional_disruption' in rec and size >= 10:
             acts.append('Evaluate cross-region replication for critical prefixes')
         for r in req:
@@ -477,12 +499,11 @@ def build(inv):
         vce = b.get('vce')
         vce_s = (f"${vce['monthly_usd']:.2f}/mo (${vce['range'][0]:.2f}–${vce['range'][1]:.2f}) · {vce['basis']}"
                  if vce else '')
-        rep = b['replication']
         nv = lambda k: f"Not verified ({b.get('errors', {}).get(k, 'not readable')})"
-        rep_s = (f"CRR → {rep['destination']} ({rep.get('destination_region') or 'region not visible'}), delete-marker replication "
+        rep_s = (f"{replication_label(rep)}, delete-marker replication "
                  f"{'unknown' if rep.get('delete_markers') is None else 'on' if rep['delete_markers'] else 'off'}"
                  if isinstance(rep, dict) and 'destination' in rep
-                 else f"is the regional copy of {rep['replica_of']}" if isinstance(rep, dict)
+                 else replication_label(rep) if isinstance(rep, dict)
                  else 'not configured (verified)' if rep == 'None' else nv('replication'))
         evidence = [
             dict(label='Role', value=f"{ROLE_LABEL[b['role']]}: {b.get('role_reason', '')}"

@@ -127,9 +127,33 @@ def test_policy_delete_guard_needs_a_delete_action():
     assert _pol(deny("s3:Get*"))["delete_deny"] is False
     assert _pol(deny("s3:Delete*"))["delete_deny"] is True
     assert _pol(deny("S3:DELETEOBJECT*"))["delete_deny"] is True
-    assert _pol(deny(["s3:GetObject", "s3:DeleteBucket"]))["delete_deny"] is True
-    assert _pol(deny("s3:DeleteObjectV*"))["delete_deny"] is True
+    assert _pol(deny(["s3:GetObject", "s3:DeleteBucket"]))["delete_deny"] is False     # bucket deletion only
+    assert _pol(deny("s3:DeleteObjectV*"))["delete_deny"] is False                      # versions only
+    assert _pol(deny("s3:DeleteObject"), deny("s3:DeleteObjectVersion"))["delete_deny"] is True   # split statements
     assert _pol(deny("s3:DeleteBucketPolicy"))["delete_deny"] is False
+
+
+def _on(resource, action=("s3:DeleteObject", "s3:DeleteObjectVersion"), cond=None):
+    s = dict(deny(list(action), cond), Resource=resource)
+    return n.policy({"ok": json.dumps({"Statement": [s]})}, "records-prod")["delete_deny"]
+
+
+def test_delete_guard_must_cover_every_object_of_the_bucket():
+    # Review F05: a s3:DeleteBucket deny on the bucket ARN is not an object guard.
+    assert n.policy({"ok": json.dumps({"Statement": [{"Effect": "Deny", "Principal": "*", "Action": "s3:DeleteBucket",
+                                                      "Resource": "arn:aws:s3:::records-prod"}]})},
+                    "records-prod") == {"delete_deny": False, "tls_only": False}
+    assert _on("arn:aws:s3:::records-prod/*") is True                   # object-wide, object and version deletes
+    assert _on(["arn:aws:s3:::records-prod", "arn:aws:s3:::records-prod/*"]) is True
+    assert _on("arn:aws:s3:::*") is True and _on("*") is True
+    assert _on("arn:aws:s3:::records-prod/*", action=("s3:DeleteObjectVersion",)) is False   # version-wide only
+    assert _on("arn:aws:s3:::records-prod/exports/*") is False          # prefix-limited
+    assert _on("arn:aws:s3:::other-bucket/*") is False
+    assert _on("arn:aws:s3:::records-prod") is False                    # bucket ARN: no object matches it
+    assert _on("arn:aws:s3:::records-prod/*", cond={"StringNotEquals": {"aws:SourceVpce": "vpce-1"}}) is False
+    assert _on("arn:aws:s3:::records-prod/*", cond={"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::1:role/r"}}) is True
+    not_res = {"Effect": "Deny", "Principal": "*", "Action": "s3:Delete*", "NotResource": "arn:aws:s3:::x/keep/*"}
+    assert n.policy({"ok": json.dumps({"Statement": [not_res]})}, "records-prod")["delete_deny"] is False
 
 
 def test_policy_wildcard_deny_counts_only_without_perimeter_condition():
@@ -149,7 +173,7 @@ def test_policy_not_action():
 
 
 def test_policy_statement_shapes():
-    one = {"Statement": deny("s3:DeleteObject")}
+    one = {"Statement": deny(["s3:DeleteObject", "s3:DeleteObjectVersion"])}
     assert _pol(raw_doc=one) == {"delete_deny": True, "tls_only": False}
     assert _pol(raw_doc=[1, 2]) == {"delete_deny": None, "tls_only": None}
     assert _pol(raw_doc={"Statement": ["oops"]}) == {"delete_deny": None, "tls_only": None}
@@ -209,3 +233,103 @@ def test_normalize_bucket_backup_plans_and_tags_read():
     ok = n.normalize_bucket({"name": "x", "account": "1", "region": "eu-west-1", "s3": raw(), "metrics": None},
                             regions={}, account_bpa="on", backup={})
     assert ok["tags_read"] is True and ok["aws_backup_plans"] == [] and ok["size_series"] == []
+
+
+# ---- regional protection credit (review F01, F02)
+
+from s3dp import run as run_seq
+from s3dp.engine import scoring
+
+
+def _rule(dest, scope=None):
+    return {"status": "Enabled", "destination": dest, "storage_class": None, "delete_markers": True, "rtc": False,
+            "scope": scope}
+
+
+REGIONS = {"src": "eu-west-1", "dst-cross": "eu-central-1", "dst-same": "eu-west-1"}
+
+
+def test_only_a_verified_bucket_wide_cross_region_copy_is_regional_protection():
+    cases = {
+        "cross": ([_rule("dst-cross")], "protected"),
+        "same": ([_rule("dst-same")], "unprotected"),
+        "unknown destination region": ([_rule("other-account-bucket")], "unknown"),
+        "prefix": ([_rule("dst-cross", {"prefix": "exports/", "tags": {}})], "partial"),
+        "tag": ([_rule("dst-cross", {"prefix": None, "tags": {"replicate": "yes"}})], "partial"),
+        "bucket-wide beside a filtered rule": ([_rule("dst-cross", {"prefix": "a/", "tags": {}}),
+                                                _rule("dst-cross")], "protected"),
+        "two filtered rules": ([_rule("dst-cross", {"prefix": "a/", "tags": {}}),
+                                _rule("dst-cross", {"prefix": "b/", "tags": {}})], "partial"),
+    }
+    for name, (rules, want) in cases.items():
+        rep = n.replication({"ok": rules}, "eu-west-1", REGIONS)
+        assert n.regional_copy(rep) == want, name
+    rep = n.replication({"ok": [_rule("dst-cross", {"prefix": "exports/", "tags": {}})]}, "eu-west-1", REGIONS)
+    assert rep["filter"] == "prefix exports/"
+    assert n.regional_copy("None") == "unprotected" and n.regional_copy("NotVerified") == "unknown"
+
+
+def _raw_pair(dest_region, scope=None, tags=None):
+    """A regulated production source replicating to a destination in `dest_region`, as a raw scan."""
+    def item(name, region, s3):
+        return {"name": name, "account": "111122223333", "region": region, "s3": s3, "metrics": None}
+    src = raw(replication={"ok": [_rule("records-copy", scope)]},
+              tags={"ok": tags or {"data-classification": "regulated"}})
+    return {"hub_account": "111122223333", "scan_date": "2026-11-26T00:00:00Z",
+            "accounts": {"111122223333": {"name": "acme", "account_bpa": "on", "role_names": [], "stack_names": [],
+                                          "config": {"recording": True, "s3_rules": []}, "security_hub": True}},
+            "regions": {"111122223333": {"eu-west-1": {}, dest_region: {}}},
+            "buckets": [item("records-prod", "eu-west-1", src), item("records-copy", dest_region, raw())],
+            "organization": None, "run": {"scope": "1 account (acme)", "unavailable": [], "api_errors": 0}}
+
+
+def _scored(raw_scan):
+    inv, data, _ = run_seq.score(raw_scan, {}, {"classification": False})
+    cards = {c["row"]["bucket"]: c for c in next(t for t in data["tabs"] if t["id"] == "resources")["cards"]}
+    return {b["name"]: b for b in inv["buckets"]}, cards
+
+
+def test_same_region_replication_leaves_the_regional_gap_open():
+    buckets, cards = _scored(_raw_pair("eu-west-1"))
+    src, copy = buckets["records-prod"], buckets["records-copy"]
+    assert src["regional_required"] is True and src["replication"]["srr"] is True
+    assert scoring.coverage(src)["regional_disruption"] == "unprotected"
+    assert copy["replication"] == {"replica_of": "records-prod", "source_region": "eu-west-1", "srr": True}
+    assert scoring.coverage(copy)["regional_disruption"] == "unprotected"     # the marker alone earns nothing
+    row = cards["records-prod"]["row"]
+    assert row["rd"] == "unprotected" and "another region" in row["action"]
+    assert row["gap"] == ["regional_disruption"]                              # counted as a required gap
+    rd_cell = next(c for c in row["controls"] if c["control"] == "Cross-region replication")["cells"]["rd"]
+    assert rd_cell[0] == "missing"
+
+
+def test_cross_region_replication_closes_it_and_a_filter_keeps_it_partial():
+    buckets, cards = _scored(_raw_pair("eu-central-1"))
+    assert scoring.coverage(buckets["records-prod"])["regional_disruption"] == "protected"
+    assert buckets["records-copy"]["replication"] == {"replica_of": "records-prod", "source_region": "eu-west-1"}
+    assert scoring.coverage(buckets["records-copy"])["regional_disruption"] == "protected"
+    buckets, cards = _scored(_raw_pair("eu-central-1", scope={"prefix": "exports/", "tags": {}}))
+    row = cards["records-prod"]["row"]
+    assert row["rd"] == "partial" and "only prefix exports/" in row["action"]
+    rd_cell = next(c for c in row["controls"] if c["control"] == "Cross-region replication")["cells"]["rd"]
+    assert rd_cell[0] == "partial" and "prefix exports/" in rd_cell[1]
+
+
+def _flags(**on):
+    return {k: k in on for k in n.PAB_FLAGS}
+
+
+def test_bpa_combines_account_and_bucket_flag_by_flag():
+    # Review F09: the account blocks ACLs, the bucket blocks policies: all four are in effect.
+    acct = _flags(BlockPublicAcls=1, IgnorePublicAcls=1)
+    bucket = {"ok": _flags(BlockPublicPolicy=1, RestrictPublicBuckets=1)}
+    assert n.bucket_bpa(bucket, "off", acct) == "on"
+    # RestrictPublicBuckets set nowhere: off.
+    assert n.bucket_bpa({"ok": _flags(BlockPublicPolicy=1)}, "off", acct) == "off"
+    # Bucket unread: the account's two flags are known, the other two are not: unknown, not off.
+    assert n.bucket_bpa({"error": "AccessDenied"}, "off", acct) == "unknown"
+    assert n.bucket_bpa({"error": "AccessDenied"}, "on", dict.fromkeys(n.PAB_FLAGS, True)) == "on"
+    # Account unread: a bucket with all four on needs nothing from it; a bucket missing one stays unknown.
+    assert n.bucket_bpa(OK_PAB, "unknown", None) == "on"
+    assert n.bucket_bpa({"ok": _flags(BlockPublicPolicy=1)}, "unknown", None) == "unknown"
+    assert n.bucket_bpa({"absent": True}, "off", dict.fromkeys(n.PAB_FLAGS, False)) == "off"

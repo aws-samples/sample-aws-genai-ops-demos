@@ -2,6 +2,12 @@
  "accounts": {
   "111122223333": {
    "account_bpa": "on",
+   "account_bpa_flags": {
+    "BlockPublicAcls": true,
+    "BlockPublicPolicy": true,
+    "IgnorePublicAcls": true,
+    "RestrictPublicBuckets": true
+   },
    "config": {
     "recording": null,
     "s3_rules": null,

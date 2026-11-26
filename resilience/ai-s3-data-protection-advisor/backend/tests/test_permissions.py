@@ -96,6 +96,7 @@ def test_design_lists_the_same_actions():
 
 SEED_NEEDS = {
     "create_bucket": ["s3:CreateBucket", "s3:PutBucketObjectLockConfiguration"],
+    "head_bucket": ["s3:ListBucket"],
     "get_waiter": ["s3:ListBucket"],
     "put_public_access_block": ["s3:PutBucketPublicAccessBlock"],
     "put_bucket_tagging": ["s3:PutBucketTagging"], "get_bucket_tagging": ["s3:GetBucketTagging"],
@@ -116,7 +117,7 @@ SEED_NEEDS = {
 
 def test_seed_calls_are_listed_in_seed_actions_only():
     text = SEED.read_text()
-    calls = set(re.findall(r"\.((?:get|list|put|create|delete)_[a-z_]+)\(", text)) - NOT_AWS
+    calls = set(re.findall(r"\.((?:get|list|put|create|delete|head)_[a-z_]+)\(", text)) - NOT_AWS
     calls |= set(re.findall(r"get_paginator\(\"([a-z_]+)\"\)", text))
     assert calls - set(SEED_NEEDS) == set(), "map the new seed call in SEED_NEEDS and SEED_ACTIONS"
     assert {a for c in calls for a in SEED_NEEDS[c]} <= set(SEED_ACTIONS)

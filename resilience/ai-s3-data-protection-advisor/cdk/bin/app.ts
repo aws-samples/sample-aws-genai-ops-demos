@@ -25,7 +25,13 @@ const list = (value: string): string[] => value.split(',').map((s) => s.trim()).
 //   hubRegion=<region>            the hub region, when it differs from the deploy region (spoke and org modes)
 //   spoke=true                    synthesize only the Spoke stack (deploy it by hand in one member account)
 //   orgOnly=true                  synthesize only the Org stack (a management account rolling out for a hub)
+//   stackSetsCallAs=SELF|DELEGATED_ADMIN   who creates the StackSet: the management account (default) or a
+//                                 StackSets delegated administrator
 const hubAccountId = ctx('hubAccountId');
+const callAs = ctx('stackSetsCallAs') || 'SELF';
+if (callAs !== 'SELF' && callAs !== 'DELEGATED_ADMIN') {
+  throw new Error(`stackSetsCallAs must be SELF or DELEGATED_ADMIN, got '${callAs}'`);
+}
 const hubRegion = ctx('hubRegion') || region;
 const orgTargets = list(ctx('orgTargets'));
 
@@ -43,6 +49,7 @@ if (ctx('spoke') === 'true') {
     hubAccountId,
     hubRegion,
     targetOuIds: orgTargets,
+    callAs,
     synthesizer: new cdk.BootstraplessSynthesizer(), // a management account needs no CDK bootstrap
     description: 'S3 Data Protection Advisor: StackSet rolling the spoke role out to member accounts',
   });
@@ -104,6 +111,7 @@ if (ctx('spoke') === 'true') {
       hubAccountId: hubAccountId || `${process.env.CDK_DEFAULT_ACCOUNT ?? ''}`,
       hubRegion: region,
       targetOuIds: orgTargets,
+      callAs,
       synthesizer: new cdk.BootstraplessSynthesizer(),
       description: 'S3 Data Protection Advisor: StackSet rolling the spoke role out to member accounts',
     });

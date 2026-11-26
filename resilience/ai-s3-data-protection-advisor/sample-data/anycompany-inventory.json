@@ -382,7 +382,8 @@
    "versioning": "Enabled",
    "object_lock": "COMPLIANCE 7y",
    "replication": {
-    "replica_of": "anycompany-clinical-records-prod"
+    "replica_of": "anycompany-clinical-records-prod",
+    "source_region": "eu-west-1"
    },
    "encryption": "SSE-KMS",
    "bucket_key": true,
@@ -575,7 +576,8 @@
    "versioning": "Enabled",
    "object_lock": "None",
    "replication": {
-    "replica_of": "anycompany-datalake-curated"
+    "replica_of": "anycompany-datalake-curated",
+    "source_region": "eu-west-1"
    },
    "encryption": "SSE-KMS",
    "bucket_key": true,

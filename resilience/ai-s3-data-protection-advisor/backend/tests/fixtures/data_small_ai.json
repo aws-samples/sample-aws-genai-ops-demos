@@ -611,7 +611,7 @@
        "title": "512 GiB unversioned"
       },
       {
-       "description": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+       "description": "No Object Lock, and no bucket policy denies both s3:DeleteObject and s3:DeleteObjectVersion on every object (a s3:DeleteBucket deny protects no data).",
        "severity": "MEDIUM",
        "title": "No delete guard"
       },
@@ -802,7 +802,7 @@
         "title": "512 GiB unversioned"
        },
        {
-        "description": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+        "description": "No Object Lock, and no bucket policy denies both s3:DeleteObject and s3:DeleteObjectVersion on every object (a s3:DeleteBucket deny protects no data).",
         "severity": "MEDIUM",
         "title": "No delete guard"
        },
@@ -1591,8 +1591,8 @@
      "account": "111122223333",
      "account_name": "acme-main",
      "bucket": "orders-prod-us-east-1",
-     "description": "No delete guard. No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
-     "detail": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+     "description": "No delete guard. No Object Lock, and no bucket policy denies both s3:DeleteObject and s3:DeleteObjectVersion on every object (a s3:DeleteBucket deny protects no data).",
+     "detail": "No Object Lock, and no bucket policy denies both s3:DeleteObject and s3:DeleteObjectVersion on every object (a s3:DeleteBucket deny protects no data).",
      "priority": 6,
      "recommendation": "Add a bucket policy that denies deletes outside an approved role",
      "region": "us-east-1",

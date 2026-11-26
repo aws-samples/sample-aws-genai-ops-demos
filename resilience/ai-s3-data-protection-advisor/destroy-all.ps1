@@ -36,9 +36,11 @@ $orgStackName = "S3DataProtectionOrg-$region"
 $orgTargets = aws cloudformation describe-stacks --stack-name $orgStackName --region $region --query "Stacks[0].Outputs[?OutputKey=='OrgTargets'].OutputValue" --output text --no-cli-pager 2>$null
 if ($LASTEXITCODE -eq 0 -and $orgTargets -and $orgTargets -ne "None") {
     $hubAccount = aws cloudformation describe-stacks --stack-name $orgStackName --region $region --query "Stacks[0].Outputs[?OutputKey=='HubAccountId'].OutputValue" --output text --no-cli-pager
+    $callAs = aws cloudformation describe-stacks --stack-name $orgStackName --region $region --query "Stacks[0].Outputs[?OutputKey=='CallAs'].OutputValue" --output text --no-cli-pager
+    if ($callAs -ne "DELEGATED_ADMIN") { $callAs = "SELF" }
     Write-Host "`nDestroying the organization stack..." -ForegroundColor Yellow
     Write-Host "      (Deletes the StackSet and the spoke role in every account under $orgTargets)" -ForegroundColor Gray
-    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -DestroyStack -CdkContext @("orgOnly=true", "orgTargets=$orgTargets", "hubAccountId=$hubAccount")
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -DestroyStack -CdkContext @("orgOnly=true", "orgTargets=$orgTargets", "hubAccountId=$hubAccount", "stackSetsCallAs=$callAs")
     if ($LASTEXITCODE -ne 0) { Write-Host "Organization stack destruction failed" -ForegroundColor Red; exit 1 }
 }
 

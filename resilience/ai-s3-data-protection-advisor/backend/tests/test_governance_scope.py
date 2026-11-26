@@ -101,3 +101,70 @@ def test_not_assessed_dimension_text_is_not_sent_for_rewrite():
             b["role"] = "non_production"
     data, _ = scoring.build(inv)
     assert not any(k.startswith("governance.standard.") for k in narrative._targets(data))
+
+
+# ---- detective controls per account (review F06) and regulated scope (review F07)
+
+MEMBER = "222233334444"
+
+
+def _two_accounts(member_rules):
+    """Both accounts record AWS Config; the hub has a versioning rule; the member has `member_rules` (None: unread)."""
+    inv = inventory.build(_raw())
+    hub = inv["hub_account"]
+    inv["accounts"][MEMBER] = {"name": "member", "account_bpa": "on"}
+    inv["governance"]["security_hub"]["enabled_accounts"] = [hub, MEMBER]
+    inv["governance"]["config"].update(
+        recording_accounts=[hub, MEMBER], recording_unknown=[],
+        s3_rules=sorted({"s3-bucket-versioning-enabled", *(member_rules or [])}),
+        s3_rules_by_account={hub: ["s3-bucket-versioning-enabled"], MEMBER: member_rules},
+        s3_rules_unknown=[] if member_rules is not None else [MEMBER])
+    return inv
+
+
+def _detective_finding(gov):
+    return next((f for f in gov["findings"] if f["title"] == "No continuous check of the data protection baseline"),
+                None)
+
+
+def test_a_rule_in_one_account_does_not_cover_the_others():
+    gov = _gov(_two_accounts([]))
+    det = _dim(gov, "detective")
+    assert det["level"] == 2
+    f = _detective_finding(gov)
+    assert f and f"1 of 2 accounts ({MEMBER} (member))" in f["evidence"]
+    assert any(f"no data protection rule in 1 of 2 accounts ({MEMBER} (member))" in e for e in det["evidence"])
+
+
+def test_rules_in_every_account_reach_the_every_account_level():
+    gov = _gov(_two_accounts(["s3-bucket-replication-enabled"]))
+    assert _dim(gov, "detective")["level"] >= 3 and _detective_finding(gov) is None
+
+
+def test_an_unreadable_account_is_unconfirmed_not_a_gap():
+    gov = _gov(_two_accounts(None))
+    det = _dim(gov, "detective")
+    assert _detective_finding(gov) is None
+    assert any("not readable in 1 accounts" in e for e in det["evidence"])
+
+
+def test_inventory_keeps_config_rules_per_account():
+    raw = _raw()
+    hub = raw["hub_account"]
+    raw["accounts"][MEMBER] = dict(raw["accounts"][hub], name="member",
+                                   config={"recording": True, "s3_rules": [], "unreadable_regions": []})
+    raw["regions"][MEMBER] = {}
+    by = inventory.build(raw)["governance"]["config"]["s3_rules_by_account"]
+    assert by[MEMBER] == [] and by[hub] == raw["accounts"][hub]["config"]["s3_rules"]
+
+
+def test_a_classification_tag_brings_a_bucket_into_the_regulated_rule():
+    raw = _raw()
+    b = next(x for x in raw["buckets"] if x["name"].endswith("-prod") or "prod" in x["name"])
+    b["s3"]["tags"] = {"ok": {"data-classification": "regulated"}}
+    b["s3"]["replication"] = {"absent": True}
+    inv = inventory.build(raw)
+    bucket = next(x for x in inv["buckets"] if x["name"] == b["name"])
+    assert bucket["role"] == "production" and bucket["regional_required"] is True
+    rule = next(p for p in _gov(inv)["policies"] if p["rule"] == "Legal and regulated data is replicated across two regions")
+    assert rule["scope"] >= 1 and b["name"] in rule["failing"] and "note" not in rule

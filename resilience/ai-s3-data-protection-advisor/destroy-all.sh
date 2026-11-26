@@ -39,10 +39,14 @@ org_targets=$(aws cloudformation describe-stacks --stack-name "$org_stack" --reg
 if [ -n "$org_targets" ] && [ "$org_targets" != "None" ]; then
     hub_account=$(aws cloudformation describe-stacks --stack-name "$org_stack" --region "$region" \
         --query "Stacks[0].Outputs[?OutputKey=='HubAccountId'].OutputValue" --output text --no-cli-pager)
+    call_as=$(aws cloudformation describe-stacks --stack-name "$org_stack" --region "$region" \
+        --query "Stacks[0].Outputs[?OutputKey=='CallAs'].OutputValue" --output text --no-cli-pager)
+    [ "$call_as" = "DELEGATED_ADMIN" ] || call_as=SELF
     echo -e "\n\033[0;33mDestroying the organization stack...\033[0m"
     echo -e "\033[0;90m      (Deletes the StackSet and the spoke role in every account under $org_targets)\033[0m"
     ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$org_stack" --skip-bootstrap --destroy \
-        --cdk-context "orgOnly=true" --cdk-context "orgTargets=$org_targets" --cdk-context "hubAccountId=$hub_account"
+        --cdk-context "orgOnly=true" --cdk-context "orgTargets=$org_targets" --cdk-context "hubAccountId=$hub_account" \
+        --cdk-context "stackSetsCallAs=$call_as"
 fi
 
 echo -e "\n\033[0;33mDestroying the stacks in $AWS_REGION...\033[0m"

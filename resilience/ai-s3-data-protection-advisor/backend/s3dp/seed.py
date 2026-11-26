@@ -2,8 +2,9 @@
 scan against what each bucket should show, and a cleanup.
 
 This is the only part of the solution that writes to AWS. It refuses an account whose alias reads as production,
-every bucket keeps the four Block Public Access settings on, and the cleanup deletes only buckets (and the one IAM
-role) that carry the mock tag AND the account's mock prefix.
+every bucket keeps the four Block Public Access settings on, it never takes over an existing bucket (or role) that
+does not already carry the mock tag (checked for every planned name before any change), and the cleanup deletes only
+buckets (and the one IAM role) that carry the mock tag AND the account's mock prefix.
 
 Buckets (prefix s3dp-<account>-; no "demo" or "mock" in names, so the generative AI assistant judges them like real buckets), primary region unless noted:
   orders-prod        production by name, never versioned, no bucket policy, server access logs to access-logs
@@ -139,8 +140,10 @@ def _policy(name, account_id, cfg):
         stmts.append({"Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*", "Action": "s3:*",
                       "Resource": [arn, arn + "/*"], "Condition": {"Bool": {"aws:SecureTransport": "false"}}})
     if cfg.get("delete_guard"):
-        stmts.append({"Sid": "DenyBucketDelete", "Effect": "Deny", "Principal": "*", "Action": "s3:DeleteBucket",
-                      "Resource": arn})
+        # Object and version deletes on every object: a s3:DeleteBucket deny alone protects no data. Cleanup removes
+        # the policy before emptying the bucket.
+        stmts.append({"Sid": "DenyObjectDelete", "Effect": "Deny", "Principal": "*",
+                      "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": arn + "/*"})
     if cfg.get("hide_policy"):
         # Hides the policy from every reader; the account can still replace or delete it (cleanup does).
         stmts.append({"Sid": "HidePolicy", "Effect": "Deny", "Principal": "*", "Action": "s3:GetBucketPolicy",
@@ -180,6 +183,35 @@ def _role(iam, account_id, source, dest):
     return arn, created
 
 
+def _existing_tags(s3, name):
+    """Tags of an existing bucket ({} when untagged), or None when no bucket has this name."""
+    try:
+        s3.head_bucket(Bucket=name)
+    except ClientError as e:
+        if _code(e) in ("404", "NoSuchBucket", "NotFound"):
+            return None
+        # 403 (another owner), 301 (another region)...: it exists and is not ours to change from here.
+        raise SystemExit(f"Bucket {name} exists but cannot be read here ({_code(e)}): not touching it")
+    try:
+        tags = s3.get_bucket_tagging(Bucket=name)["TagSet"]
+    except ClientError as e:
+        if _code(e) != "NoSuchTagSet":
+            raise
+        tags = []
+    return {t["Key"]: t["Value"] for t in tags}
+
+
+def _refuse_unless_mock(s3, name):
+    """True for an existing mock bucket (it may be updated), False when the name is free. A bucket that exists
+    without the mock tag is refused: seeding would rewrite its settings and tags, and the cleanup would then empty
+    and delete it."""
+    tags = _existing_tags(s3, name)
+    if tags is not None and tags.get(TAG_KEY) != TAG_VALUE:
+        raise SystemExit(f"Bucket {name} already exists without the {TAG_KEY}={TAG_VALUE} tag: not reusing it. "
+                         "Rename or remove it, or seed into another account.")
+    return tags is not None
+
+
 def _create(s3, name, region, cfg):
     kw = {"Bucket": name}
     if region != "us-east-1":
@@ -191,16 +223,36 @@ def _create(s3, name, region, cfg):
     except ClientError as e:
         if _code(e) != "BucketAlreadyOwnedByYou":
             raise
+        _refuse_unless_mock(s3, name)       # appeared since the preflight: the same rule applies
     s3.get_waiter("bucket_exists").wait(Bucket=name)
 
 
+def _preflight(session, clients, buckets):
+    """Before any change: every planned name is free or already a mock bucket, and the replication role is free or
+    the mock's. Returns the names of the existing mock buckets. (In us-east-1, CreateBucket on a bucket the account
+    already owns succeeds, so the existence check cannot rely on the create error.)"""
+    existing = {name for name, region, _ in buckets if _refuse_unless_mock(clients[region], name)}
+    try:
+        role = session.client("iam").get_role(RoleName=ROLE_NAME)["Role"]
+    except ClientError as e:
+        if _code(e) != "NoSuchEntity":
+            raise
+        return existing
+    if {t["Key"]: t["Value"] for t in role.get("Tags", [])}.get(TAG_KEY) != TAG_VALUE:
+        raise SystemExit(f"IAM role {ROLE_NAME} exists without the {TAG_KEY} tag: not reusing it")
+    return existing
+
+
 def seed(session, account_id, primary, secondary, log=print, sleep=time.sleep):
-    """Create or update the mock estate. Returns the bucket names."""
+    """Create or update the mock estate. Returns the bucket names. Nothing is changed unless every planned bucket
+    and the role are free or already the mock estate's."""
     names = {s: n for n, _, s in plan(account_id, primary, secondary)}
     clients = {r: session.client("s3", region_name=r) for r in (primary, secondary)}
+    existing = _preflight(session, clients, plan(account_id, primary, secondary))
     for name, region, suffix in plan(account_id, primary, secondary):
         cfg, s3 = SPEC[suffix][1], clients[region]
-        _create(s3, name, region, cfg)
+        if name not in existing:
+            _create(s3, name, region, cfg)
         s3.put_public_access_block(Bucket=name, PublicAccessBlockConfiguration=PAB)
         s3.put_bucket_tagging(Bucket=name, Tagging={"TagSet": [
             {"Key": k, "Value": v} for k, v in {TAG_KEY: TAG_VALUE, **cfg.get("tags", {})}.items()]})

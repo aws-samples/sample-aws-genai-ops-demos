@@ -181,6 +181,12 @@ def _region_buckets(session, r, names, account_id, run, errors):
         if err and "cloudwatch" not in errors:
             errors["cloudwatch"] = err
             run.fail(f"S3 CloudWatch metrics ({r}): sizes not measured", err)
+        partial = sorted(n for n, v in m.items() if isinstance(v, dict) and v.get("incomplete"))
+        if partial:
+            kinds = sorted({k for n in partial for k in m[n]["incomplete"]})
+            run.fail(f"S3 CloudWatch metrics ({r}): {', '.join(kinds)} not measured on {len(partial)} bucket(s): "
+                     f"{', '.join(partial[:10])}{', ...' if len(partial) > 10 else ''}",
+                     "metric results did not come back Complete: left unknown", count=len(partial))
         rs3 = guarded("s3", "S3 regional client", lambda: client("s3"))
         for n in names:
             raw = s3c.collect_bucket(rs3, n) if rs3 is not None else {}
@@ -201,7 +207,8 @@ def _outcome(info, errors):
 
 def account_overview(session, account_id, account_name=None, today=None, batch=BATCH):
     """Account-level reads. JSON-serializable checkpoint: {"today", "account_id", "account_name", "buckets":
-    [{"name","region"}], "regions" (sorted), "alias", "role_names", "account_bpa", "listed", "batch", "run"}."""
+    [{"name","region"}], "regions" (sorted), "alias", "role_names", "account_bpa", "account_bpa_flags", "listed",
+    "batch", "run"}."""
     today = today or datetime.now(timezone.utc).date().isoformat()
     run = _Run()
     buckets = _list_buckets(session, run)
@@ -215,12 +222,14 @@ def account_overview(session, account_id, account_name=None, today=None, batch=B
     if roles is None:
         run.fail("IAM role names (third-party backup detection)", "ListRoles failed")
     s3control = run.call("S3 Control client", lambda: session.client("s3control", config=CFG))
-    bpa = acc.account_bpa(s3control, account_id) if s3control else "unknown"
+    flags = acc.account_bpa_flags(s3control, account_id) if s3control else None
+    bpa = acc.bpa_state(flags)
     if bpa == "unknown":
         run.fail("Account-level S3 Block Public Access", "GetPublicAccessBlock failed")
     return {"today": today, "account_id": account_id, "account_name": account_name,
             "buckets": [{"name": b["name"], "region": b["region"]} for b in buckets or []], "regions": regions,
-            "alias": alias, "role_names": roles, "account_bpa": bpa, "listed": buckets is not None,
+            "alias": alias, "role_names": roles, "account_bpa": bpa, "account_bpa_flags": flags,
+            "listed": buckets is not None,
             "batch": batch, "run": run.to_dict()}
 
 
@@ -298,7 +307,8 @@ def assemble(overview, units):
 
     rules = [x for x in acct["config_rules"] if x is not None]
     name = overview.get("account_name") or overview["alias"] or account_id
-    meta = {"name": name, "account_bpa": overview["account_bpa"], "role_names": overview["role_names"],
+    meta = {"name": name, "account_bpa": overview["account_bpa"],
+            "account_bpa_flags": overview.get("account_bpa_flags"), "role_names": overview["role_names"],
             "stack_names": sorted(set(acct["stack_names"])),
             "config": {"recording": _merge(acct["config_recording"]),
                        "s3_rules": sorted({x for rs in rules for x in rs}) if rules else None,

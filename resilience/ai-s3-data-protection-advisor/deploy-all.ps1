@@ -74,6 +74,9 @@ if ($Accounts) {
         exit 1
     }
     $orgRollout = ($orgCheck -eq 0)
+    # A service-managed StackSet created from a delegated administrator needs CallAs DELEGATED_ADMIN.
+    $managementAccount = aws organizations describe-organization --query "Organization.MasterAccountId" --output text --no-cli-pager
+    $stackSetsCallAs = if ($managementAccount -eq $hubAccount) { "SELF" } else { "DELEGATED_ADMIN" }
     if (-not $OrgTargets) {
         $OrgTargets = aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager
     }
@@ -128,8 +131,8 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Frontend stack deployment failed" -Foregr
 
 if ($orgRollout) {
     Write-Host "`nDeploying organization stack..." -ForegroundColor Yellow
-    Write-Host "      (Service-managed StackSet placing the read-only S3DataProtectionScanRole in every account under $OrgTargets)" -ForegroundColor Gray
-    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -CdkContext ($context + @("orgTargets=$OrgTargets", "hubAccountId=$hubAccount"))
+    Write-Host "      (Service-managed StackSet placing the read-only S3DataProtectionScanRole in every account under $OrgTargets, as $stackSetsCallAs)" -ForegroundColor Gray
+    & "..\..\shared\scripts\deploy-cdk.ps1" -CdkDirectory "cdk" -StackName $orgStackName -SkipBootstrap -CdkContext ($context + @("orgTargets=$OrgTargets", "hubAccountId=$hubAccount", "stackSetsCallAs=$stackSetsCallAs"))
     if ($LASTEXITCODE -ne 0) { Write-Host "Organization stack deployment failed" -ForegroundColor Red; exit 1 }
 }
 

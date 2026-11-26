@@ -93,3 +93,15 @@ def test_spend_by_region_follows_next_page_token():
     st.add_response("get_cost_and_usage", {"ResultsByTime": [{"Groups": [g("us-east-1", "5")]}]})
     with st:
         assert account.s3_spend_by_region(c, "2026-11-25") == {"eu-west-1": 10.0, "us-east-1": 5.0}
+
+
+def test_account_bpa_flags_are_kept_one_by_one():
+    c = boto3.client("s3control", region_name="eu-west-1", aws_access_key_id="x", aws_secret_access_key="x")
+    with Stubber(c) as st:
+        st.add_response("get_public_access_block", {"PublicAccessBlockConfiguration": {
+            "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": False}})
+        flags = account.account_bpa_flags(c, "111122223333")
+    assert flags == {"BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": False,
+                     "RestrictPublicBuckets": False}
+    assert account.bpa_state(flags) == "off" and account.bpa_state(None) == "unknown"
+    assert account.bpa_state(dict.fromkeys(account.PAB_FLAGS, True)) == "on"

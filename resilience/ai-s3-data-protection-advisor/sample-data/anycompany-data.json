@@ -2346,7 +2346,7 @@
       },
       {
        "label": "Replication",
-       "value": "is the regional copy of anycompany-clinical-records-prod"
+       "value": "is the regional copy of anycompany-clinical-records-prod (from eu-west-1)"
       },
       {
        "label": "Encryption",
@@ -2420,7 +2420,7 @@
        },
        {
         "label": "Replication",
-        "value": "is the regional copy of anycompany-clinical-records-prod"
+        "value": "is the regional copy of anycompany-clinical-records-prod (from eu-west-1)"
        },
        {
         "label": "Encryption",
@@ -2482,7 +2482,7 @@
        },
        {
         "control": "Cross-region replication",
-        "value": "Is the regional copy of anycompany-clinical-records-prod",
+        "value": "Is the regional copy of anycompany-clinical-records-prod (eu-west-1)",
         "cells": {
          "he": [
           "na",
@@ -2494,7 +2494,7 @@
          ],
          "rd": [
           "ok",
-          "Is the regional copy of anycompany-clinical-records-prod"
+          "Is the regional copy of anycompany-clinical-records-prod (eu-west-1)"
          ]
         }
        },
@@ -3952,7 +3952,7 @@
       },
       {
        "label": "Replication",
-       "value": "is the regional copy of anycompany-datalake-curated"
+       "value": "is the regional copy of anycompany-datalake-curated (from eu-west-1)"
       },
       {
        "label": "Encryption",
@@ -4043,7 +4043,7 @@
        },
        {
         "label": "Replication",
-        "value": "is the regional copy of anycompany-datalake-curated"
+        "value": "is the regional copy of anycompany-datalake-curated (from eu-west-1)"
        },
        {
         "label": "Encryption",
@@ -4109,7 +4109,7 @@
        },
        {
         "control": "Cross-region replication",
-        "value": "Is the regional copy of anycompany-datalake-curated",
+        "value": "Is the regional copy of anycompany-datalake-curated (eu-west-1)",
         "cells": {
          "he": [
           "na",
@@ -4121,7 +4121,7 @@
          ],
          "rd": [
           "ok",
-          "Is the regional copy of anycompany-datalake-curated"
+          "Is the regional copy of anycompany-datalake-curated (eu-west-1)"
          ]
         }
        },

@@ -19,6 +19,8 @@ def _err(code):
 class World:
     def __init__(self):
         self.buckets, self.roles = {}, {}
+        self.owned_create_succeeds = False     # us-east-1: CreateBucket on a bucket you own returns success
+        self.unseen = set()                    # names HeadBucket misses once (created between check and create)
 
 
 class FakeS3:
@@ -35,9 +37,19 @@ class FakeS3:
         region = (CreateBucketConfiguration or {}).get("LocationConstraint", "us-east-1")
         assert region == self.region, "bucket created with a client of another region"
         if Bucket in self.w.buckets:
+            if self.w.owned_create_succeeds:
+                return {}
             raise _err("BucketAlreadyOwnedByYou")
         self.w.buckets[Bucket] = {"region": region, "versioning": "Enabled" if ObjectLockEnabledForBucket else None,
                                   "lock": ObjectLockEnabledForBucket, "objects": [], "ownership": "BucketOwnerEnforced"}
+
+    def head_bucket(self, Bucket):
+        if Bucket in self.w.unseen:
+            self.w.unseen.discard(Bucket)
+            raise _err("404")
+        if Bucket not in self.w.buckets:
+            raise _err("404")
+        return {}
 
     def get_waiter(self, name):
         assert name == "bucket_exists"
@@ -380,3 +392,99 @@ def test_other_partitions_are_refused():
 def test_mock_tag_is_not_sent_to_the_model():
     sent = {x["name"]: x for x in inventory.undecided(_raw(_seeded()))}
     assert sent[seed.prefix(ACCOUNT) + "shared-data"]["tags"] == {"owner": "data-platform", "application": "customer-analytics"}
+
+
+# ---- existing buckets are never claimed (review F03)
+
+class Recording:
+    """Passes calls through and logs every mutating one (put_*, delete_*, create_*)."""
+    def __init__(self, inner, log):
+        self.inner, self.log = inner, log
+
+    def __getattr__(self, name):
+        fn = getattr(self.inner, name)
+        if not name.startswith(("put_", "delete_", "create_")):
+            return fn
+
+        def logged(**kw):
+            self.log.append((name, kw.get("Bucket") or kw.get("RoleName")))
+            return fn(**kw)
+        return logged
+
+
+class RecordingSession(Session):
+    def __init__(self, world, region="eu-west-1"):
+        super().__init__(world, region)
+        self.log = []
+
+    def client(self, svc, region_name=None, **kw):
+        return Recording(super().client(svc, region_name, **kw), self.log)
+
+
+def _foreign(w, suffix, region="eu-west-1", tags=None):
+    """A bucket the account already owns under a mock name, not created by the seed."""
+    name = seed.prefix(ACCOUNT) + suffix
+    w.buckets[name] = {"region": region, "versioning": None, "lock": False, "objects": ["keep/me.txt"],
+                       "ownership": "BucketOwnerEnforced", **({"tags": tags} if tags else {})}
+    return name
+
+
+def _seed(session, region="eu-west-1", secondary="us-east-1"):
+    return seed.seed(session, ACCOUNT, region, secondary, log=lambda *_: None, sleep=lambda *_: None)
+
+
+def test_an_existing_untagged_bucket_is_refused_before_any_change():
+    w = World()
+    name = _foreign(w, "analytics-dev")
+    before = json.loads(json.dumps(w.buckets[name]))
+    s = RecordingSession(w)
+    with pytest.raises(SystemExit, match="without the s3dp-demo=mock tag"):
+        _seed(s)
+    assert s.log == [] and list(w.buckets) == [name] and w.buckets[name] == before
+
+
+def test_an_existing_bucket_with_other_tags_is_refused_too():
+    w = World()
+    _foreign(w, "orders-prod", tags=[{"Key": "team", "Value": "payments"}])
+    s = RecordingSession(w)
+    with pytest.raises(SystemExit):
+        _seed(s)
+    assert s.log == []
+
+
+def test_us_east_1_create_success_on_an_owned_bucket_does_not_bypass_the_check():
+    w = World()
+    w.owned_create_succeeds = True
+    _foreign(w, "orders-prod", region="us-east-1")
+    s = RecordingSession(w, "us-east-1")
+    with pytest.raises(SystemExit):
+        _seed(s, "us-east-1", "us-west-2")
+    assert s.log == []
+
+
+def test_a_bucket_appearing_after_the_check_is_refused_at_create():
+    w = World()
+    name = _foreign(w, "access-logs")              # first in creation order
+    w.unseen.add(name)                             # the preflight does not see it yet
+    s = RecordingSession(w)
+    with pytest.raises(SystemExit):
+        _seed(s)
+    assert ("create_bucket", name) in s.log and not any(op != "create_bucket" for op, _ in s.log)
+
+
+def test_an_existing_mock_bucket_is_updated():
+    w = _seeded()
+    name = seed.prefix(ACCOUNT) + "orders-prod"
+    s = RecordingSession(w)
+    _seed(s)
+    assert ("create_bucket", name) not in s.log and ("put_bucket_tagging", name) in s.log
+    assert seed.check(inventory.build(_raw(w)))[1]
+
+
+def test_an_untagged_replication_role_is_refused_before_any_bucket_change():
+    w = World()
+    w.roles[seed.ROLE_NAME] = {"Arn": "arn", "Tags": [], "policies": {}}
+    s = RecordingSession(w)
+    with pytest.raises(SystemExit, match="IAM role"):
+        _seed(s)
+    assert s.log == [] and w.buckets == {}

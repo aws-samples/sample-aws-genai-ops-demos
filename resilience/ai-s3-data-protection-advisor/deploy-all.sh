@@ -89,6 +89,9 @@ elif [ "$MULTI_ACCOUNT" = true ]; then
         exit 1
     fi
     [ $org_check -eq 0 ] && ORG_ROLLOUT=true
+    # A service-managed StackSet created from a delegated administrator needs CallAs DELEGATED_ADMIN.
+    management_account=$(aws organizations describe-organization --query "Organization.MasterAccountId" --output text --no-cli-pager)
+    if [ "$management_account" = "$hub_account" ]; then STACKSETS_CALL_AS=SELF; else STACKSETS_CALL_AS=DELEGATED_ADMIN; fi
     if [ -z "$ORG_TARGETS" ]; then
         ORG_TARGETS=$(aws organizations list-roots --query "Roots[0].Id" --output text --no-cli-pager)
     fi
@@ -131,9 +134,10 @@ echo -e "\033[0;90m      (S3 and CloudFront, with /api forwarded to the HTTP API
 
 if [ "$ORG_ROLLOUT" = true ]; then
     echo -e "\n\033[0;33mDeploying organization stack...\033[0m"
-    echo -e "\033[0;90m      (Service-managed StackSet placing the read-only S3DataProtectionScanRole in every account under $ORG_TARGETS)\033[0m"
+    echo -e "\033[0;90m      (Service-managed StackSet placing the read-only S3DataProtectionScanRole in every account under $ORG_TARGETS, as $STACKSETS_CALL_AS)\033[0m"
     ../../shared/scripts/deploy-cdk.sh --cdk-directory "cdk" --stack-name "$org_stack" --skip-bootstrap \
-        "${CONTEXT[@]}" --cdk-context "orgTargets=$ORG_TARGETS" --cdk-context "hubAccountId=$hub_account"
+        "${CONTEXT[@]}" --cdk-context "orgTargets=$ORG_TARGETS" --cdk-context "hubAccountId=$hub_account" \
+        --cdk-context "stackSetsCallAs=$STACKSETS_CALL_AS"
 fi
 
 website_url=$(stack_output "$frontend_stack" WebsiteUrl)

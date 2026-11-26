@@ -13,7 +13,9 @@ def _normalized(raw):
         a = item["account"]
         bk = raw["regions"].get(a, {}).get(item["region"], {}).get("backup") or {}
         # protected_s3 None (or no AWS Backup data for the region) = not read: the bucket's coverage is NotVerified.
-        b = normalize.normalize_bucket(item, regions, raw["accounts"][a]["account_bpa"], bk.get("protected_s3"))
+        meta = raw["accounts"][a]
+        b = normalize.normalize_bucket(item, regions, meta["account_bpa"], bk.get("protected_s3"),
+                                       account_flags=meta.get("account_bpa_flags"))
         out.append(b)
     return out
 
@@ -40,6 +42,8 @@ def _config(accounts):
     return {"recording_accounts": [a for a, c in cfg.items() if c.get("recording")],
             "recording_unknown": [a for a, c in cfg.items() if c.get("recording") is None],
             "s3_rules": sorted({r for c in cfg.values() for r in c.get("s3_rules") or []}),
+            # Per account (None = unread): a rule in one account says nothing about the others.
+            "s3_rules_by_account": {a: c.get("s3_rules") for a, c in cfg.items()},
             "s3_rules_unknown": [a for a, c in cfg.items() if c.get("s3_rules") is None],
             "auto_remediation": None}
 
@@ -114,11 +118,13 @@ def build(raw, ai_roles=None):
             else:
                 b.update(role="unknown", role_source="default", role_reason=reason)
     for b in norm:
-        if isinstance(b["replication"], str) and any(
-                isinstance(o["replication"], dict) and o["replication"].get("destination") == b["name"] for o in norm):
-            src = next(o["name"] for o in norm if isinstance(o["replication"], dict)
-                       and o["replication"].get("destination") == b["name"])
-            b["replication"] = {"replica_of": src}
+        src = next((o for o in norm if isinstance(o["replication"], dict)
+                    and o["replication"].get("destination") == b["name"]), None)
+        if isinstance(b["replication"], str) and src is not None:
+            # The source's region decides the copy's regional value: a same-region replica shares its fate.
+            b["replication"] = {"replica_of": src["name"], "source_region": src["region"]}
+            if src["region"] == b["region"]:
+                b["replication"]["srr"] = True
         cls = (b["tags"].get("data-classification") or b["tags"].get("DataClassification") or "").lower()
         b["regional_required"] = b["role"] == "production" and (
             cls in REGULATED_TAGS or has_word(b["name"], REGULATED_NAMING))

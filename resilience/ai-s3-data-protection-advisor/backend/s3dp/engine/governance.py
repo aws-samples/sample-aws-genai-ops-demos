@@ -84,7 +84,9 @@ def assess(inv, cards, families, inconsistencies):
     rows = {c['row']['bucket']: c['row'] for c in cards}
     scoped = [b for b in inv['buckets'] if b['role'] not in ('non_production', 'tooling', 'access_logs')]
     prod = [b for b in inv['buckets'] if b['role'] == 'production']
-    regulated = [b for b in prod if any(re.search(rf'(^|[-_.]){w}', b['name']) for w in g['regulated_naming'])]
+    # Same predicate as the bucket assessment (regulated name or classification tag), so the two never disagree.
+    regulated = [b for b in prod if b.get('regional_required')
+                 or any(re.search(rf'(^|[-_.]){w}', b['name']) for w in g['regulated_naming'])]
     drifted = sorted({w for r in inconsistencies if r['severity'] in ('HIGH', 'MEDIUM') for w in r['weaker']})
     drift_fams = {r['family'] for r in inconsistencies if r['severity'] in ('HIGH', 'MEDIUM')}
 
@@ -184,18 +186,28 @@ def assess(inv, cards, families, inconsistencies):
         lvl_prev = None
 
     cfg = g['config']
-    dp_rules = [r for r in cfg['s3_rules'] or [] if any(k in r for k in ('versioning', 'replication', 'object-lock', 'backup'))]
+    dp_of = lambda rules: [r for r in rules or [] if any(k in r for k in ('versioning', 'replication', 'object-lock', 'backup'))]
+    dp_rules = dp_of(cfg['s3_rules'])           # estate-wide list, for the evidence text only
     # Accounts whose AWS Config (or Security Hub) status could not be read are unknown: excluded, never a gap.
     rec_unknown, rules_unknown = cfg.get('recording_unknown', []), cfg.get('s3_rules_unknown', [])
     sh_unknown = g['security_hub'].get('unknown_accounts', [])
     rec_known = set(accts) - set(rec_unknown)
     all_accts = bool(rec_known) and set(cfg['recording_accounts']) >= rec_known
     rec_gap = bool(rec_known - set(cfg['recording_accounts']))      # an account is known not to record
-    rule_gap = not dp_rules and not rules_unknown                   # no data protection rule, all rules read
+    # Data protection rules are judged per account: one account's rule covers no other account.
+    by_acct = cfg.get('s3_rules_by_account')
+    if by_acct is None:     # inventory without per-account rules: the estate list stands for every readable account
+        by_acct = {a: None if a in rules_unknown else cfg['s3_rules'] for a in accts}
+    rules_read = [a for a in accts if by_acct.get(a) is not None]
+    no_dp = [a for a in rules_read if not dp_of(by_acct[a])]       # read, and no data protection rule
+    dp_every = bool(rules_read) and not no_dp
+    rule_gap = bool(no_dp)
+    missing_dp = (f"{len(no_dp)} of {len(rules_read)} accounts ({', '.join(acct_label(a) for a in no_dp[:5])}"
+                  f"{', ...' if len(no_dp) > 5 else ''})")
     # Above level 3 each rung is scored only when known: automatic remediation (not collectable in v1), then posture
     # reporting (AWS Backup Audit Manager frameworks). An unknown rung neither adds a level nor stops the climb.
     lvl_det = (1 if not cfg['recording_accounts'] and not g['security_hub']['enabled_accounts']
-               else 2 if not (all_accts and dp_rules) else 3)
+               else 2 if not (all_accts and dp_every) else 3)
     if lvl_det == 3:
         frameworks = g.get('backup_audit_manager_frameworks')
         for rung in (cfg.get('auto_remediation'), None if frameworks is None else frameworks > 0):
@@ -251,6 +263,7 @@ def assess(inv, cards, families, inconsistencies):
                       ('S3 rules: not readable' if len(rules_unknown) == len(accts) else
                        f"S3 rules: {', '.join(cfg['s3_rules']) or 'none'}"
                        + ('' if dp_rules else ' (no versioning, replication or backup rules)')
+                       + (f"; no data protection rule in {missing_dp}" if dp_rules and no_dp else '')
                        + (f"; not readable in {len(rules_unknown)} accounts" if rules_unknown else '')),
                       'Security Hub enabled' if g['security_hub']['enabled_accounts'] else
                       'Security Hub: not readable' if sh_unknown else 'Security Hub not enabled',
@@ -315,7 +328,8 @@ def assess(inv, cards, families, inconsistencies):
         add('MEDIUM', 'No continuous check of the data protection baseline',
             f"AWS Config records in {len(cfg['recording_accounts'])} of {len(accts)} accounts"
             + (f" (not readable in {len(rec_unknown)})" if rec_unknown else '')
-            + (' with no versioning, replication or backup rules' if rule_gap else '')
+            + ('' if not rule_gap else ' with no versioning, replication or backup rules' if not dp_rules
+               else f"; no versioning, replication or backup rule in {missing_dp}")
             + ('; Security Hub is off.' if not g['security_hub']['enabled_accounts'] and not sh_unknown else '.'),
             'Deploy AWS Config rules org-wide (s3-bucket-versioning-enabled, s3-bucket-replication-enabled, s3-bucket-default-lock-enabled, s3-resources-protected-by-backup-plan) and enable Security Hub S3 controls; report with AWS Backup Audit Manager.',
             'detective')

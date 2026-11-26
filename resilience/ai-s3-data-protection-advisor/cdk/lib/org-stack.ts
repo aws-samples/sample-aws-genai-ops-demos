@@ -12,6 +12,8 @@ export interface OrgStackProps extends cdk.StackProps {
   hubRegion: string;
   /** Organization root (r-...) and/or OU (ou-...) ids to roll the spoke role out to. */
   targetOuIds: string[];
+  /** SELF from the management account, DELEGATED_ADMIN from a StackSets delegated administrator. */
+  callAs: 'SELF' | 'DELEGATED_ADMIN';
 }
 
 /**
@@ -52,7 +54,8 @@ export class OrgStack extends cdk.Stack {
       permissionModel: 'SERVICE_MANAGED',
       capabilities: ['CAPABILITY_NAMED_IAM'],
       autoDeployment: { enabled: true, retainStacksOnAccountRemoval: false },
-      callAs: 'SELF',
+      // A service-managed StackSet created from a delegated administrator must say so (DELEGATED_ADMIN).
+      callAs: props.callAs,
       templateBody: JSON.stringify(template),
       operationPreferences: {
         failureTolerancePercentage: 100, // one account refusing must not stop the others
@@ -73,5 +76,6 @@ export class OrgStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'OrgTargets', { value: props.targetOuIds.join(','), description: 'Roots and OUs targeted' });
     new cdk.CfnOutput(this, 'HubAccountId', { value: props.hubAccountId });
+    new cdk.CfnOutput(this, 'CallAs', { value: props.callAs, description: 'StackSet caller role' });
   }
 }

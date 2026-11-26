@@ -99,3 +99,61 @@ def test_assemble_size_series_sums_common_days_oldest_first():
     assert out["b"]["size_series"] == [160.0, 175.0]
     assert out["c"]["size_series"] == [] and out["d"]["size_series"] == []
     assert out["b"]["size_bytes"] == 175
+
+
+# ---- incomplete object and request metrics (review F08)
+
+from s3dp.derive import write_pattern
+
+REQ_INDEX = {"q0": ("b", "size", "StandardStorage"), "q1": ("b", "objects", None),
+             "q2": ("b", "puts", None), "q3": ("b", "deletes", None), "q4": ("b", "gets", None)}
+
+
+def _req_results(status=None, drop=None):
+    days = [_ts(d) for d in range(1, 8)]
+    out = [{"Id": "q0", "Timestamps": days, "Values": [1e9] * 7},
+           {"Id": "q1", "Timestamps": days, "Values": [1000.0] * 7}]
+    for q in ("q2", "q3", "q4"):
+        if q != drop:
+            r = {"Id": q, "Timestamps": [], "Values": []}
+            if status:
+                r["StatusCode"] = status
+            out.append(r)
+    return out
+
+
+def test_failed_or_missing_request_metrics_stay_unknown():
+    for status in ("InternalError", "PartialData"):
+        out = metrics.assemble(REQ_INDEX, _req_results(status), ["b"])["b"]
+        assert out["requests"] is None and out["incomplete"] == ["requests"], status
+        assert out["size_bytes"] == 1e9                              # the complete size series is still a measurement
+    out = metrics.assemble(REQ_INDEX, _req_results(drop="q3"), ["b"])["b"]
+    assert out["requests"] is None and out["incomplete"] == ["requests"]
+
+
+def test_complete_zero_requests_are_a_measurement():
+    out = metrics.assemble(REQ_INDEX, _req_results(), ["b"])["b"]
+    assert out["requests"] == {"puts": 0, "deletes": 0, "gets": 0} and "incomplete" not in out
+
+
+def test_incomplete_object_series_is_unknown():
+    results = _req_results()
+    results[1]["StatusCode"] = "InternalError"
+    out = metrics.assemble(REQ_INDEX, results, ["b"])["b"]
+    assert out["objects"] is None and out["objects_series"] == [] and out["incomplete"] == ["objects"]
+
+
+def _pattern_and_cost(results):
+    m = metrics.assemble(REQ_INDEX, results, ["b"])["b"]
+    cost = write_pattern.vce({"STANDARD": m["size_bytes"]}, m["objects_series"], m["requests"],
+                             size_series_changed=False, size_tb=m["size_bytes"] / 2**40)
+    return write_pattern.classify(m["objects_series"], m["size_series"], m["requests"]), cost
+
+
+def test_failed_requests_never_read_as_an_inactive_bucket_with_a_zero_cost():
+    pattern, cost = _pattern_and_cost(_req_results("InternalError"))
+    assert pattern == {"pattern": "static_or_inactive", "approximate": True}       # inferred, not measured
+    assert (cost["basis"], cost["confidence"]) == ("prior", "medium")
+    pattern, cost = _pattern_and_cost(_req_results())                               # genuine zero activity
+    assert pattern == {"pattern": "inactive", "approximate": False}
+    assert (cost["basis"], cost["confidence"]) == ("measured", "high")

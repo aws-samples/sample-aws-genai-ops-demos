@@ -30,6 +30,18 @@ def _bucket_name(arn):
     return arn.split(":::", 1)[-1] if arn else None
 
 
+def rule_scope(rule):
+    """None when a replication rule covers the whole bucket, else {"prefix": str | None, "tags": {key: value}}.
+    Reads the V2 Filter (Prefix, Tag, or And of both) and the legacy V1 top-level Prefix."""
+    f = rule.get("Filter") or {}
+    both = f.get("And") or {}
+    prefix = both.get("Prefix") or f.get("Prefix") or rule.get("Prefix") or ""
+    tags = {t["Key"]: t["Value"] for t in both.get("Tags", [])}
+    if "Tag" in f:
+        tags[f["Tag"]["Key"]] = f["Tag"]["Value"]
+    return None if not prefix and not tags else {"prefix": prefix or None, "tags": tags}
+
+
 def list_buckets(s3):
     """Every bucket of the account with its region when ListBuckets returns it (None otherwise)."""
     out, kwargs = [], {"MaxBuckets": 1000}
@@ -76,7 +88,8 @@ def collect_bucket(s3, name):
         return [{"status": r.get("Status"), "destination": _bucket_name(r["Destination"].get("Bucket")),
                  "storage_class": r["Destination"].get("StorageClass"),   # None: same class as the source
                  "delete_markers": delete_markers(r),
-                 "rtc": r["Destination"].get("ReplicationTime", {}).get("Status") == "Enabled"} for r in rules]
+                 "rtc": r["Destination"].get("ReplicationTime", {}).get("Status") == "Enabled",
+                 "scope": rule_scope(r)} for r in rules]
 
     def encryption():
         rule = s3.get_bucket_encryption(**p)["ServerSideEncryptionConfiguration"]["Rules"][0]

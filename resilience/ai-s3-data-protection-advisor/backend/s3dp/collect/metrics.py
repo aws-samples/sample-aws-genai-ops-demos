@@ -66,41 +66,55 @@ def index_of(queries):
     return out
 
 
+REQUESTS = ("puts", "deletes", "gets")
+
+
 def assemble(index, results, buckets):
     """Per bucket: size (newest day on which every storage type with data has a point, summed over storage types),
     by-class split, object series, request sums, and size_series (daily total bytes, oldest -> newest, on the days
-    where every storage type with data has a point; [] when a size series is incomplete). A size series that did not come back Complete makes the size
-    "partial" (None); results may carry a "StatusCode" per query id."""
-    series, incomplete = defaultdict(dict), set()
+    where every storage type with data has a point; [] when a size series is incomplete). Results may carry a
+    "StatusCode" per query id: a series that did not come back Complete (InternalError, PartialData...) is not a
+    measurement. Size becomes "partial" (None), objects None, and requests None when any of the three request
+    series is incomplete or missing, so a failed read is never taken for zero activity. "incomplete" lists the
+    affected kinds ("size", "objects", "requests")."""
+    series, incomplete = defaultdict(dict), defaultdict(set)
     for r in results:
         b, kind, st = index[r["Id"]]
         pts = sorted(zip(r.get("Timestamps", []), r.get("Values", [])))
         series[b][(kind, st)] = pts
-        if kind == "size" and r.get("StatusCode", "Complete") != "Complete":
-            incomplete.add(b)
+        if r.get("StatusCode", "Complete") != "Complete":
+            incomplete[b].add("requests" if kind in REQUESTS else kind)
+    asked = defaultdict(set)            # request metrics queried per bucket (EntireBucket filter present)
+    for b, kind, _ in index.values():
+        if kind in REQUESTS:
+            asked[b].add(kind)
     out = {}
     for b in buckets:
-        s = series.get(b, {})
+        s, bad = series.get(b, {}), incomplete.get(b, set())
+        if asked[b] and any((k, None) not in s for k in asked[b]):
+            bad.add("requests")         # a queried request series did not come back at all
         sizes = {st: dict(pts) for (k, st), pts in s.items() if k == "size" and pts}
         common = set.intersection(*(set(d) for d in sizes.values())) if sizes else set()
-        newest = max(common) if common and b not in incomplete else None
+        newest = max(common) if common and "size" not in bad else None
         by_class = defaultdict(int)
         if newest:
             for st, d in sizes.items():
                 by_class[STORAGE_TYPE_CLASS.get(st, "UNKNOWN")] += int(d[newest])
         partial = bool(sizes) and newest is None
-        objs = s.get(("objects", None), [])
-        req = {k: sum(v for _, v in s[(k, None)]) for k in ("puts", "deletes", "gets") if (k, None) in s}
+        objs = [] if "objects" in bad else s.get(("objects", None), [])
+        req = None if "requests" in bad or not asked[b] else {k: sum(v for _, v in s[(k, None)]) for k in REQUESTS}
         out[b] = {
             "size_bytes": sum(by_class.values()) if newest else None,
-            "size_series": [] if b in incomplete else [sum(d[t] for d in sizes.values()) for t in sorted(common)],
+            "size_series": [] if "size" in bad else [sum(d[t] for d in sizes.values()) for t in sorted(common)],
             "by_class": dict(by_class),
             "size_as_of": newest.strftime("%Y-%m-%d") if newest else None,
             "size_status": "measured" if newest else ("partial" if partial else "unavailable"),
             "objects": int(objs[-1][1]) if objs else None,
             "objects_series": [v for _, v in objs],
-            "requests": req or None,
+            "requests": req,
         }
+        if bad:
+            out[b]["incomplete"] = sorted(bad)
     return out
 
 

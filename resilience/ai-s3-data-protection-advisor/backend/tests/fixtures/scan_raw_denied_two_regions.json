@@ -2,6 +2,7 @@
  "accounts": {
   "111122223333": {
    "account_bpa": "unknown",
+   "account_bpa_flags": null,
    "config": {
     "recording": null,
     "s3_rules": null,
