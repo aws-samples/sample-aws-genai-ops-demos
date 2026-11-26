@@ -1,0 +1,25 @@
+# Demo validation contract for ai-s3-data-protection-advisor.
+# See .kiro/steering/contributor-guide.md ("Demo Validation (validation.yaml)").
+
+# The demo's own deploy command (argv), run from the demo folder.
+deploy_command: ["./deploy-all.sh"]
+
+# Teardown runs from the CDK directory (not the default infrastructure/cdk).
+destroy_command: ["npx", "-y", "cdk", "destroy", "--all", "--force", "--no-cli-pager"]
+destroy_subdir: "cdk"
+
+# CloudFormation stacks to confirm deployed (verify) and confirm gone (destroy).
+stacks:
+  - "S3DataProtectionData-<region>"
+  - "S3DataProtectionAuth-<region>"
+  - "S3DataProtectionPipeline-<region>"
+  - "S3DataProtectionApi-<region>"
+  - "S3DataProtectionFrontend-<region>"
+
+verify: "deterministic"
+
+notes: >
+  Needs Amazon Bedrock Nova Lite available in the deploy region's geography.
+  The scan is read-only. The optional --mock-data flag creates sandbox-only
+  buckets and a role in the account, so use it in sandbox accounts only.
+  TypeScript CDK app (bin/app.ts); no pythonpath_repo_root needed.

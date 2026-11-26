@@ -1,0 +1,2192 @@
+{
+ "meta": {
+  "account": "111122223333",
+  "ai": {
+   "classification": false,
+   "narrative": "off"
+  },
+  "audience": "customer",
+  "customerName": "acme-main",
+  "generated": "2026-11-25T10:00:00Z",
+  "service": "S3 Data Protection Advisor"
+ },
+ "meta_ai": {
+  "narrative": "unavailable",
+  "reason": "eu.amazon.nova-lite-v1:0: AccessDeniedException"
+ },
+ "tabs": [
+  {
+   "heading": "How to use this report",
+   "id": "instructions",
+   "intro": "Read this first: how the data was collected, how a bucket ends up red or green, and how far the conclusions can be trusted.",
+   "label": "Instructions",
+   "sections": [
+    {
+     "items": [
+      "Customer: acme-main",
+      "Scope: 1 account (acme-main)",
+      "Collected: 2026-11-25 (point-in-time snapshot: changes made after this date are not reflected)",
+      "Reviewed: 4 buckets, about 1.5 TiB",
+      "Regions scanned: eu-west-1, us-east-1",
+      "Regions skipped: none"
+     ],
+     "title": "About this report"
+    },
+    {
+     "items": [
+      "Three risks, three controls: human or application errors \u2192 Versioning \u00b7 malicious activity \u2192 Object Lock \u00b7 regional disruption \u2192 cross-region replication.",
+      "Coverage: protected \u00b7 partial (for example versioning without Object Lock: recoverable, not immune) \u00b7 unprotected (evidence shows the control is absent) \u00b7 unconfirmed (the setting could not be read).",
+      "Row status: RISK GAP (a required protection is missing) \u00b7 GAP \u2014 CONFIRM 3P (missing, but a backup tool may cover it) \u00b7 PARTIAL \u00b7 CONFIRM (required protection unreadable) \u00b7 CONFIRM ROLE (the bucket role could not be determined) \u00b7 PROTECTED \u00b7 NON-PROD / LOG/TOOLING (not scored).",
+      "Priority focus: buckets to address first (risk + size + business criticality)",
+      "Example: a backup-tool bucket with versioning but no Object Lock is protected against human error and partial against malicious activity, status RISK GAP: for a backup target, protection against deliberate deletion is required, and versioned objects can still be permanently deleted."
+     ],
+     "table": {
+      "columns": [
+       "Tab",
+       "What it answers"
+      ],
+      "rows": [
+       [
+        "Buckets",
+        "Every bucket, which of the three risks it is protected from, and the recommended change. The Evidence column of the Excel download lists the settings behind each status."
+       ],
+       [
+        "Risk Review",
+        "The headline: protection counts per risk, critical exposures, AWS Backup posture, scope per account."
+       ],
+       [
+        "Recommendations",
+        "One row per bucket and action, sorted by severity. Filter by account or severity."
+       ],
+       [
+        "Inconsistencies",
+        "Buckets of the same workload configured differently across regions or accounts; always aligned to the stronger setting."
+       ],
+       [
+        "Governance",
+        "Why the gaps exist and what would keep them from coming back: maturity level, example rules, findings."
+       ],
+       [
+        "Cost Optimization",
+        "Cost quick wins and the cost of protection, with their order of magnitude and basis."
+       ]
+      ]
+     },
+     "title": "How to read this report"
+    },
+    {
+     "items": [
+      "Only configuration metadata was read, with the read-only credentials used for the scan: bucket settings, AWS Backup settings, daily S3 storage metrics (size and object count), S3 spend per region, IAM role names, CloudFormation stack names, AWS Config and Security Hub status.",
+      "No object was read, downloaded or listed. No setting was changed.",
+      "Settings that could not be read, shown as unconfirmed in the report: Versioning, Object Lock and replication on blob-store-42.",
+      "3 API calls were denied or failed; those settings are shown as unconfirmed."
+     ],
+     "title": "How the data was retrieved"
+    },
+    {
+     "items": [
+      "Bucket roles are assigned from tags, account names, bucket names and replication / backup relationships (first match wins). Each role has an expected protection level (table below).",
+      "Buckets no rule can classify keep the role \"unknown\" (CONFIRM ROLE) and are not scored until their owner confirms the role.",
+      "Coverage comes from evidence only: an explicit \"not configured\" answer is unprotected; a setting that could not be read is unconfirmed, never unprotected. A stronger control that can't be verified never erases a verified weaker one (versioning with unreadable Object Lock stays partial).",
+      "Versioning is a prerequisite for Object Lock, replication and AWS Backup of S3: a bucket that never had versioning provably has none of them.",
+      "Critical exposures (1 in this report): production buckets failing two or more of backup coverage, point-in-time protection and delete protection, plus every backup target without immutability.",
+      "Priority score: +50 per missing required protection (+15 partial, +5 unconfirmed); size +30 (\u2265100 TiB), +20 (\u226510 TiB), +12 (\u22651 TiB), +5 (\u22650.1 TiB); backup target or audit trail +15, production +8, non-production \u221230; business-critical naming (clinical, patient, customer, oracle, sql\u2026) +10, non-production naming \u221215; a HIGH finding +10. Critical \u226580, High \u226560, Medium \u226535, else Low.",
+      "Versioning cost estimate: churn% \u00d7 size per storage class \u00d7 class price \u00d7 (30-day noncurrent retention / 30). Churn basis: measured (request metrics), bounded (daily object-count drops + 1 point for overwrites) or prior (static 0%, append 1%, unknown 10% with a 2\u201325% range, high churn 25%). Only valid with a NoncurrentVersionExpiration rule.",
+      "Inconsistencies: buckets whose names match once region tokens, account IDs and replica suffixes are removed form a family (1 compared); differing settings are recommended up to the stronger value, never down."
+     ],
+     "table": {
+      "columns": [
+       "Bucket role",
+       "Human error",
+       "Malicious activity",
+       "Regional disruption"
+      ],
+      "rows": [
+       [
+        "Backup target (backup tool, database dumps, archives)",
+        "Required",
+        "Required: it is the copy of last resort",
+        "Recommended"
+       ],
+       [
+        "Production data",
+        "Required",
+        "Recommended",
+        "Recommended (required if not re-creatable)"
+       ],
+       [
+        "Audit trail (CloudTrail, Config delivery)",
+        "Recommended",
+        "Required: tamper-evidence",
+        "Optional"
+       ],
+       [
+        "Access / service logs",
+        "Optional",
+        "Recommended",
+        "No"
+       ],
+       [
+        "Replica (replication destination)",
+        "Recommended",
+        "Recommended",
+        "It is the regional copy"
+       ],
+       [
+        "Non-production / tooling",
+        "Optional",
+        "Optional",
+        "No"
+       ]
+      ]
+     },
+     "title": "How it works"
+    },
+    {
+     "items": [
+      "None beyond the defaults described above."
+     ],
+     "title": "Assumptions to confirm"
+    },
+    {
+     "note": "The more unconfirmed and assumed rows, the more a number is an indication rather than a measurement.",
+     "table": {
+      "columns": [
+       "Measure",
+       "Value"
+      ],
+      "rows": [
+       [
+        "Buckets individually verified",
+        "4"
+       ],
+       [
+        "Rows without a size",
+        "2"
+       ],
+       [
+        "Rows with Versioning not verified",
+        "1"
+       ],
+       [
+        "Rows with Object Lock not verified",
+        "1"
+       ],
+       [
+        "Rows with Replication not verified",
+        "1"
+       ],
+       [
+        "Rows with Encryption not verified",
+        "0"
+       ],
+       [
+        "Rows with Lifecycle not verified",
+        "0"
+       ],
+       [
+        "Rows with AWS Backup not verified",
+        "0"
+       ],
+       [
+        "Rows with human error coverage unconfirmed",
+        "1"
+       ],
+       [
+        "Rows with malicious activity coverage unconfirmed",
+        "1"
+       ],
+       [
+        "Rows with regional disruption coverage unconfirmed",
+        "1"
+       ],
+       [
+        "Versioning cost basis",
+        "prior: 1"
+       ]
+      ]
+     },
+     "title": "Coverage and confidence"
+    },
+    {
+     "items": [
+      "Configuration is not behaviour: the report shows what is enabled, not whether restores work or who can actually delete data.",
+      "Backup tools outside AWS Backup are detected from names and roles only; which buckets they cover is not known.",
+      "Without request metrics, write patterns and versioning costs are inferred from daily storage metrics; overwrites of the same key are invisible.",
+      "Not everything could be checked: 2 rows without a size, unconfirmed counts per check in the table above.",
+      "Costs are list-price estimates (US East (N. Virginia) list prices), before discounts, credits and taxes, labelled as estimates.",
+      "This is not an audit or a compliance attestation; regulatory retention and availability obligations need your own assessment.",
+      "Rules-based report: no generative AI was used."
+     ],
+     "title": "Limits"
+    },
+    {
+     "table": {
+      "columns": [
+       "Term",
+       "Meaning"
+      ],
+      "rows": [
+       [
+        "Versioning",
+        "Keeps every version of an object. Enabled = on; Suspended = was on, old versions kept, new writes unprotected; never enabled = off."
+       ],
+       [
+        "Noncurrent version",
+        "An older version kept after an overwrite or delete. Billed like any object until a lifecycle rule expires it."
+       ],
+       [
+        "Object Lock",
+        "Write-once protection: a locked version cannot be deleted or overwritten until its retention date. Needs versioning."
+       ],
+       [
+        "Governance vs Compliance",
+        "Governance mode can be bypassed by users with a special permission; Compliance mode cannot be shortened by anyone, including the root user."
+       ],
+       [
+        "Default vs per-object retention",
+        "A default rule locks every new object; per-object retention is set by the writing application (for example a backup tool)."
+       ],
+       [
+        "MFA Delete",
+        "Requires a second factor to permanently delete versions or change versioning."
+       ],
+       [
+        "CRR / SRR",
+        "Cross-Region / Same-Region Replication: S3 copies new objects to another bucket. Only CRR protects against a regional disruption."
+       ],
+       [
+        "Delete-marker replication",
+        "When on, a delete in the source also hides the object in the replica, so a replica alone is not a backup."
+       ],
+       [
+        "AWS Backup plan / vault",
+        "A plan schedules backups of selected resources; recovery points are stored in a vault."
+       ],
+       [
+        "Vault Lock",
+        "Prevents recovery points in a vault from being deleted before their retention (Governance or Compliance mode)."
+       ],
+       [
+        "Logically air-gapped vault",
+        "An AWS Backup vault that is locked by default and shareable to a separate account for isolated recovery."
+       ],
+       [
+        "S3 opt-in (AWS Backup)",
+        "Per-region setting that lets AWS Backup protect S3. When off, backup plans silently skip buckets in that region."
+       ],
+       [
+        "Block Public Access",
+        "Account- or bucket-level guardrail that overrides policies or ACLs granting public access."
+       ],
+       [
+        "Storage classes",
+        "Standard, Standard-IA, Intelligent-Tiering, Glacier Instant Retrieval, Glacier, Deep Archive: lower storage price, higher retrieval cost or delay."
+       ]
+      ]
+     },
+     "title": "Glossary"
+    },
+    {
+     "items": [
+      "Start with the critical exposures (Risk Review) and the priority focus buckets (Buckets).",
+      "Confirm the unconfirmed items and the assumptions with the bucket owners before planning changes.",
+      "Test configuration changes on a non-production bucket first, and add a NoncurrentVersionExpiration rule when enabling versioning.",
+      "Some changes are irreversible: Object Lock Compliance-mode retention cannot be shortened by anyone; start with Governance mode."
+     ],
+     "title": "Next steps"
+    }
+   ],
+   "type": "instructions"
+  },
+  {
+   "cards": [
+    {
+     "badge": {
+      "color": "orange",
+      "text": "ISSUE"
+     },
+     "details": [
+      {
+       "label": "Role",
+       "value": "production: Bucket name"
+      },
+      {
+       "label": "Versioning",
+       "value": "Enabled"
+      },
+      {
+       "label": "Object Lock",
+       "value": "GOVERNANCE 30d"
+      },
+      {
+       "label": "Replication",
+       "value": "not configured (verified)"
+      },
+      {
+       "label": "Encryption",
+       "value": "SSE-KMS + Bucket Keys"
+      },
+      {
+       "label": "Lifecycle",
+       "value": "yes"
+      },
+      {
+       "label": "AWS Backup",
+       "value": "daily"
+      },
+      {
+       "label": "Storage class",
+       "value": "STANDARD"
+      },
+      {
+       "label": "Write pattern (30d)",
+       "value": "Unknown: storage metrics cannot rule out overwrites"
+      }
+     ],
+     "id": "111122223333-orders-prod-eu-west-1",
+     "recommendations": [
+      {
+       "description": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+       "severity": "MEDIUM",
+       "title": "TLS not enforced"
+      }
+     ],
+     "row": {
+      "account": "acme-main",
+      "account_id": "111122223333",
+      "action": "Evaluate S3 Intelligent-Tiering (save up to ~$11/month)",
+      "bucket": "orders-prod-eu-west-1",
+      "chips": [
+       "Save ~$11/month",
+       "1.0 TiB"
+      ],
+      "controls": [
+       {
+        "cells": {
+         "he": [
+          "ok",
+          "Enabled"
+         ],
+         "ma": [
+          "partial",
+          "Deletes recoverable, not immune"
+         ],
+         "rd": [
+          "na",
+          "Prerequisite for replication"
+         ]
+        },
+        "control": "Versioning",
+        "value": "Enabled"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "ok",
+          "GOVERNANCE 30d (bypassable with special permission)"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Object Lock",
+        "value": "GOVERNANCE 30d"
+       },
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "ma": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Delete guard (policy / MFA Delete)",
+        "value": "None"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "na",
+          "A replica is not a backup"
+         ],
+         "rd": [
+          "missing",
+          "Not configured"
+         ]
+        },
+        "control": "Cross-region replication",
+        "value": "Not configured"
+       },
+       {
+        "cells": {
+         "he": [
+          "ok",
+          "daily"
+         ],
+         "ma": [
+          "partial",
+          "Separate copy; immutable only in a locked vault"
+         ],
+         "rd": [
+          "unknown",
+          "Only with a cross-region copy rule"
+         ]
+        },
+        "control": "Backup copy (AWS Backup)",
+        "value": "daily"
+       }
+      ],
+      "evidence": [
+       {
+        "label": "Role",
+        "value": "production: Bucket name"
+       },
+       {
+        "label": "Versioning",
+        "value": "Enabled"
+       },
+       {
+        "label": "Object Lock",
+        "value": "GOVERNANCE 30d"
+       },
+       {
+        "label": "Replication",
+        "value": "not configured (verified)"
+       },
+       {
+        "label": "Encryption",
+        "value": "SSE-KMS + Bucket Keys"
+       },
+       {
+        "label": "Lifecycle",
+        "value": "yes"
+       },
+       {
+        "label": "AWS Backup",
+        "value": "daily"
+       },
+       {
+        "label": "Storage class",
+        "value": "STANDARD"
+       },
+       {
+        "label": "Write pattern (30d)",
+        "value": "Unknown: storage metrics cannot rule out overwrites"
+       }
+      ],
+      "findings": [
+       {
+        "description": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+        "severity": "MEDIUM",
+        "title": "TLS not enforced"
+       }
+      ],
+      "gap": [],
+      "he": "protected",
+      "ma": "protected_governance",
+      "rd": "unprotected",
+      "reasons": [
+       "Large: 1.0 TiB",
+       "Cost saving: ~$11/month"
+      ],
+      "rec": [
+       "malicious_activity",
+       "regional_disruption"
+      ],
+      "region": "eu-west-1",
+      "req": [
+       "human_error"
+      ],
+      "role": "production",
+      "score": 20,
+      "size_bytes": 1099511627776,
+      "size_human": "1.0 TiB",
+      "size_short": "1.0 TiB",
+      "spotlight": false,
+      "status": "ISSUE",
+      "status_color": "orange",
+      "third_party": "",
+      "tier": "Low",
+      "vce": "",
+      "vce_usd": null
+     },
+     "sortValue": 1099511627776,
+     "subtitle": "eu-west-1",
+     "title": "orders-prod-eu-west-1"
+    },
+    {
+     "badge": {
+      "color": "orange",
+      "text": "GAP \u2014 CONFIRM 3P"
+     },
+     "details": [
+      {
+       "label": "Role",
+       "value": "production: Bucket name"
+      },
+      {
+       "label": "Versioning",
+       "value": "Never enabled"
+      },
+      {
+       "label": "Object Lock",
+       "value": "None"
+      },
+      {
+       "label": "Replication",
+       "value": "not configured (verified)"
+      },
+      {
+       "label": "Encryption",
+       "value": "SSE-S3"
+      },
+      {
+       "label": "Lifecycle",
+       "value": "none"
+      },
+      {
+       "label": "AWS Backup",
+       "value": "None \u2014 Veeam present in estate, coverage unconfirmed"
+      },
+      {
+       "label": "Storage class",
+       "value": "STANDARD"
+      },
+      {
+       "label": "Write pattern (30d)",
+       "value": "Append: object count only grows over 30 days (storage metrics only)"
+      },
+      {
+       "label": "Versioning cost est.",
+       "value": "$0.12/mo (range $0.12\u2013$0.12) \u2014 basis: prior, 1.0% churn, 30d noncurrent retention, estimate"
+      },
+      {
+       "label": "Inconsistency",
+       "value": "Object Lock: Enable Object Lock (GOVERNANCE 30d) on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+      },
+      {
+       "label": "Inconsistency",
+       "value": "Versioning: Enable versioning on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+      },
+      {
+       "label": "Inconsistency",
+       "value": "AWS Backup coverage: Add orders-prod-us-east-1 to AWS Backup plan 'daily' to match orders-prod-eu-west-1."
+      },
+      {
+       "label": "Inconsistency",
+       "value": "Encryption type: Switch default encryption to SSE-KMS on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+      },
+      {
+       "label": "Inconsistency",
+       "value": "Lifecycle (noncurrent expiration): Add a NoncurrentVersionExpiration rule on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+      }
+     ],
+     "id": "111122223333-orders-prod-us-east-1",
+     "recommendations": [
+      {
+       "description": "Without versioning a delete or overwrite is permanent, and the bucket cannot be added to AWS Backup or replicated. Estimated cost of versioning: $0.12/month (basis: prior, 1.0% churn, 30-day noncurrent retention), estimate.",
+       "severity": "HIGH",
+       "title": "512 GiB unversioned"
+      },
+      {
+       "description": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+       "severity": "MEDIUM",
+       "title": "No delete guard"
+      },
+      {
+       "description": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+       "severity": "MEDIUM",
+       "title": "TLS not enforced"
+      },
+      {
+       "description": "No server access logging: no forensic trail after a deletion (CloudTrail data events not checked).",
+       "severity": "LOW",
+       "title": "No access logging"
+      },
+      {
+       "description": "Incomplete multipart uploads are billed until deleted.",
+       "severity": "LOW",
+       "title": "No incomplete multipart upload cleanup"
+      }
+     ],
+     "row": {
+      "account": "acme-main",
+      "account_id": "111122223333",
+      "action": "Evaluate S3 Intelligent-Tiering (save up to ~$5/month); Enable versioning; Add Object Lock (Governance)",
+      "bucket": "orders-prod-us-east-1",
+      "chips": [
+       "Missing required: human or application errors",
+       "Inconsistent with orders-prod-eu-west-1",
+       "Save ~$5/month"
+      ],
+      "controls": [
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "Never enabled"
+         ],
+         "ma": [
+          "missing",
+          "No versions to recover"
+         ],
+         "rd": [
+          "na",
+          "Prerequisite for replication"
+         ]
+        },
+        "control": "Versioning",
+        "value": "Never enabled"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "missing",
+          "Not enabled"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Object Lock",
+        "value": "None"
+       },
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "ma": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Delete guard (policy / MFA Delete)",
+        "value": "None"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "na",
+          "A replica is not a backup"
+         ],
+         "rd": [
+          "missing",
+          "Not configured (needs versioning)"
+         ]
+        },
+        "control": "Cross-region replication",
+        "value": "Not configured (needs versioning)"
+       },
+       {
+        "cells": {
+         "he": [
+          "unknown",
+          "Veeam may cover it: confirm"
+         ],
+         "ma": [
+          "unknown",
+          "Veeam may cover it: confirm"
+         ],
+         "rd": [
+          "unknown",
+          "Veeam may cover it: confirm"
+         ]
+        },
+        "control": "Backup copy (AWS Backup / Veeam)",
+        "value": "None"
+       }
+      ],
+      "evidence": [
+       {
+        "label": "Role",
+        "value": "production: Bucket name"
+       },
+       {
+        "label": "Versioning",
+        "value": "Never enabled"
+       },
+       {
+        "label": "Object Lock",
+        "value": "None"
+       },
+       {
+        "label": "Replication",
+        "value": "not configured (verified)"
+       },
+       {
+        "label": "Encryption",
+        "value": "SSE-S3"
+       },
+       {
+        "label": "Lifecycle",
+        "value": "none"
+       },
+       {
+        "label": "AWS Backup",
+        "value": "None \u2014 Veeam present in estate, coverage unconfirmed"
+       },
+       {
+        "label": "Storage class",
+        "value": "STANDARD"
+       },
+       {
+        "label": "Write pattern (30d)",
+        "value": "Append: object count only grows over 30 days (storage metrics only)"
+       },
+       {
+        "label": "Versioning cost est.",
+        "value": "$0.12/mo (range $0.12\u2013$0.12) \u2014 basis: prior, 1.0% churn, 30d noncurrent retention, estimate"
+       },
+       {
+        "label": "Inconsistency",
+        "value": "Object Lock: Enable Object Lock (GOVERNANCE 30d) on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+       },
+       {
+        "label": "Inconsistency",
+        "value": "Versioning: Enable versioning on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+       },
+       {
+        "label": "Inconsistency",
+        "value": "AWS Backup coverage: Add orders-prod-us-east-1 to AWS Backup plan 'daily' to match orders-prod-eu-west-1."
+       },
+       {
+        "label": "Inconsistency",
+        "value": "Encryption type: Switch default encryption to SSE-KMS on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+       },
+       {
+        "label": "Inconsistency",
+        "value": "Lifecycle (noncurrent expiration): Add a NoncurrentVersionExpiration rule on orders-prod-us-east-1 to match orders-prod-eu-west-1."
+       }
+      ],
+      "findings": [
+       {
+        "description": "Without versioning a delete or overwrite is permanent, and the bucket cannot be added to AWS Backup or replicated. Estimated cost of versioning: $0.12/month (basis: prior, 1.0% churn, 30-day noncurrent retention), estimate.",
+        "severity": "HIGH",
+        "title": "512 GiB unversioned"
+       },
+       {
+        "description": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+        "severity": "MEDIUM",
+        "title": "No delete guard"
+       },
+       {
+        "description": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+        "severity": "MEDIUM",
+        "title": "TLS not enforced"
+       },
+       {
+        "description": "No server access logging: no forensic trail after a deletion (CloudTrail data events not checked).",
+        "severity": "LOW",
+        "title": "No access logging"
+       },
+       {
+        "description": "Incomplete multipart uploads are billed until deleted.",
+        "severity": "LOW",
+        "title": "No incomplete multipart upload cleanup"
+       }
+      ],
+      "gap": [
+       "human_error"
+      ],
+      "he": "unprotected",
+      "ma": "unprotected",
+      "rd": "unprotected",
+      "reasons": [
+       "Missing required: Human or application errors",
+       "Size: 512 GiB",
+       "HIGH finding",
+       "Cost saving: ~$5/month",
+       "Inconsistent with orders-prod-eu-west-1"
+      ],
+      "rec": [
+       "malicious_activity",
+       "regional_disruption"
+      ],
+      "region": "us-east-1",
+      "req": [
+       "human_error"
+      ],
+      "role": "production",
+      "score": 73,
+      "size_bytes": 549755813888,
+      "size_human": "512 GiB",
+      "size_short": "512 GiB",
+      "spotlight": true,
+      "status": "GAP \u2014 CONFIRM 3P",
+      "status_color": "orange",
+      "third_party": "Veeam",
+      "tier": "High",
+      "vce": "$0.12/mo ($0.12\u2013$0.12) \u00b7 prior",
+      "vce_usd": 0.12
+     },
+     "sortValue": 549755813888,
+     "subtitle": "us-east-1",
+     "title": "orders-prod-us-east-1"
+    },
+    {
+     "badge": {
+      "color": "grey",
+      "text": "LOG/TOOLING"
+     },
+     "details": [
+      {
+       "label": "Role",
+       "value": "access logs: Server access log target of another bucket"
+      },
+      {
+       "label": "Versioning",
+       "value": "Never enabled"
+      },
+      {
+       "label": "Object Lock",
+       "value": "None"
+      },
+      {
+       "label": "Replication",
+       "value": "not configured (verified)"
+      },
+      {
+       "label": "Encryption",
+       "value": "SSE-S3"
+      },
+      {
+       "label": "Lifecycle",
+       "value": "none"
+      },
+      {
+       "label": "AWS Backup",
+       "value": "None"
+      },
+      {
+       "label": "Storage class",
+       "value": "UNKNOWN"
+      }
+     ],
+     "id": "111122223333-acme-access-logs",
+     "recommendations": [],
+     "row": {
+      "account": "acme-main",
+      "account_id": "111122223333",
+      "action": "None \u2014 protected for its role",
+      "bucket": "acme-access-logs",
+      "chips": [
+       "Not measured"
+      ],
+      "controls": [
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "Never enabled"
+         ],
+         "ma": [
+          "missing",
+          "No versions to recover"
+         ],
+         "rd": [
+          "na",
+          "Prerequisite for replication"
+         ]
+        },
+        "control": "Versioning",
+        "value": "Never enabled"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "missing",
+          "Not enabled"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Object Lock",
+        "value": "None"
+       },
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "ma": [
+          "missing",
+          "No delete-deny policy or MFA Delete"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Delete guard (policy / MFA Delete)",
+        "value": "None"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "na",
+          "A replica is not a backup"
+         ],
+         "rd": [
+          "missing",
+          "Not configured (needs versioning)"
+         ]
+        },
+        "control": "Cross-region replication",
+        "value": "Not configured (needs versioning)"
+       },
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "Not covered"
+         ],
+         "ma": [
+          "missing",
+          "Not covered"
+         ],
+         "rd": [
+          "missing",
+          "Not covered"
+         ]
+        },
+        "control": "Backup copy (AWS Backup)",
+        "value": "None"
+       }
+      ],
+      "evidence": [
+       {
+        "label": "Role",
+        "value": "access logs: Server access log target of another bucket"
+       },
+       {
+        "label": "Versioning",
+        "value": "Never enabled"
+       },
+       {
+        "label": "Object Lock",
+        "value": "None"
+       },
+       {
+        "label": "Replication",
+        "value": "not configured (verified)"
+       },
+       {
+        "label": "Encryption",
+        "value": "SSE-S3"
+       },
+       {
+        "label": "Lifecycle",
+        "value": "none"
+       },
+       {
+        "label": "AWS Backup",
+        "value": "None"
+       },
+       {
+        "label": "Storage class",
+        "value": "UNKNOWN"
+       }
+      ],
+      "findings": [],
+      "gap": [],
+      "he": "unprotected",
+      "ma": "unprotected",
+      "rd": "unprotected",
+      "reasons": [],
+      "rec": [
+       "malicious_activity"
+      ],
+      "region": "eu-west-1",
+      "req": [],
+      "role": "access logs",
+      "score": 0,
+      "size_bytes": null,
+      "size_human": "Not measured",
+      "size_short": "Not measured",
+      "spotlight": false,
+      "status": "LOG/TOOLING",
+      "status_color": "grey",
+      "third_party": "",
+      "tier": "Low",
+      "vce": "",
+      "vce_usd": null
+     },
+     "sortValue": null,
+     "subtitle": "eu-west-1",
+     "title": "acme-access-logs"
+    },
+    {
+     "badge": {
+      "color": "grey",
+      "text": "CONFIRM ROLE"
+     },
+     "details": [
+      {
+       "label": "Role",
+       "value": "unknown: No tag, name or relationship decides the role"
+      },
+      {
+       "label": "Versioning",
+       "value": "Not verified (AccessDenied)"
+      },
+      {
+       "label": "Object Lock",
+       "value": "Not verified (AccessDenied)"
+      },
+      {
+       "label": "Replication",
+       "value": "Not verified (AccessDenied)"
+      },
+      {
+       "label": "Encryption",
+       "value": "SSE-S3"
+      },
+      {
+       "label": "Lifecycle",
+       "value": "none"
+      },
+      {
+       "label": "AWS Backup",
+       "value": "None"
+      },
+      {
+       "label": "Storage class",
+       "value": "UNKNOWN"
+      }
+     ],
+     "id": "111122223333-blob-store-42",
+     "recommendations": [
+      {
+       "description": "Incomplete multipart uploads are billed until deleted.",
+       "severity": "LOW",
+       "title": "No incomplete multipart upload cleanup"
+      }
+     ],
+     "row": {
+      "account": "acme-main",
+      "account_id": "111122223333",
+      "action": "None \u2014 protected for its role",
+      "bucket": "blob-store-42",
+      "chips": [
+       "Not measured"
+      ],
+      "controls": [
+       {
+        "cells": {
+         "he": [
+          "unknown",
+          "Not verified"
+         ],
+         "ma": [
+          "unknown",
+          "Not verified"
+         ],
+         "rd": [
+          "na",
+          "Prerequisite for replication"
+         ]
+        },
+        "control": "Versioning",
+        "value": "NotVerified"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "unknown",
+          "Not verified"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Object Lock",
+        "value": "NotVerified"
+       },
+       {
+        "cells": {
+         "he": [
+          "unknown",
+          "Not verified: MFA Delete"
+         ],
+         "ma": [
+          "unknown",
+          "Not verified: MFA Delete"
+         ],
+         "rd": [
+          "na",
+          ""
+         ]
+        },
+        "control": "Delete guard (policy / MFA Delete)",
+        "value": "not verified"
+       },
+       {
+        "cells": {
+         "he": [
+          "na",
+          ""
+         ],
+         "ma": [
+          "na",
+          "A replica is not a backup"
+         ],
+         "rd": [
+          "unknown",
+          "Not verified"
+         ]
+        },
+        "control": "Cross-region replication",
+        "value": "Not verified"
+       },
+       {
+        "cells": {
+         "he": [
+          "missing",
+          "Not covered"
+         ],
+         "ma": [
+          "missing",
+          "Not covered"
+         ],
+         "rd": [
+          "missing",
+          "Not covered"
+         ]
+        },
+        "control": "Backup copy (AWS Backup)",
+        "value": "None"
+       }
+      ],
+      "evidence": [
+       {
+        "label": "Role",
+        "value": "unknown: No tag, name or relationship decides the role"
+       },
+       {
+        "label": "Versioning",
+        "value": "Not verified (AccessDenied)"
+       },
+       {
+        "label": "Object Lock",
+        "value": "Not verified (AccessDenied)"
+       },
+       {
+        "label": "Replication",
+        "value": "Not verified (AccessDenied)"
+       },
+       {
+        "label": "Encryption",
+        "value": "SSE-S3"
+       },
+       {
+        "label": "Lifecycle",
+        "value": "none"
+       },
+       {
+        "label": "AWS Backup",
+        "value": "None"
+       },
+       {
+        "label": "Storage class",
+        "value": "UNKNOWN"
+       }
+      ],
+      "findings": [
+       {
+        "description": "Incomplete multipart uploads are billed until deleted.",
+        "severity": "LOW",
+        "title": "No incomplete multipart upload cleanup"
+       }
+      ],
+      "gap": [],
+      "he": "unknown",
+      "ma": "unknown",
+      "rd": "unknown",
+      "reasons": [],
+      "rec": [],
+      "region": "eu-west-1",
+      "req": [],
+      "role": "unknown",
+      "score": 0,
+      "size_bytes": null,
+      "size_human": "Not measured",
+      "size_short": "Not measured",
+      "spotlight": false,
+      "status": "CONFIRM ROLE",
+      "status_color": "grey",
+      "third_party": "",
+      "tier": "Low",
+      "vce": "",
+      "vce_usd": null
+     },
+     "sortValue": null,
+     "subtitle": "eu-west-1",
+     "title": "blob-store-42"
+    }
+   ],
+   "id": "resources",
+   "label": "Buckets",
+   "type": "cards"
+  },
+  {
+   "description": "Risk-based S3 data protection review: human or application errors \u2192 S3 Versioning \u00b7 malicious activity \u2192 S3 Object Lock \u00b7 regional disruption \u2192 S3 Replication. Third-party backup detected: Veeam; buckets without AWS Backup may be protected by it, confirm.",
+   "id": "operational-review",
+   "label": "Risk Review",
+   "pillars": [
+    "Human or application error protection",
+    "Malicious activity protection",
+    "Regional disruption protection",
+    "Role-expected protection",
+    "AWS Backup posture",
+    "Public access"
+   ],
+   "resources": [
+    {
+     "name": "Estate risk overview: 3 risks",
+     "pillars": [
+      {
+       "checks": [
+        {
+         "description": "Evidence-backed",
+         "label": "Protected: 1 buckets",
+         "pass": true
+        },
+        {
+         "description": "e.g. versioning without Object Lock: recoverable, not immune",
+         "label": "Partial: 0 buckets",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "Evidence shows the control is absent",
+         "label": "Unprotected: 1 buckets",
+         "pass": false,
+         "severity": "HIGH"
+        },
+        {
+         "description": "Setting could not be read: confirm",
+         "label": "Unconfirmed: 0 buckets (excluded from score)",
+         "pass": true
+        }
+       ],
+       "name": "Human or application error protection",
+       "pass": 1,
+       "total": 2
+      },
+      {
+       "checks": [
+        {
+         "description": "Evidence-backed",
+         "label": "Protected: 1 buckets",
+         "pass": true
+        },
+        {
+         "description": "e.g. versioning without Object Lock: recoverable, not immune",
+         "label": "Partial: 0 buckets",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "Evidence shows the control is absent",
+         "label": "Unprotected: 1 buckets",
+         "pass": false,
+         "severity": "HIGH"
+        },
+        {
+         "description": "Setting could not be read: confirm",
+         "label": "Unconfirmed: 0 buckets (excluded from score)",
+         "pass": true
+        }
+       ],
+       "name": "Malicious activity protection",
+       "pass": 1,
+       "total": 2
+      },
+      {
+       "checks": [
+        {
+         "description": "Evidence-backed",
+         "label": "Protected: 0 buckets",
+         "pass": true
+        },
+        {
+         "description": "e.g. versioning without Object Lock: recoverable, not immune",
+         "label": "Partial: 0 buckets",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "Evidence shows the control is absent",
+         "label": "Unprotected: 2 buckets",
+         "pass": false,
+         "severity": "HIGH"
+        },
+        {
+         "description": "Setting could not be read: confirm",
+         "label": "Unconfirmed: 0 buckets (excluded from score)",
+         "pass": true
+        }
+       ],
+       "name": "Regional disruption protection",
+       "pass": 0,
+       "total": 2
+      }
+     ],
+     "region": "all"
+    },
+    {
+     "name": "Critical exposures (1)",
+     "pillars": [
+      {
+       "checks": [
+        {
+         "description": "Fails: point-in-time protection, delete protection; unconfirmed: backup coverage (Veeam may cover it)",
+         "label": "orders-prod-us-east-1 (512 GiB)",
+         "pass": false,
+         "severity": "HIGH"
+        }
+       ],
+       "name": "Role-expected protection",
+       "pass": 0,
+       "total": 1
+      }
+     ],
+     "region": "all"
+    },
+    {
+     "name": "AWS Backup posture",
+     "pillars": [
+      {
+       "checks": [
+        {
+         "description": "Recovery points in an unlocked vault can be deleted",
+         "label": "Vault Lock: 0 of 1 vaults locked",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "Isolated recovery copy",
+         "label": "Logically air-gapped vault: none",
+         "pass": false,
+         "severity": "LOW"
+        },
+        {
+         "description": "Without copies, recovery points share the source blast radius",
+         "label": "Copy rules: 0 of 1 plans",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "Recoverability tested",
+         "label": "Restore testing plans: 0",
+         "pass": false,
+         "severity": "LOW"
+        },
+        {
+         "description": "Backup selections silently skip S3 where opt-in is off",
+         "label": "S3 opt-in for AWS Backup: off in us-east-1",
+         "pass": false,
+         "severity": "MEDIUM"
+        }
+       ],
+       "name": "AWS Backup posture",
+       "pass": 0,
+       "total": 5
+      }
+     ],
+     "region": "all"
+    },
+    {
+     "name": "acme-main (111122223333)",
+     "pillars": [
+      {
+       "checks": [
+        {
+         "description": "production \u00b7 ISSUE \u00b7 Evaluate S3 Intelligent-Tiering (save up to ~$11/month)",
+         "label": "orders-prod-eu-west-1",
+         "pass": false,
+         "severity": "MEDIUM"
+        },
+        {
+         "description": "production \u00b7 GAP \u2014 CONFIRM 3P \u00b7 Evaluate S3 Intelligent-Tiering (save up to ~$5/month); Enable versioning; Add Object Lock (Governance)",
+         "label": "orders-prod-us-east-1",
+         "pass": false,
+         "severity": "HIGH"
+        },
+        {
+         "description": "Not scored until the role is confirmed: blob-store-42",
+         "label": "Role to confirm: 1 buckets",
+         "pass": true,
+         "severity": "INFO",
+         "unknown": true
+        }
+       ],
+       "name": "Role-expected protection",
+       "pass": 0,
+       "total": 2
+      },
+      {
+       "checks": [
+        {
+         "description": "on",
+         "label": "Account-level Block Public Access",
+         "pass": true
+        }
+       ],
+       "name": "Public access",
+       "pass": 1,
+       "total": 1
+      }
+     ],
+     "region": "all"
+    }
+   ],
+   "type": "operational-review"
+  },
+  {
+   "id": "recommendations",
+   "items": [
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "512 GiB unversioned. Without versioning a delete or overwrite is permanent, and the bucket cannot be added to AWS Backup or replicated. Estimated cost of versioning: $0.12/month (basis: prior, 1.0% churn, 30-day noncurrent retention), estimate.",
+     "detail": "Without versioning a delete or overwrite is permanent, and the bucket cannot be added to AWS Backup or replicated. Estimated cost of versioning: $0.12/month (basis: prior, 1.0% churn, 30-day noncurrent retention), estimate.",
+     "inconsistency": "Inconsistent with orders-prod-eu-west-1 (versioning)",
+     "priority": 1,
+     "recommendation": "Enable versioning with a NoncurrentVersionExpiration lifecycle rule",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "HIGH",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "GAP \u2014 CONFIRM 3P",
+     "tier": "production",
+     "title": "Enable versioning with a NoncurrentVersionExpiration lifecycle rule",
+     "why": "512 GiB unversioned"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "Inconsistent with orders-prod-eu-west-1 (object lock)",
+     "detail": "",
+     "inconsistency": "Inconsistent with orders-prod-eu-west-1 (object lock)",
+     "priority": 2,
+     "recommendation": "Enable Object Lock (GOVERNANCE 30d) on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "HIGH",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "",
+     "tier": "",
+     "title": "Enable Object Lock (GOVERNANCE 30d) on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "why": "Inconsistent with orders-prod-eu-west-1 (object lock)"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (account-level)",
+     "description": "S3 resource-type opt-in disabled: backup selections silently skip these buckets",
+     "detail": "",
+     "priority": 3,
+     "recommendation": "Opt S3 in to AWS Backup in us-east-1",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 \u2014 (account-level)",
+     "severity": "HIGH",
+     "status": "",
+     "tier": "",
+     "title": "Opt S3 in to AWS Backup in us-east-1",
+     "why": "S3 resource-type opt-in disabled: backup selections silently skip these buckets"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (organization-level)",
+     "description": "Governance: Protection depends on who created the bucket. 1 workloads differ between regions; drifted buckets (orders-prod-us-east-1) were created outside IaC.",
+     "detail": "1 workloads differ between regions; drifted buckets (orders-prod-us-east-1) were created outside IaC.",
+     "priority": 4,
+     "recommendation": "Publish a shared S3 module (CloudFormation/Terraform/CDK) that embeds the baseline per data class, and require it for production buckets.",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (organization-level)",
+     "severity": "HIGH",
+     "status": "",
+     "tier": "governance",
+     "title": "Publish a shared S3 module (CloudFormation/Terraform/CDK) that embeds the baseline per data class, and require it for production buckets.",
+     "why": "Governance: Protection depends on who created the bucket"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-eu-west-1",
+     "description": "TLS not enforced. No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+     "detail": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+     "priority": 5,
+     "recommendation": "Add a Deny statement for aws:SecureTransport = false",
+     "region": "eu-west-1",
+     "resource": "111122223333 \u2014 orders-prod-eu-west-1",
+     "severity": "MEDIUM",
+     "size_bytes": 1099511627776,
+     "size_human": "1.0 TiB",
+     "status": "ISSUE",
+     "tier": "production",
+     "title": "Add a Deny statement for aws:SecureTransport = false",
+     "why": "TLS not enforced"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "No delete guard. No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+     "detail": "No Object Lock and no bucket policy statement denies s3:DeleteObject or s3:DeleteBucket.",
+     "priority": 6,
+     "recommendation": "Add a bucket policy that denies deletes outside an approved role",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "MEDIUM",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "GAP \u2014 CONFIRM 3P",
+     "tier": "production",
+     "title": "Add a bucket policy that denies deletes outside an approved role",
+     "why": "No delete guard"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "TLS not enforced. No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+     "detail": "No Deny statement on aws:SecureTransport = false: requests over plain HTTP are accepted.",
+     "priority": 7,
+     "recommendation": "Add a Deny statement for aws:SecureTransport = false",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "MEDIUM",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "GAP \u2014 CONFIRM 3P",
+     "tier": "production",
+     "title": "Add a Deny statement for aws:SecureTransport = false",
+     "why": "TLS not enforced"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "Inconsistent with orders-prod-eu-west-1 (encryption type)",
+     "detail": "",
+     "inconsistency": "Inconsistent with orders-prod-eu-west-1 (encryption type)",
+     "priority": 8,
+     "recommendation": "Switch default encryption to SSE-KMS on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "MEDIUM",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "",
+     "tier": "",
+     "title": "Switch default encryption to SSE-KMS on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "why": "Inconsistent with orders-prod-eu-west-1 (encryption type)"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (account-level)",
+     "description": "3 recovery points in unlocked vaults, no cross-region copy rules. Without Vault Lock the backups themselves can be deleted by anyone with backup:Delete* permissions.",
+     "detail": "Without Vault Lock the backups themselves can be deleted by anyone with backup:Delete* permissions.",
+     "priority": 9,
+     "recommendation": "Enable AWS Backup Vault Lock (Governance first) and add a cross-region or cross-account copy rule",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (account-level)",
+     "severity": "MEDIUM",
+     "status": "",
+     "tier": "",
+     "title": "Enable AWS Backup Vault Lock (Governance first) and add a cross-region or cross-account copy rule",
+     "why": "3 recovery points in unlocked vaults, no cross-region copy rules"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (organization-level)",
+     "description": "Governance: Data classification is not machine-readable. 0% of buckets carry a data-classification tag; regulated data is recognisable only by name.",
+     "detail": "0% of buckets carry a data-classification tag; regulated data is recognisable only by name.",
+     "priority": 10,
+     "recommendation": "Define a data-classification tag (e.g. public / internal / regulated / legal) in a tag policy and require it at creation; map each value to required controls.",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (organization-level)",
+     "severity": "MEDIUM",
+     "status": "",
+     "tier": "governance",
+     "title": "Define a data-classification tag (e.g. public / internal / regulated / legal) in a tag policy and require it at creation; map each value to required controls.",
+     "why": "Governance: Data classification is not machine-readable"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (organization-level)",
+     "description": "Governance: Recoverability is assumed, not tested. No AWS Backup restore testing plan; RPO/RTO per data class is not visible in configuration.",
+     "detail": "No AWS Backup restore testing plan; RPO/RTO per data class is not visible in configuration.",
+     "priority": 11,
+     "recommendation": "Agree RPO/RTO per data class, then schedule AWS Backup restore testing.",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (organization-level)",
+     "severity": "MEDIUM",
+     "status": "",
+     "tier": "governance",
+     "title": "Agree RPO/RTO per data class, then schedule AWS Backup restore testing.",
+     "why": "Governance: Recoverability is assumed, not tested"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "blob-store-42",
+     "description": "No incomplete multipart upload cleanup. Incomplete multipart uploads are billed until deleted.",
+     "detail": "Incomplete multipart uploads are billed until deleted.",
+     "priority": 12,
+     "recommendation": "Add an AbortIncompleteMultipartUpload lifecycle rule (7 days)",
+     "region": "eu-west-1",
+     "resource": "111122223333 \u2014 blob-store-42",
+     "severity": "LOW",
+     "size_bytes": null,
+     "size_human": "Not measured",
+     "status": "CONFIRM ROLE",
+     "tier": "unknown",
+     "title": "Add an AbortIncompleteMultipartUpload lifecycle rule (7 days)",
+     "why": "No incomplete multipart upload cleanup"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "orders-prod-us-east-1",
+     "description": "No incomplete multipart upload cleanup. Incomplete multipart uploads are billed until deleted.",
+     "detail": "Incomplete multipart uploads are billed until deleted.",
+     "priority": 13,
+     "recommendation": "Add an AbortIncompleteMultipartUpload lifecycle rule (7 days)",
+     "region": "us-east-1",
+     "resource": "111122223333 \u2014 orders-prod-us-east-1",
+     "severity": "LOW",
+     "size_bytes": 549755813888,
+     "size_human": "512 GiB",
+     "status": "GAP \u2014 CONFIRM 3P",
+     "tier": "production",
+     "title": "Add an AbortIncompleteMultipartUpload lifecycle rule (7 days)",
+     "why": "No incomplete multipart upload cleanup"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (account-level)",
+     "description": "No restore testing plan exists: recoverability is assumed, not proven",
+     "detail": "",
+     "priority": 14,
+     "recommendation": "Create an AWS Backup restore testing plan for production S3 recovery points",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (account-level)",
+     "severity": "LOW",
+     "status": "",
+     "tier": "",
+     "title": "Create an AWS Backup restore testing plan for production S3 recovery points",
+     "why": "No restore testing plan exists: recoverability is assumed, not proven"
+    },
+    {
+     "account": "111122223333",
+     "account_name": "acme-main",
+     "bucket": "\u2014 (organization-level)",
+     "description": "Governance: Many buckets have no accountable owner. 67% of in-scope buckets have no owner tag, so findings have nobody to go to.",
+     "detail": "67% of in-scope buckets have no owner tag, so findings have nobody to go to.",
+     "priority": 15,
+     "recommendation": "Require an owner tag (team or cost center) and route posture findings to it.",
+     "region": "all",
+     "resource": "111122223333 \u2014 \u2014 (organization-level)",
+     "severity": "LOW",
+     "status": "",
+     "tier": "governance",
+     "title": "Require an owner tag (team or cost center) and route posture findings to it.",
+     "why": "Governance: Many buckets have no accountable owner"
+    }
+   ],
+   "label": "Recommendations",
+   "type": "recommendations"
+  },
+  {
+   "consistent_families": [],
+   "families_compared": 1,
+   "id": "inconsistencies",
+   "items": [
+    {
+     "align_to": "orders-prod-eu-west-1",
+     "basis": "Same name apart from the region / geography token",
+     "family": "orders-prod",
+     "match": "exact",
+     "members": [
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-eu-west-1",
+       "region": "eu-west-1",
+       "value": "GOVERNANCE 30d"
+      },
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-us-east-1",
+       "region": "us-east-1",
+       "value": "None"
+      }
+     ],
+     "recommendation": "Enable Object Lock (GOVERNANCE 30d) on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "relation": "peer",
+     "setting": "Object Lock",
+     "severity": "HIGH",
+     "weaker": [
+      "orders-prod-us-east-1"
+     ]
+    },
+    {
+     "align_to": "orders-prod-eu-west-1",
+     "basis": "Same name apart from the region / geography token",
+     "family": "orders-prod",
+     "match": "exact",
+     "members": [
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-eu-west-1",
+       "region": "eu-west-1",
+       "value": "Enabled"
+      },
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-us-east-1",
+       "region": "us-east-1",
+       "value": "Never enabled"
+      }
+     ],
+     "recommendation": "Enable versioning on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "relation": "peer",
+     "setting": "Versioning",
+     "severity": "HIGH",
+     "weaker": [
+      "orders-prod-us-east-1"
+     ]
+    },
+    {
+     "align_to": "orders-prod-eu-west-1",
+     "basis": "Same name apart from the region / geography token",
+     "family": "orders-prod",
+     "match": "exact",
+     "members": [
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-eu-west-1",
+       "region": "eu-west-1",
+       "value": "SSE-KMS"
+      },
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-us-east-1",
+       "region": "us-east-1",
+       "value": "SSE-S3"
+      }
+     ],
+     "recommendation": "Switch default encryption to SSE-KMS on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "relation": "peer",
+     "setting": "Encryption type",
+     "severity": "MEDIUM",
+     "weaker": [
+      "orders-prod-us-east-1"
+     ]
+    },
+    {
+     "align_to": "orders-prod-eu-west-1",
+     "basis": "Same name apart from the region / geography token",
+     "family": "orders-prod",
+     "match": "exact",
+     "members": [
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-eu-west-1",
+       "region": "eu-west-1",
+       "value": "daily"
+      },
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-us-east-1",
+       "region": "us-east-1",
+       "value": "None"
+      }
+     ],
+     "recommendation": "Add orders-prod-us-east-1 to AWS Backup plan 'daily' to match orders-prod-eu-west-1.",
+     "relation": "peer",
+     "setting": "AWS Backup coverage",
+     "severity": "LOW",
+     "weaker": [
+      "orders-prod-us-east-1"
+     ]
+    },
+    {
+     "align_to": "orders-prod-eu-west-1",
+     "basis": "Same name apart from the region / geography token",
+     "family": "orders-prod",
+     "match": "exact",
+     "members": [
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-eu-west-1",
+       "region": "eu-west-1",
+       "value": "present"
+      },
+      {
+       "account": "111122223333",
+       "bucket": "orders-prod-us-east-1",
+       "region": "us-east-1",
+       "value": "absent"
+      }
+     ],
+     "recommendation": "Add a NoncurrentVersionExpiration rule on orders-prod-us-east-1 to match orders-prod-eu-west-1.",
+     "relation": "peer",
+     "setting": "Lifecycle (noncurrent expiration)",
+     "severity": "LOW",
+     "weaker": [
+      "orders-prod-us-east-1"
+     ]
+    }
+   ],
+   "label": "Inconsistencies",
+   "note": "Log, tooling and non-production buckets are not compared.",
+   "type": "inconsistencies"
+  },
+  {
+   "dimensions": [
+    {
+     "current": "Some buckets have an owner tag; classification is implied by names.",
+     "evidence": [
+      "33% of in-scope buckets have an owner tag",
+      "0% have a data-classification tag",
+      "Tag policies: not readable from this account (AWS Organizations data is not collected)"
+     ],
+     "id": "ownership",
+     "level": 2,
+     "name": "Ownership & data classification",
+     "next": "Owner and data-classification tags on most buckets; a tag policy defines the allowed values."
+    },
+    {
+     "current": "Most production buckets meet a baseline, but same-workload buckets drift between regions.",
+     "evidence": [
+      "1 of 2 production buckets versioned (50%)",
+      "1 of 1 bucket families drifted between regions",
+      "Exceptions register: not collectable"
+     ],
+     "id": "standard",
+     "level": 2,
+     "name": "Protection standard & consistency",
+     "next": "A written baseline per data class; production buckets meet it and twins match."
+    },
+    {
+     "current": "Not assessed: nothing in scope or nothing readable for this dimension.",
+     "evidence": [
+      "Account-level BPA on in 1 of 1 accounts",
+      "SCPs: not readable from this account (AWS Organizations data is not collected)",
+      "Organization backup policies: not readable from this account"
+     ],
+     "id": "preventive",
+     "level": null,
+     "name": "Preventive guardrails",
+     "next": ""
+    },
+    {
+     "current": "Data protection rules (versioning, replication, Object Lock, backup coverage) in every account.",
+     "evidence": [
+      "AWS Config recording in 1 of 1 accounts",
+      "S3 rules: s3-bucket-versioning-enabled",
+      "Security Hub not enabled",
+      "AWS Backup Audit Manager frameworks: 0",
+      "Automatic remediation: not collectable"
+     ],
+     "id": "detective",
+     "level": 3,
+     "name": "Detective controls",
+     "next": "Findings route to owners with automatic remediation for the baseline."
+    },
+    {
+     "current": "Some workloads use IaC; others are console-created and drift from them.",
+     "evidence": [
+      "33% of in-scope buckets are IaC-managed (CloudFormation/Terraform tags)",
+      "Drifted buckets created outside IaC: orders-prod-us-east-1"
+     ],
+     "id": "iac",
+     "level": 2,
+     "name": "Standardization (infrastructure as code)",
+     "next": "Most buckets are IaC-managed from shared modules that embed the protection baseline."
+    },
+    {
+     "current": "No isolated backup layer; recovery depends on the production account.",
+     "evidence": [
+      "Central backup account: not collectable from configuration",
+      "Vault Lock on 0 of 1 vaults; 0 plans with copy rules",
+      "No backup targets in scope",
+      "Restore testing plans: 0; RPO/RTO per data class: not collectable"
+     ],
+     "id": "recovery",
+     "level": 1,
+     "name": "Backup & recovery governance",
+     "next": "A central backup account or vendor exists, but backups are mutable or untested."
+    }
+   ],
+   "findings": [
+    {
+     "dimension": "Standardization (infrastructure as code)",
+     "evidence": "1 workloads differ between regions; drifted buckets (orders-prod-us-east-1) were created outside IaC.",
+     "improvement": "Publish a shared S3 module (CloudFormation/Terraform/CDK) that embeds the baseline per data class, and require it for production buckets.",
+     "severity": "HIGH",
+     "title": "Protection depends on who created the bucket"
+    },
+    {
+     "dimension": "Ownership & data classification",
+     "evidence": "0% of buckets carry a data-classification tag; regulated data is recognisable only by name.",
+     "improvement": "Define a data-classification tag (e.g. public / internal / regulated / legal) in a tag policy and require it at creation; map each value to required controls.",
+     "severity": "MEDIUM",
+     "title": "Data classification is not machine-readable"
+    },
+    {
+     "dimension": "Backup & recovery governance",
+     "evidence": "No AWS Backup restore testing plan; RPO/RTO per data class is not visible in configuration.",
+     "improvement": "Agree RPO/RTO per data class, then schedule AWS Backup restore testing.",
+     "severity": "MEDIUM",
+     "title": "Recoverability is assumed, not tested"
+    },
+    {
+     "dimension": "Ownership & data classification",
+     "evidence": "67% of in-scope buckets have no owner tag, so findings have nobody to go to.",
+     "improvement": "Require an owner tag (team or cost center) and route posture findings to it.",
+     "severity": "LOW",
+     "title": "Many buckets have no accountable owner"
+    }
+   ],
+   "id": "governance",
+   "label": "Governance",
+   "levels": [
+    {
+     "description": "Protection is decided bucket by bucket by whoever creates it. No written standard; results depend on the team and the day.",
+     "label": "Ad hoc",
+     "level": 1
+    },
+    {
+     "description": "Some teams reuse templates and protect well, but the rules are informal. Nothing verifies them, so drift goes unnoticed.",
+     "label": "Repeatable",
+     "level": 2
+    },
+    {
+     "description": "A written data protection standard maps each data class (e.g. legal, clinical, production) to required controls. IaC modules apply it by default and buckets carry classification tags.",
+     "label": "Defined",
+     "level": 3
+    },
+    {
+     "description": "Guardrails prevent weakening protection (SCPs, organization backup policies), detective controls cover every account, exceptions are recorded and time-boxed, and restores are tested.",
+     "label": "Managed",
+     "level": 4
+    },
+    {
+     "description": "Compliance with the standard is measured continuously and reported to leadership, drift is remediated automatically, and recovery is exercised regularly from an isolated backup account.",
+     "label": "Optimized",
+     "level": 5
+    }
+   ],
+   "overall": 2.0,
+   "overall_label": "Repeatable",
+   "overall_level": 2,
+   "policies": [
+    {
+     "compliant": 1,
+     "failing": [
+      "orders-prod-us-east-1"
+     ],
+     "pct": 50,
+     "rule": "All production buckets have versioning enabled",
+     "scope": 2,
+     "total": 2,
+     "why": "Protects against accidental or scripted deletion and overwrite."
+    },
+    {
+     "compliant": 0,
+     "failing": [],
+     "note": "Not applicable: nothing in scope",
+     "pct": null,
+     "rule": "Legal and regulated data is replicated across two regions",
+     "scope": 0,
+     "total": 0,
+     "why": "Identified by name (legal, clinical, payment, invoice\u2026) or classification tag: 0 buckets carry a classification tag."
+    },
+    {
+     "compliant": 0,
+     "failing": [],
+     "note": "Not applicable: nothing in scope",
+     "pct": null,
+     "rule": "Backup targets are immutable (Object Lock)",
+     "scope": 0,
+     "total": 0,
+     "why": "The copy of last resort must survive compromised credentials."
+    },
+    {
+     "compliant": 0,
+     "failing": [],
+     "note": "Not applicable: nothing in scope",
+     "pct": null,
+     "rule": "Audit trails are tamper-evident (Object Lock)",
+     "scope": 0,
+     "total": 0,
+     "why": "An attacker should not be able to erase the record of what they did."
+    },
+    {
+     "compliant": 1,
+     "failing": [
+      "orders-prod-us-east-1"
+     ],
+     "pct": 50,
+     "rule": "Production data has a second copy (AWS Backup or cross-region replication)",
+     "scope": 2,
+     "total": 2,
+     "why": "Versioning alone lives in the same bucket, account and region."
+    },
+    {
+     "compliant": 1,
+     "failing": [],
+     "pct": 100,
+     "rule": "Versioned buckets expire noncurrent versions",
+     "scope": 1,
+     "total": 1,
+     "why": "Keeps the cost of versioning bounded."
+    },
+    {
+     "compliant": 0,
+     "failing": [
+      "orders-prod"
+     ],
+     "pct": 0,
+     "rule": "Buckets of the same workload share one configuration in every region",
+     "scope": 1,
+     "total": 1,
+     "why": "Divergence between twins is drift, not design."
+    },
+    {
+     "compliant": 0,
+     "failing": [
+      "orders-prod-eu-west-1",
+      "orders-prod-us-east-1"
+     ],
+     "pct": 0,
+     "rule": "Every production bucket has an owner and a data-classification tag",
+     "scope": 2,
+     "total": 2,
+     "why": "Rules per data class can only be automated if the class is on the bucket."
+    },
+    {
+     "compliant": 1,
+     "failing": [],
+     "pct": 100,
+     "rule": "Account-level Block Public Access is on in every account",
+     "scope": 1,
+     "total": 1,
+     "why": "The guardrail that catches a misconfigured bucket policy."
+    }
+   ],
+   "summary": "Governance maturity is assessed at level 2 of 5 (Repeatable), average 2.0 over 5 of 6 dimensions (1 not assessed). Strongest dimension: detective controls. Weakest: backup & recovery governance. The bucket fixes in this report close today's gaps; the governance items stop them from coming back.",
+   "type": "governance"
+  },
+  {
+   "id": "cost-optimization",
+   "items": [
+    {
+     "annual_usd": 129.0,
+     "basis": "STANDARD minus STANDARD_IA list price per GB-month, all bytes (US East (N. Virginia) list prices, before discounts, credits and taxes)",
+     "description": "Access pattern is not visible in storage metrics. Intelligent-Tiering keeps millisecond access and has no retrieval fee, so the downside is the monitoring fee.",
+     "effort": "low",
+     "estimatedSaving": 10.75,
+     "impact": "saving",
+     "magnitude": {
+      "label": "tens of dollars per month",
+      "level": 2
+     },
+     "monthly_usd": 10.75,
+     "one_time_usd": 0.01,
+     "resources": [
+      "orders-prod-eu-west-1"
+     ],
+     "savings": "Up to ~$11/month if every object becomes infrequently accessed; monitoring fee up to ~$0/month; ~$0 one-time transition, estimate",
+     "title": "Evaluate S3 Intelligent-Tiering for orders-prod-eu-west-1 (1.0 TiB in S3 Standard)",
+     "up_to": true,
+     "worst_case_usd": 0.0
+    },
+    {
+     "annual_usd": 64.56,
+     "basis": "STANDARD minus STANDARD_IA list price per GB-month, all bytes (US East (N. Virginia) list prices, before discounts, credits and taxes)",
+     "description": "Access pattern is not visible in storage metrics. Intelligent-Tiering keeps millisecond access and has no retrieval fee, so the downside is the monitoring fee.",
+     "effort": "low",
+     "estimatedSaving": 5.38,
+     "impact": "saving",
+     "magnitude": {
+      "label": "single dollars per month",
+      "level": 1
+     },
+     "monthly_usd": 5.38,
+     "one_time_usd": 0.01,
+     "resources": [
+      "orders-prod-us-east-1"
+     ],
+     "savings": "Up to ~$5/month if every object becomes infrequently accessed; monitoring fee up to ~$0/month; ~$0 one-time transition, estimate",
+     "title": "Evaluate S3 Intelligent-Tiering for orders-prod-us-east-1 (512 GiB in S3 Standard)",
+     "up_to": true,
+     "worst_case_usd": 0.0
+    }
+   ],
+   "label": "Cost Optimization",
+   "type": "cost-optimization"
+  }
+ ]
+}

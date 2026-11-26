@@ -1,0 +1,1026 @@
+{
+ "_comment": "FICTITIOUS sample data for demonstrating the S3 Data Protection Advisor report. AnyCompany Health and every account ID, bucket name, size and cost below are invented. Account IDs are AWS documentation example IDs.",
+ "customer": "AnyCompany Health",
+ "scan_date": "2026-10-01T09:00:00Z",
+ "accounts": {
+  "111122223333": {
+   "name": "Production",
+   "account_bpa": "off",
+   "s3_spend_monthly": 2425000
+  },
+  "444455556666": {
+   "name": "Data Platform",
+   "account_bpa": "on",
+   "s3_spend_monthly": 1860000
+  },
+  "777788889999": {
+   "name": "Shared Services (Backup)",
+   "account_bpa": "on",
+   "s3_spend_monthly": 1960000
+  }
+ },
+ "third_party": [
+  {
+   "vendor": "Veeam",
+   "evidence": "Bucket names anycompany-veeam-repo-prod and anycompany-veaam-offsite (misspelling, lower confidence) + IAM role AnyCompanyVeeamBackupRole",
+   "confidence": "strong"
+  },
+  {
+   "vendor": "Velero (EKS)",
+   "evidence": "Bucket name anycompany-velero-eks-prod",
+   "confidence": "strong"
+  }
+ ],
+ "backup_posture": {
+  "vaults": [
+   {
+    "account": "111122223333",
+    "name": "Default",
+    "region": "eu-west-1",
+    "locked": false,
+    "recovery_points": 412
+   },
+   {
+    "account": "111122223333",
+    "name": "anycompany-prod-vault",
+    "region": "eu-west-1",
+    "locked": false,
+    "recovery_points": 1260
+   },
+   {
+    "account": "444455556666",
+    "name": "Default",
+    "region": "eu-west-1",
+    "locked": false,
+    "recovery_points": 96
+   }
+  ],
+  "air_gapped_vault_present": false,
+  "plans_total": 2,
+  "plans_with_copy_actions": 0,
+  "restore_testing_plans": 0,
+  "audit_frameworks": 0,
+  "s3_opt_in": {
+   "eu-west-1": true,
+   "eu-central-1": true,
+   "us-east-1": false
+  }
+ },
+ "buckets": [
+  {
+   "name": "anycompany-invoices-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 20000,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": false,
+   "lifecycle": false,
+   "aws_backup": "None",
+   "write_pattern": "Write-once / Append: +59M objects/day, 0 deletes over 30 days",
+   "vce": {
+    "monthly_usd": 950,
+    "range": [
+     0,
+     1900
+    ],
+    "basis": "bounded",
+    "churn_pct": 0.2
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "20 PiB of invoices unversioned, but they are never overwritten",
+     "description": "Objects are written once and never changed or deleted (30-day CloudWatch metrics). Versioning protects every invoice against accidental or scripted deletion for about $950/month (about 0.2% of its storage bill), because no noncurrent versions are created.",
+     "action": "Enable versioning (Quick Win: ~$950/month) with a 30-day NoncurrentVersionExpiration rule"
+    },
+    {
+     "severity": "LOW",
+     "title": "SSE-KMS without S3 Bucket Keys",
+     "description": "59M new objects/day each trigger a KMS request. Bucket Keys cut KMS request cost by up to 99%.",
+     "action": "Enable S3 Bucket Keys"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-imaging-archive-2019",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 60000,
+   "storage_class": "DEEP_ARCHIVE",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "None",
+   "write_pattern": "Static: object count and size unchanged for 30 days",
+   "vce": {
+    "monthly_usd": 0,
+    "range": [
+     0,
+     0
+    ],
+    "basis": "measured",
+    "churn_pct": 0
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "60 PiB medical-imaging archive can be deleted with one API call",
+     "description": "The archive is completely static, so versioning costs $0 (measured). It is the largest dataset in the estate and has no second copy.",
+     "action": "Enable versioning ($0, measured), then Object Lock (Governance) for the retention period"
+    },
+    {
+     "severity": "MEDIUM",
+     "title": "Largest dataset exists in one region only",
+     "description": "No replication and no AWS Backup coverage. To confirm whether the imaging archive can be re-acquired from source systems.",
+     "action": "Confirm re-derivability; if not re-derivable, replicate to Deep Archive in eu-central-1 (estimate ~$110,600/month + ~$1.23M one-time transfer)"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-session-state-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 400.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "aws_backup": "None",
+   "write_pattern": "Overwrite-heavy: same keys rewritten, ~60% of bytes per month (request metrics)",
+   "vce": {
+    "monthly_usd": 1300,
+    "range": [
+     950,
+     1700
+    ],
+    "basis": "measured",
+    "churn_pct": 60,
+    "retention_days": 7
+   },
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "Overwrite-heavy bucket: versioning is cheap only with a short noncurrent expiration",
+     "description": "About 60% of the bytes are rewritten each month. With a 7-day NoncurrentVersionExpiration, versioning costs ~$1,300/month (measured); without the rule it grows by ~240 TiB every month. If session state is ephemeral by design, document that and leave it unversioned.",
+     "action": "Confirm the data is worth protecting; if so, enable versioning WITH a 7-day NoncurrentVersionExpiration rule (~$1,300/month)"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-legal-contracts-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 3000,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "None",
+   "regional_required": true,
+   "write_pattern": "Append-mostly: +20,000 contracts/day, rare edits",
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Signed legal contracts exist in a single region",
+     "description": "Versioning protects against accidental deletion, but there is no cross-region copy and no backup. Legal records can't be re-created, so a regional disruption or account compromise means permanent loss.",
+     "action": "Add cross-region replication to eu-central-1 Deep Archive (estimate ~$5,530/month + ~$61,400 one-time transfer)"
+    },
+    {
+     "severity": "MEDIUM",
+     "title": "No Object Lock on records with a legal retention obligation",
+     "description": "Any principal with s3:DeleteObjectVersion can purge history. Object Lock in Compliance mode enforces the retention period, which is also what auditors ask for.",
+     "action": "Enable Object Lock (Compliance) with the legal retention period on new objects; apply retention to existing objects with S3 Batch Operations"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-payments-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 1150.0,
+   "storage_class": "STANDARD",
+   "versioning": "Suspended",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "aws_backup": "None",
+   "write_pattern": "Append-mostly",
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Versioning was suspended on the payments bucket",
+     "description": "Older versions are still retained, but every object written since suspension is unprotected against overwrite and deletion. Suspension is often a one-off cost fix that was never reverted.",
+     "action": "Re-enable versioning (currently Suspended) and add a NoncurrentVersionExpiration rule"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "aws-cloudtrail-logs-111122223333-a1b2c3d4",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "audit_trail",
+   "size_tb": 175.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "aws_backup": "None",
+   "write_pattern": "Append-only",
+   "vce": {
+    "monthly_usd": 50,
+    "range": [
+     0,
+     100
+    ],
+    "basis": "bounded",
+    "churn_pct": 0.1
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "CloudTrail audit trail can be deleted",
+     "description": "An attacker who gains write access can erase the record of what they did. Tamper-evidence is the point of an audit trail.",
+     "action": "Enable versioning + Object Lock (Governance, 365 days) and a lifecycle rule to Glacier after 90 days"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-orders-prod-eu-west-1",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 1550.0,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "GOVERNANCE 30d",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "anycompany-daily-prod (periodic)",
+   "write_pattern": "Append-mostly",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-orders-prod-us-east-1",
+   "account": "111122223333",
+   "region": "us-east-1",
+   "role": "production",
+   "size_tb": 1400.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "noncurrent_expiration": false,
+   "aws_backup": "None",
+   "write_pattern": "Append-mostly",
+   "vce": {
+    "monthly_usd": 650,
+    "range": [
+     300,
+     1300
+    ],
+    "basis": "bounded",
+    "churn_pct": 2
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "US orders bucket has none of the protections of its EU twin",
+     "description": "The eu-west-1 deployment has versioning, Object Lock (Governance 30d), SSE-KMS and a daily AWS Backup plan. The us-east-1 copy of the same application has none of them, and AWS Backup for S3 isn't enabled in us-east-1.",
+     "action": "Align with anycompany-orders-prod-eu-west-1: enable versioning, Object Lock (Governance 30d), SSE-KMS; opt S3 in to AWS Backup in us-east-1"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-clinical-records-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 9000,
+   "storage_class": "INTELLIGENT_TIERING",
+   "versioning": "Enabled",
+   "object_lock": "COMPLIANCE 7y",
+   "replication": {
+    "type": "CRR",
+    "destination": "anycompany-clinical-records-prod-crr",
+    "destination_region": "eu-central-1",
+    "delete_markers": false
+   },
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "anycompany-continuous-prod (continuous, 35d PITR)",
+   "write_pattern": "Append-mostly",
+   "findings": [
+    {
+     "severity": "INFO",
+     "title": "Reference configuration: protected from all three risks",
+     "description": "Versioning, Object Lock Compliance 7 years, CRR to a locked replica in eu-central-1, and continuous AWS Backup. Use this bucket as the template for other regulated data."
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-clinical-records-prod-crr",
+   "account": "111122223333",
+   "region": "eu-central-1",
+   "role": "replica",
+   "size_tb": 9000,
+   "storage_class": "GLACIER_IR",
+   "versioning": "Enabled",
+   "object_lock": "COMPLIANCE 7y",
+   "replication": {
+    "replica_of": "anycompany-clinical-records-prod"
+   },
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "None",
+   "write_pattern": "Replica",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-partner-exchange-prod-eu-west-1",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 200.0,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "NotVerified",
+   "replication": "NotVerified",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "anycompany-daily-prod (periodic)",
+   "write_pattern": "Transient: files picked up and deleted within 24h",
+   "note": "GetObjectLockConfiguration and GetBucketReplication returned AccessDenied (bucket policy restricts the analysis role).",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-partner-exchange-prod-us-east-1",
+   "account": "111122223333",
+   "region": "us-east-1",
+   "role": "production",
+   "size_tb": 150.0,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "anycompany-daily-prod (periodic)",
+   "write_pattern": "Transient: files picked up and deleted within 24h",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-marketing-public-test",
+   "account": "111122223333",
+   "region": "us-east-1",
+   "role": "non_production",
+   "size_tb": 10.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "bucket_bpa": "off",
+   "aws_backup": "None",
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Bucket named 'public-test' with no public-access guardrail at any level",
+     "description": "Bucket-level Block Public Access is off, and so is account-level BPA in the Production account.",
+     "action": "Enable bucket-level Block Public Access; delete the bucket if the test is over"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-alb-access-logs-prod",
+   "account": "111122223333",
+   "region": "eu-west-1",
+   "role": "access_logs",
+   "size_tb": 600.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "None",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-datalake-raw",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 7500,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": false,
+   "noncurrent_expiration": false,
+   "aws_backup": "None",
+   "write_pattern": "Overwrite-heavy: daily re-ingest rewrites ~8% of bytes per month",
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "Versioned without lifecycle: noncurrent versions grow forever",
+     "description": "~600 TiB of noncurrent versions is added every month and never expires: estimate +$14,100/month, every month, unbounded. After a year that's ~7 PiB of hidden storage.",
+     "action": "Add NoncurrentVersionExpiration (30 days) + AbortIncompleteMultipartUpload"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-research-datasets-prod",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 30000,
+   "objects": 6000000000,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "anycompany-daily-data (periodic)",
+   "write_pattern": "Append-mostly: new study data added monthly",
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "30 PiB in S3 Standard with no tiering: up to ~$465,000/month to save with Intelligent-Tiering",
+     "description": "All 30 PiB is billed at the Standard rate (estimate $706,600/month) and no lifecycle rule moves data to a cheaper class. The access pattern is not visible in configuration metadata, so confirm it. S3 Intelligent-Tiering is low-risk either way: it moves objects to Infrequent Access after 30 days and Archive Instant Access after 90 days without access, has no retrieval fees and keeps millisecond access. Worst case (everything read often): +~$15,000/month monitoring fee for 6B objects. If, as is typical for research datasets, ~70% of the data goes unread for 90+ days: ~$242,000/month instead of $706,600, saving up to ~$465,000/month (~$5.6M/year). One-time transition: ~$60,000.",
+     "action": "Confirm the access pattern , then add a lifecycle rule transitioning current versions to S3 Intelligent-Tiering (estimate: up to ~$465,000/month saving, worst case +$15,000/month; ~$60,000 one-time)"
+    }
+   ],
+   "cost_saving": {
+    "monthly_usd": 465000,
+    "action": "Evaluate S3 Intelligent-Tiering (save up to ~$465,000/month)"
+   },
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-datalake-curated",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 4500,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": {
+    "type": "CRR",
+    "destination": "anycompany-datalake-curated-crr",
+    "destination_region": "eu-central-1",
+    "delete_markers": true
+   },
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": true,
+   "noncurrent_expiration": true,
+   "aws_backup": "None",
+   "write_pattern": "Overwrite-heavy",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-datalake-curated-crr",
+   "account": "444455556666",
+   "region": "eu-central-1",
+   "role": "replica",
+   "size_tb": 4500,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": {
+    "replica_of": "anycompany-datalake-curated"
+   },
+   "encryption": "SSE-KMS",
+   "bucket_key": true,
+   "lifecycle": false,
+   "noncurrent_expiration": false,
+   "aws_backup": "None",
+   "write_pattern": "Replica",
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "A replica is not a backup: deletions replicate too",
+     "description": "Delete-marker replication is on and the replica has no Object Lock, so a deletion (accidental or malicious) in eu-west-1 reaches eu-central-1 within minutes. The replica covers a regional outage, not deletion.",
+     "action": "Enable Object Lock (Governance) on the replica, or turn off delete-marker replication if downstream jobs don't need it"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-scans-001",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 1700.0,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "anycompany-daily-data (periodic)",
+   "write_pattern": "Append-only",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-scans-002",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 1450.0,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "anycompany-daily-data (periodic)",
+   "write_pattern": "Append-only",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-scans-003",
+   "account": "444455556666",
+   "region": "us-east-1",
+   "role": "production",
+   "size_tb": 1550.0,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "None",
+   "write_pattern": "Static: unchanged for 30 days",
+   "vce": {
+    "monthly_usd": 0,
+    "range": [
+     0,
+     0
+    ],
+    "basis": "measured",
+    "churn_pct": 0
+   },
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "scans-003 drifted from its series",
+     "description": "scans-001, -002 and -004 are versioned; -003 (the only one in us-east-1) never was. It is static, so versioning costs $0 (measured).",
+     "action": "Enable versioning ($0, measured) to match scans-001/002/004"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-scans-004",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "production",
+   "size_tb": 900.0,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "anycompany-daily-data (periodic)",
+   "write_pattern": "Append-only",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-athena-results-eu",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "tooling",
+   "size_tb": 25.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "None",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-sandbox-team-a",
+   "account": "444455556666",
+   "region": "eu-west-1",
+   "role": "non_production",
+   "size_tb": 100.0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "aws_backup": "None",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-veeam-repo-prod",
+   "account": "777788889999",
+   "region": "eu-west-1",
+   "role": "backup_target",
+   "vendor": "Veeam",
+   "size_tb": 42500,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "aws_backup": "n/a (vendor target)",
+   "write_pattern": "Append + daily retention cleanup by Veeam",
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Veeam repository (42.5 PiB) is not immutable",
+     "description": "Versioning is on, but there is no Object Lock, so Veeam's immutability option can't be active. Anyone holding the Veeam service credentials (a typical ransomware target) can delete every restore point, versions included. This is the copy of last resort.",
+     "action": "Create an Object Lock-enabled bucket and enable Veeam immutability on the repository (move backups with a new chain); keep versioning"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-veaam-offsite",
+   "account": "777788889999",
+   "region": "eu-central-1",
+   "role": "backup_target",
+   "vendor": "Veeam (name variant)",
+   "size_tb": 20000,
+   "storage_class": "GLACIER_IR",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "n/a (vendor target)",
+   "write_pattern": "Append-mostly: weekly Veeam copy jobs",
+   "vce": {
+    "monthly_usd": 4100,
+    "range": [
+     2000,
+     8000
+    ],
+    "basis": "bounded",
+    "churn_pct": 5
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Off-site Veeam copy (20 PiB) has no versioning and no Object Lock",
+     "description": "Detected as a Veeam target despite the misspelled name ('veaam'). The off-site copy exists to survive the loss of the primary, yet it is fully mutable.",
+     "action": "Enable versioning + Object Lock (Governance) or Veeam immutability (estimate ~$4,100/month)"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-sqlserver-fullbkp",
+   "account": "777788889999",
+   "region": "eu-west-1",
+   "role": "backup_target",
+   "vendor": "SQL Server native backup",
+   "size_tb": 2000,
+   "storage_class": "STANDARD_IA",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": true,
+   "aws_backup": "n/a (DB dump landing zone)",
+   "write_pattern": "Rotation: nightly full dumps, deleted after 14 days",
+   "vce": {
+    "monthly_usd": 5650,
+    "range": [
+     4500,
+     7000
+    ],
+    "basis": "bounded",
+    "churn_pct": 95,
+    "retention_days": 7
+   },
+   "findings": [
+    {
+     "severity": "HIGH",
+     "title": "Database dumps can be deleted along with the database",
+     "description": "Nightly SQL Server full backups land here (name signature 'fullbkp') with no versioning or lock. Because dumps rotate every 14 days, versioning is not free: ~$5,650/month with a 7-day noncurrent expiration.",
+     "action": "Enable versioning + Object Lock (Governance, 14 days to match rotation) with a 7-day NoncurrentVersionExpiration (~$5,650/month)"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-velero-eks-prod",
+   "account": "777788889999",
+   "region": "eu-west-1",
+   "role": "backup_target",
+   "vendor": "Velero (EKS)",
+   "size_tb": 0,
+   "objects": 0,
+   "storage_class": "STANDARD",
+   "versioning": "Never enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-S3",
+   "lifecycle": false,
+   "aws_backup": "n/a (vendor target)",
+   "write_pattern": "Empty: 0 objects",
+   "findings": [
+    {
+     "severity": "MEDIUM",
+     "title": "Velero backup target is empty and unlocked",
+     "description": "Either EKS backups aren't running, or they go elsewhere. Object Lock is easiest to enable on a new, empty bucket, so this is the moment to do it.",
+     "action": "Confirm Velero is configured; recreate the bucket with Object Lock enabled while it's empty"
+    }
+   ],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  },
+  {
+   "name": "anycompany-terraform-state",
+   "account": "777788889999",
+   "region": "eu-west-1",
+   "role": "tooling",
+   "size_tb": 0.5,
+   "storage_class": "STANDARD",
+   "versioning": "Enabled",
+   "object_lock": "None",
+   "replication": "None",
+   "encryption": "SSE-KMS",
+   "lifecycle": false,
+   "aws_backup": "None",
+   "findings": [],
+   "role_source": "rules",
+   "role_reason": "Sample data",
+   "errors": {}
+  }
+ ],
+ "cost_optimization": [
+  {
+   "title": "Evaluate S3 Intelligent-Tiering for 30 PiB of research data in S3 Standard",
+   "resources": [
+    "anycompany-research-datasets-prod (30 PiB, Standard, no lifecycle transition)"
+   ],
+   "savings": "estimate up to ~$465,000/month (~$5.6M/year); worst case +$15,000/month; ~$60,000 one-time",
+   "effort": "low",
+   "description": "Access pattern not observable from outside the account: to confirm. Intelligent-Tiering has no retrieval fees and keeps millisecond access, so the downside is limited to the monitoring fee.",
+   "impact": "saving",
+   "monthly_usd": 465000,
+   "one_time_usd": 60000,
+   "basis": "Bucket size and storage class (CloudWatch storage metrics), 6B objects, no lifecycle transition. Saving assumes ~70% of bytes unread for 90+ days, a typical research-archive profile, not a measurement",
+   "up_to": true,
+   "worst_case_usd": 15000
+  },
+  {
+   "title": "Close the human-error gap on 4 production datasets (83 PiB)",
+   "resources": [
+    "anycompany-invoices-prod (20 PiB)",
+    "anycompany-imaging-archive-2019 (60 PiB)",
+    "anycompany-scans-003",
+    "anycompany-orders-prod-us-east-1"
+   ],
+   "savings": "Risk reduction on 83 PiB for estimate ~$1,600/month total (measured/bounded write patterns)",
+   "effort": "low",
+   "description": "Write-once and static data creates no noncurrent versions, so versioning is almost free.",
+   "impact": "cost",
+   "monthly_usd": 1600,
+   "basis": "Measured and bounded write patterns: write-once and static data creates almost no noncurrent versions"
+  },
+  {
+   "title": "Stop unbounded noncurrent-version growth",
+   "resources": [
+    "anycompany-datalake-raw"
+   ],
+   "savings": "estimate ~$14,100/month added each month avoided (~$169,000/month after a year)",
+   "effort": "low",
+   "description": "NoncurrentVersionExpiration (30 days) + AbortIncompleteMultipartUpload.",
+   "impact": "avoided",
+   "monthly_usd": 14100,
+   "basis": "~600 TiB of new noncurrent versions per month that never expire; the avoided cost grows by ~$14,100/month each month (~$169,000/month after a year)"
+  },
+  {
+   "title": "Enable S3 Bucket Keys on high-PUT KMS buckets",
+   "resources": [
+    "anycompany-invoices-prod"
+   ],
+   "savings": "estimate ~$5,300/month on writes alone (up to 99% fewer KMS requests)",
+   "effort": "zero-cost",
+   "description": "One-setting change; applies to new objects.",
+   "impact": "saving",
+   "monthly_usd": 5300,
+   "basis": "~1.77B PUT requests/month × $0.03 per 10,000 KMS requests; reads add more if they also call KMS"
+  }
+ ],
+ "governance": {
+  "_comment": "Fictitious governance signals. In a real run these come from Organizations (SCPs, backup and tag policies), AWS Config, Security Hub, AWS Backup and resource tags; anything not collectable is shown as unconfirmed.",
+  "organizations": {
+   "enabled": true,
+   "control_tower": false,
+   "scps": [
+    {
+     "name": "DenyLeaveOrganization",
+     "protects": []
+    },
+    {
+     "name": "DenyRootUser",
+     "protects": []
+    },
+    {
+     "name": "RegionRestriction",
+     "protects": []
+    }
+   ],
+   "backup_policies": 0,
+   "tag_policies": [
+    {
+     "name": "CostCenterRequired",
+     "keys": [
+      "cost-center"
+     ],
+     "enforced": false
+    }
+   ]
+  },
+  "config": {
+   "recording_accounts": [
+    "111122223333"
+   ],
+   "s3_rules": [
+    "s3-bucket-public-read-prohibited",
+    "s3-bucket-server-side-encryption-enabled"
+   ],
+   "conformance_packs": 0,
+   "auto_remediation": false
+  },
+  "security_hub": {
+   "enabled_accounts": []
+  },
+  "backup_audit_manager_frameworks": 0,
+  "central_backup_account": "777788889999",
+  "tags": {
+   "owner": [
+    "anycompany-clinical-records-prod",
+    "anycompany-clinical-records-prod-crr",
+    "anycompany-orders-prod-eu-west-1",
+    "anycompany-datalake-raw",
+    "anycompany-datalake-curated",
+    "anycompany-datalake-curated-crr",
+    "anycompany-scans-001",
+    "anycompany-scans-002",
+    "anycompany-veeam-repo-prod",
+    "anycompany-terraform-state",
+    "anycompany-research-datasets-prod"
+   ],
+   "data-classification": [
+    "anycompany-clinical-records-prod",
+    "anycompany-clinical-records-prod-crr",
+    "anycompany-payments-prod"
+   ]
+  },
+  "iac_managed": [
+   "anycompany-clinical-records-prod",
+   "anycompany-clinical-records-prod-crr",
+   "anycompany-orders-prod-eu-west-1",
+   "anycompany-datalake-raw",
+   "anycompany-datalake-curated",
+   "anycompany-datalake-curated-crr",
+   "anycompany-scans-001",
+   "anycompany-scans-002",
+   "anycompany-scans-004",
+   "anycompany-partner-exchange-prod-eu-west-1",
+   "anycompany-partner-exchange-prod-us-east-1",
+   "anycompany-terraform-state",
+   "aws-cloudtrail-logs-111122223333-a1b2c3d4",
+   "anycompany-alb-access-logs-prod",
+   "anycompany-athena-results-eu",
+   "anycompany-research-datasets-prod"
+  ],
+  "regulated_naming": [
+   "legal",
+   "contract",
+   "clinical",
+   "patient",
+   "payment",
+   "invoice"
+  ],
+  "restore_tests_last_12_months": 0,
+  "rpo_rto_documented": null,
+  "exceptions_register": null
+ },
+ "hub_account": "111122223333"
+}

@@ -1,0 +1,116 @@
+{
+ "accounts": {
+  "111122223333": {
+   "account_bpa": "unknown",
+   "config": {
+    "recording": null,
+    "s3_rules": null,
+    "unreadable_regions": [
+     "ap-south-1",
+     "eu-west-1"
+    ]
+   },
+   "name": "111122223333",
+   "outcome": "denied: S3 bucket list",
+   "role_names": null,
+   "security_hub": false,
+   "stack_names": []
+  }
+ },
+ "buckets": [],
+ "hub_account": "111122223333",
+ "organization": null,
+ "regions": {
+  "111122223333": {
+   "ap-south-1": {
+    "backup": {
+     "errors": {
+      "frameworks": "AccessDeniedException",
+      "plans": "AccessDeniedException",
+      "protected_resources": "AccessDeniedException",
+      "region_settings": "AccessDeniedException",
+      "restore_testing": "AccessDeniedException",
+      "vaults": "AccessDeniedException"
+     },
+     "frameworks": null,
+     "plans_total": null,
+     "plans_with_copy_actions": null,
+     "protected_s3": null,
+     "restore_testing_plans": null,
+     "s3_opt_in": null,
+     "vaults": null
+    },
+    "errors": {
+     "backup": "AccessDeniedException",
+     "config": "unreadable"
+    },
+    "outcome": "partial: backup AccessDeniedException, config unreadable"
+   },
+   "eu-west-1": {
+    "backup": {
+     "errors": {
+      "frameworks": "AccessDeniedException",
+      "plans": "AccessDeniedException",
+      "protected_resources": "AccessDeniedException",
+      "region_settings": "AccessDeniedException",
+      "restore_testing": "AccessDeniedException",
+      "vaults": "AccessDeniedException"
+     },
+     "frameworks": null,
+     "plans_total": null,
+     "plans_with_copy_actions": null,
+     "protected_s3": null,
+     "restore_testing_plans": null,
+     "s3_opt_in": null,
+     "vaults": null
+    },
+    "errors": {
+     "backup": "AccessDeniedException",
+     "config": "unreadable"
+    },
+    "outcome": "partial: backup AccessDeniedException, config unreadable"
+   }
+  }
+ },
+ "run": {
+  "api_errors": 17,
+  "collected": "2026-11-25",
+  "price_region": "US East (N. Virginia) list prices",
+  "regions_scanned": [
+   "ap-south-1",
+   "eu-west-1"
+  ],
+  "regions_skipped": "none",
+  "scope": "1 account (111122223333)",
+  "unavailable": [
+   [
+    "S3 bucket list",
+    "AccessDenied"
+   ],
+   [
+    "IAM role names (third-party backup detection)",
+    "ListRoles failed"
+   ],
+   [
+    "Account-level S3 Block Public Access",
+    "GetPublicAccessBlock failed"
+   ],
+   [
+    "AWS Backup (ap-south-1): frameworks, plans, protected_resources, region_settings, restore_testing, vaults",
+    "AccessDeniedException"
+   ],
+   [
+    "AWS Config (ap-south-1)",
+    "configuration recorder or rules could not be read"
+   ],
+   [
+    "AWS Backup (eu-west-1): frameworks, plans, protected_resources, region_settings, restore_testing, vaults",
+    "AccessDeniedException"
+   ],
+   [
+    "AWS Config (eu-west-1)",
+    "configuration recorder or rules could not be read"
+   ]
+  ]
+ }
+}

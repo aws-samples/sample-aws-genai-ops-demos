@@ -1,0 +1,10 @@
+cdk.out*
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+out/
+frontend/dist/
+backend/.venv/
+frontend/node_modules/

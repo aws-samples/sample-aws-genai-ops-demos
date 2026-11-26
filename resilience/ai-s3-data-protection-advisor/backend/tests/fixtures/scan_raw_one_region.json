@@ -1,0 +1,134 @@
+{
+ "accounts": {
+  "111122223333": {
+   "account_bpa": "on",
+   "config": {
+    "recording": null,
+    "s3_rules": null,
+    "unreadable_regions": [
+     "eu-west-1"
+    ]
+   },
+   "name": "acme",
+   "outcome": "scanned",
+   "role_names": [],
+   "security_hub": false,
+   "stack_names": []
+  }
+ },
+ "buckets": [
+  {
+   "account": "111122223333",
+   "metrics": {
+    "by_class": {},
+    "objects": null,
+    "objects_series": [],
+    "requests": null,
+    "size_as_of": null,
+    "size_bytes": null,
+    "size_series": [],
+    "size_status": "unavailable"
+   },
+   "name": "orders-prod",
+   "region": "eu-west-1",
+   "s3": {
+    "encryption": {
+     "absent": true
+    },
+    "eventbridge": {
+     "ok": false
+    },
+    "lifecycle": {
+     "absent": true
+    },
+    "logging": {
+     "ok": {
+      "enabled": false,
+      "target": null
+     }
+    },
+    "object_lock": {
+     "absent": true
+    },
+    "ownership": {
+     "absent": true
+    },
+    "policy": {
+     "absent": true
+    },
+    "policy_status": {
+     "absent": true
+    },
+    "public_access_block": {
+     "absent": true
+    },
+    "replication": {
+     "absent": true
+    },
+    "tags": {
+     "absent": true
+    },
+    "versioning": {
+     "ok": {
+      "mfa_delete": null,
+      "status": "Enabled"
+     }
+    }
+   }
+  }
+ ],
+ "hub_account": "111122223333",
+ "organization": null,
+ "regions": {
+  "111122223333": {
+   "eu-west-1": {
+    "backup": {
+     "errors": {
+      "frameworks": "AccessDeniedException",
+      "plans": "AccessDeniedException",
+      "protected_resources": "AccessDeniedException",
+      "region_settings": "AccessDeniedException",
+      "restore_testing": "AccessDeniedException",
+      "vaults": "AccessDeniedException"
+     },
+     "frameworks": null,
+     "plans_total": null,
+     "plans_with_copy_actions": null,
+     "protected_s3": null,
+     "restore_testing_plans": null,
+     "s3_opt_in": null,
+     "vaults": null
+    },
+    "errors": {
+     "backup": "AccessDeniedException",
+     "config": "unreadable"
+    },
+    "outcome": "partial: backup AccessDeniedException, config unreadable"
+   }
+  }
+ },
+ "run": {
+  "api_errors": 8,
+  "collected": "2026-11-25",
+  "price_region": "US East (N. Virginia) list prices",
+  "regions_scanned": [
+   "eu-west-1"
+  ],
+  "regions_skipped": "none",
+  "scope": "1 account (acme)",
+  "unavailable": [
+   [
+    "S3 spend per region (Cost Explorer)",
+    "AccessDeniedException: regions taken from bucket locations"
+   ],
+   [
+    "AWS Backup (eu-west-1): frameworks, plans, protected_resources, region_settings, restore_testing, vaults",
+    "AccessDeniedException"
+   ],
+   [
+    "AWS Config (eu-west-1)",
+    "configuration recorder or rules could not be read"
+   ]
+  ]
+ }
+}
