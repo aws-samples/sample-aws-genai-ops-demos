@@ -38,3 +38,13 @@ export const SCAN_ACTIONS = [
 ];
 
 export const BEDROCK_ACTIONS = ['bedrock:InvokeModel'];
+
+// Hub pipeline role only, multi-account deployments only (mirrors ORG_ACTIONS in permissions.py).
+export const ORG_ACTIONS = ['organizations:ListAccounts'];
+
+// Fixed name: the hub builds each member account's role ARN from the account id (mirrors permissions.py).
+export const SPOKE_ROLE_NAME = 'S3DataProtectionScanRole';
+
+// Fixed, region-suffixed hub role name: the spoke trust policy pins aws:PrincipalArn to it, and two hub
+// deployments in different regions of one account must not collide (IAM is global).
+export const hubRoleName = (region: string): string => `S3DataProtectionHub-${region}`;

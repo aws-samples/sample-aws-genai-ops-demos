@@ -1,5 +1,7 @@
 """HTTP API (payload 2.0) for runs and reports. The JWT authorizer has already validated the caller; nothing here
 reads claims. Routes come from event["routeKey"]. Our code logs error types only, never messages, and never reads execution data (the SDK logs step exceptions itself)."""
+import base64
+import binascii
 import json
 import logging
 import os
@@ -45,9 +47,28 @@ def _unqualified(arn):
 
 
 ACTIVE_STATUSES = ("RUNNING", "PAUSING", "PAUSED")
+SCOPES = ("account", "organization")
 
 
-def start():
+def _requested_scope(event):
+    """The scope in the POST body ({"scope": ...}), "account" when absent; None when the body is not valid."""
+    raw = event.get("body") or ""
+    try:
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw, validate=True).decode("utf-8")
+        body = json.loads(raw) if raw.strip() else {}
+    except (ValueError, binascii.Error, UnicodeDecodeError):
+        return None
+    scope = body.get("scope", "account") if isinstance(body, dict) else None
+    return scope if scope in SCOPES else None
+
+
+def start(event):
+    scope = _requested_scope(event)
+    if scope is None:
+        return _resp(400, {"error": "scope must be account or organization"})
+    if scope == "organization" and os.environ.get("MULTI_ACCOUNT", "").lower() != "true":
+        return _resp(400, {"error": "organization scans need a multi-account deployment"})
     arn = os.environ["PIPELINE_FUNCTION_ARN"]
     lam = _lambda()
     # Check-then-act: two POSTs seconds apart can both start a run. Acceptable for a single-user demo; POSTs in the
@@ -64,9 +85,9 @@ def start():
     now = _now()
     run_id = now.strftime("scan-%Y%m%d-%H%M%S")
     out = lam.invoke(FunctionName=arn, InvocationType="Event", DurableExecutionName=run_id,
-                     Payload=json.dumps({"run_id": run_id}))
+                     Payload=json.dumps({"run_id": run_id, "scope": scope}))
     _store().update_run(run_id, execution_arn=out.get("DurableExecutionArn"), status="RUNNING",
-                        started_at=now.isoformat(timespec="seconds"))
+                        started_at=now.isoformat(timespec="seconds"), requested_scope=scope)
     return _resp(202, {"run_id": run_id, "status": "RUNNING"})
 
 
@@ -107,10 +128,18 @@ def _history(lam, arn):
     return state
 
 
+# Per-account and per-unit steps: the pipeline tolerates their failure, so they never hold a label back.
+UNITS = ("regions-", "collect-")
+
+
+def _plural(n, word):
+    return f"{n} {word}{'s' if n != 1 else ''}"
+
+
 def _fold(state, run_status):
     """The seven labels with a status each. See the contract: success needs every step done and the next label
-    started (or the run succeeded); a failed unit collect is tolerated by the pipeline, so only `assemble` closes
-    the collect label."""
+    started (or the run succeeded). A failed account overview or unit collect is tolerated by the pipeline, so the
+    next label starting (`collect`, then `assemble`) is what closes labels 2 and 3."""
     per = [[] for _ in labels.STEPS]
     for name, st in state.items():
         label = labels.label_for(name)
@@ -120,10 +149,9 @@ def _fold(state, run_status):
     out = []
     for i, label in enumerate(labels.STEPS):
         items = per[i]
-        core = [(n, s) for n, s in items if not n.startswith("collect-")]
-        collected = sum(1 for n, s in items if n.startswith("collect-") and s == "succeeded")
+        core = [(n, s) for n, s in items if not n.startswith(UNITS)]
         in_flight = any(s == "started" for _, s in items)
-        core_ok = bool(core) and all(s == "succeeded" for _, s in core)    # for label 3 core is `assemble` only
+        core_ok = all(s == "succeeded" for _, s in core)
         done = bool(items) and core_ok and not in_flight and (run_status == "SUCCEEDED" or any(started[i + 1:]))
         if done:
             status = "success"
@@ -131,7 +159,10 @@ def _fold(state, run_status):
             status = "error" if items else "pending"
         else:
             status = "in-progress" if items else "pending"
-        detail = f"{collected} unit{'s' if collected != 1 else ''} collected" if i == 2 and collected else ""
+        read = sum(1 for n, s in items if n.startswith("regions-") and s == "succeeded")
+        collected = sum(1 for n, s in items if n.startswith("collect-") and s == "succeeded")
+        detail = (f"{_plural(read, 'account')} read" if i == 1 and read > 1 else
+                  f"{_plural(collected, 'unit')} collected" if i == 2 and collected else "")
         out.append({"label": label, "status": status, "detail": detail})
     return out
 
@@ -178,7 +209,7 @@ def sample():
 def _route(event):
     route = event.get("routeKey")
     if route == "POST /api/scans":
-        return start()
+        return start(event)
     if route == "GET /api/scans":
         return list_runs()
     if route == "GET /api/sample":

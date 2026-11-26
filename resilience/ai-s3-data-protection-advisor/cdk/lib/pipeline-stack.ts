@@ -8,7 +8,7 @@ import { Construct } from 'constructs';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { BEDROCK_ACTIONS, SCAN_ACTIONS } from './scan-permissions';
+import { BEDROCK_ACTIONS, ORG_ACTIONS, SCAN_ACTIONS, SPOKE_ROLE_NAME, hubRoleName } from './scan-permissions';
 import { NOVA_LITE_FOUNDATION_MODEL } from './model-id';
 
 export interface PipelineStackProps extends cdk.StackProps {
@@ -16,6 +16,10 @@ export interface PipelineStackProps extends cdk.StackProps {
   bucket: s3.IBucket;
   /** Amazon Nova Lite inference profile id, "" when none is known for the region. */
   modelId: string;
+  /** Organization scans allowed: grants the org reads and the spoke assume-role, enables the scope in the API. */
+  multiAccount: boolean;
+  /** Explicit member accounts to scan instead of listing the organization (manual spoke deployments). */
+  scanAccounts: string[];
 }
 
 const DEMO_DIR = path.join(__dirname, '..', '..');
@@ -111,6 +115,7 @@ export class PipelineStack extends cdk.Stack {
     const environment: Record<string, string> = {
       REPORTS_BUCKET: props.bucket.bucketName,
       RUNS_TABLE: props.table.tableName,
+      MULTI_ACCOUNT: props.multiAccount ? 'true' : 'false',
     };
 
     // ---- durable pipeline function ----
@@ -120,6 +125,16 @@ export class PipelineStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Fixed name: the spoke roles in member accounts trust exactly this role (aws:PrincipalArn).
+    const pipelineRole = new iam.Role(this, 'PipelineRole', {
+      roleName: hubRoleName(this.region),
+      description: 'S3 data protection advisor: hub scan pipeline',
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicDurableExecutionRolePolicy'),
+      ],
+    });
+
     this.pipelineFunction = new lambda.Function(this, 'PipelineFunction', {
       functionName: PIPELINE_FUNCTION_NAME,
       description: 'S3 data protection advisor: seven-step scan (Lambda durable function)',
@@ -127,24 +142,40 @@ export class PipelineStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       handler: 's3dp.service.pipeline.handler',
       code,
+      role: pipelineRole,
       memorySize: 1024,
       timeout: cdk.Duration.minutes(15),
       logGroup: pipelineLogGroup,
-      environment: { ...environment, MODEL_ID: props.modelId },
+      environment: {
+        ...environment,
+        MODEL_ID: props.modelId,
+        SPOKE_ROLE_NAME,
+        SCAN_ACCOUNTS: props.scanAccounts.join(','),
+      },
       durableConfig: {
-        executionTimeout: cdk.Duration.hours(2),
+        // An organization scan visits every member account: allow it far longer than one account needs.
+        executionTimeout: cdk.Duration.hours(props.multiAccount ? 8 : 2),
         retentionPeriod: cdk.Duration.days(14),
       },
     });
-    const pipelineRole = this.pipelineFunction.role!;
-    pipelineRole.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicDurableExecutionRolePolicy'),
-    );
     this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
       sid: 'ScanReadOnly',
       actions: [...SCAN_ACTIONS],
       resources: ['*'], // read-only describe/list calls without resource-level permissions
     }));
+    if (props.multiAccount) {
+      this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
+        sid: 'OrganizationAccounts',
+        actions: [...ORG_ACTIONS],
+        resources: ['*'], // DescribeOrganization and ListAccounts have no resource-level permissions
+      }));
+      // Any account's spoke role; each member account's trust policy decides whether the hub may assume it.
+      this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
+        sid: 'AssumeSpokeRole',
+        actions: ['sts:AssumeRole'],
+        resources: [`arn:${this.partition}:iam::*:role/${SPOKE_ROLE_NAME}`],
+      }));
+    }
     if (props.modelId) {
       this.pipelineFunction.addToRolePolicy(new iam.PolicyStatement({
         sid: 'BedrockNovaLite',

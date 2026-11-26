@@ -1,50 +1,119 @@
 """The pipeline steps as plain functions: no durable imports, store and session passed in. Each returns a small
 JSON-serializable dict (it becomes a durable checkpoint, so well under the 256 KB checkpoint limit) and writes bulk data to the store.
-`run` is the dict returned by `accounts`: {"run_id", "started_at", "account_id", "account_name"}."""
+`run` is the dict returned by `accounts`: {"run_id", "started_at", "scope", "account_id" (the hub), "accounts": [ids,
+hub first]}. Account names and the organization listing outcome live in the store (scope.json), not the checkpoint.
+
+Blast radius is one account: a member account whose spoke role cannot be assumed, or whose overview step fails, is
+reported as not scanned and every other account is scanned as usual."""
+import os
+
 from s3dp import run as seq
 from s3dp.ai import bedrock
-from s3dp.collect import scan as collector
+from s3dp.collect import org, scan as collector, session as sessions
+from s3dp.permissions import SPOKE_ROLE_NAME
+
+SCOPES = ("account", "organization")
+
+
+def multi_account():
+    """Deployed with --multi-account: the organization scope is allowed."""
+    return os.environ.get("MULTI_ACCOUNT", "").lower() == "true"
+
+
+def _listed_accounts():
+    return [a for a in os.environ.get("SCAN_ACCOUNTS", "").split(",") if a.strip()]
 
 
 def _key(run, name):
     return f"runs/{run['run_id']}/{name}"
 
 
-def accounts(store, session, run_id, started_at):
-    account_id = session.client("sts").get_caller_identity()["Account"]
-    # The IAM alias is only known once the overview is read (step 2); until then the id is the name.
-    store.update_run(run_id, status="RUNNING", scope=f"1 account ({account_id})",
-                     accounts=[{"id": account_id, "name": account_id, "outcome": "scanning"}])
-    return {"run_id": run_id, "started_at": started_at, "account_id": account_id, "account_name": account_id}
+def _acct_key(run, account_id, name):
+    return f"runs/{run['run_id']}/accounts/{account_id}/{name}"
 
 
-def regions(store, session, run):
-    """Bounded result for any estate size: {"unit_count", "buckets", "regions"}. The handler maps `collect` over
-    range(unit_count); the unit plan itself lives in overview.json."""
-    ov = collector.account_overview(session, run["account_id"])
-    store.put_json(_key(run, "overview.json"), ov)
-    units = collector.plan_units(ov)
-    name = ov["alias"] or run["account_id"]
-    store.update_run(run["run_id"], scope=f"1 account ({name})",
-                     accounts=[{"id": run["account_id"], "name": name, "outcome": "scanning"}])
-    return {"unit_count": len(units), "buckets": len(ov["buckets"]), "regions": ov["regions"]}
+def _session(session, run, account_id):
+    return sessions.for_account(session, account_id, account_id == run["account_id"], SPOKE_ROLE_NAME)
 
 
-def collect(store, session, run, n):
+def _scope_label(scope):
+    n = len(scope["accounts"])
+    if scope["source"] == "hub":
+        return f"1 account ({scope['accounts'][0]['id']})"
+    return f"{n} accounts ({'organization' if scope['source'] == 'organization' else 'account list'})"
+
+
+def accounts(store, session, run_id, started_at, scope="account"):
+    hub = session.client("sts").get_caller_identity()["Account"]
+    if scope == "organization":
+        sc = org.scope_accounts(session, hub, _listed_accounts())
+    else:
+        sc = {"accounts": [{"id": hub, "name": None, "hub": True}], "source": "hub", "unavailable": []}
+    run = {"run_id": run_id, "started_at": started_at, "scope": scope, "account_id": hub,
+           "accounts": [a["id"] for a in sc["accounts"]]}
+    store.put_json(_key(run, "scope.json"), sc)
+    # Until the overviews are read, account ids name the accounts; outcomes are final once assemble has run.
+    store.update_run(run_id, status="RUNNING", scope=_scope_label(sc),
+                     accounts=[{"id": a["id"], "name": a["name"] or a["id"], "outcome": "scanning"}
+                               for a in sc["accounts"]])
+    return run
+
+
+def regions(store, session, run, account_id):
+    """Overview of one account. Bounded result for any estate size: {"account", "units", "buckets"}, plus "denied"
+    (error code) when the spoke role could not be assumed. The unit plan itself lives in overview.json."""
+    s, denied = _session(session, run, account_id)
+    if denied:
+        return {"account": account_id, "units": 0, "buckets": 0, "denied": denied}
+    names = {a["id"]: a["name"] for a in store.get_json(_key(run, "scope.json"))["accounts"]}
+    ov = collector.account_overview(s, account_id, names.get(account_id))
+    store.put_json(_acct_key(run, account_id, "overview.json"), ov)
+    return {"account": account_id, "units": len(collector.plan_units(ov)), "buckets": len(ov["buckets"])}
+
+
+def collect(store, session, run, account_id, n):
+    s, denied = _session(session, run, account_id)
+    if denied:      # the role answered for the overview minutes ago: fail this unit, assemble reports it
+        raise PermissionError(f"AssumeRole {denied}")
     # plan_units on the stored overview, never a recomputed one: unit numbers stay stable on replay
-    units = collector.plan_units(store.get_json(_key(run, "overview.json")))
-    res = collector.collect_unit(session, run["account_id"], units[n])
-    store.put_json(_key(run, f"units/{n}.json"), res)
+    units = collector.plan_units(store.get_json(_acct_key(run, account_id, "overview.json")))
+    res = collector.collect_unit(s, account_id, units[n])
+    store.put_json(_acct_key(run, account_id, f"units/{n}.json"), res)
     return {"n": n, "items": len(res["items"])}
 
 
-def assemble(store, run, unit_count, failed):
-    ov = store.get_json(_key(run, "overview.json"))
-    failed = set(failed)
-    results = [None if n in failed else store.get_json(_key(run, f"units/{n}.json")) for n in range(unit_count)]
-    raw = collector.assemble(ov, results)
+def _not_scanned_reason(item):
+    if item is None:
+        return "collection failed"
+    return (f"AssumeRole {item['denied']}: the {SPOKE_ROLE_NAME} role is missing in this account or does not "
+            f"trust this hub")
+
+
+def assemble(store, run, per_account):
+    """`per_account` is aligned with run["accounts"]: the `regions` result plus "failed" (unit numbers that did not
+    collect), or None when the overview step itself failed."""
+    sc = store.get_json(_key(run, "scope.json"))
+    names = {a["id"]: a["name"] for a in sc["accounts"]}
+    today = run["started_at"][:10]
+    raws = []
+    for account_id, item in zip(run["accounts"], per_account):
+        if item is None or item.get("denied"):
+            raws.append(collector.not_scanned(account_id, names.get(account_id), _not_scanned_reason(item), today))
+            continue
+        ov = store.get_json(_acct_key(run, account_id, "overview.json"))
+        failed = set(item.get("failed") or ())
+        results = [None if n in failed else store.get_json(_acct_key(run, account_id, f"units/{n}.json"))
+                   for n in range(item["units"])]
+        raws.append(collector.assemble(ov, results))
+    raw = collector.merge(raws, run["account_id"], sc["source"], sc["unavailable"])
     store.put_json(_key(run, "raw.json"), raw)
-    return {"buckets": len(raw["buckets"]), "api_errors": raw["run"]["api_errors"]}
+    store.update_run(run["run_id"], scope=raw["run"]["scope"], accounts=_outcomes(raw))
+    return {"buckets": len(raw["buckets"]), "accounts": len(raw["accounts"]), "api_errors": raw["run"]["api_errors"]}
+
+
+def _outcomes(raw):
+    return [{"id": a, "name": m.get("name") or a, "outcome": m.get("outcome", "scanned")}
+            for a, m in raw["accounts"].items()]
 
 
 def _client(session, model):
@@ -106,15 +175,12 @@ def publish(store, run, finished_at):
             for item in tab["items"]:
                 if item["severity"] in recs:
                     recs[item["severity"]] += 1
-    meta = raw["accounts"].get(run["account_id"], {})
     ai = data["meta"].get("ai") or {"classification": False, "narrative": "off"}
     ai = {"classification": bool(ai.get("classification")),
           "narrative": (data.get("meta_ai") or {}).get("narrative") or ai.get("narrative", "off")}
     store.update_run(run["run_id"], status="SUCCEEDED", finished_at=finished_at, buckets=len(raw["buckets"]),
                      regions=len(raw["run"]["regions_scanned"]), recs=recs, ai=ai,
-                     scope=raw["run"]["scope"],
-                     accounts=[{"id": run["account_id"], "name": meta.get("name", run["account_name"]),
-                                "outcome": meta.get("outcome", "scanned")}])
+                     scope=raw["run"]["scope"], accounts=_outcomes(raw))
     return {"report": True, "recs": recs}
 
 

@@ -7,7 +7,7 @@ from aws_durable_execution_sdk_python.exceptions import ExecutionError, StepErro
 from s3dp.service import labels, pipeline
 
 RUN = "scan-20261125-101500"
-RUN_REC = {"run_id": RUN, "started_at": "t0", "account_id": "111122223333", "account_name": "x"}
+HUB, MEMBER, DENIED = "111122223333", "222233334444", "333344445555"
 
 
 class Item:
@@ -16,8 +16,9 @@ class Item:
 
 
 class FakeContext:
-    def __init__(self, fail_units=()):
-        self.names, self.fail_units = [], set(fail_units)
+    def __init__(self, fail=()):
+        """fail: step names whose map item fails (the SDK reports the item FAILED after its retries)."""
+        self.names, self.fail = [], set(fail)
 
     def step(self, fn, name=None, config=None):
         self.names.append(name)
@@ -32,11 +33,13 @@ class FakeContext:
     def map(self, items, fn, name=None, config=None):
         self.names.append(name)
         out = []
-        for i, n in enumerate(items):
-            if i in self.fail_units:
-                out.append(Item(i, pipeline.BatchItemStatus.FAILED))
-            else:
-                out.append(Item(i, pipeline.BatchItemStatus.SUCCEEDED, fn(self, n, i, items)))
+        for i, x in enumerate(items):
+            child = FakeContext(self.fail)
+            res = fn(child, x, i, items)
+            self.names += child.names
+            failed = any(n in self.fail for n in child.names)
+            out.append(Item(i, pipeline.BatchItemStatus.FAILED) if failed
+                       else Item(i, pipeline.BatchItemStatus.SUCCEEDED, res))
         return SimpleNamespace(all=out)
 
 
@@ -44,23 +47,29 @@ class FakeContext:
 def calls(monkeypatch):
     log = []
     monkeypatch.setenv("MODEL_ID", "")
+    monkeypatch.setenv("MULTI_ACCOUNT", "true")
     monkeypatch.setattr(pipeline.store, "from_env", lambda: "STORE")
     monkeypatch.setattr(pipeline.boto3, "Session", lambda: "SESSION")
-    state = {"ai": {"classification": True, "narrative": "pending"}, "units": 3, "score_error": None}
+    state = {"ai": {"classification": True, "narrative": "pending"}, "accounts": [HUB], "units": 3,
+             "denied": set(), "score_error": None}
 
-    def rec(name, ret=None):
-        def f(*a, **k):
-            log.append((name, a, k))
-            return ret
-        return f
+    def accounts(s, ses, rid, at, scope):
+        log.append(("accounts", rid, scope))
+        return {"run_id": rid, "started_at": "t0", "scope": scope, "account_id": HUB, "accounts": state["accounts"]}
 
-    monkeypatch.setattr(pipeline.steps, "accounts", lambda s, ses, rid, at: log.append(("accounts", rid)) or RUN_REC)
-    monkeypatch.setattr(pipeline.steps, "regions",
-                        lambda s, ses, run: {"unit_count": state["units"], "buckets": 5, "regions": ["a"]})
-    monkeypatch.setattr(pipeline.steps, "collect", lambda s, ses, run, n: {"n": n, "items": 1})
+    def regions(s, ses, run, a):
+        if a in state["denied"]:
+            return {"account": a, "units": 0, "buckets": 0, "denied": "AccessDenied"}
+        return {"account": a, "units": state["units"], "buckets": 5}
+
+    monkeypatch.setattr(pipeline.steps, "accounts", accounts)
+    monkeypatch.setattr(pipeline.steps, "regions", regions)
+    monkeypatch.setattr(pipeline.steps, "collect",
+                        lambda s, ses, run, a, n: log.append(("collect", a, n)) or {"n": n, "items": 1})
     monkeypatch.setattr(pipeline.steps, "assemble",
-                        lambda s, run, count, failed: log.append(("assemble", count, list(failed))) or {})
+                        lambda s, run, per_account: log.append(("assemble", per_account)) or {})
     monkeypatch.setattr(pipeline.steps, "classify", lambda s, ses, run, model: state["ai"])
+
     def score(s, run):
         if state["score_error"]:
             raise state["score_error"]
@@ -73,18 +82,48 @@ def calls(monkeypatch):
     return log, state
 
 
+def _assembled(log):
+    return next(c[1] for c in log if c[0] == "assemble")
+
+
 def test_step_order_and_labels(calls):
+    log, _ = calls
     ctx = FakeContext()
     out = pipeline._run({"run_id": RUN}, ctx)
     assert out == {"report": True}
-    assert ctx.names == ["accounts", "regions", "collect", "collect-0", "collect-1", "collect-2", "assemble", "classify", "score", "narrative", "publish"]
+    assert ctx.names == ["accounts", "regions", f"regions-{HUB}", "collect", f"collect-{HUB}-0", f"collect-{HUB}-1",
+                         f"collect-{HUB}-2", "assemble", "classify", "score", "narrative", "publish"]
     assert {labels.label_for(n) for n in ctx.names} == set(labels.STEPS)
+    assert ("accounts", RUN, "account") in log                           # scope defaults to this account
 
 
 def test_failed_units_go_to_assemble(calls):
     log, _ = calls
-    pipeline._run({"run_id": RUN}, FakeContext(fail_units=[1]))
-    assert ("assemble", 3, [1]) in log
+    pipeline._run({"run_id": RUN}, FakeContext(fail={f"collect-{HUB}-1"}))
+    assert _assembled(log) == [{"account": HUB, "units": 3, "buckets": 5, "failed": [1]}]
+
+
+def test_organization_maps_every_account_and_skips_denied_ones(calls):
+    log, state = calls
+    state.update(accounts=[HUB, MEMBER, DENIED], units=2, denied={DENIED})
+    ctx = FakeContext(fail={f"regions-{MEMBER}"})        # the member's overview step fails after its retries
+    pipeline._run({"run_id": RUN, "scope": "organization"}, ctx)
+    assert [n for n in ctx.names if n.startswith("regions-")] == [f"regions-{a}" for a in (HUB, MEMBER, DENIED)]
+    assert [c[1:] for c in log if c[0] == "collect"] == [(HUB, 0), (HUB, 1)]     # no work for failed or denied
+    assert _assembled(log) == [
+        {"account": HUB, "units": 2, "buckets": 5, "failed": []},
+        None,
+        {"account": DENIED, "units": 0, "buckets": 0, "denied": "AccessDenied", "failed": []}]
+
+
+def test_organization_scope_needs_a_multi_account_deployment(calls, monkeypatch):
+    monkeypatch.setenv("MULTI_ACCOUNT", "false")
+    ctx = FakeContext()
+    with pytest.raises(ValueError):
+        pipeline._run({"run_id": RUN, "scope": "organization"}, ctx)
+    with pytest.raises(ValueError):
+        pipeline._run({"run_id": RUN, "scope": "everything"}, ctx)
+    assert ctx.names == []
 
 
 def test_bad_run_id_raises_before_any_step(calls):

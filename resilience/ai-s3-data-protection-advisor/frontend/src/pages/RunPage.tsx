@@ -13,7 +13,7 @@ import ReportView from '../components/report/Report';
 import type { Report } from '../lib/types';
 import RunSteps from '../components/RunSteps';
 import { accountLabel, formatDate, formatDuration } from '../lib/format';
-import { isActive, runStatus } from '../lib/runs';
+import { accountOutcome, isActive, runStatus } from '../lib/runs';
 
 function RunReport({ runId }: { runId: string }) {
   const [report, setReport] = useState<Report | null>(null);
@@ -105,7 +105,10 @@ export default function RunPage() {
             <Header variant="h2">Accounts</Header>
             <KeyValuePairs
               columns={3}
-              items={run.accounts.map((a) => ({ label: accountLabel(a.name, a.id), value: a.outcome }))}
+              items={run.accounts.map((a) => ({
+                label: accountLabel(a.name, a.id),
+                value: <StatusIndicator type={accountOutcome(a.outcome)}>{a.outcome}</StatusIndicator>,
+              }))}
             />
           </SpaceBetween>
         )}

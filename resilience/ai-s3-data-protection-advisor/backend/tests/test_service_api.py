@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,12 +74,15 @@ def env(monkeypatch):
     return st, lam, s3
 
 
-def call(route, id=None, fmt=None):
+def call(route, id=None, fmt=None, body=None, b64=False):
     ev = {"routeKey": route}
     if id is not None:
         ev["pathParameters"] = {"id": id}
     if fmt is not None:
         ev["queryStringParameters"] = {"format": fmt}
+    if body is not None:
+        ev["body"] = base64.b64encode(body.encode()).decode() if b64 else body
+        ev["isBase64Encoded"] = b64
     r = api.handler(ev, None)
     assert r["headers"]["Cache-Control"] == "no-store"
     assert r["headers"]["Content-Type"] == "application/json"
@@ -95,10 +99,35 @@ def test_start_writes_record(env):
     assert (code, body) == (202, {"run_id": RUN, "status": "RUNNING"})
     inv = lam.invokes[0]
     assert inv["FunctionName"] == ARN + ":live" and inv["InvocationType"] == "Event"
-    assert inv["DurableExecutionName"] == RUN and json.loads(inv["Payload"]) == {"run_id": RUN}
+    assert inv["DurableExecutionName"] == RUN and json.loads(inv["Payload"]) == {"run_id": RUN, "scope": "account"}
     rec = st.get_run(RUN)
     assert rec["execution_arn"] == EXE and rec["status"] == "RUNNING" and rec["started_at"].startswith("2026-11-25T10:15")
+    assert rec["requested_scope"] == "account"
     assert lam.listed == ["RUNNING", "PAUSING", "PAUSED"]     # one status per call: the service rejects more
+
+
+def test_start_organization_scope_on_a_multi_account_deployment(env, monkeypatch):
+    _, lam, _ = env
+    monkeypatch.setenv("MULTI_ACCOUNT", "true")
+    code, _ = call("POST /api/scans", body='{"scope": "organization"}', b64=True)
+    assert code == 202 and json.loads(lam.invokes[0]["Payload"])["scope"] == "organization"
+
+
+def test_start_rejects_organization_scope_on_a_single_account_deployment(env, monkeypatch):
+    _, lam, _ = env
+    monkeypatch.setenv("MULTI_ACCOUNT", "false")
+    code, body = call("POST /api/scans", body='{"scope": "organization"}')
+    assert code == 400 and "multi-account" in body["error"] and not lam.invokes
+
+
+def test_start_rejects_a_bad_body(env):
+    _, lam, _ = env
+    for body in ('{"scope": "everything"}', "not json", "[1]"):
+        assert call("POST /api/scans", body=body)[0] == 400
+    bad_b64 = api.handler({"routeKey": "POST /api/scans", "body": "%%%", "isBase64Encoded": True}, None)
+    assert bad_b64["statusCode"] == 400
+    assert not lam.invokes
+    assert call("POST /api/scans", body="{}")[0] == 202        # an empty object means this account
 
 
 def test_start_conflict(env):
@@ -224,3 +253,22 @@ def test_detail_retry_sequence_is_success(env):
 
 def test_trailing_newline_id_is_400(env):
     assert call("GET /api/scans/{id}", RUN + "\n")[0] == 400
+
+
+def test_detail_organization_scan_tolerates_a_failed_account(env):
+    hub, member = "111122223333", "222233334444"
+    evs = [ev("StepStarted", "accounts"), ev("StepSucceeded", "accounts"),
+           ev("StepStarted", f"regions-{hub}"), ev("StepSucceeded", f"regions-{hub}"),
+           ev("StepStarted", f"regions-{member}"), ev("StepFailed", f"regions-{member}"),
+           ev("StepStarted", f"collect-{hub}-0")]
+    body = detail(env, "RUNNING", evs)
+    assert [s["status"] for s in body["steps"]][:3] == ["success", "success", "in-progress"]
+    assert body["steps"][1]["detail"] == ""         # one account read: no count to show
+
+
+def test_detail_counts_accounts_read(env):
+    evs = [ev("StepStarted", "accounts"), ev("StepSucceeded", "accounts")]
+    for a in ("111122223333", "222233334444", "333344445555"):
+        evs += [ev("StepStarted", f"regions-{a}"), ev("StepSucceeded", f"regions-{a}")]
+    body = detail(env, "RUNNING", evs)
+    assert body["steps"][1] == {"label": labels.STEPS[1], "status": "in-progress", "detail": "3 accounts read"}

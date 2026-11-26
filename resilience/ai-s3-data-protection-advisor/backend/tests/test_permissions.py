@@ -2,7 +2,8 @@
 import re
 from pathlib import Path
 
-from s3dp.permissions import BEDROCK_ACTIONS, SCAN_ACTIONS, SEED_ACTIONS
+from s3dp.permissions import (ASSUME_ACTIONS, BEDROCK_ACTIONS, ORG_ACTIONS, SCAN_ACTIONS, SEED_ACTIONS,
+                              SPOKE_ROLE_NAME)
 
 SRC = Path(__file__).resolve().parents[1] / "s3dp"
 DESIGN = Path(__file__).resolve().parents[2] / "docs" / "design.md"
@@ -44,7 +45,11 @@ NEEDS = {
     "list_metrics": ["cloudwatch:ListMetrics"],
     "get_metric_data": ["cloudwatch:GetMetricData"],
     "converse": ["bedrock:InvokeModel"],
+    # hub pipeline role only (multi-account)
+    "list_accounts": ["organizations:ListAccounts"],
+    "assume_role": ["sts:AssumeRole"],
 }
+HUB_ONLY = set(ORG_ACTIONS) | set(ASSUME_ACTIONS)
 NOT_AWS = {"get_paginator", "get_partition_for_region"}
 
 
@@ -55,7 +60,7 @@ SEED = SRC / "seed.py"      # sandbox-only writer, never part of the scan: see S
 def _calls():
     # service/ runs under the pipeline and API roles, whose grants are written in CDK, not the scan role
     text = "\n".join(p.read_text() for p in SRC.rglob("*.py") if p != SEED and SERVICE not in p.parents)
-    names = set(re.findall(r"\.((?:get|list|describe)_[a-z_]+|converse)\(", text))
+    names = set(re.findall(r"\.((?:get|list|describe)_[a-z_]+|converse|assume_role)\(", text))
     names |= set(re.findall(r"get_paginator\(\"([a-z_]+)\"\)", text))
     names |= set(re.findall(r"_paged\(\s*bk,\s*\"([a-z_]+)\"", text))
     return names - NOT_AWS
@@ -63,10 +68,10 @@ def _calls():
 
 def test_every_call_is_mapped_and_allowed():
     calls = _calls()
-    assert calls - set(NEEDS) == set(), "map the new AWS call to its IAM action in NEEDS and SCAN_ACTIONS"
-    needed = {a for c in calls for a in NEEDS[c]}
-    assert needed - set(SCAN_ACTIONS) - set(BEDROCK_ACTIONS) == set()
-    assert {a for v in NEEDS.values() for a in v} <= set(SCAN_ACTIONS) | set(BEDROCK_ACTIONS)
+    assert calls - set(NEEDS) == set(), "map the new AWS call to its IAM action in NEEDS"
+    allowed = set(SCAN_ACTIONS) | set(BEDROCK_ACTIONS) | HUB_ONLY
+    assert {a for c in calls for a in NEEDS[c]} - allowed == set()
+    assert {a for v in NEEDS.values() for a in v} <= allowed
 
 
 def test_scan_actions_are_read_only_and_unique():
@@ -75,10 +80,17 @@ def test_scan_actions_are_read_only_and_unique():
     assert BEDROCK_ACTIONS == ("bedrock:InvokeModel",)
 
 
+def test_hub_only_actions_stay_off_the_spoke_role():
+    # The spoke role carries SCAN_ACTIONS only: it can neither list the organization nor assume further roles.
+    assert not HUB_ONLY & set(SCAN_ACTIONS)
+    assert all(re.fullmatch(r"organizations:(List|Describe)[A-Za-z]+", a) for a in ORG_ACTIONS)
+    assert ASSUME_ACTIONS == ("sts:AssumeRole",)
+
+
 def test_design_lists_the_same_actions():
     section = DESIGN.read_text().split("### Scan permissions", 1)[1].split("\n## ", 1)[0]
     listed = set(re.findall(r"`([a-z0-9]+:[A-Za-z]+)`", section))
-    assert set(SCAN_ACTIONS) | set(BEDROCK_ACTIONS) <= listed
+    assert set(SCAN_ACTIONS) | set(BEDROCK_ACTIONS) | HUB_ONLY <= listed
     assert "backup:DescribeBackupVault" not in listed
 
 
@@ -112,12 +124,16 @@ def test_seed_calls_are_listed_in_seed_actions_only():
     assert not writes & set(SCAN_ACTIONS)
 
 
+TS = Path(__file__).resolve().parents[2] / "cdk" / "lib" / "scan-permissions.ts"
+
+
 def _ts_list(name):
-    ts = Path(__file__).resolve().parents[2] / "cdk" / "lib" / "scan-permissions.ts"
-    body = re.search(r"export const " + name + r" = \[(.*?)\]", ts.read_text(), re.S).group(1)
+    body = re.search(r"export const " + name + r" = \[(.*?)\]", TS.read_text(), re.S).group(1)
     return re.findall(r"['\"]([a-z0-9]+:[A-Za-z]+)['\"]", body)
 
 
 def test_cdk_mirror_equals_python_lists():
     assert _ts_list("SCAN_ACTIONS") == list(SCAN_ACTIONS)
     assert _ts_list("BEDROCK_ACTIONS") == list(BEDROCK_ACTIONS)
+    assert _ts_list("ORG_ACTIONS") == list(ORG_ACTIONS)
+    assert f"export const SPOKE_ROLE_NAME = '{SPOKE_ROLE_NAME}';" in TS.read_text()

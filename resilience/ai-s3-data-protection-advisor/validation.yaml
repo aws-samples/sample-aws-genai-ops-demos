@@ -23,3 +23,7 @@ notes: >
   The scan is read-only. The optional --mock-data flag creates sandbox-only
   buckets and a role in the account, so use it in sandbox accounts only.
   TypeScript CDK app (bin/app.ts); no pythonpath_repo_root needed.
+  Validation covers the default single-account deployment. Organization scans
+  (--multi-account: Org stack with a service-managed StackSet) need an
+  AWS Organizations management or delegated administrator account and are
+  not exercised here.

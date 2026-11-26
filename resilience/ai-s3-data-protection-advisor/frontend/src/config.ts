@@ -2,6 +2,8 @@ export interface AppConfig {
   region: string;
   userPoolId: string;
   userPoolClientId: string;
+  /** Deployed with --multi-account: Start scan offers the organization scope. */
+  multiAccount: boolean;
 }
 
 export class ConfigError extends Error {
@@ -25,6 +27,7 @@ function validate(raw: unknown): AppConfig {
     region: o.region as string,
     userPoolId: o.userPoolId as string,
     userPoolClientId: o.userPoolClientId as string,
+    multiAccount: o.multiAccount === true,
   };
 }
 

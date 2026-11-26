@@ -15,13 +15,22 @@ afterEach(() => {
 });
 
 describe('loadConfig', () => {
-  it('returns the three values and fetches /config.json once', async () => {
+  it('returns the values and fetches /config.json once', async () => {
     const fn = mockFetch(valid);
-    expect(await loadConfig()).toEqual(valid);
-    expect(await loadConfig()).toEqual(valid);
+    const expected = { ...valid, multiAccount: false };
+    expect(await loadConfig()).toEqual(expected);
+    expect(await loadConfig()).toEqual(expected);
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls[0][0]).toBe('/config.json');
-    expect(getConfig()).toEqual(valid);
+    expect(getConfig()).toEqual(expected);
+  });
+
+  it('reads multiAccount only when it is the boolean true', async () => {
+    mockFetch({ ...valid, multiAccount: true });
+    expect((await loadConfig()).multiAccount).toBe(true);
+    resetConfig();
+    mockFetch({ ...valid, multiAccount: 'true' });
+    expect((await loadConfig()).multiAccount).toBe(false);
   });
 
   it('throws a ConfigError when a field is missing', async () => {

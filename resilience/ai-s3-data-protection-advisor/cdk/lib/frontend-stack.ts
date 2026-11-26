@@ -10,6 +10,8 @@ export interface FrontendStackProps extends cdk.StackProps {
   apiId: string;
   userPool: cognito.IUserPool;
   userPoolClient: cognito.IUserPoolClient;
+  /** Offer the organization scope on Start scan. */
+  multiAccount: boolean;
 }
 
 // Single-page app routing: extensionless paths get index.html. Runs on the default (site) behavior only, so API
@@ -105,6 +107,7 @@ export class FrontendStack extends cdk.Stack {
           region: this.region,
           userPoolId: props.userPool.userPoolId,
           userPoolClientId: props.userPoolClient.userPoolClientId,
+          multiAccount: props.multiAccount,
         }),
       ],
       destinationBucket: siteBucket,

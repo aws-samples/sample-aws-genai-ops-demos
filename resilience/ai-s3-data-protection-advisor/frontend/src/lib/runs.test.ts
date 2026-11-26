@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isActive, recsLabel, runStatus, stepStatus } from './runs';
+import { accountOutcome, isActive, recsLabel, runStatus, stepStatus } from './runs';
 import type { Run } from '../api';
 
 const run = (status: Run['status'], extra: Partial<Run> = {}): Run => ({
@@ -43,5 +43,16 @@ describe('stepStatus', () => {
     expect(stepStatus('success')).toBe('success');
     expect(stepStatus('error')).toBe('error');
     expect(stepStatus('weird')).toBe('pending');
+  });
+});
+
+describe('accountOutcome', () => {
+  it('maps each account outcome to a status', () => {
+    expect(accountOutcome('scanned')).toBe('success');
+    expect(accountOutcome('scanning')).toBe('in-progress');
+    expect(accountOutcome('partial: backup AccessDenied')).toBe('warning');
+    expect(accountOutcome('not scanned: AssumeRole AccessDenied')).toBe('error');
+    expect(accountOutcome('denied: S3 bucket list')).toBe('error');
+    expect(accountOutcome('something else')).toBe('pending');
   });
 });

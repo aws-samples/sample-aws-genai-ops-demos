@@ -22,6 +22,15 @@ export function isActive(run: Pick<Run, 'status'> | null | undefined): boolean {
   return run?.status === 'RUNNING';
 }
 
+/** Status of one account's outcome text ("scanned", "partial: ...", "not scanned: ...", "denied: ...", "scanning"). */
+export function accountOutcome(outcome: string): StatusView['type'] {
+  if (outcome === 'scanned') return 'success';
+  if (outcome === 'scanning') return 'in-progress';
+  if (outcome.startsWith('partial')) return 'warning';
+  if (outcome.startsWith('not scanned') || outcome.startsWith('denied')) return 'error';
+  return 'pending';
+}
+
 export function stepStatus(s: string): 'pending' | 'in-progress' | 'success' | 'error' {
   return s === 'in-progress' || s === 'success' || s === 'error' ? s : 'pending';
 }

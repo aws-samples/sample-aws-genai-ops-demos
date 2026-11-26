@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import ButtonDropdown from '@cloudscape-design/components/button-dropdown';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Flashbar, { FlashbarProps } from '@cloudscape-design/components/flashbar';
 import Header from '@cloudscape-design/components/header';
@@ -9,7 +10,8 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { ApiError, listRuns, Run, startScan } from '../api';
+import { ApiError, listRuns, Run, ScanScope, startScan } from '../api';
+import { getConfig } from '../config';
 import { formatDate } from '../lib/format';
 import { isActive, recsLabel, runStatus } from '../lib/runs';
 
@@ -38,10 +40,10 @@ export default function RunsPage() {
     return () => clearInterval(t);
   }, [running, load]);
 
-  const start = async () => {
+  const start = async (scope: ScanScope) => {
     setStarting(true);
     try {
-      const { run_id } = await startScan();
+      const { run_id } = await startScan(scope);
       navigate(`/runs/${run_id}`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
@@ -60,7 +62,21 @@ export default function RunsPage() {
     }
   };
 
-  const startButton = <Button variant="primary" loading={starting} onClick={() => void start()}>Start scan</Button>;
+  const startButton = getConfig().multiAccount ? (
+    <ButtonDropdown
+      variant="primary"
+      loading={starting}
+      items={[
+        { id: 'organization', text: 'Scan the organization', description: 'This account and every member account' },
+        { id: 'account', text: 'Scan this account' },
+      ]}
+      onItemClick={({ detail }) => void start(detail.id as ScanScope)}
+    >
+      Start scan
+    </ButtonDropdown>
+  ) : (
+    <Button variant="primary" loading={starting} onClick={() => void start('account')}>Start scan</Button>
+  );
 
   return (
     <ContentLayout

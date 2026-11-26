@@ -2,7 +2,11 @@
 boto3 session and client creation, AWS calls) happens inside a durable step; the code between steps only moves step
 results along. Step results stay small (they are checkpoints): bulk data goes to the run store.
 
-Input: {"run_id": "scan-YYYYMMDD-HHMMSS"}. Our code never logs or stores exception messages, only type names (the SDK itself logs step exceptions)."""
+Step 2 maps one overview step per account (`regions-<account>`), step 3 one collect step per account and unit
+(`collect-<account>-<n>`). Both tolerate failures: a failed account or unit is reported, never fatal.
+
+Input: {"run_id": "scan-YYYYMMDD-HHMMSS", "scope": "account" | "organization"} (scope defaults to "account"). Our
+code never logs or stores exception messages, only type names (the SDK itself logs step exceptions)."""
 import logging
 import os
 import re
@@ -22,7 +26,7 @@ logger = logging.getLogger(__name__)
 RUN_ID = re.compile(r"^scan-\d{8}-\d{6}$")
 RETRY = StepConfig(retry_strategy=create_retry_strategy(RetryStrategyConfig(
     max_attempts=3, initial_delay=Duration.from_seconds(5), max_delay=Duration.from_seconds(30))))
-TOLERATE = CompletionConfig(tolerated_failure_percentage=100)
+TOLERATE = MapConfig(max_concurrency=4, completion_config=CompletionConfig(tolerated_failure_percentage=100))
 
 
 def _now():
@@ -34,23 +38,23 @@ def _model():
 
 
 @durable_step
-def _accounts(step: StepContext, run_id):
-    return steps.accounts(store.from_env(), boto3.Session(), run_id, _now())
+def _accounts(step: StepContext, run_id, scope):
+    return steps.accounts(store.from_env(), boto3.Session(), run_id, _now(), scope)
 
 
 @durable_step
-def _regions(step: StepContext, run):
-    return steps.regions(store.from_env(), boto3.Session(), run)
+def _regions(step: StepContext, run, account_id):
+    return steps.regions(store.from_env(), boto3.Session(), run, account_id)
 
 
 @durable_step
-def _collect(step: StepContext, run, n):
-    return steps.collect(store.from_env(), boto3.Session(), run, n)
+def _collect(step: StepContext, run, account_id, n):
+    return steps.collect(store.from_env(), boto3.Session(), run, account_id, n)
 
 
 @durable_step
-def _assemble(step: StepContext, run, unit_count, failed):
-    return steps.assemble(store.from_env(), run, unit_count, failed)
+def _assemble(step: StepContext, run, per_account):
+    return steps.assemble(store.from_env(), run, per_account)
 
 
 @durable_step
@@ -89,19 +93,40 @@ def results_by_index(batch, count):
     return aligned
 
 
+def _scope(event):
+    scope = event.get("scope", "account")
+    if scope not in steps.SCOPES:
+        raise ValueError("scope: expected account or organization")
+    if scope == "organization" and not steps.multi_account():
+        raise ValueError("scope: organization scans need a multi-account deployment")
+    return scope
+
+
 def _run(event, context):
-    run_id = (event or {}).get("run_id", "")
+    event = event or {}
+    run_id = event.get("run_id", "")
     if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
         raise ValueError("run_id: expected scan-YYYYMMDD-HHMMSS")
+    scope = _scope(event)
     try:
-        run = context.step(_accounts(run_id), name="accounts", config=RETRY)
-        plan = context.step(_regions(run), name="regions", config=RETRY)
-        units = list(range(plan["unit_count"]))      # bounded: the unit plan lives in the store
-        batch = context.map(units, lambda ctx, n, i, _all: ctx.step(_collect(run, n), name=f"collect-{n}",
-                                                                    config=RETRY),
-                            name="collect", config=MapConfig(max_concurrency=4, completion_config=TOLERATE))
-        failed = [i for i, r in enumerate(results_by_index(batch, len(units))) if r is None]
-        context.step(_assemble(run, len(units), failed), name="assemble", config=RETRY)
+        run = context.step(_accounts(run_id, scope), name="accounts", config=RETRY)
+        accts = run["accounts"]
+        overviews = results_by_index(context.map(
+            accts, lambda ctx, a, i, _all: ctx.step(_regions(run, a), name=f"regions-{a}", config=RETRY),
+            name="regions", config=TOLERATE), len(accts))
+        # One work item per (account, unit) of every account whose overview was read.
+        work = [[a, n] for a, ov in zip(accts, overviews) if ov and not ov.get("denied") for n in range(ov["units"])]
+        failed = {}
+        if work:
+            done = results_by_index(context.map(
+                work, lambda ctx, w, i, _all: ctx.step(_collect(run, w[0], w[1]), name=f"collect-{w[0]}-{w[1]}",
+                                                       config=RETRY),
+                name="collect", config=TOLERATE), len(work))
+            for (a, n), res in zip(work, done):
+                if res is None:
+                    failed.setdefault(a, []).append(n)
+        per_account = [None if ov is None else dict(ov, failed=failed.get(a, [])) for a, ov in zip(accts, overviews)]
+        context.step(_assemble(run, per_account), name="assemble", config=RETRY)
         ai = context.step(_classify(run), name="classify", config=RETRY)
         context.step(_score(run), name="score", config=RETRY)
         context.step(_narrative(run, ai), name="narrative", config=RETRY)

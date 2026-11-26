@@ -48,15 +48,17 @@ references and any customer data. "Customer spotlight" becomes "Priority focus".
 | `S3DataProtectionPipeline-<region>` | Durable scan function (`live` alias), read-only scan role, Bedrock `InvokeModel` on the Nova model only |
 | `S3DataProtectionApi-<region>` | HTTP API, Cognito JWT authorizer on every route, API Lambda |
 | `S3DataProtectionFrontend-<region>` | SPA on S3 behind CloudFront (origin access control, security headers, CSP); `config.js` generated at deploy |
-| `S3DataProtectionSpoke` (bootstrapless) | `--multi-account` only: read-only role with a fixed name in each member account, no tracking tag |
-| `S3DataProtectionOrg-<region>` | `--multi-account` only: service-managed, auto-deploying StackSet of the Spoke template, hub excluded, no tracking tag |
+| `S3DataProtectionSpoke` (bootstrapless) | `--accounts` only, deployed by hand in a member account (`-c spoke=true`): read-only role with a fixed name, no tracking tag |
+| `S3DataProtectionOrg-<region>` (bootstrapless) | `--multi-account` only: service-managed, auto-deploying StackSet of the Spoke template, hub excluded, no tracking tag. A management account can deploy it for a hub with `-c orgOnly=true` |
 
 API routes: `POST /scans` (409 while a run is in progress), `GET /scans`, `GET /scans/{id}` (status and steps from the
 durable execution history), `GET /scans/{id}/report?format=json|xlsx|html` (presigned URL, short expiry),
 `GET /sample` (bundled sample report).
 
 Scripts: `deploy-all.sh` / `deploy-all.ps1` with `--multi-account [--org-targets r-...,ou-...]` /
-`-MultiAccount [-OrgTargets ...]`; `destroy-all.*`. Both call `shared/scripts/check-prerequisites.*`; multi-account calls
+`-MultiAccount [-OrgTargets ...]`, or `--accounts <id>,...` / `-Accounts` for an explicit account list without
+Organizations access; `destroy-all.*` (destroys the Org stack first when it exists). `POST /scans` takes
+`{"scope": "account" | "organization"}`; the organization scope is refused unless the deployment is multi-account. Both call `shared/scripts/check-prerequisites.*`; multi-account calls
 `shared/scripts/check-org-access.*` first and branches on its exit code; every stack goes through
 `shared/scripts/deploy-cdk.*`. Region from the shared utilities, never hardcoded. The scripts end with the standard
 summary (URL, region, admin user).
@@ -111,12 +113,14 @@ parentheses where it differs. `tests/test_permissions.py` checks that every AWS 
 Pipeline function only (`BEDROCK_ACTIONS`): `bedrock:InvokeModel` (Converse), on the Amazon Nova Lite inference
 profile and its foundation model only.
 
-Multi-account only, not called by the single-account scan (hub only): `organizations:DescribeOrganization`,
-`organizations:ListAccounts`, `organizations:ListPolicies`, `organizations:DescribePolicy`, `ec2:DescribeRegions`.
-Until they are collected, SCPs and organization backup and tag policies are reported as not readable.
+Multi-account only, hub pipeline role only, granted when deployed with `--multi-account` (`ORG_ACTIONS` and
+`ASSUME_ACTIONS`): `organizations:ListAccounts`, and `sts:AssumeRole` on the fixed-name spoke role
+`S3DataProtectionScanRole` in any account. The spoke role carries `SCAN_ACTIONS` only. SCPs and
+organization backup and tag policies are not collected yet (`organizations:ListPolicies` and
+`organizations:DescribePolicy` are not granted): the report shows them as not readable, never as absent.
 
 The demo never modifies a bucket. Spoke trust: the hub account root with an `aws:PrincipalArn` condition on the hub
-scan role's fixed name, optional `sts:ExternalId`.
+pipeline role's fixed, region-suffixed name (`S3DataProtectionHub-<region>`).
 
 ## Pipeline (durable function)
 

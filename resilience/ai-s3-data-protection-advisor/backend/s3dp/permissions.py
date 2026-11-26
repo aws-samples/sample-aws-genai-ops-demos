@@ -49,6 +49,12 @@ SCAN_ACTIONS = (
 
 BEDROCK_ACTIONS = ("bedrock:InvokeModel",)    # Converse
 
+# Hub pipeline role only, and only on a multi-account deployment: list the organization's accounts, then assume the
+# read-only spoke role (SPOKE_ROLE_NAME) in each member account. The spoke role itself carries SCAN_ACTIONS only.
+ORG_ACTIONS = ("organizations:ListAccounts",)
+ASSUME_ACTIONS = ("sts:AssumeRole",)
+SPOKE_ROLE_NAME = "S3DataProtectionScanRole"
+
 # Mock estate (s3dp/seed.py, sandbox only, run from a workstation). Never granted to the scan, spoke or pipeline
 # roles. Bucket names are limited to s3dp-<account>-* and the role to s3dp-demo-replication.
 SEED_ACTIONS = (

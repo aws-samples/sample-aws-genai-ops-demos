@@ -94,7 +94,9 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return (await res.json()) as T;
 }
 
-export const startScan = () => request<{ run_id: string }>('/api/scans', { method: 'POST' });
+export type ScanScope = 'account' | 'organization';
+export const startScan = (scope: ScanScope = 'account') =>
+  request<{ run_id: string }>('/api/scans', { method: 'POST', body: JSON.stringify({ scope }) });
 export const listRuns = () => request<{ runs: Run[] }>('/api/scans');
 export const getRun = (id: string) => request<RunDetail>(`/api/scans/${encodeURIComponent(id)}`);
 export const reportUrl = (id: string, format: ReportFormat) =>

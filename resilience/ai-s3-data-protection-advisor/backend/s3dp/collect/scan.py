@@ -324,3 +324,53 @@ def collect_account(session, account_id, account_name=None, today=None):
     region_name, get_partition_for_region). Shape: see derive/inventory.build()."""
     ov = account_overview(session, account_id, account_name, today)
     return assemble(ov, [collect_unit(session, account_id, u) for u in plan_units(ov)])
+
+
+def not_scanned(account_id, account_name, reason, today):
+    """Raw scan of an account nothing could be read from (spoke role not assumable, collection failed). Every
+    account-level signal stays unknown, so the report counts the account as not readable, never as compliant."""
+    ov = {"today": today, "account_id": account_id, "account_name": account_name, "buckets": [], "regions": [],
+          "alias": None, "role_names": None, "account_bpa": "unknown", "listed": False, "batch": BATCH,
+          "run": {"api_errors": 1, "unavailable": [["Account not scanned (no setting read)", reason]],
+                  "settings": {}}}
+    raw = assemble(ov, [])
+    raw["accounts"][account_id]["outcome"] = f"not scanned: {reason}"
+    return raw
+
+
+def _label(account_id, meta):
+    name = meta.get("name") or account_id
+    return account_id if name == account_id else f"{name} ({account_id})"
+
+
+def merge(raws, hub_id, source, unavailable=()):
+    """One raw scan from the per-account raw scans (the hub's first). `source` says how the accounts were chosen:
+    "hub" (this account only), "organization" or "list". `unavailable` rows (organization listing) come first.
+    A single account keeps its raw scan unchanged; with several, each unavailable row is prefixed with its account,
+    since the same check failing in two accounts is two gaps, not one."""
+    if len(raws) == 1:
+        raw = copy.deepcopy(raws[0])
+        raw["run"]["unavailable"] = [list(u) for u in unavailable] + raw["run"]["unavailable"]
+        return raw
+    accounts, regions, buckets, rows, errors = {}, {}, [], [list(u) for u in unavailable], 0
+    for raw in raws:
+        for a, meta in raw["accounts"].items():
+            accounts[a] = meta
+            rows += [[f"{_label(a, meta)}: {what}", why] for what, why in raw["run"]["unavailable"]]
+        regions.update(raw["regions"])
+        buckets += raw["buckets"]
+        errors += raw["run"]["api_errors"]
+    hub = next(r for r in raws if hub_id in r["accounts"])
+    scanned = sorted({r for raw in raws for r in raw["run"]["regions_scanned"]})
+    how = {"organization": "organization", "list": "account list"}.get(source, source)
+    return {
+        "scan_date": hub["scan_date"],
+        "hub_account": hub_id,
+        "accounts": accounts,
+        "regions": regions,
+        "buckets": buckets,
+        "organization": None,       # SCPs, backup and tag policies are not collected: None = not read
+        "run": {"scope": f"{len(accounts)} accounts ({how})", "collected": hub["run"]["collected"],
+                "regions_scanned": scanned, "regions_skipped": "none", "unavailable": rows, "api_errors": errors,
+                "price_region": hub["run"]["price_region"]},
+    }
