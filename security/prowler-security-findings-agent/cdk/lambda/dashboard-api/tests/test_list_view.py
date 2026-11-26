@@ -4,15 +4,15 @@ import gzip
 import json
 import threading
 
-from boto3.dynamodb.types import TypeSerializer
+import boto3
+from botocore.stub import Stubber
 
 import index
 
-_ser = TypeSerializer()
-
 
 class FakeClient:
-    """Low-level DynamoDB scan: honours Segment/TotalSegments, projection, and pages of `page` items."""
+    """A boto3 *resource's* client scan: native Python values (not typed AttributeValues), honouring
+    Segment/TotalSegments, projection, and pages of `page` items."""
 
     def __init__(self, items, page):
         self.items, self.page = items, page
@@ -25,12 +25,12 @@ class FakeClient:
             self.calls.append((Segment, ExclusiveStartKey))
         fields = [ExpressionAttributeNames[n.strip()] for n in ProjectionExpression.split(',')]
         mine = [it for i, it in enumerate(self.items) if i % TotalSegments == Segment]
-        start = int(ExclusiveStartKey['finding_uid']['S'].split('_')[1]) + 1 if ExclusiveStartKey else 0
+        start = int(ExclusiveStartKey['finding_uid'].split('_')[1]) + 1 if ExclusiveStartKey else 0
         start = next((j for j, it in enumerate(mine) if int(it['finding_uid'].split('_')[1]) >= start), len(mine))
         chunk = mine[start:start + self.page]
-        resp = {'Items': [{k: _ser.serialize(v) for k, v in it.items() if k in fields} for it in chunk]}
+        resp = {'Items': [{k: v for k, v in it.items() if k in fields} for it in chunk]}
         if start + len(chunk) < len(mine):
-            resp['LastEvaluatedKey'] = {'finding_uid': {'S': chunk[-1]['finding_uid']}}
+            resp['LastEvaluatedKey'] = {'finding_uid': chunk[-1]['finding_uid']}
         return resp
 
 
@@ -83,6 +83,22 @@ def test_list_view_is_gzipped_only_when_accepted(monkeypatch):
     plain = index.handler(_event({'view': 'list'}, gzip_ok=False), None)
     assert not plain.get('isBase64Encoded') and 'content-encoding' not in plain['headers']
     assert _body(zipped) == _body(plain)
+
+
+def test_real_resource_client_returns_native_values(monkeypatch):
+    """Guards the deploy bug: a boto3 resource's client already deserializes, so scanning it must not deserialize again."""
+    table = boto3.resource('dynamodb', region_name='us-east-1').Table('prowler-security-findings')
+    stub = Stubber(table.meta.client)
+    for _ in range(index._SCAN_SEGMENTS):
+        stub.add_response('scan', {'Items': [{
+            'finding_uid': {'S': 'uid_1'}, 'status': {'S': 'FAIL'},
+            'status_history': {'L': [{'M': {'status': {'S': 'FAIL'}}}]},
+        }]})
+    monkeypatch.setattr(index, 'TABLE', table)
+    with stub:
+        body = json.loads(index._list_all_findings_slim()['body'])
+    assert body['count'] == index._SCAN_SEGMENTS
+    assert body['items'][0] == {'finding_uid': 'uid_1', 'status': 'FAIL', 'status_history': [{'status': 'FAIL'}]}
 
 
 def test_small_responses_are_not_gzipped():

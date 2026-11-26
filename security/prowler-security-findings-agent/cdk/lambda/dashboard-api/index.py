@@ -32,7 +32,6 @@ from urllib.parse import unquote
 
 import boto3
 from boto3.dynamodb.conditions import Key
-from boto3.dynamodb.types import TypeDeserializer
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -331,7 +330,6 @@ _LIST_VIEW_FIELDS = (
     'status_history', 'suppressed_at', 'suppress_reason', 'suppressed_by', 'remediation_s3_key',
 )
 _SCAN_SEGMENTS = 8
-_deserializer = TypeDeserializer()
 
 
 def _scan_segment(segment: int) -> list[dict[str, Any]]:
@@ -345,8 +343,9 @@ def _scan_segment(segment: int) -> list[dict[str, Any]]:
     }
     items: list[dict[str, Any]] = []
     while True:
+        # The resource's client already converts DynamoDB attribute values to Python types.
         resp = TABLE.meta.client.scan(**kwargs)
-        items.extend({k: _deserializer.deserialize(v) for k, v in it.items()} for it in resp.get('Items', []))
+        items.extend(resp.get('Items', []))
         if not resp.get('LastEvaluatedKey'):
             return items
         kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
