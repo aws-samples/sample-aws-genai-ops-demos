@@ -18,6 +18,7 @@ creating duplicates.
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any
 from urllib.parse import unquote_plus
@@ -325,36 +326,57 @@ def _to_item(finding: dict[str, Any], scan_id: str, now: str) -> dict[str, Any]:
 
 MAX_HISTORY_ENTRIES = 20
 
+# Attributes ingest derives from the report (_to_item, status_history, first_seen_at). Any
+# other attribute was set by another component (suppressed_* by dashboard-api,
+# remediation_* by remediation-context, ...) and is carried over from the previous row,
+# because put_item replaces the whole item.
+INGEST_FIELDS = frozenset({
+    'finding_uid', 'scan_id', 'last_seen_at', 'severity', 'status', 'check_id', 'check_title',
+    'check_description', 'status_extended', 'service_name', 'resource_uid', 'region', 'account_id',
+    'compliance_frameworks', 'raw', 'remediation_guidance', 'remediation_url', 'additional_urls',
+    'categories', 'notes', 'finding_types', 'risk_details', 'compliance_controls',
+    'status_history', 'first_seen_at',
+})
+_PREVIOUS_FIELDS_READ = frozenset({'finding_uid', 'status', 'status_history', 'last_seen_at', 'first_seen_at'})
+BATCH_GET_ATTEMPTS = 8
+
 
 def _batch_get_previous(finding_uids: list[str]) -> dict[str, dict]:
-    """Fetch existing items for a list of finding_uids, keyed by uid.
+    """Fetch the existing row of each finding_uid, keyed by uid.
 
-    Used to preserve status_history across scans: the previous row's
-    history + its current status get appended to the new entry.
-    Returns an empty dict on the first scan (nothing to fetch) or if
-    any single page fails (best-effort; history is not load-bearing).
+    The previous row supplies status_history, first_seen_at and the attributes
+    other components set on it. Raises, before anything is written, when rows
+    cannot be read: writing without them would drop those attributes.
     """
     out: dict[str, dict] = {}
-    if not finding_uids:
-        return out
+    # A report can list the same check and resource twice; BatchGetItem rejects duplicate keys.
+    keys = [{'finding_uid': uid} for uid in dict.fromkeys(finding_uids)]
     ddb = _ddb.meta.client
     # BatchGetItem caps at 100 keys per request.
     CHUNK = 100
-    for i in range(0, len(finding_uids), CHUNK):
-        chunk = finding_uids[i:i + CHUNK]
-        try:
-            resp = ddb.batch_get_item(RequestItems={
-                TABLE_NAME: {
-                    'Keys': [{'finding_uid': uid} for uid in chunk],
-                    'ProjectionExpression': 'finding_uid, #st, last_seen_at, scan_id, status_history',
-                    'ExpressionAttributeNames': {'#st': 'status'},
-                },
-            })
-            for existing in resp.get('Responses', {}).get(TABLE_NAME, []):
-                out[existing['finding_uid']] = existing
-        except Exception as exc:  # noqa: BLE001 — best effort
-            logger.warning('batch_get_item failed for chunk of %d: %s', len(chunk), exc)
+    for i in range(0, len(keys), CHUNK):
+        request = {TABLE_NAME: {'Keys': keys[i:i + CHUNK]}}
+        for attempt in range(BATCH_GET_ATTEMPTS):
+            resp = ddb.batch_get_item(RequestItems=request)
+            for row in resp.get('Responses', {}).get(TABLE_NAME, []):
+                out[row['finding_uid']] = {
+                    k: v for k, v in row.items() if k in _PREVIOUS_FIELDS_READ or k not in INGEST_FIELDS
+                }
+            # Keys come back unprocessed when throttled or past the 16 MB response limit.
+            request = resp.get('UnprocessedKeys') or {}
+            if not request:
+                break
+            time.sleep(min(0.1 * 2 ** attempt, 2.0))
+        else:
+            raise RuntimeError(f'BatchGetItem left {len(request[TABLE_NAME]["Keys"])} previous rows unread')
     return out
+
+
+def _carry_forward(item: dict[str, Any], previous: dict | None) -> None:
+    """Copy the attributes ingest does not own from the previous row."""
+    for key, value in (previous or {}).items():
+        if key not in INGEST_FIELDS:
+            item.setdefault(key, value)
 
 
 def _next_history(previous: dict | None, new_status: str, new_scan_id: str, now: str) -> list[dict]:
@@ -410,6 +432,7 @@ def handler(event, context):
                     item['first_seen_at'] = prev.get('first_seen_at') or prev['last_seen_at']
                 else:
                     item['first_seen_at'] = now
+                _carry_forward(item, prev)
                 writer.put_item(Item=item)
                 ingested += 1
 

@@ -63,10 +63,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed architecture
 - **Node.js 20+** and **npm**
 - **Python 3.12+** (for Lambda packaging inspection; not required at runtime)
 - **zip** utility
-- **CDK bootstrap** for the target account/region. If you haven't bootstrapped yet:
-  ```bash
-  npx cdk bootstrap aws://<account-id>/<region>
-  ```
+- **jq** on macOS / Linux (the bash scripts read and write the DevOps Agent webhook bundle with it)
+- **CDK bootstrap**: nothing to do. `deploy-all` deploys every stack through `shared/scripts/deploy-cdk`, which bootstraps the account/region (or updates the bootstrap stack) on its first call.
 - **Bedrock model access** — enable **Amazon Nova Lite 2** in your region via the Bedrock console (Model access > Manage model access). The demo defaults to the global inference profile `global.amazon.nova-2-lite-v1:0`, which routes to the closest supported region automatically; the base model must be enabled in the regions the profile covers (the console lets you enable them in one click).
 - **AWS DevOps Agent** is available in `us-east-1`, `us-west-2`, and `eu-west-1`. If your infrastructure region is different, set `DEVOPS_AGENT_REGION` before deploying.
 
@@ -89,6 +87,11 @@ export DEVOPS_AGENT_REGION=eu-west-1
 # set to block-ingress in the region, deploy-all switches to private subnets
 # behind a NAT gateway (~$33/month) automatically. Force either mode with:
 # export SCANNER_NAT_GATEWAY=true
+# Event-driven scans are off by default. With EVENT_SCANS=true, risky CloudTrail
+# write calls (security group ingress, S3 public access, admin policy on IAM
+# users, public Lambda or RDS) start a targeted Prowler scan within minutes.
+# Needs a CloudTrail trail that logs write management events.
+# export EVENT_SCANS=true
 
 # Deploy
 bash deploy-all.sh          # macOS / Linux
@@ -99,7 +102,7 @@ The script walks through:
 
 1. Prerequisites check (region, CDK, AWS CLI version, zip)
 2. **Interactive DevOps Agent setup** — creates the Agent Space + IAM roles, prompts you to generate a webhook URL and secret in the DevOps Agent console, then captures them and live-patches both Lambdas (trigger + dashboard-api) with the webhook URL, HMAC secret, and Space ID
-3. Deploys 7 CDK stacks (everything except frontend): Data, Auth, DevOpsAgent, Scanner, Ingest, Api, Observability
+3. Deploys 7 CDK stacks (everything except frontend), one `shared/scripts/deploy-cdk` call each: Data, Auth, DevOpsAgent, Scanner, Ingest, Api, Observability
 4. Builds the Prowler container image via CodeBuild and pushes to ECR
 5. Rebuilds the React dashboard with the CDK outputs baked in
 6. Deploys the frontend stack (CloudFront + S3 + OAC)
@@ -139,6 +142,10 @@ aws cognito-idp admin-set-user-password \
 3. Findings arrive in 3-10 minutes depending on account size.
 4. Open **Findings** → click any CRITICAL/HIGH item → press **Generate AI Insights** to produce the Bedrock-generated playbook on demand (shown in the Overview tab).
 5. From the same finding, press **Investigate with DevOps Agent** to dispatch a single incident to the Agent. The Investigation tab streams backlog task status and journal records live; the Agent Operator console shows the full reasoning trace.
+
+### Prowler version
+
+`scanner/Dockerfile` pins Prowler with `ARG PROWLER_VERSION` (currently `5.52.0`), so every image build runs the same checks. To upgrade, set it to a release listed on [PyPI](https://pypi.org/project/prowler/#history) and rebuild the image with `bash scripts/build-scanner-image.sh <RawReportsBucketName> <BuildProjectName>` (outputs of the Data and Scanner stacks) or by re-running `deploy-all.sh`. The image is pushed as `:latest`, so the next scan uses it.
 
 ## CDK Stacks
 
@@ -180,7 +187,7 @@ prowler-security-findings-agent/
 │       ├── devops-agent-trigger/index.py
 │       └── dashboard-api/index.py
 ├── scanner/
-│   ├── Dockerfile                      ← FROM toniblyx/prowler
+│   ├── Dockerfile                      ← python:3.12-slim + Prowler pinned by PROWLER_VERSION
 │   └── entrypoint.sh                   ← prowler aws --output-formats json-ocsf -S
 ├── scripts/
 │   ├── setup-devops-agent.sh / .ps1
@@ -216,7 +223,7 @@ This demo was built to slot cleanly next to the existing patterns:
 
 - **DevOps Agent webhook** (`cdk/lib/devops-agent-stack.ts` + `cdk/lambda/devops-agent-trigger/index.py`) is an adaptation of [`observability/eks-investigation-devops-agent`](../../observability/eks-investigation-devops-agent/), replacing CloudWatch-alarm payloads with Prowler OCSF findings.
 - **React/Cloudscape dashboard** follows [`operations-automation/ai-lambda-runtime-migration`](../../operations-automation/ai-lambda-runtime-migration/): Cognito User Pool → Identity Pool → SigV4 → IAM-authorized Lambda Function URL (instead of AgentCore Runtime).
-- **Shared tooling**: `shared/scripts/check-prerequisites.sh` and `shared/utils/aws-utils.sh` are used verbatim for region detection and prereq validation.
+- **Shared tooling**: `shared/scripts/check-prerequisites.sh` and `shared/utils/aws-utils.sh` are used verbatim for region detection and prereq validation, and `shared/scripts/deploy-cdk.sh` / `.ps1` runs every CDK deploy and destroy.
 
 ## Cost
 
@@ -250,14 +257,14 @@ bash scripts/cleanup.sh        # macOS / Linux
 ./scripts/cleanup.ps1          # Windows
 ```
 
-Destroys all 8 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles.
+Destroys all 8 stacks in reverse dependency order and (after confirmation) deletes the DevOps Agent Space and its IAM roles. Like `deploy-all`, cleanup looks for the Agent Space in the deploy region; if you deployed with `DEVOPS_AGENT_REGION` set, export the same value first.
 
 ## Troubleshooting
 
 | Problem | Cause | Fix |
 |---|---|---|
 | `The provided model identifier is invalid` or `isn't supported` when calling Converse | Model access not enabled in the inference-profile regions | Enable Nova Lite 2 in Bedrock console > Model access > Manage across the regions the selected profile covers (the `global.*` profile spans all supported regions — the console has a one-click enable). |
-| CodeBuild fails to pull `toniblyx/prowler` | Docker Hub rate limits | Re-run `bash scripts/build-scanner-image.sh`; or switch to an ECR Public mirror in `scanner/Dockerfile`. |
+| CodeBuild fails installing Prowler | PyPI unreachable from CodeBuild, or `PROWLER_VERSION` set to a release that does not exist | Check the build log in `/aws/codebuild/<BuildProjectName>`, fix `PROWLER_VERSION` in `scanner/Dockerfile`, and re-run `bash scripts/build-scanner-image.sh`. |
 | Fargate task fails with `AccessDenied` on S3 | Bucket region mismatch | Confirm `RawReportsBucket` is in the same region as the scanner task; rerun `deploy-all.sh`. |
 | DevOps Agent never receives incidents | Webhook URL/secret still placeholders | Run `bash scripts/setup-devops-agent.sh` — it live-updates the deployed Lambda and Secrets Manager. |
 | Dashboard returns 403 calling the API | Authenticated role missing `lambda:InvokeFunctionUrl` | Redeploy `ProwlerSecurityApi-{region}` and `ProwlerSecurityAuth-{region}`. |
@@ -276,7 +283,7 @@ Same reason the runtime-migration demo does not have API Gateway: fewer moving p
 
 ### Why ECS Fargate for Prowler (not Lambda)?
 
-Prowler scans a medium-sized account in 3–10 minutes — too long for Lambda's 15-minute hard limit when scanning multiple regions, and awkward to package with its dependencies. Fargate runs the official `toniblyx/prowler` image as-is.
+Prowler scans a medium-sized account in 3–10 minutes — too long for Lambda's 15-minute hard limit when scanning multiple regions, and awkward to package with its dependencies. Fargate runs a small image with the pinned Prowler release from PyPI.
 
 ## Contributing
 

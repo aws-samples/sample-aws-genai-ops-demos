@@ -10,10 +10,16 @@
 
 setup_devops_agent() {
     AGENT_SPACE_NAME="${1:-prowler-security}"
-    # Default to the same region where the rest of the stack lives. Fall back to
-    # us-east-1 only if AWS_REGION isn't set (e.g. when the script is sourced
-    # standalone without running deploy-all.sh first).
-    DEVOPS_AGENT_REGION="${DEVOPS_AGENT_REGION:-${AWS_REGION:-us-east-1}}"
+    # Default to the same region where the rest of the stack lives: AWS_REGION as
+    # deploy-all.sh resolved it, or, when run on its own, the shared region lookup
+    # (AWS_DEFAULT_REGION, AWS_REGION, aws configure, us-east-1).
+    if [ -z "${DEVOPS_AGENT_REGION:-}" ]; then
+        DEVOPS_AGENT_REGION="${AWS_REGION:-}"
+        if [ -z "$DEVOPS_AGENT_REGION" ]; then
+            source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../shared/utils" && pwd)/aws-utils.sh"
+            DEVOPS_AGENT_REGION="$(get_aws_region)"
+        fi
+    fi
 
     echo "=============================================="
     echo " DevOps Agent Setup — Prowler Security"

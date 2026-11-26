@@ -18,8 +18,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Prowler from PyPI — the official distribution channel for v5+.
+# Pinned so every image build scans with the same checks; bump deliberately.
+ARG PROWLER_VERSION=5.52.0
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir prowler
+    && pip install --no-cache-dir "prowler==${PROWLER_VERSION}"
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 # Strip Windows CRLF line endings that break the shebang on Linux.

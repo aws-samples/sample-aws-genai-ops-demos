@@ -53,7 +53,7 @@ Secondary indexes: `severity-index` (PK severity, SK last_seen_at) and `status-i
 
 ## Prowler execution
 
-- Official `toniblyx/prowler` image (built once into ECR by the CodeBuild project).
+- `python:3.12-slim` image with Prowler installed from PyPI at the version pinned by `ARG PROWLER_VERSION` in `scanner/Dockerfile` (built into ECR by the CodeBuild project).
 - Task role: `SecurityAudit` + `ViewOnlyAccess` managed policies plus a small `ProwlerExtras` statement for the permissions Prowler needs that aren't in those two (credential report generation, service last accessed, etc.).
 - Command: `prowler aws --output-formats json-ocsf csv html -S` — `-S` additionally sends ASFF to Security Hub so findings are queryable there too.
 - The entrypoint uploads `{account}.ocsf.json` (and human-readable csv/html) to `s3://raw-reports/raw-reports/{scan_id}/`.
@@ -71,6 +71,16 @@ The HMAC-signed POST body schema matches what the EKS demo uses (eventType/incid
 - `incidentId` is `prowler-{finding_uid}` so the agent deduplicates if the same finding reappears.
 - `description` embeds the Bedrock markdown when available (up to 20 KB).
 - `data.remediationS3Key` is passed so the agent can fetch the full markdown directly if needed.
+
+## Reading investigations back
+
+`dashboard-api` reads the Agent Space with the boto3 `devops-agent` client (IAM actions `aidevops:ListBacklogTasks`, `aidevops:ListExecutions` and `aidevops:ListJournalRecords`). `GET /findings/{finding_uid}/investigation` reports the newest backlog task that matches the finding, so a re-investigation shows its own progress. Its `status` is `in_progress`, `pending` (queued or waiting for an approval), `completed`, or `failed` (the task `FAILED`, `TIMED_OUT`, was `CANCELED` or `SKIPPED`); the dashboard polls only while it is `pending` or `in_progress`. A `LINKED` task, a duplicate incident the agent attached to an earlier one, reports that primary task. `tasks` lists the matching tasks newest first, with their raw backlog status.
+
+Both investigation routes, `GET /findings/{finding_uid}/investigation` and `GET /investigations`, return a `summary` per investigation: `{content, updatedAt, final}`, or `null` when the agent has written none.
+
+- While the investigation runs, `content` is the newest `ui_investigation_summary` journal record rendered as markdown (`final: false`). That record is the live summary the DevOps Agent console shows: a JSON UI tree the agent rewrites every few seconds; only its summary card (incident, current root-cause hypothesis, focus and plan) is kept.
+- Once the backlog task is `COMPLETED`, `content` is the `investigation_summary_md` record followed by `mitigation_summary_md` (`final: true`).
+- `updatedAt` is the ISO-8601 creation time of the record the content came from.
 
 ## Extending this demo
 

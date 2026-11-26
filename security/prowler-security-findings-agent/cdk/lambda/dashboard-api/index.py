@@ -11,7 +11,7 @@ Routes (matched against event['requestContext']['http']['path'] + method):
     GET  /findings/{finding_uid}                   — full finding + presigned URL to remediation markdown
     POST /findings/{finding_uid}/insights          — generate Bedrock insight for finding (sync)
     POST /findings/{finding_uid}/investigate       — dispatch DevOps Agent investigation
-    GET  /findings/{finding_uid}/investigation     — DevOps Agent status + journal for finding
+    GET  /findings/{finding_uid}/investigation     — DevOps Agent status, journal and summary for finding
     GET  /investigations                           — every DevOps Agent backlog task dispatched by this demo
     GET  /scans                                    — most recent scan_ids (derived from findings)
     GET  /scans/running                            — ECS tasks currently running/recently stopped
@@ -19,11 +19,14 @@ Routes (matched against event['requestContext']['http']['path'] + method):
     POST /scans                                    — start a Prowler Fargate task on-demand
 """
 
+import base64
+import gzip
 import json
 import logging
 import os
 import re
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote
 
@@ -82,13 +85,9 @@ REMEDIATION_LAMBDA = os.environ.get('REMEDIATION_LAMBDA', '')
 COST_EVENTS_TABLE_NAME = os.environ.get('COST_EVENTS_TABLE', '')
 COST_TABLE = _ddb.Table(COST_EVENTS_TABLE_NAME) if COST_EVENTS_TABLE_NAME else None
 
-# The Lambda runtime's bundled botocore does not yet ship the devops-agent
-# service model, so we call the DevOps Agent HTTPS API directly with SigV4
-# signing via botocore's internal primitives (no extra dependencies).
-from botocore.auth import SigV4Auth  # noqa: E402
-from botocore.awsrequest import AWSRequest  # noqa: E402
+import botocore.session  # noqa: E402
+from botocore.config import Config  # noqa: E402
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
-from urllib import error as urllib_error, request as urllib_request  # noqa: E402
 
 
 def _incident_id(finding_uid: str) -> str:
@@ -104,55 +103,25 @@ def _incident_id(finding_uid: str) -> str:
     return f'prowler-{safe}'
 
 
-DEVOPS_SAFE_ERRORS = (RuntimeError, urllib_error.URLError, json.JSONDecodeError, BotoCoreError, ClientError)
+DEVOPS_SAFE_ERRORS = (RuntimeError, BotoCoreError, ClientError)
+_devops_client = None
 
 
-def _devops_request(path: str, body: dict | None = None) -> dict:
-    """POST to the DevOps Agent REST API with SigV4 auth.
-
-    The service uses REST-style endpoints under
-    https://dp.aidevops.{region}.api.aws/{path}  (SigV4 service name: 'aidevops').
-    Returns parsed JSON body on success, raises on error.
-    """
-    if not DEVOPS_AGENT_REGION:
-        raise RuntimeError('DEVOPS_AGENT_REGION not set')
-    host = f'dp.aidevops.{DEVOPS_AGENT_REGION}.api.aws'
-    if not path.startswith('/'):
-        path = '/' + path
-    url = f'https://{host}{path}'
-    data = json.dumps(body or {}).encode('utf-8')
-    req = AWSRequest(
-        method='POST',
-        url=url,
-        data=data,
-        headers={
-            'Content-Type': 'application/json',
-            'Host': host,
-        },
-    )
-    creds = boto3.Session().get_credentials().get_frozen_credentials()
-    SigV4Auth(creds, 'aidevops', DEVOPS_AGENT_REGION).add_auth(req)
-    py_req = urllib_request.Request(
-        url,
-        data=data,
-        method='POST',
-        headers=dict(req.headers.items()),
-    )
-    # Defense-in-depth: guarantee the URL is HTTPS against the expected host
-    # before calling urlopen, even though both are constructed above from the
-    # Lambda env var (itself set by CDK, not user input). This keeps static
-    # analysis (bandit B310 / semgrep dynamic-urllib) from flagging the call.
-    if not py_req.full_url.startswith(f'https://{host}/'):
-        raise RuntimeError(f'refusing to call non-HTTPS or unexpected host: {py_req.full_url!r}')
-    try:
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-        with urllib_request.urlopen(py_req, timeout=10) as resp:  # nosec B310 - scheme+host validated above
-            raw = resp.read().decode('utf-8') or '{}'
-            return json.loads(raw)
-    except urllib_error.HTTPError as e:
-        err = e.read().decode('utf-8')
-        logger.warning('aidevops POST %s -> %s %s', path, e.code, err)
-        raise RuntimeError(f'{e.code}: {err}')
+def _devops():
+    """AWS DevOps Agent client (botocore service `devops-agent`, IAM prefix `aidevops`)."""
+    global _devops_client
+    if _devops_client is None:
+        if not DEVOPS_AGENT_REGION:
+            raise RuntimeError('DEVOPS_AGENT_REGION not set')
+        session = botocore.session.get_session()
+        # Keep timestamps as sent on the wire (ISO strings for tasks, epoch seconds for executions and records).
+        session.get_component('response_parser_factory').set_parser_defaults(timestamp_parser=lambda value: value)
+        _devops_client = boto3.Session(botocore_session=session).client(
+            'devops-agent',
+            region_name=DEVOPS_AGENT_REGION,
+            config=Config(connect_timeout=5, read_timeout=10, retries={'mode': 'standard'}),
+        )
+    return _devops_client
 
 
 def _devops_available() -> tuple[bool, str | None]:
@@ -163,6 +132,189 @@ def _devops_available() -> tuple[bool, str | None]:
     return True, None
 
 
+# Journal record types behind the DevOps Agent console's investigation summary.
+LIVE_SUMMARY_RECORD = 'ui_investigation_summary'
+FINAL_SUMMARY_RECORDS = ('investigation_summary_md', 'mitigation_summary_md')
+_TERMINAL_TASK_STATUSES = {'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED'}
+_settled_summaries: dict[str, dict | None] = {}
+
+
+def _iso8601(value: Any) -> str | None:
+    if isinstance(value, (int, float)):
+        value = datetime.fromtimestamp(value, tz=timezone.utc)
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return str(value) if value else None
+
+
+# Backlog task status -> investigation status. The dashboard polls only while 'pending' or 'in_progress'.
+# Anything not listed (PENDING_TRIAGE, PENDING_START, WAITING, PENDING_CUSTOMER_APPROVAL) is 'pending'.
+_INVESTIGATION_STATUS = {
+    'COMPLETED': 'completed',
+    'LINKED': 'completed',  # only when its primary task is not listed (see _primary_task)
+    'IN_PROGRESS': 'in_progress',
+    'RUNNING': 'in_progress',
+    'ACTIVE': 'in_progress',
+    'FAILED': 'failed',
+    'TIMED_OUT': 'failed',
+    'CANCELED': 'failed',
+    'SKIPPED': 'failed',
+}
+
+
+def _epoch(value: Any) -> float:
+    """Seconds since the epoch of a wire timestamp (ISO-8601 string or epoch number); 0 when unknown."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _list_backlog_tasks(agent_space_id: str) -> list[dict[str, Any]]:
+    """Every backlog task of the Agent Space (pages of 100, ordered by task id rather than time)."""
+    tasks: list[dict[str, Any]] = []
+    for page in _devops().get_paginator('list_backlog_tasks').paginate(agentSpaceId=agent_space_id):
+        tasks.extend(page.get('tasks', []))
+    return tasks
+
+
+def _primary_task(task: dict[str, Any], all_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """The task that carries the investigation: a LINKED task (a duplicate incident) defers to its primary."""
+    if (task.get('status') or '').upper() == 'LINKED' and task.get('primaryTaskId'):
+        return next((t for t in all_tasks if t.get('taskId') == task['primaryTaskId']), task)
+    return task
+
+
+def _execution_id(agent_space_id: str, task: dict[str, Any]) -> str | None:
+    """Task's execution id; a task that does not carry one yet is resolved with ListExecutions."""
+    exec_id = task.get('executionId')
+    task_id = task.get('taskId')
+    if exec_id or not task_id:
+        return exec_id
+    try:
+        execs = _devops().list_executions(agentSpaceId=agent_space_id, taskId=task_id).get('executions', [])
+    except DEVOPS_SAFE_ERRORS as exc:
+        logger.warning('ListExecutions failed for task %s: %s', task_id, exc)
+        return None
+    return execs[0].get('executionId') if execs else None
+
+
+def _latest_record(agent_space_id: str, execution_id: str, record_type: str) -> dict[str, Any] | None:
+    resp = _devops().list_journal_records(
+        agentSpaceId=agent_space_id, executionId=execution_id, recordType=record_type, order='DESC', limit=1,
+    )
+    records = resp.get('records') or []
+    return records[0] if records else None
+
+
+def _ui_children(node: dict[str, Any]) -> list[dict[str, Any]]:
+    return [c for c in node.get('children') or [] if isinstance(c, dict)]
+
+
+def _ui_text(node: dict[str, Any]) -> str:
+    text = node.get('text')
+    return text.strip() if isinstance(text, str) else ''
+
+
+def _ui_inline(node: dict[str, Any]) -> str:
+    text = _ui_text(node)
+    if node.get('type') == 'badge':
+        return f'`{text}`' if text else ''
+    parts = [text] + [_ui_inline(c) for c in _ui_children(node)]
+    return ' '.join(p for p in parts if p)
+
+
+def _ui_heading(node: dict[str, Any]) -> str:
+    if node.get('type') == 'card-title':
+        return '###'
+    try:
+        level = int((node.get('props') or {}).get('level') or 3)
+    except (TypeError, ValueError):
+        level = 3
+    return '#' * max(2, min(level + 1, 6))
+
+
+def _ui_markdown_blocks(node: dict[str, Any], blocks: list[str]) -> None:
+    kind = node.get('type')
+    children = _ui_children(node)
+    text = _ui_text(node)
+    if kind in ('card-title', 'title'):
+        line = _ui_inline(node)
+        blocks.append(f'{_ui_heading(node)} {line}' if line else '')
+    elif kind == 'container' and (node.get('props') or {}).get('layout') == 'horizontal':
+        line = _ui_inline(node)
+        if line and children and children[0].get('type') in ('card-title', 'title'):
+            line = f'{_ui_heading(children[0])} {line}'
+        blocks.append(line)
+    elif kind in ('markdown', 'text', 'card-description'):
+        blocks.append(text)
+    elif kind == 'badge':
+        blocks.append(_ui_inline(node))
+    elif kind == 'separator':
+        blocks.append('---')
+    elif kind == 'list':
+        blocks.append('\n'.join(f'- {_ui_inline(c)}' for c in children))
+    else:
+        blocks.append(text)
+        for child in children:
+            _ui_markdown_blocks(child, blocks)
+
+
+def _ui_summary_markdown(content: Any) -> str:
+    """Markdown for the summary card of a ui_investigation_summary record (a JSON UI tree)."""
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except json.JSONDecodeError:
+            return content.strip()
+    tree = content.get('content') if isinstance(content, dict) else None
+    if not isinstance(tree, dict):
+        return ''
+    card = next((c for c in _ui_children(tree) if c.get('id') == 'summary'), tree)
+    blocks: list[str] = []
+    _ui_markdown_blocks(card, blocks)
+    return '\n\n'.join(b for b in blocks if b.strip())
+
+
+def _final_summary(agent_space_id: str, execution_id: str) -> dict[str, Any] | None:
+    records = [_latest_record(agent_space_id, execution_id, t) for t in FINAL_SUMMARY_RECORDS]
+    records = [r for r in records if r and isinstance(r.get('content'), str) and r['content'].strip()]
+    if not records:
+        return None
+    return {
+        'content': '\n\n'.join(r['content'].strip() for r in records),
+        'updatedAt': _iso8601(max(r.get('createdAt') or 0 for r in records)),
+        'final': True,
+    }
+
+
+def _investigation_summary(agent_space_id: str, execution_id: str | None, task_status: str | None) -> dict[str, Any] | None:
+    """Latest live summary of an execution, or its final root cause and mitigation once the task completed."""
+    if not execution_id:
+        return None
+    if execution_id in _settled_summaries:
+        return _settled_summaries[execution_id]
+    try:
+        summary = _final_summary(agent_space_id, execution_id) if task_status == 'COMPLETED' else None
+        if summary is None:
+            record = _latest_record(agent_space_id, execution_id, LIVE_SUMMARY_RECORD)
+            content = _ui_summary_markdown(record.get('content')) if record else ''
+            if content:
+                summary = {'content': content, 'updatedAt': _iso8601(record.get('createdAt')), 'final': False}
+    except DEVOPS_SAFE_ERRORS as exc:
+        logger.warning('Summary lookup failed for execution %s: %s', execution_id, exc)
+        return None
+    if task_status in _TERMINAL_TASK_STATUSES:
+        if len(_settled_summaries) >= 500:
+            _settled_summaries.clear()
+        _settled_summaries[execution_id] = summary
+    return summary
+
+
 def _json(status: int, body: Any) -> dict[str, Any]:
     return {
         'statusCode': status,
@@ -171,34 +323,102 @@ def _json(status: int, body: Any) -> dict[str, Any]:
     }
 
 
+# Fields the dashboard, findings, compliance and command-palette views read. The detail page fetches the full item.
+_LIST_VIEW_FIELDS = (
+    'finding_uid', 'check_id', 'check_title', 'severity', 'status', 'service_name', 'resource_uid',
+    'region', 'account_id', 'scan_id', 'first_seen_at', 'last_seen_at', 'compliance_frameworks',
+    'status_history', 'suppressed_at', 'suppress_reason', 'suppressed_by', 'remediation_s3_key',
+)
+_SCAN_SEGMENTS = 8
+
+
+def _scan_segment(segment: int) -> list[dict[str, Any]]:
+    names = {f'#f{i}': f for i, f in enumerate(_LIST_VIEW_FIELDS)}
+    kwargs: dict[str, Any] = {
+        'TableName': TABLE.name,
+        'Segment': segment,
+        'TotalSegments': _SCAN_SEGMENTS,
+        'ProjectionExpression': ', '.join(names),
+        'ExpressionAttributeNames': names,
+    }
+    items: list[dict[str, Any]] = []
+    while True:
+        # The resource's client already converts DynamoDB attribute values to Python types.
+        resp = TABLE.meta.client.scan(**kwargs)
+        items.extend(resp.get('Items', []))
+        if not resp.get('LastEvaluatedKey'):
+            return items
+        kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+
+
+def _list_all_findings_slim() -> dict[str, Any]:
+    """Every finding with only the list-view fields, read with a parallel scan (the low-level client is thread-safe)."""
+    with ThreadPoolExecutor(max_workers=_SCAN_SEGMENTS) as pool:
+        segments = list(pool.map(_scan_segment, range(_SCAN_SEGMENTS)))
+    items = [it for seg in segments for it in seg]
+    return _json(200, {'items': items, 'count': len(items), 'next': None})
+
+
 def _list_findings(qs: dict[str, str]) -> dict[str, Any]:
+    if qs.get('view') == 'list' and not any(qs.get(k) for k in ('severity', 'status', 'next')):
+        return _list_all_findings_slim()
     severity = qs.get('severity')
     status = qs.get('status')
     limit = int(qs.get('limit', '50'))
     limit = max(1, min(limit, 500))
 
+    try:
+        start_key = _decode_cursor(qs.get('next'))
+    except ValueError:
+        return _json(400, {'error': 'invalid next cursor'})
+
     if severity:
-        resp = TABLE.query(
+        read = lambda **kw: TABLE.query(  # noqa: E731
             IndexName='severity-index',
             KeyConditionExpression=Key('severity').eq(severity.upper()),
-            Limit=limit,
-            ScanIndexForward=False,
-        )
+            ScanIndexForward=False, **kw)
     elif status:
-        resp = TABLE.query(
+        read = lambda **kw: TABLE.query(  # noqa: E731
             IndexName='status-index',
             KeyConditionExpression=Key('status').eq(status.upper()),
-            Limit=limit,
-            ScanIndexForward=False,
-        )
+            ScanIndexForward=False, **kw)
     else:
-        resp = TABLE.scan(Limit=limit)
+        read = TABLE.scan
 
-    items = resp.get('Items', [])
+    # DynamoDB stops each page at 1 MB (about 100 findings), so keep reading until `limit` is reached.
+    items: list[dict[str, Any]] = []
+    while True:
+        kwargs: dict[str, Any] = {'Limit': limit - len(items)}
+        if start_key:
+            kwargs['ExclusiveStartKey'] = start_key
+        resp = read(**kwargs)
+        items.extend(resp.get('Items', []))
+        start_key = resp.get('LastEvaluatedKey')
+        if not start_key or len(items) >= limit:
+            break
+
     # Strip raw payload from list view — it's huge.
     for i in items:
         i.pop('raw', None)
-    return _json(200, {'items': items, 'count': len(items)})
+    return _json(200, {'items': items, 'count': len(items), 'next': _encode_cursor(start_key)})
+
+
+def _encode_cursor(key: dict[str, Any] | None) -> str | None:
+    if not key:
+        return None
+    return base64.urlsafe_b64encode(json.dumps(key, default=str).encode()).decode()
+
+
+def _decode_cursor(cursor: str | None) -> dict[str, Any] | None:
+    if not cursor:
+        return None
+    try:
+        key = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, TypeError) as exc:
+        raise ValueError('bad cursor') from exc
+    if not isinstance(key, dict) or not all(isinstance(v, str) for v in key.values()):
+        raise ValueError('bad cursor')
+    return key
 
 
 def _get_finding(finding_uid: str) -> dict[str, Any]:
@@ -467,15 +687,12 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'tasks': [],
             'journal': [],
             'error': err,
+            'summary': None,
         })
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops_request(
-            f'/backlog/agent-space/{agent_space_id}/tasks/list',
-            {},
-        )
-        all_tasks = tasks_resp.get('tasks', [])
+        all_tasks = _list_backlog_tasks(agent_space_id)
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks failed: %s', exc)
         return _json(200, {
@@ -485,6 +702,7 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             'tasks': [],
             'journal': [],
             'agentSpaceId': agent_space_id,
+            'summary': None,
         })
 
     # Strict match: the backlog task belongs to this finding only if *both*
@@ -517,56 +735,41 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
             return True
         return False
 
-    matching = [t for t in all_tasks if _task_matches(t)]
+    # Newest first: a re-investigation is a new task, and the newest one is the investigation to report.
+    matching = sorted((t for t in all_tasks if _task_matches(t)), key=lambda t: _epoch(t.get('createdAt')), reverse=True)
+    current = _primary_task(matching[0], all_tasks) if matching else None
 
     journal = []
-    for task in matching[:3]:
-        exec_id = task.get('executionId')
+    execution_ids: dict[Any, str | None] = {}
+    sources = [current] + [t for t in matching if t is not current] if current else []
+    for task in sources[:3]:
+        exec_id = execution_ids[task.get('taskId')] = _execution_id(agent_space_id, task)
         if not exec_id:
-            # Task has no execution yet → try to resolve the latest execution
-            # via ListExecutions (POST /journal/agent-space/{id}/executions).
-            task_id = task.get('taskId')
-            if not task_id:
-                continue
-            try:
-                e = _devops_request(
-                    f'/journal/agent-space/{agent_space_id}/executions',
-                    {'taskId': task_id},
-                )
-                execs = e.get('executions', [])
-                if execs:
-                    exec_id = execs[0].get('executionId')
-            except DEVOPS_SAFE_ERRORS as exc:
-                logger.warning('ListExecutions failed for task %s: %s', task_id, exc)
-            if not exec_id:
-                continue
+            continue
         try:
-            j = _devops_request(
-                f'/journal/agent-space/{agent_space_id}/journalRecords',
-                {'executionId': exec_id},
-            )
+            j = _devops().list_journal_records(agentSpaceId=agent_space_id, executionId=exec_id)
             journal.extend(j.get('records', []))
         except DEVOPS_SAFE_ERRORS as exc:
             logger.warning('ListJournalRecords failed for %s: %s', exec_id, exc)
 
+    summary = None
+    current_exec_id = None
+    if current:
+        current_exec_id = execution_ids.get(current.get('taskId'))
+        summary = _investigation_summary(agent_space_id, current_exec_id, current.get('status'))
+
     # 'idle' means "no task has ever been dispatched for this finding".
     # 'pending' is only meaningful after a task has been queued.
-    if not matching:
+    if not current:
         status = 'idle'
     else:
-        statuses = {t.get('status') for t in matching}
-        if 'COMPLETED' in statuses:
-            status = 'completed'
-        elif any(s in statuses for s in ('IN_PROGRESS', 'RUNNING', 'ACTIVE')):
-            status = 'in_progress'
-        else:
-            status = 'pending'
+        status = _INVESTIGATION_STATUS.get((current.get('status') or '').upper(), 'pending')
 
     return _json(200, {
         'incidentId': incident_id,
         'status': status,
         'agentSpaceId': agent_space_id,
-        'executionId': (matching[0].get('executionId') if matching else None),
+        'executionId': current_exec_id,
         'tasks': [
             {
                 'taskId': t.get('taskId'),
@@ -581,12 +784,13 @@ def _get_investigation(finding_uid: str) -> dict[str, Any]:
         ],
         'journal': [
             {
-                'timestamp': r.get('timestamp'),
-                'type': r.get('type'),
+                'timestamp': _iso8601(r.get('createdAt')) or r.get('timestamp'),
+                'type': r.get('recordType') or r.get('type'),
                 'content': r.get('content'),
             }
             for r in journal[:50]  # cap payload
         ],
+        'summary': summary,
     })
 
 
@@ -741,11 +945,7 @@ def _list_investigations() -> dict[str, Any]:
 
     agent_space_id = _get_agent_space_id()
     try:
-        tasks_resp = _devops_request(
-            f'/backlog/agent-space/{agent_space_id}/tasks/list',
-            {},
-        )
-        all_tasks = tasks_resp.get('tasks', [])
+        all_tasks = _list_backlog_tasks(agent_space_id)
     except DEVOPS_SAFE_ERRORS as exc:
         logger.warning('ListBacklogTasks (investigations) failed: %s', exc)
         return _json(200, {'investigations': [], 'error': str(exc), 'status': 'error'})
@@ -824,6 +1024,12 @@ def _list_investigations() -> dict[str, Any]:
         if not existing or updated > (existing.get('updatedAt') or existing.get('createdAt') or ''):
             by_finding[matched_uid] = t
 
+    def _task_summary(task: dict[str, Any]) -> dict[str, Any] | None:
+        return _investigation_summary(agent_space_id, _execution_id(agent_space_id, task), task.get('status'))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        summaries = dict(zip(by_finding, pool.map(_task_summary, by_finding.values())))
+
     # Hydrate with check metadata from DynamoDB (best-effort).
     out: list[dict[str, Any]] = []
     for finding_uid, task in by_finding.items():
@@ -851,6 +1057,7 @@ def _list_investigations() -> dict[str, Any]:
             'severity': meta.get('severity'),
             'service_name': meta.get('service_name'),
             'resource_uid': meta.get('resource_uid'),
+            'summary': summaries.get(finding_uid),
         })
 
     out.sort(key=lambda r: (r.get('updatedAt') or r.get('createdAt') or ''), reverse=True)
@@ -863,7 +1070,29 @@ def _list_investigations() -> dict[str, Any]:
     })
 
 
+_GZIP_MIN_BYTES = 8192
+
+
 def handler(event, context):
+    resp = _route(event, context)
+    return _maybe_gzip(event, resp)
+
+
+def _maybe_gzip(event: dict[str, Any], resp: dict[str, Any]) -> dict[str, Any]:
+    """Gzip large JSON bodies when the browser accepts it (the findings list is ~15x smaller)."""
+    headers = {k.lower(): v for k, v in (event.get('headers') or {}).items()}
+    body = resp.get('body')
+    if (not isinstance(body, str) or resp.get('isBase64Encoded') or len(body) < _GZIP_MIN_BYTES
+            or 'gzip' not in (headers.get('accept-encoding') or '')):
+        return resp
+    out = dict(resp)
+    out['headers'] = {**(resp.get('headers') or {}), 'content-encoding': 'gzip', 'vary': 'accept-encoding'}
+    out['body'] = base64.b64encode(gzip.compress(body.encode('utf-8'), compresslevel=1)).decode('ascii')
+    out['isBase64Encoded'] = True
+    return out
+
+
+def _route(event, context):
     http = (event.get('requestContext') or {}).get('http') or {}
     method = (http.get('method') or '').upper()
     path = http.get('path') or '/'
