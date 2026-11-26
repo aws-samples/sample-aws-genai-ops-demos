@@ -179,17 +179,33 @@ export const listFindings = (filters: { severity?: string; status?: string; limi
   return signedFetch('GET', path) as Promise<{ items: Finding[]; count: number; next?: string | null }>;
 };
 
-/** Every finding, following the API's `next` cursor (each page is capped to keep responses under the Lambda limit). */
-export const listAllFindings = async (filters: { severity?: string; status?: string } = {}) => {
+const ALL_FINDINGS_TTL_MS = 10_000;
+let allFindingsCache: { at: number; promise: Promise<{ items: Finding[]; count: number }> } | null = null;
+
+async function fetchAllFindings() {
+  // view=list returns every finding with only the list fields; `next` is followed in case an older API is deployed.
   const items: Finding[] = [];
   let next: string | null | undefined;
   for (let page = 0; page < 100; page++) {
-    const r = await listFindings({ ...filters, limit: 500, next: next ?? undefined });
+    const qs = new URLSearchParams({ view: 'list', limit: '500' });
+    if (next) qs.set('next', next);
+    const r = (await signedFetch('GET', `/findings?${qs}`)) as { items: Finding[]; next?: string | null };
     items.push(...(r.items || []));
     next = r.next;
     if (!next) break;
   }
   return { items, count: items.length };
+}
+
+/** Every finding (list fields only). Pages opened within a few seconds of each other share one request. */
+export const listAllFindings = (opts: { force?: boolean } = {}) => {
+  const now = Date.now();
+  if (opts.force || !allFindingsCache || now - allFindingsCache.at > ALL_FINDINGS_TTL_MS) {
+    const promise = fetchAllFindings();
+    allFindingsCache = { at: now, promise };
+    promise.catch(() => { if (allFindingsCache?.promise === promise) allFindingsCache = null; });
+  }
+  return allFindingsCache.promise;
 };
 
 export const getFinding = (findingUid: string) =>

@@ -272,11 +272,11 @@ export default function Findings() {
     setSearchParams(next, { replace: true });
   }, [query, frameworkFilter, groupByCheck, setSearchParams]);
 
-  async function load() {
+  async function load(force = false) {
     setLoading(true);
     setError(null);
     try {
-      const res = await listAllFindings();
+      const res = await listAllFindings({ force });
       setItems(res.items || []);
     } catch (e: any) {
       setError(e?.message || 'Failed to load findings');
@@ -384,7 +384,7 @@ export default function Findings() {
     );
     setBulkBusy(null);
     setSelected([]);
-    await load();
+    await load(true);
   }
 
   async function bulkInvestigate() {
@@ -425,7 +425,7 @@ export default function Findings() {
               >
                 Group by check
               </Button>
-              <Button iconName="refresh" onClick={load} loading={loading} ariaLabel="Refresh findings">Refresh</Button>
+              <Button iconName="refresh" onClick={() => load(true)} loading={loading} ariaLabel="Refresh findings">Refresh</Button>
             </SpaceBetween>
           }
         >
@@ -435,7 +435,7 @@ export default function Findings() {
     >
       <SpaceBetween size="l">
         {error && (
-          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={load}>Retry</Button>}>
+          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={() => load(true)}>Retry</Button>}>
             {error}
           </Alert>
         )}

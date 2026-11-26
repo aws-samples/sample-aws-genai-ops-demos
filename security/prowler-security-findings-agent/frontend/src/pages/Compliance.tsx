@@ -74,11 +74,11 @@ export default function Compliance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  async function load(force = false) {
     setLoading(true);
     setError(null);
     try {
-      const r = await listAllFindings();
+      const r = await listAllFindings({ force });
       setItems(r.items || []);
     } catch (e: any) {
       setError(e?.message || 'Failed to load findings');
@@ -149,7 +149,7 @@ export default function Compliance() {
     >
       <SpaceBetween size="l">
         {error && (
-          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={load}>Retry</Button>}>
+          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={() => load(true)}>Retry</Button>}>
             {error}
           </Alert>
         )}

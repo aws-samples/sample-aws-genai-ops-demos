@@ -100,12 +100,12 @@ export default function Dashboard() {
   const [message, setMessage] = useState<string | null>(null);
   const [showAllServices, setShowAllServices] = useState(false);
 
-  async function load() {
+  async function load(force = false) {
     setLoading(true);
     setError(null);
     try {
       const [res, sc, rn] = await Promise.all([
-        listAllFindings(),
+        listAllFindings({ force }),
         listScans(),
         listRunningScans(),
       ]);
@@ -137,7 +137,7 @@ export default function Dashboard() {
     if (!hasActiveScan) return;
     const id = setInterval(() => {
       refreshRunning();
-      listAllFindings().then((r) => setFindings(r.items || [])).catch(() => {});
+      listAllFindings({ force: true }).then((r) => setFindings(r.items || [])).catch(() => {});
     }, 10000);
     return () => clearInterval(id);
   }, [hasActiveScan]);
@@ -343,7 +343,7 @@ export default function Dashboard() {
           }
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={load} loading={loading} ariaLabel="Refresh dashboard data">Refresh</Button>
+              <Button iconName="refresh" onClick={() => load(true)} loading={loading} ariaLabel="Refresh dashboard data">Refresh</Button>
               <Button variant="primary" onClick={startScan} loading={starting || activeScanCount > 0} disabled={activeScanCount > 0}>
                 {activeScanCount > 0 ? `Scan running (${activeScanCount})` : 'Run scan now'}
               </Button>
@@ -356,7 +356,7 @@ export default function Dashboard() {
     >
       <SpaceBetween size="l">
         {error && (
-          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={load}>Retry</Button>}>
+          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={() => load(true)}>Retry</Button>}>
             {error}
           </Alert>
         )}
