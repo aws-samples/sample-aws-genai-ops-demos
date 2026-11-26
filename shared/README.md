@@ -372,6 +372,7 @@ Automates CDK bootstrap, dependency installation, and deployment:
 - `-StackName` / `--stack-name`: Specific stack to deploy (optional)
 - `-DestroyStack` / `--destroy`: Destroy stack instead of deploying
 - `-SkipBootstrap` / `--skip-bootstrap`: Skip CDK bootstrap check
+- `-CdkContext` / `--cdk-context key=value`: CDK context entry, repeatable; passed to `cdk deploy` / `cdk destroy` as `--context key=value`, value unchanged
 
 **Features**:
 - Automatically detects Python or TypeScript CDK projects
