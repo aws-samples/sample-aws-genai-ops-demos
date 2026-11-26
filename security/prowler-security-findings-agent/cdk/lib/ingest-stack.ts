@@ -18,6 +18,8 @@ export interface IngestStackProps extends cdk.StackProps {
    * false (default) → the dashboard user drives investigation manually, one finding at a time.
    */
   autoInvestigate?: boolean;
+  /** Also ingest the partial reports event-driven scans write under event-reports/. */
+  eventScans?: boolean;
 }
 
 /**
@@ -174,6 +176,14 @@ export class IngestStack extends cdk.Stack {
       new s3n.LambdaDestination(ingestLambda),
       { prefix: 'raw-reports/', suffix: '.ocsf.json' },
     );
+    if (props.eventScans) {
+      // Separate prefix: the dashboard lists raw-reports/ prefixes as full scans.
+      rawBucket.addEventNotification(
+        s3.EventType.OBJECT_CREATED,
+        new s3n.LambdaDestination(ingestLambda),
+        { prefix: 'event-reports/', suffix: '.ocsf.json' },
+      );
+    }
 
     new cdk.CfnOutput(this, 'IngestLambdaArn', { value: ingestLambda.functionArn });
     this.remediationLambdaArn = remediationLambda.functionArn;

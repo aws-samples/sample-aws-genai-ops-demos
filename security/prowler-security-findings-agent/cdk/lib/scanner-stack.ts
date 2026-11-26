@@ -8,12 +8,15 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import { Construct } from 'constructs';
+import { EventScanTrigger } from './event-scan-trigger';
 
 export interface ScannerStackProps extends cdk.StackProps {
   rawReportsBucketName: string;
   scanSchedule: string;
   /** Run the task in private subnets behind a NAT gateway instead of public subnets. */
   natGateway?: boolean;
+  /** Start targeted scans from risky CloudTrail write calls (see event-scan-trigger.ts). */
+  eventScans?: boolean;
 }
 
 /**
@@ -39,6 +42,9 @@ export interface ScannerStackProps extends cdk.StackProps {
  * gateway instead. Needed in accounts where VPC Block Public Access is set to
  * `block-ingress`, which drops replies to traffic sent straight through the
  * internet gateway, so the task can't reach ECR.
+ *
+ * With `eventScans: true` an EventScanTrigger also starts targeted runs of the
+ * same task definition when risky CloudTrail write calls happen.
  */
 export class ScannerStack extends cdk.Stack {
   public readonly clusterArn: string;
@@ -247,5 +253,18 @@ export class ScannerStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ScannerSubnetIds', { value: this.subnetIds.join(',') });
     new cdk.CfnOutput(this, 'ScannerSecurityGroupId', { value: this.securityGroupId });
     new cdk.CfnOutput(this, 'ScannerAssignPublicIp', { value: natGateway ? 'DISABLED' : 'ENABLED' });
+
+    if (props.eventScans) {
+      const eventScans = new EventScanTrigger(this, 'EventScans', {
+        cluster,
+        taskDefinition,
+        subnetIds: this.subnetIds,
+        securityGroup,
+        assignPublicIp: this.assignPublicIp,
+      });
+      new cdk.CfnOutput(this, 'EventScanQueueUrl', { value: eventScans.queue.queueUrl });
+      new cdk.CfnOutput(this, 'EventScanDeadLetterQueueUrl', { value: eventScans.deadLetterQueue.queueUrl });
+      new cdk.CfnOutput(this, 'EventScanTriggerFunctionName', { value: eventScans.function.functionName });
+    }
   }
 }

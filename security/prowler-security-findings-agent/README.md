@@ -149,11 +149,52 @@ All stack IDs include the region suffix for multi-region deployments.
 | `ProwlerSecurityData-{region}` | State | DynamoDB `prowler-security-findings` (PK `finding_uid`, GSIs `severity-index` + `status-index`), S3 raw-reports + remediations buckets |
 | `ProwlerSecurityAuth-{region}` | Auth | Cognito User Pool + Identity Pool + authenticated IAM role |
 | `ProwlerSecurityDevOpsAgent-{region}` | Agent webhook | SNS topic, HMAC-SHA256 Lambda, Secrets Manager secret |
-| `ProwlerSecurityScanner-{region}` | Prowler | ECR repo, CodeBuild image build, ECS cluster + Fargate Task Definition (SecurityAudit + ViewOnlyAccess), EventBridge schedule |
+| `ProwlerSecurityScanner-{region}` | Prowler | ECR repo, CodeBuild image build, ECS cluster + Fargate Task Definition (SecurityAudit + ViewOnlyAccess), EventBridge schedule; with `eventScans`, the event-scan rules, SQS queues and trigger Lambda |
 | `ProwlerSecurityIngest-{region}` | Pipeline | `ingest-findings` Lambda (S3-triggered), `remediation-context` Lambda (Bedrock Converse / Nova Lite 2) |
 | `ProwlerSecurityApi-{region}` | Dashboard API | `dashboard-api` Lambda with IAM-auth Function URL (SigV4 from browser). Routes findings, scans, cost events, investigations, suppressions, insights |
 | `ProwlerSecurityObservability-{region}` | Metrics | CloudWatch Dashboard stitching Lambda invocations, Bedrock tokens, DynamoDB RCU/WCU, and Fargate scan runs into one pane |
 | `ProwlerSecurityFrontend-{region}` | Dashboard | CloudFront + S3 website + OAC |
+
+## Event-driven scans (opt-in)
+
+Scheduled and on-demand scans report what was wrong when they ran. Event-driven scans re-check the resource a risky API call touched, a few minutes after the call. This is a do-it-yourself take on [Prowler Realtime](https://docs.prowler.com/user-guide/tutorials/prowler-cloud-realtime), which is a Prowler Cloud feature (added in 5.48.0) and not part of the open-source CLI this demo runs. It only detects and records; it does not remediate. It is off by default.
+
+```bash
+export EVENT_SCANS=true          # deploy-all passes -c eventScans=true to CDK
+bash deploy-all.sh
+```
+
+Deploying with the CDK directly works too: run `npx cdk deploy --exclusively ProwlerSecurityScanner-{region} ProwlerSecurityIngest-{region} -c eventScans=true`, keep the `-c` flags of your previous deploy (for example `-c scannerNatGateway=true`), and rebuild the scanner image with `scripts/build-scanner-image.sh` so the task understands `SCAN_MODE=event`.
+
+**Requirement: a CloudTrail trail.** EventBridge only receives `AWS API Call via CloudTrail` events when the account has a trail with logging on that records write management events in the region (`aws cloudtrail describe-trails`, then `aws cloudtrail get-trail-status --name <trail>` should show `IsLogging: true`). IAM calls and S3 account-level Block Public Access calls are delivered to `us-east-1` only, so those rules fire only when the demo is deployed in `us-east-1`.
+
+**How it works.** One EventBridge rule per row below sends matching calls (successful ones only) to an SQS queue. The `prowler-security-event-scan-trigger` Lambda reads what the queue collected over a 60-second batching window, resolves the resource each call touched, and coalesces the batch into one Fargate task per scan group. The task runs the existing task definition with container overrides (`SCAN_MODE=event`), which run `prowler aws --checks <ids> --resource-arn <arns>` with the scanner's own subnets and public IP setting. The rules, check IDs and resolvers live in [`cdk/lambda/event-scan-trigger/rules.json`](cdk/lambda/event-scan-trigger/rules.json).
+
+| CloudTrail calls | Scanned resource | Prowler checks |
+|---|---|---|
+| `AuthorizeSecurityGroupIngress`, `ModifySecurityGroupRules`, `RevokeSecurityGroupIngress` | Security group, plus its VPC | 20 `ec2_securitygroup_*` checks: internet ingress to all ports, any port, any port from an IP, high-risk ports, 22, 3389 and 12 database or service ports, wide-open IPv4, default group restricts traffic |
+| `PutBucketPolicy`, `DeleteBucketPolicy`, `PutBucketAcl`, `PutBucketPublicAccessBlock`, `DeleteBucketPublicAccessBlock` | S3 bucket | `s3_bucket_public_access`, `s3_bucket_policy_public_write_access`, `s3_bucket_public_write_acl`, `s3_bucket_public_list_acl`, `s3_bucket_level_public_access_block`, `s3_bucket_cross_account_access` |
+| `PutAccountPublicAccessBlock`, `DeleteAccountPublicAccessBlock` | Account S3 Block Public Access | `s3_account_level_public_access_blocks` |
+| `AttachUserPolicy`, `DetachUserPolicy` | IAM user (ARN with path) | `iam_user_administrator_access_policy` |
+| `AddPermission*`, `RemovePermission*`, `CreateFunctionUrlConfig*`, `UpdateFunctionUrlConfig*` | Lambda function (unqualified) | `awslambda_function_not_publicly_accessible`, `awslambda_function_url_public`, `awslambda_function_url_cors_policy` |
+| `ModifyDBInstance` (held 10 minutes) | Every RDS instance in the event's region | `rds_instance_no_public_access` |
+
+The revoke and delete calls are included so a fix shows up as **Fixed** without waiting for the next full scan.
+
+**Where partial reports land.** An event scan writes `event-reports/{scan_id}/{account}.ocsf.json`, with a scan ID such as `20261125T193512Z-event-ec2-securitygroup-1a2b3c`, never `raw-reports/`. The Dashboard scan history lists `raw-reports/` prefixes, so it keeps showing full scans only; event reports expire with the bucket's 90-day lifecycle rule like full ones. Ingest upserts the reported findings by `finding_uid`, which is the same check and resource as in a full scan, so their status, status history (New, Fixed and Regressed badges), `last_seen_at` and `scan_id` update. Findings missing from a partial report are left untouched, since ingest has no "missing means resolved" step. Event runs pass `-S --skip-sh-update` so Security Hub gets the re-checked findings; without `--skip-sh-update` Prowler would archive every Prowler finding the partial run did not report. Because a finding's `scan_id` names the last scan that saw it, filtering Findings by a full scan's ID leaves out findings re-checked since.
+
+**Limitations.**
+
+- `--resource-arn` filters every resource Prowler loads, not just the one being checked. Security group checks skip a group whose VPC is filtered out, so the trigger adds the VPC ARN. They also skip groups with no network interface, as full scans do, so a new unattached group produces no finding.
+- `rds_instance_no_public_access` reads the instance's security groups and subnets, which an ARN-scoped run would filter out, and Prowler drops RDS checks when RDS and EC2 ARNs share a run. RDS events therefore run that check for the whole region. `ModifyDBInstance` applies changes asynchronously, so a delay queue holds RDS events for 10 minutes; a change that takes longer is picked up by the next scheduled scan.
+- Calls whose checks would not reflect the change are not mapped: access-key and console-login checks read the IAM credential report, which IAM regenerates at most every 4 hours (`CreateAccessKey`, `CreateLoginProfile`), and Prowler drops inline-policy checks when the scan targets a user ARN (`PutUserPolicy`).
+- While an event scan runs (about 2 minutes), the Dashboard lists it under running scans and disables **Run scan now**.
+- The mapping was verified against Prowler 5.52.0 (`prowlerVersion` in `rules.json`). Before the scanner image moves to another Prowler version, install that version locally and run the trigger tests. With Prowler installed they also check that every mapped check exists, that it survives Prowler's ARN-based check selection, and that `prowlerVersion` matches; bump it once the rest passes:
+
+  ```bash
+  cd cdk/lambda/event-scan-trigger
+  python3 -m unittest discover -s tests   # needs boto3; install prowler to run the compatibility tests
+  ```
 
 ## Project Structure
 
@@ -169,6 +210,7 @@ prowler-security-findings-agent/
 │   │   ├── auth-stack.ts
 │   │   ├── devops-agent-stack.ts       ← mirrors observability/eks-investigation-devops-agent
 │   │   ├── scanner-stack.ts
+│   │   ├── event-scan-trigger.ts        ← opt-in event-driven scans (EventBridge → SQS → Lambda → RunTask)
 │   │   ├── ingest-stack.ts
 │   │   ├── api-stack.ts
 │   │   ├── observability-stack.ts       ← CloudWatch Dashboard
@@ -178,6 +220,7 @@ prowler-security-findings-agent/
 │       ├── ingest-findings/index.py
 │       ├── remediation-context/index.py
 │       ├── devops-agent-trigger/index.py
+│       ├── event-scan-trigger/          ← index.py, rules.json (event → checks mapping), tests/
 │       └── dashboard-api/index.py
 ├── scanner/
 │   ├── Dockerfile                      ← FROM toniblyx/prowler
@@ -238,6 +281,10 @@ All costs approximate, `us-east-1` pricing.
 - Fargate task: 1 vCPU, 2 GB RAM, ~5 min runtime → ~$0.02
 - **Nova Lite 2 remediation** (Converse API, 1 call per finding you click "Generate AI Insights" on): ~$0.0002–0.001 per finding depending on OCSF size
 - CodeBuild: only runs on image rebuilds
+
+### Event-driven scans (opt-in, ~$0.002 per scan)
+
+Nothing is added while the account is quiet: the EventBridge rules, SQS queues and trigger Lambda have no idle cost, and EventBridge does not charge for AWS management events delivered to targets in the same account. Each coalesced batch starts one short Fargate task (about 2 minutes, ~$0.002). With `SCANNER_NAT_GATEWAY=true`, every task also pulls the ~0.5 GB scanner image through the NAT gateway, about $0.02 of NAT data processing per scan. The Cost page logs each event scan that uploads a report at the same $0.02 estimate as a full scan. A trail's first copy of management events is free; you pay only for its S3 storage.
 
 ### DevOps Agent usage
 

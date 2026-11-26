@@ -1,0 +1,115 @@
+{
+  "prowlerVersion": "5.52.0",
+  "rules": [
+    {
+      "id": "ec2-security-group-ingress",
+      "group": "ec2-securitygroup",
+      "source": "aws.ec2",
+      "eventNames": [
+        "AuthorizeSecurityGroupIngress",
+        "ModifySecurityGroupRules",
+        "RevokeSecurityGroupIngress"
+      ],
+      "resolver": "security_group",
+      "checks": [
+        "ec2_securitygroup_allow_ingress_from_internet_to_all_ports",
+        "ec2_securitygroup_allow_ingress_from_internet_to_any_port",
+        "ec2_securitygroup_allow_ingress_from_internet_to_any_port_from_ip",
+        "ec2_securitygroup_allow_ingress_from_internet_to_high_risk_tcp_ports",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_22",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_3389",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_cassandra_7199_9160_8888",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_elasticsearch_kibana_9200_9300_5601",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_ftp_20_21",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_kafka_9092",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_memcached_11211",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_mongodb_27017_27018",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_mysql_3306",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_oracle_1521_2483",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_postgres_5432",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_redis_6379",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_sql_server_1433_1434",
+        "ec2_securitygroup_allow_ingress_from_internet_to_tcp_port_telnet_23",
+        "ec2_securitygroup_allow_wide_open_public_ipv4",
+        "ec2_securitygroup_default_restrict_traffic"
+      ]
+    },
+    {
+      "id": "s3-bucket-public-access",
+      "group": "s3",
+      "source": "aws.s3",
+      "eventNames": [
+        "PutBucketPolicy",
+        "DeleteBucketPolicy",
+        "PutBucketAcl",
+        "PutBucketPublicAccessBlock",
+        "DeleteBucketPublicAccessBlock"
+      ],
+      "resolver": "s3_bucket",
+      "checks": [
+        "s3_bucket_public_access",
+        "s3_bucket_policy_public_write_access",
+        "s3_bucket_public_write_acl",
+        "s3_bucket_public_list_acl",
+        "s3_bucket_level_public_access_block",
+        "s3_bucket_cross_account_access"
+      ]
+    },
+    {
+      "id": "s3-account-public-access-block",
+      "group": "s3",
+      "source": "aws.s3",
+      "eventNames": [
+        "PutAccountPublicAccessBlock",
+        "DeleteAccountPublicAccessBlock"
+      ],
+      "resolver": "s3_account",
+      "checks": [
+        "s3_account_level_public_access_blocks"
+      ]
+    },
+    {
+      "id": "iam-user-admin-policy",
+      "group": "iam-user",
+      "source": "aws.iam",
+      "eventNames": [
+        "AttachUserPolicy",
+        "DetachUserPolicy"
+      ],
+      "resolver": "iam_user",
+      "checks": [
+        "iam_user_administrator_access_policy"
+      ]
+    },
+    {
+      "id": "lambda-function-public-access",
+      "group": "awslambda-function",
+      "source": "aws.lambda",
+      "eventNamePrefixes": [
+        "AddPermission",
+        "RemovePermission",
+        "CreateFunctionUrlConfig",
+        "UpdateFunctionUrlConfig"
+      ],
+      "resolver": "lambda_function",
+      "checks": [
+        "awslambda_function_not_publicly_accessible",
+        "awslambda_function_url_public",
+        "awslambda_function_url_cors_policy"
+      ]
+    },
+    {
+      "id": "rds-instance-public-access",
+      "group": "rds-instance",
+      "source": "aws.rds",
+      "eventNames": [
+        "ModifyDBInstance"
+      ],
+      "resolver": "region",
+      "checks": [
+        "rds_instance_no_public_access"
+      ],
+      "delaySeconds": 600
+    }
+  ]
+}
