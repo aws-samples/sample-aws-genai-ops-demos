@@ -20,6 +20,7 @@ Routes (matched against event['requestContext']['http']['path'] + method):
 """
 
 import base64
+import gzip
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from urllib.parse import unquote
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import TypeDeserializer
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -322,7 +324,45 @@ def _json(status: int, body: Any) -> dict[str, Any]:
     }
 
 
+# Fields the dashboard, findings, compliance and command-palette views read. The detail page fetches the full item.
+_LIST_VIEW_FIELDS = (
+    'finding_uid', 'check_id', 'check_title', 'severity', 'status', 'service_name', 'resource_uid',
+    'region', 'account_id', 'scan_id', 'first_seen_at', 'last_seen_at', 'compliance_frameworks',
+    'status_history', 'suppressed_at', 'suppress_reason', 'suppressed_by', 'remediation_s3_key',
+)
+_SCAN_SEGMENTS = 8
+_deserializer = TypeDeserializer()
+
+
+def _scan_segment(segment: int) -> list[dict[str, Any]]:
+    names = {f'#f{i}': f for i, f in enumerate(_LIST_VIEW_FIELDS)}
+    kwargs: dict[str, Any] = {
+        'TableName': TABLE.name,
+        'Segment': segment,
+        'TotalSegments': _SCAN_SEGMENTS,
+        'ProjectionExpression': ', '.join(names),
+        'ExpressionAttributeNames': names,
+    }
+    items: list[dict[str, Any]] = []
+    while True:
+        resp = TABLE.meta.client.scan(**kwargs)
+        items.extend({k: _deserializer.deserialize(v) for k, v in it.items()} for it in resp.get('Items', []))
+        if not resp.get('LastEvaluatedKey'):
+            return items
+        kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+
+
+def _list_all_findings_slim() -> dict[str, Any]:
+    """Every finding with only the list-view fields, read with a parallel scan (the low-level client is thread-safe)."""
+    with ThreadPoolExecutor(max_workers=_SCAN_SEGMENTS) as pool:
+        segments = list(pool.map(_scan_segment, range(_SCAN_SEGMENTS)))
+    items = [it for seg in segments for it in seg]
+    return _json(200, {'items': items, 'count': len(items), 'next': None})
+
+
 def _list_findings(qs: dict[str, str]) -> dict[str, Any]:
+    if qs.get('view') == 'list' and not any(qs.get(k) for k in ('severity', 'status', 'next')):
+        return _list_all_findings_slim()
     severity = qs.get('severity')
     status = qs.get('status')
     limit = int(qs.get('limit', '50'))
@@ -1031,7 +1071,29 @@ def _list_investigations() -> dict[str, Any]:
     })
 
 
+_GZIP_MIN_BYTES = 8192
+
+
 def handler(event, context):
+    resp = _route(event, context)
+    return _maybe_gzip(event, resp)
+
+
+def _maybe_gzip(event: dict[str, Any], resp: dict[str, Any]) -> dict[str, Any]:
+    """Gzip large JSON bodies when the browser accepts it (the findings list is ~15x smaller)."""
+    headers = {k.lower(): v for k, v in (event.get('headers') or {}).items()}
+    body = resp.get('body')
+    if (not isinstance(body, str) or resp.get('isBase64Encoded') or len(body) < _GZIP_MIN_BYTES
+            or 'gzip' not in (headers.get('accept-encoding') or '')):
+        return resp
+    out = dict(resp)
+    out['headers'] = {**(resp.get('headers') or {}), 'content-encoding': 'gzip', 'vary': 'accept-encoding'}
+    out['body'] = base64.b64encode(gzip.compress(body.encode('utf-8'), compresslevel=5)).decode('ascii')
+    out['isBase64Encoded'] = True
+    return out
+
+
+def _route(event, context):
     http = (event.get('requestContext') or {}).get('http') or {}
     method = (http.get('method') or '').upper()
     path = http.get('path') or '/'
