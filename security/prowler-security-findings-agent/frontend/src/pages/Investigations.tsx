@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -12,16 +12,30 @@ import {
   StatusIndicator,
   Table,
 } from '@cloudscape-design/components';
-import { InvestigationSummary, listInvestigations } from '../api';
+import { InvestigationSummary, LiveSummary, listInvestigations } from '../api';
 import { SEVERITY_ORDER } from '../theme';
 import { AGENT_SKILLS } from '../agent-skills';
+import { SeverityBadge } from '../ui';
+import { hasSummary, isTaskRunning, taskState } from '../investigation-status';
+
+// Loaded only when an investigation has a summary: it brings react-markdown.
+const LiveSummaryList = lazy(() => import('../LiveSummary').then((m) => ({ default: m.LiveSummaryList })));
+
+const STATUS_LABELS: Record<string, string> = {
+  FAILED: 'Failed',
+  ERROR: 'Failed',
+  TIMED_OUT: 'Timed out',
+  CANCELED: 'Canceled',
+  CANCELLED: 'Canceled',
+  SKIPPED: 'Skipped',
+};
 
 function statusIndicator(status?: string) {
   const s = (status || '').toUpperCase();
   if (s === 'COMPLETED') return <StatusIndicator type="success">Completed</StatusIndicator>;
   if (s === 'IN_PROGRESS' || s === 'RUNNING' || s === 'ACTIVE') return <StatusIndicator type="in-progress">In progress</StatusIndicator>;
-  if (s === 'FAILED' || s === 'ERROR') return <StatusIndicator type="error">Failed</StatusIndicator>;
-  if (s === 'PENDING') return <StatusIndicator type="pending">Pending</StatusIndicator>;
+  if (taskState(s) === 'failed') return <StatusIndicator type="error">{STATUS_LABELS[s]}</StatusIndicator>;
+  if (taskState(s) === 'running') return <StatusIndicator type="pending">Pending</StatusIndicator>;
   return <StatusIndicator type="info">{status || 'unknown'}</StatusIndicator>;
 }
 
@@ -38,7 +52,7 @@ function SkillField({
 }) {
   return (
     <div>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--soc-fg-muted)', marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>{label}</span>
         <Button
           variant="inline-link"
@@ -70,22 +84,36 @@ export default function Investigations() {
   const [error, setError] = useState<string | null>(null);
   const [agentSpaceId, setAgentSpaceId] = useState<string | undefined>();
 
-  async function load() {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const r = await listInvestigations();
       setItems(r.investigations || []);
       setAgentSpaceId(r.agentSpaceId);
-      if (r.error) setError(r.error);
+      if (r.error && !silent) setError(r.error);
     } catch (e: any) {
-      setError(e?.message || 'Failed to load investigations');
+      if (!silent) setError(e?.message || 'Failed to load investigations');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const anyRunning = items.some((it) => isTaskRunning(it.status));
+  useEffect(() => {
+    if (!anyRunning) return;
+    const id = window.setInterval(() => load(true), 10000);
+    return () => window.clearInterval(id);
+  }, [anyRunning, load]);
+
+  const withSummary = items
+    .filter((it): it is InvestigationSummary & { summary: LiveSummary } => hasSummary(it.summary))
+    .sort((a, b) => Number(isTaskRunning(b.status)) - Number(isTaskRunning(a.status))
+      || (b.summary.updatedAt || '').localeCompare(a.summary.updatedAt || ''));
 
   const operatorBase = agentSpaceId ? `https://${agentSpaceId}.aidevops.global.app.aws` : null;
 
@@ -95,7 +123,7 @@ export default function Investigations() {
         <Header
           variant="h1"
           description="Every finding that's been dispatched to AWS DevOps Agent from this demo. Click a row to re-open the finding detail with the full agent journal."
-          actions={<Button iconName="refresh" onClick={load} loading={loading}>Refresh</Button>}
+          actions={<Button iconName="refresh" onClick={() => load()} loading={loading}>Refresh</Button>}
         >
           DevOps Agent investigations
         </Header>
@@ -114,6 +142,21 @@ export default function Investigations() {
           </Alert>
         )}
 
+        {withSummary.length > 0 && (
+          <Suspense fallback={null}>
+            <LiveSummaryList
+              onFollow={navigate}
+              items={withSummary.map((it) => ({
+                id: it.finding_uid,
+                heading: it.check_title || it.check_id || it.title || it.finding_uid,
+                href: `/findings/${encodeURIComponent(it.finding_uid)}`,
+                summary: it.summary,
+                state: taskState(it.status),
+              }))}
+            />
+          </Suspense>
+        )}
+
         <Table
           loading={loading}
           loadingText="Querying DevOps Agent backlog…"
@@ -127,7 +170,7 @@ export default function Investigations() {
               id: 'severity',
               header: 'Severity',
               cell: (it) => (it.severity
-                ? <span className={`soc-severity-chip soc-severity-chip--${it.severity}`}>{it.severity}</span>
+                ? <SeverityBadge severity={it.severity} />
                 : <Box color="text-status-inactive" variant="small">—</Box>),
               sortingField: 'severity',
               sortingComparator: (a, b) => (SEVERITY_ORDER[a.severity ?? ''] ?? 99) - (SEVERITY_ORDER[b.severity ?? ''] ?? 99),

@@ -10,3 +10,7 @@ cdk/cdk.context.json
 .playwright-mcp
 # UI audit screenshots / snapshots — captured ad-hoc; not part of the demo
 ui-audit/
+
+# The repo root ignores lockfiles. This one is committed so the frontend installs the exact
+# Cloudscape versions the One Theme port (frontend/src/one-theme) was generated for.
+!frontend/package-lock.json

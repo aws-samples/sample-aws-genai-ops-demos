@@ -9,7 +9,7 @@ import {
   Header,
   SpaceBetween,
 } from '@cloudscape-design/components';
-import { Finding, listFindings } from '../api';
+import { Finding, listAllFindings } from '../api';
 import { COLOR } from '../theme';
 
 import { FRAMEWORKS, matchesFramework } from '../frameworks';
@@ -58,7 +58,6 @@ function Ring({ pct, size = 160 }: { pct: number; size?: number }) {
         x="50%"
         y={cy - 2}
         textAnchor="middle"
-        fontFamily="Inter, -apple-system, sans-serif"
         fontSize={size * 0.22}
         fontWeight={700}
         fill={COLOR.fg}
@@ -75,11 +74,11 @@ export default function Compliance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  async function load(force = false) {
     setLoading(true);
     setError(null);
     try {
-      const r = await listFindings({ limit: 500 });
+      const r = await listAllFindings({ force });
       setItems(r.items || []);
     } catch (e: any) {
       setError(e?.message || 'Failed to load findings');
@@ -119,7 +118,7 @@ export default function Compliance() {
           <div className="soc-compliance-hero">
             <div style={{ textAlign: 'center' }}>
               <Ring pct={overallPct} size={220} />
-              <div style={{ color: COLOR.fgMuted, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 6 }}>
+              <div className="soc-ring-label">
                 Overall posture
               </div>
             </div>
@@ -150,7 +149,7 @@ export default function Compliance() {
     >
       <SpaceBetween size="l">
         {error && (
-          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={load}>Retry</Button>}>
+          <Alert type="error" dismissible onDismiss={() => setError(null)} action={<Button onClick={() => load(true)}>Retry</Button>}>
             {error}
           </Alert>
         )}
@@ -172,25 +171,25 @@ export default function Compliance() {
                   flexDirection: 'column',
                   gap: 6,
                   padding: 16,
-                  opacity: fw.total === 0 ? 0.4 : 1,
+                  opacity: fw.total === 0 ? 0.65 : 1,
                   cursor: fw.total === 0 ? 'default' : 'pointer',
                   alignItems: 'stretch',
                 }}
               >
-                <div style={{ color: COLOR.fg, fontWeight: 700, fontSize: 14 }}>{fw.label}</div>
-                <div style={{ color: COLOR.fgDim, fontSize: 11, lineHeight: 1.3 }}>{fw.description}</div>
+                <div style={{ color: COLOR.fg, fontWeight: 600, fontSize: 16 }}>{fw.label}</div>
+                <div style={{ color: COLOR.fgDim, fontSize: 12, lineHeight: 1.4 }}>{fw.description}</div>
                 <div style={{ width: '100%', marginTop: 4, textAlign: 'center' }}>
                   {fw.total > 0 ? (
                     <Ring pct={fw.pct} size={160} />
                   ) : (
                     <Box color="text-status-inactive" textAlign="center" padding={{ vertical: 'l' }}>
-                      <div style={{ fontSize: 11 }}>no checks mapped</div>
+                      <div style={{ fontSize: 12 }}>No checks mapped</div>
                     </Box>
                   )}
                 </div>
                 {fw.total > 0 && (
-                  <div style={{ color: COLOR.fgMuted, fontSize: 11 }}>
-                    {fw.passing}/{fw.total} passing · <span style={{ color: COLOR.critical }}>{fw.failing} failing</span>
+                  <div style={{ color: COLOR.fgMuted, fontSize: 12 }}>
+                    {fw.passing}/{fw.total} passing · <span style={{ color: 'var(--soc-error-text)' }}>{fw.failing} failing</span>
                   </div>
                 )}
               </button>

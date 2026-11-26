@@ -82,7 +82,7 @@ export default function KeyboardShortcuts() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.55)',
+        background: 'var(--soc-backdrop)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -92,14 +92,14 @@ export default function KeyboardShortcuts() {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--soc-bg-elev)',
-          border: '1px solid var(--soc-border)',
-          borderRadius: 10,
+          background: 'var(--soc-popover-bg)',
+          border: '1px solid var(--soc-popover-border)',
+          borderRadius: 'var(--soc-radius-popover)',
           padding: '20px 26px',
           minWidth: 360,
           maxWidth: 520,
           color: 'var(--soc-fg)',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          boxShadow: 'var(--soc-shadow-raised)',
         }}
       >
         <h2 style={{ marginTop: 0, marginBottom: 14, fontSize: 18 }}>Keyboard shortcuts</h2>
@@ -132,7 +132,7 @@ function Kbd({ children }: { children: React.ReactNode }) {
         borderRadius: 4,
         background: 'var(--soc-bg-elev-2)',
         fontSize: 11,
-        fontFamily: 'JetBrains Mono, monospace',
+        fontFamily: 'var(--soc-font-mono)',
         color: 'var(--soc-fg)',
         minWidth: 18,
         textAlign: 'center',

@@ -184,11 +184,14 @@ prowler-security-findings-agent/
 │   ├── build-frontend.sh / .ps1
 │   └── cleanup.sh / .ps1
 ├── frontend/
-│   ├── index.html, package.json, vite.config.ts, tsconfig.json
+│   ├── index.html, package.json, package-lock.json, vite.config.ts, tsconfig.json
+│   ├── scripts/gen-one-theme.mjs        ← regenerates src/one-theme when Cloudscape is bumped
 │   └── src/
 │       ├── main.tsx, App.tsx, auth.ts, api.ts, AuthModal.tsx, constants.ts, theme.ts, frameworks.ts
+│       ├── one-theme/                   ← Cloudscape One Theme port (generated)
 │       ├── CommandPalette.tsx           ← global ⌘K navigation + actions
 │       ├── KeyboardShortcuts.tsx        ← j/k/?/g* navigation
+│       ├── LiveSummary.tsx              ← DevOps Agent live investigation summary
 │       ├── status-history.ts            ← per-finding timeline persisted in IndexedDB
 │       ├── agent-skills.ts              ← seeded DevOps Agent skills (copy-paste-ready)
 │       └── pages/
@@ -272,6 +275,10 @@ Same reason the runtime-migration demo does not have API Gateway: fewer moving p
 ### Why ECS Fargate for Prowler (not Lambda)?
 
 Prowler scans a medium-sized account in 3–10 minutes — too long for Lambda's 15-minute hard limit when scanning multiple regions, and awkward to package with its dependencies. Fargate runs the official `toniblyx/prowler` image as-is.
+
+### Why are the Cloudscape packages pinned?
+
+The dashboard uses Cloudscape One Theme, which the published `@cloudscape-design/components` package does not include yet. `frontend/src/one-theme/` is a port generated for the exact Cloudscape versions pinned in `frontend/package.json`: when you bump them, regenerate it with `frontend/scripts/gen-one-theme.mjs` (steps at the top of the script).
 
 ## Contributing
 

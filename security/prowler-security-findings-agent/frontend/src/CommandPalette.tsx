@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Finding, listFindings, runScan } from './api';
+import { Finding, listAllFindings, runScan } from './api';
 
 /**
  * Global ⌘K / Ctrl+K / "/" command palette.
@@ -62,7 +62,7 @@ async function loadFindingsCached(): Promise<Finding[]> {
     return _findingsCache.items;
   }
   try {
-    const r = await listFindings({ limit: 500 });
+    const r = await listAllFindings();
     _findingsCache = { ts: Date.now(), items: r.items || [] };
     return _findingsCache.items;
   } catch {
@@ -224,7 +224,7 @@ export default function CommandPalette() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.55)',
+        background: 'var(--soc-backdrop)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -235,14 +235,14 @@ export default function CommandPalette() {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--soc-bg-elev)',
-          border: '1px solid var(--soc-border)',
-          borderRadius: 12,
+          background: 'var(--soc-popover-bg)',
+          border: '1px solid var(--soc-popover-border)',
+          borderRadius: 'var(--soc-radius-popover)',
           width: 'min(640px, 92vw)',
           maxHeight: '70vh',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '0 30px 80px rgba(0,0,0,0.55)',
+          boxShadow: 'var(--soc-shadow-raised)',
           overflow: 'hidden',
           color: 'var(--soc-fg)',
         }}
@@ -296,9 +296,8 @@ export default function CommandPalette() {
                   aria-hidden="true"
                   style={{
                     padding: '8px 18px 4px',
-                    fontSize: 10,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
+                    fontSize: 12,
+                    fontWeight: 600,
                     color: 'var(--soc-fg-dim)',
                   }}
                 >
@@ -318,15 +317,15 @@ export default function CommandPalette() {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
-                    background: activeIdx === it.idx ? 'rgba(79,143,255,0.10)' : 'transparent',
-                    borderLeft: `3px solid ${activeIdx === it.idx ? 'var(--soc-accent)' : 'transparent'}`,
+                    background: activeIdx === it.idx ? 'var(--soc-selected-bg)' : 'transparent',
+                    borderLeft: `3px solid ${activeIdx === it.idx ? 'var(--soc-focus)' : 'transparent'}`,
                   }}
                 >
                   <span style={{ color: 'var(--soc-fg)', fontWeight: 500, fontSize: 13 }}>
                     {it.cmd.title}
                   </span>
                   {it.cmd.subtitle && (
-                    <span style={{ color: 'var(--soc-fg-dim)', fontSize: 11, fontFamily: it.cmd.group === 'Findings' ? 'JetBrains Mono, monospace' : undefined }}>
+                    <span style={{ color: 'var(--soc-fg-dim)', fontSize: 11, fontFamily: it.cmd.group === 'Findings' ? 'var(--soc-font-mono)' : undefined }}>
                       {it.cmd.subtitle}
                     </span>
                   )}
@@ -371,7 +370,7 @@ const kbdStyle: React.CSSProperties = {
   borderRadius: 3,
   background: 'var(--soc-bg-elev-2)',
   fontSize: 10,
-  fontFamily: 'JetBrains Mono, monospace',
+  fontFamily: 'var(--soc-font-mono)',
   color: 'var(--soc-fg)',
   minWidth: 14,
   textAlign: 'center' as const,

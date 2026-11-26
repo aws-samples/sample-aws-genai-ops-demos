@@ -41,7 +41,8 @@ async function credentialsProvider() {
   }
   if (!_cognitoClient) _cognitoClient = new CognitoIdentityClient({ region });
   const provider = fromCognitoIdentityPool({
-    client: _cognitoClient,
+    // Same client at runtime; the provider's typings pin a different @smithy/types copy.
+    client: _cognitoClient as unknown as Parameters<typeof fromCognitoIdentityPool>[0]['client'],
     identityPoolId,
     logins: {
       [`cognito-idp.${region}.amazonaws.com/${userPoolId}`]: idToken,
@@ -168,13 +169,43 @@ export interface Finding {
   raw?: string;
 }
 
-export const listFindings = (filters: { severity?: string; status?: string; limit?: number } = {}) => {
+export const listFindings = (filters: { severity?: string; status?: string; limit?: number; next?: string } = {}) => {
   const qs = new URLSearchParams();
   if (filters.severity) qs.set('severity', filters.severity);
   if (filters.status) qs.set('status', filters.status);
   if (filters.limit) qs.set('limit', String(filters.limit));
+  if (filters.next) qs.set('next', filters.next);
   const path = '/findings' + (qs.toString() ? `?${qs}` : '');
-  return signedFetch('GET', path) as Promise<{ items: Finding[]; count: number }>;
+  return signedFetch('GET', path) as Promise<{ items: Finding[]; count: number; next?: string | null }>;
+};
+
+const ALL_FINDINGS_TTL_MS = 10_000;
+let allFindingsCache: { at: number; promise: Promise<{ items: Finding[]; count: number }> } | null = null;
+
+async function fetchAllFindings() {
+  // view=list returns every finding with only the list fields; `next` is followed in case an older API is deployed.
+  const items: Finding[] = [];
+  let next: string | null | undefined;
+  for (let page = 0; page < 100; page++) {
+    const qs = new URLSearchParams({ view: 'list', limit: '500' });
+    if (next) qs.set('next', next);
+    const r = (await signedFetch('GET', `/findings?${qs}`)) as { items: Finding[]; next?: string | null };
+    items.push(...(r.items || []));
+    next = r.next;
+    if (!next) break;
+  }
+  return { items, count: items.length };
+}
+
+/** Every finding (list fields only). Pages opened within a few seconds of each other share one request. */
+export const listAllFindings = (opts: { force?: boolean } = {}) => {
+  const now = Date.now();
+  if (opts.force || !allFindingsCache || now - allFindingsCache.at > ALL_FINDINGS_TTL_MS) {
+    const promise = fetchAllFindings();
+    allFindingsCache = { at: now, promise };
+    promise.catch(() => { if (allFindingsCache?.promise === promise) allFindingsCache = null; });
+  }
+  return allFindingsCache.promise;
 };
 
 export const getFinding = (findingUid: string) =>
@@ -227,18 +258,28 @@ export interface AgentTask {
 }
 
 export interface AgentJournalRecord {
+  /** ISO-8601. */
   timestamp?: string;
+  /** DevOps Agent recordType: message, utilization, observation, finding, ui_investigation_summary, ... */
   type?: string;
   content?: string;
 }
 
+/** The DevOps Agent's latest investigation summary; final once the root cause and mitigation are in. */
+export interface LiveSummary {
+  content: string;
+  updatedAt: string;
+  final: boolean;
+}
+
 export interface InvestigationState {
   incidentId: string;
-  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'not_configured' | 'error';
+  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'failed' | 'not_configured' | 'error';
   agentSpaceId?: string;
   executionId?: string;
   tasks: AgentTask[];
   journal: AgentJournalRecord[];
+  summary?: LiveSummary | null;
   error?: string;
 }
 
@@ -285,6 +326,7 @@ export interface InvestigationSummary {
   severity?: string;
   service_name?: string;
   resource_uid?: string;
+  summary?: LiveSummary | null;
 }
 
 export const listInvestigations = () =>
