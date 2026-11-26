@@ -192,7 +192,8 @@ export class ApiStack extends cdk.Stack {
       // Lazy Bedrock Insights invocation is synchronous — the remediation
       // Lambda has a 5 min timeout; keep a safe margin above that.
       timeout: cdk.Duration.minutes(6),
-      memorySize: 512,
+      // CPU scales with memory; parsing and gzipping the full findings list is CPU-bound.
+      memorySize: 2048,
       environment: {
         FINDINGS_TABLE: props.findingsTableName,
         REMEDIATIONS_BUCKET: props.remediationsBucketName,

@@ -1087,7 +1087,7 @@ def _maybe_gzip(event: dict[str, Any], resp: dict[str, Any]) -> dict[str, Any]:
         return resp
     out = dict(resp)
     out['headers'] = {**(resp.get('headers') or {}), 'content-encoding': 'gzip', 'vary': 'accept-encoding'}
-    out['body'] = base64.b64encode(gzip.compress(body.encode('utf-8'), compresslevel=5)).decode('ascii')
+    out['body'] = base64.b64encode(gzip.compress(body.encode('utf-8'), compresslevel=1)).decode('ascii')
     out['isBase64Encoded'] = True
     return out
 
